@@ -208,6 +208,10 @@ switch -- $env(AMSFTP_CASE_MODE) {
     expect_process_exit
     exit 0
   }
+  failure {
+    expect_process_exit
+    exit 0
+  }
   default {
     exit 90
   }
@@ -345,6 +349,15 @@ run_case() {
     printf 'authentication case %s failed\n' "${name}" >&2
     exit 1
   fi
+  case "${mode}" in
+    wrong | cancel | failure)
+      if ! grep -Fq 'establish OpenSSH SFTP session' "${client_stderr}"; then
+        printf 'authentication case %s did not report a bounded transport failure\n' "${name}" >&2
+        /usr/bin/strings "${client_stderr}" 2>/dev/null | sed -n '1,120p' >&2 || true
+        exit 1
+      fi
+      ;;
+  esac
   stop_client_daemon
   printf 'authentication case %s passed\n' "${name}"
 }
@@ -440,6 +453,28 @@ write_config "Host auth-confirm
   PreferredAuthentications password"
 run_case confirm confirm auth-confirm "${target_home}" endpoint-auth.txt
 test -s "${confirm_known_hosts}"
+
+changed_key="${sshd_root}/changed_host_key"
+changed_known_hosts="${client_home}/.ssh/changed_known_hosts"
+/usr/bin/ssh-keygen -q -t ed25519 -N '' -f "${changed_key}"
+printf '[127.0.0.1]:%s %s\n' "${port}" "$(cut -d' ' -f1,2 "${changed_key}.pub")" >"${changed_known_hosts}"
+chown "${client_user}:${client_user}" "${changed_known_hosts}"
+chmod 0600 "${changed_known_hosts}"
+changed_known_hosts_digest="$(sha256sum "${changed_known_hosts}" | cut -d' ' -f1)"
+write_config "Host auth-host-key-changed
+  HostName 127.0.0.1
+  Port ${port}
+  User ${target_user}
+  ConnectTimeout 5
+  GlobalKnownHostsFile /dev/null
+  UserKnownHostsFile ${changed_known_hosts}
+  StrictHostKeyChecking yes
+  LogLevel ERROR
+  IdentityFile ${client_home}/.ssh/client_key
+  IdentitiesOnly yes
+  PreferredAuthentications publickey"
+run_case host-key-changed failure auth-host-key-changed "${target_home}" endpoint-auth.txt
+test "$(sha256sum "${changed_known_hosts}" | cut -d' ' -f1)" = "${changed_known_hosts_digest}"
 
 for secret in "${password}" "${mfa_password}" "${key_passphrase}"; do
   if find "${root}" "${client_home}" -type f -readable -exec grep -IlF -- "${secret}" {} + | grep -q .; then
