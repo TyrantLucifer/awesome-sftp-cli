@@ -10,6 +10,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 )
 
 func TestClassifySSHConnectErrorDoesNotRetryAuthHostKeyOrConfig(t *testing.T) {
@@ -94,6 +95,187 @@ func TestRecoveryParentWalksTowardRootWithoutChangingEndpoint(t *testing.T) {
 	}
 	if _, ok := recoveryParent(domain.Location{EndpointID: location.EndpointID, Path: "/"}); ok {
 		t.Fatal("root unexpectedly has a recovery parent")
+	}
+}
+
+func TestPaneRecoveryFallbackPreservesEndpointTransaction(t *testing.T) {
+	endpoint := domain.Endpoint{
+		ID:           domain.EndpointID("ep_cccccccccccccccccccccccccc"),
+		Kind:         domain.EndpointSSH,
+		DisplayName:  "work",
+		SSHHostAlias: "work",
+	}
+	deep := domain.Location{EndpointID: endpoint.ID, Path: "/srv/missing/deep"}
+	initial := tui.Intent{
+		Kind:                 tui.IntentList,
+		Pane:                 tui.Left,
+		Location:             deep,
+		Endpoint:             endpoint,
+		Connection:           domain.StateReady,
+		CapabilityGeneration: 7,
+		CommitEndpoint:       true,
+	}
+
+	var recovery paneRecovery
+	recovery.beginConnection()
+	recovery.connected()
+	recovery.listingStarted(41, initial)
+	fallback, ok := recovery.listingFailed(tui.ListingFailed{
+		Pane:       tui.Left,
+		Generation: 41,
+		Code:       domain.CodeNotFound,
+		Location:   deep,
+	})
+	if !ok {
+		t.Fatal("not-found recovery did not request the nearest parent")
+	}
+	want := initial
+	want.Location.Path = "/srv/missing"
+	if !reflect.DeepEqual(fallback, want) {
+		t.Fatalf("fallback intent = %#v, want %#v", fallback, want)
+	}
+}
+
+func TestPaneRecoveryCompletesOnlyCurrentFallbackListing(t *testing.T) {
+	endpointID := domain.EndpointID("ep_cccccccccccccccccccccccccc")
+	deep := domain.Location{EndpointID: endpointID, Path: "/srv/missing/deep"}
+	initial := tui.Intent{Kind: tui.IntentList, Pane: tui.Left, Location: deep}
+
+	var recovery paneRecovery
+	recovery.beginConnection()
+	recovery.connected()
+	recovery.listingStarted(41, initial)
+	fallback, ok := recovery.listingFailed(tui.ListingFailed{
+		Pane:       tui.Left,
+		Generation: 41,
+		Code:       domain.CodeNotFound,
+		Location:   deep,
+	})
+	if !ok {
+		t.Fatal("not-found recovery did not request the nearest parent")
+	}
+	recovery.listingStarted(42, fallback)
+	if recovery.listingCompleted(tui.ListingPage{Pane: tui.Left, Generation: 41, Done: true}) {
+		t.Fatal("stale listing completed recovery")
+	}
+	if !recovery.listingCompleted(tui.ListingPage{Pane: tui.Left, Generation: 42, Done: true}) {
+		t.Fatal("current fallback listing did not complete recovery")
+	}
+	if recovery.listingCompleted(tui.ListingPage{Pane: tui.Left, Generation: 42, Done: true}) {
+		t.Fatal("completed recovery remained active")
+	}
+}
+
+func TestPaneRecoveryFallbackCommitsReconnectedEndpointAtParent(t *testing.T) {
+	oldEndpoint := domain.Endpoint{
+		ID:           domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+		Kind:         domain.EndpointSSH,
+		DisplayName:  "work",
+		SSHHostAlias: "work",
+	}
+	newEndpoint := oldEndpoint
+	newEndpoint.ID = domain.EndpointID("ep_cccccccccccccccccccccccccc")
+	oldLocation := domain.Location{EndpointID: oldEndpoint.ID, Path: "/srv/missing/deep"}
+	newLocation := domain.Location{EndpointID: newEndpoint.ID, Path: oldLocation.Path}
+	rightEndpoint := domain.Endpoint{ID: domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb"), Kind: domain.EndpointLocal, DisplayName: "local"}
+	rightLocation := domain.Location{EndpointID: rightEndpoint.ID, Path: "/"}
+	model := tui.NewModel(tui.NewPaneState(oldEndpoint, oldLocation), tui.NewPaneState(rightEndpoint, rightLocation))
+
+	model, intents := tui.Reduce(model, tui.PaneConnected{
+		Pane:              tui.Left,
+		Endpoint:          newEndpoint,
+		Location:          newLocation,
+		State:             domain.StateReady,
+		PreserveCommitted: true,
+	})
+	if len(intents) != 1 {
+		t.Fatalf("connected intents = %#v, want one list", intents)
+	}
+	initial := intents[0]
+	var recovery paneRecovery
+	recovery.beginConnection()
+	recovery.connected()
+	recovery.listingStarted(41, initial)
+	model, _ = tui.Reduce(model, tui.BeginListing{
+		Pane:           tui.Left,
+		Generation:     41,
+		Location:       initial.Location,
+		Endpoint:       initial.Endpoint,
+		Connection:     initial.Connection,
+		CommitEndpoint: initial.CommitEndpoint,
+	})
+	failure := tui.ListingFailed{
+		Pane:       tui.Left,
+		Generation: 41,
+		Code:       domain.CodeNotFound,
+		Location:   newLocation,
+	}
+	model, _ = tui.Reduce(model, failure)
+	fallback, ok := recovery.listingFailed(failure)
+	if !ok {
+		t.Fatal("not-found recovery did not request the nearest parent")
+	}
+	recovery.listingStarted(42, fallback)
+	model, _ = tui.Reduce(model, tui.BeginListing{
+		Pane:           tui.Left,
+		Generation:     42,
+		Location:       fallback.Location,
+		Endpoint:       fallback.Endpoint,
+		Connection:     fallback.Connection,
+		CommitEndpoint: fallback.CommitEndpoint,
+	})
+	if model.Panes[tui.Left].Listing.Generation != 42 {
+		t.Fatalf("fallback generation = %d, want 42", model.Panes[tui.Left].Listing.Generation)
+	}
+	page := tui.ListingPage{Pane: tui.Left, Generation: 42, Entries: []domain.Entry{{
+		Location: domain.Location{EndpointID: newEndpoint.ID, Path: "/srv/missing/recovered.txt"},
+		Name:     "recovered.txt",
+		Kind:     domain.EntryFile,
+	}}, Done: true}
+	model, _ = tui.Reduce(model, page)
+	if !recovery.listingCompleted(page) {
+		t.Fatal("successful parent page did not complete recovery")
+	}
+	pane := model.Panes[tui.Left]
+	if pane.Endpoint != newEndpoint || pane.Location != fallback.Location || !reflect.DeepEqual(pane.VisibleNames(), []string{"recovered.txt"}) {
+		t.Fatalf("recovered pane = %#v names=%#v", pane, pane.VisibleNames())
+	}
+}
+
+func TestPaneRecoveryConnectionFailureClearsConnectingState(t *testing.T) {
+	var recovery paneRecovery
+	recovery.beginConnection()
+	if !recovery.connecting() {
+		t.Fatal("started recovery is not connecting")
+	}
+	recovery.connectionFailed()
+	if recovery.connecting() {
+		t.Fatal("failed recovery remained connecting")
+	}
+}
+
+func TestPaneRecoveryTerminalListingFailureStopsFallback(t *testing.T) {
+	endpointID := domain.EndpointID("ep_cccccccccccccccccccccccccc")
+	deep := domain.Location{EndpointID: endpointID, Path: "/srv/missing/deep"}
+	var recovery paneRecovery
+	recovery.beginConnection()
+	recovery.connected()
+	recovery.listingStarted(41, tui.Intent{Kind: tui.IntentList, Pane: tui.Left, Location: deep})
+	if _, ok := recovery.listingFailed(tui.ListingFailed{
+		Pane:       tui.Left,
+		Generation: 41,
+		Code:       domain.CodeInternal,
+		Location:   deep,
+	}); ok {
+		t.Fatal("internal failure unexpectedly requested fallback")
+	}
+	if _, ok := recovery.listingFailed(tui.ListingFailed{
+		Pane:       tui.Left,
+		Generation: 41,
+		Code:       domain.CodeNotFound,
+		Location:   deep,
+	}); ok {
+		t.Fatal("terminal listing failure left recovery validation active")
 	}
 }
 

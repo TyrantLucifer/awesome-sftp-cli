@@ -72,7 +72,7 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Milestone Status**: In Progress
 
-**Current checkpoint**: CLI zero/one/two Location 与 `--workspace`、OpenSSH Host/workspace picker、版本化无秘密 workspace 原子保存/损坏拒绝、pane-local endpoint transaction、能力 revision、诊断关联、Vim count/repeat 与有界多行预览均已实现并通过本地 `make ci` 和精确 Go 1.25.12 `make check`。真实 Darwin/Linux kernel ACL、cross-process lock 与 hostile other-UID peer fixtures 在 exact-head [Hosted run 29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068) 的 Ubuntu 22.04/24.04、macOS 15 ARM/Intel 四个 native job 全绿，平台安全门禁已独立 Verified。该 run 的其他必跑作业除 auth/recovery 与依赖它的 final compare 外均通过；auth matrix 再次通过，但真实 sshd 断线重连后的 `not_found` 未进入 nearest-parent fallback。这个 recovery 问题已达到三次诊断/修复尝试上限，按工程规则停止修改并等待方向。另一独立门禁是远端目录源端增量枚举：ADR-0006 冻结的 `github.com/pkg/sftp v1.13.10` 仅公开返回完整 `[]os.FileInfo` 的 `ReadDirContext`，因此在不批准窄 fork/replace 或 ADR-backed dependency/API change 的前提下无法同时保持依赖决策与真实 source streaming。Stage 1/M1.4 在两项决策、实现和 exact-candidate Hosted evidence 完成前保持 In Progress。
+**Current checkpoint**: CLI/workspace/picker、能力、诊断、Vim 与预览已通过既有本地/Hosted 子门禁；四平台 kernel ACL、cross-process lock 与 hostile other-UID peer fixtures 在 [Hosted run 29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068) 全绿。获批的确定性 pane recovery state machine 已用 RED→GREEN 测试证明 reconnect 后的 `not_found` fallback 保留 endpoint transaction、只由当前 generation 完成且终止错误不残留恢复状态。ADR-0011 的不可变 `pkg/sftp v1.13.11` 窄 fork commit `f947b886400be01ed663564525f8bacf1be6c74e` 已推送；Provider 测试证明 `Limit=1` 在第二个 source batch 阻塞时先返回首批页面，fork 的双工具链/race/恶意包测试通过。Stage 1/M1.4 在完整依赖 intake、本地全门禁和 exact-candidate Hosted evidence 完成前保持 In Progress。
 
 ## Stage 2: Durable Transfers
 

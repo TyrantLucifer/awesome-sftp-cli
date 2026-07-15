@@ -6,7 +6,7 @@
 - **Branch**: `codex/stage1-read-only-explorer`
 - **Stage 0 baseline commit/tree**: `d637474ac52ef2c5b9f78c9be663e52c6a9f441c` / `83a515607f44f7edb85f8103962b6d9d1173c02d`
 - **Current milestone**: M1.4 — Workspace and recovery
-- **Current candidate**: M1.4 implementation and platform evidence at `56e5f4f6c4579cbafa6e38a237720efc1686b098`; recovery reached the three-attempt stop and source-streaming decision remains open
+- **Current candidate**: M1.4 recovery state machine and ADR-0011 source-streaming cursor implemented locally on top of `2a47b002b58642021a43fe6a1d7c5ab075467990`; complete local and exact-head Hosted gates pending
 
 Stage 1 delivers the read-only explorer only. It does not deliver Stage 2 transfer or mutation operations, Stage 3 external editing/cache, Stage 4 helper/search, Stage 5 direct transfer/scale hardening, or Stage 6 release readiness.
 
@@ -124,7 +124,7 @@ Current candidate evidence:
 - Listing/refresh transactions carry connection epochs and request generations. Stale pages are ignored, partial state is retained, refresh remaps cursor/marks by canonical Location, invalid directories recover toward the nearest valid parent without changing Endpoint, and capability replacement cannot leak state between panes. Preview requests are cancellable, preserve sanitized line structure and remain capped at 64 KiB.
 - The TUI implements bounded numeric counts only for safe navigation and bounded repeat for the last repeatable navigation action. Normal/Visual selection, independent sort/hidden/refresh controls, direct path navigation, endpoint/workspace modals and read-only intent tests keep all file mutation operations unreachable in the Stage 1 UI/RPC/CLI surface.
 - Client-visible daemon failures append only a safe correlation summary (`request_id`, canonical error code, Endpoint and retry/effect); owner-private bounded JSON logs retain the diagnostic cause without passwords, askpass answers, ticket material or raw file content.
-- The Hosted authentication fixture now additionally proves `Include`/`Match`, ControlMaster creation/reuse, bounded cancellation that returns control to the TUI, and changed-host-key refusal with the supplied known_hosts file byte-identical. The recovery fixture uses two real sshd endpoints and reaches all three Endpoint combinations, workspace reopen and a real one-endpoint disconnect/reconnect. Its nearest-parent postcondition still fails after reconnect, so later daemon-replacement/socket/log/resize assertions in that fixture have not executed and are not claimed.
+- The Hosted authentication fixture already proves `Include`/`Match`, ControlMaster creation/reuse, bounded cancellation that returns control to the TUI, and changed-host-key refusal with the supplied known_hosts file byte-identical. The prior recovery fixture exposed that a reconnect creates a new Endpoint but its bare parent fallback dropped the Endpoint commit transaction, so the reducer correctly rejected the page. The new `paneRecovery` state machine retains the exact validation intent across fallback, tracks its generation, terminates on non-recoverable errors and completes only on the current fallback's terminal page. Deterministic tests cover each transition; the unchanged real two-sshd fixture remains the required Hosted proof.
 
 Local validation before the Hosted-only recovery failure:
 
@@ -138,12 +138,28 @@ Local validation before the Hosted-only recovery failure:
 
 Hosted candidate [run 29416890911](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416890911) is bound to commit `4803d2789504d00566d51282b82c5d6fa5bf561a`. Quality, native Ubuntu 22.04/24.04, native macOS 15 ARM/Intel, all oldstable legs, four builds and reproducibility/compare passed. Auth job [87357175516](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416890911/job/87357175516) passed Include/Match, ControlMaster new/reuse, key, agent, ProxyCommand, ProxyJump, password, wrong-password, cancel, MFA, confirmation and changed-host-key cases before the recovery scenario failed. The job and run are FAILED, MIT Kerberos did not run in this exact candidate because it follows that step, and final compare was skipped.
 
-Source-streaming blocker:
+Source-streaming resolution:
 
-- Exact `github.com/pkg/sftp v1.13.10` exposes `Client.ReadDir` and `Client.ReadDirContext`; the implementation loops over every `SSH_FXP_READDIR` response and accumulates the complete directory into `[]os.FileInfo` before returning. Its public `Walk` path uses `github.com/kr/fs` and delegates back to that complete-slice `ReadDir` behavior.
-- Inspection of v1.13.11 found the same public directory API and behavior. A simple patch-version bump therefore does not satisfy the exit criterion.
-- Daemon RPC pages, reducer generations, cancellation and visible-window rendering are bounded and responsive after the provider returns, but they cannot make remote entries appear before the dependency completes source enumeration. Claiming PANE-004 or the Stage 1 incremental-directory exit item as verified would be false.
-- ADR-0006 freezes exact v1.13.10 and rejects a second in-product SFTP implementation. The remaining compliant choices require explicit approval: a narrowly maintained immutable fork/`replace` exposing a directory cursor, or an ADR-backed dependency/API change. M1.4 and Stage 1 remain In Progress pending that decision, implementation and exact-candidate Hosted evidence.
+- [ADR-0011](../architecture/adr/0011-pkg-sftp-streaming-directory-cursor.md) replaces the v1.13.10 pin with an immutable narrow fork based on upstream v1.13.11. Root imports remain `github.com/pkg/sftp`; the exact replace is `github.com/TyrantLucifer/sftp v1.13.12-0.20260715132526-f947b886400b`, commit `f947b886400be01ed663564525f8bacf1be6c74e`, tree `32258bedd3d535d1da84d5ca9fc489533bce88c6`, module sum `h1:nTtLW2gYG18og3cJx3d8cxf1vEX4naYExzYQvdRtg6s=`.
+- The fork exposes a context-aware `ReadDirCursor` that returns one `SSH_FXP_NAME` response at a time and safely rejects impossible counts/truncated names. Its real client/server fixture returns a 257-entry directory as `128/128/1/EOF`; current-toolchain, race and Go 1.25.12 suites pass.
+- The Provider now stores only the remote cursor plus the current protocol batch remainder. A deterministic request-server test blocks the second `READDIR` and proves `Limit=1` returns the first page before requesting that batch. EOF, cancellation, error, conflict, discard and Provider close release the handle.
+- Fork `go vet ./...` reports the same two `ReadFrom` signature and two test lock-copy warnings as pristine upstream v1.13.11; the fork adds none. This upstream baseline exception does not weaken the root module's vet/lint gates.
+- PANE-004 is Implemented locally but remains short of Verified until the complete exact-head local and Hosted gates pass.
+
+Approved blocker-resolution local validation:
+
+| Command/check | Result |
+|---|---|
+| fork `GOTOOLCHAIN=go1.26.5 go test ./... -count=1` and `go test -race ./... -count=1` | PASS at immutable fork commit `f947b886400be01ed663564525f8bacf1be6c74e` |
+| fork `GOTOOLCHAIN=go1.25.12 go test ./... -count=1` | PASS on the project oldstable line |
+| `GOTOOLCHAIN=go1.26.5 go test -count=1 ./internal/app ./internal/tui ./internal/provider/sftp` | PASS for recovery state, reducer transaction and streaming Provider tests |
+| same focused packages with `-race`, plus exact Go 1.25.12 without race | PASS |
+| Go 1.26.5 and 1.25.12 `go mod tidy -diff` / `go mod verify` | PASS; both report `all modules verified` and no tidy diff |
+| `GOTOOLCHAIN=go1.26.5 make ci` | PASS: fmt/vet/unit/contracts/docs/module verification, lint 0 issues, full race, four fuzz smokes, govulncheck/actionlint and four CGO-disabled target builds |
+| `GOTOOLCHAIN=go1.25.12 make check` | PASS on the complete same working-tree candidate |
+| `git diff --check` | PASS |
+
+`govulncheck` reports zero reachable and zero imported-package vulnerabilities, with one uncalled finding somewhere in the required module graph; this remains a dependency-risk note rather than a false claim that every required module is vulnerability-free. Exact-head Hosted/native, real recovery and reproducibility evidence are still pending.
 
 Platform final-evidence candidate:
 
@@ -211,10 +227,10 @@ The first PTY smoke found that daemon context cancellation did not interrupt an 
 
 M1.3's first three Kerberos Hosted attempts established separate failure boundaries: run `29407836699` found an IPv6-only keyscan mismatch, run `29408137670` found a non-default-port known_hosts alias mismatch, and run `29408333811` proved successful TGT/service-ticket issuance before sshd rejected the locked local account. After the required stop/reassessment, the isolated account was unlocked with an unused random local password while sshd kept password, keyboard-interactive and public-key authentication disabled. Run `29408646901` then passed the full GSSAPI matrix. The final host-key negative extension and unchanged Kerberos regression both passed on [29408865534](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29408865534). Required Hosted environment evidence cannot be replaced by mocks, skips or weakened assertions.
 
-M1.4 recovery used its three allowed evidence-driven attempts and is stopped pending direction:
+M1.4 recovery used its three allowed evidence-driven Hosted attempts before the user authorized the explicit state-machine repair:
 
 1. [Run 29416101770](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416101770), commit `a67ea98a10727f8cd2514d7bece8dc9303faf7a6`, fixed strict-shell local initialization and reached the PTY fixture, then timed out before the first local/remote markers. The fixture lacked failure-tail diagnostics.
 2. [Run 29416557838](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416557838), commit `c3afef05a239f50de0bdf994fe06bb49a7d1d6f9`, unlocked test-only target accounts while keeping password authentication disabled and added PTY tail diagnostics. It passed startup/workspace scenarios, but stopping only the listener process group left an accepted sshd child alive; deleting the path therefore produced `not_found` without a transport reconnect.
 3. [Run 29416890911](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416890911), commit `4803d2789504d00566d51282b82c5d6fa5bf561a`, terminated the complete `/proc` sshd descendant tree. The transcript proves `connection lost; reconnecting`, a new ready capability session, and then `not_found` for the removed directory. The application did not issue the next parent listing, so `hosted-stage1-recovery.py:322` timed out waiting for `reconnected at nearest accessible parent` and `a-recovered-marker.txt`.
 
-Exact failed command: `sudo env AMSFTP_AUTH_BINARY=... AMSFTP_AUTH_ROOT=... bash ./internal/integration/hosted-auth.sh`, in auth job 87357175516. Suspected root cause is the orchestration boundary between `PaneConnected(PreserveCommitted)`, the first post-reconnect `ListingFailed{Code:not_found}`, and the `validatingRecovery`/generation transaction in `runClient`; the pure `recoveryParent` helper itself passes. No fourth variant, weaker assertion, skip or hidden fallback has been attempted. Alternatives requiring direction are: (a) refactor recovery into an explicit tested pane recovery state machine and retain the real fixture; (b) first add an in-process event-loop harness that reproduces the reconnect→not-found sequence, then make the smallest state fix; or (c) revise the required automatic nearest-parent behavior by ADR, which is not recommended because it weakens the Stage 1 contract.
+Exact failed command: `sudo env AMSFTP_AUTH_BINARY=... AMSFTP_AUTH_ROOT=... bash ./internal/integration/hosted-auth.sh`, in auth job 87357175516. Root-cause tracing found that `PaneConnected(PreserveCommitted)` correctly emitted an intent containing `CommitEndpoint`, the new Endpoint and capability transaction, but the subsequent `not_found` branch created a bare parent `IntentList`; the reducer therefore correctly refused to commit a page for the new Endpoint. The approved `paneRecovery` state machine preserves the original intent through the parent fallback. RED→GREEN tests cover transaction preservation, current-generation completion, connection failure and terminal listing failure. No fixture assertion or product contract was weakened; the same real recovery scenario will run in the exact candidate.

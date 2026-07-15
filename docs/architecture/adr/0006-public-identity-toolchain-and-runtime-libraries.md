@@ -40,10 +40,10 @@ Stage 0 根 module 保持无第三方产品依赖。下表是后续 owning stage
 | Owning stage | 用途 | 规范 module/version |
 | --- | --- | --- |
 | Stage 1 | 终端输入与 cell 渲染 | `github.com/gdamore/tcell/v3 v3.4.0` |
-| Stage 1 | system-ssh stdio 上的 SFTP 协议 client | `github.com/pkg/sftp v1.13.10` |
+| Stage 1 | system-ssh stdio 上的 SFTP 协议 client | 由 [ADR-0011](0011-pkg-sftp-streaming-directory-cursor.md) 修订为上游 `github.com/pkg/sftp v1.13.11` 加不可变窄 fork/replace |
 | Stage 2 | SQLite driver | `modernc.org/sqlite v1.53.0`，并保留其精确 `modernc.org/libc v1.73.4` 解析结果 |
 
-`tcell/v3 v3.4.0` 与 `modernc.org/sqlite v1.53.0` 的 module 都声明 Go 1.25.0；`pkg/sftp v1.13.10` 的稳定 v1 线最低 Go 版本低于本项目基线。SQLite 的使用与迁移机制由 [ADR-0008](0008-modernc-sqlite-and-forward-migrations.md) 约束。
+`tcell/v3 v3.4.0`、ADR-0011 的 `pkg/sftp v1.13.11` fork 基线与 `modernc.org/sqlite v1.53.0` 都兼容 Go 1.25.0。SQLite 的使用与迁移机制由 [ADR-0008](0008-modernc-sqlite-and-forward-migrations.md) 约束。
 
 ### TUI 与渲染
 
@@ -105,5 +105,5 @@ tcell v2 是可接受的回退线，但新项目优先采用支持 event channel
 
 - [Go release history](https://go.dev/doc/devel/release)
 - [tcell v3.4.0 module](https://raw.githubusercontent.com/gdamore/tcell/v3.4.0/go.mod)、[v3 changes](https://raw.githubusercontent.com/gdamore/tcell/v3.4.0/CHANGESv3.md) 与 [`vt.NewMockTerm`](https://github.com/gdamore/tcell/blob/v3.4.0/vt/mock.go)
-- [`pkg/sftp` v1.13.10 release](https://github.com/pkg/sftp/releases/tag/v1.13.10)
+- [`pkg/sftp` v1.13.11 release](https://github.com/pkg/sftp/releases/tag/v1.13.11) 与 [ADR-0011](0011-pkg-sftp-streaming-directory-cursor.md)
 - [`log/slog` package](https://pkg.go.dev/log/slog) 与 [Go slog design](https://go.dev/blog/slog)

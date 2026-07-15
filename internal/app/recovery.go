@@ -9,7 +9,76 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 )
+
+type paneRecoveryPhase uint8
+
+const (
+	paneRecoveryIdle paneRecoveryPhase = iota
+	paneRecoveryConnecting
+	paneRecoveryValidating
+)
+
+type paneRecovery struct {
+	phase      paneRecoveryPhase
+	generation uint64
+	intent     tui.Intent
+	fallback   bool
+}
+
+func (r *paneRecovery) beginConnection() {
+	*r = paneRecovery{phase: paneRecoveryConnecting}
+}
+
+func (r *paneRecovery) connecting() bool {
+	return r.phase == paneRecoveryConnecting
+}
+
+func (r *paneRecovery) connectionFailed() {
+	*r = paneRecovery{}
+}
+
+func (r *paneRecovery) connected() {
+	*r = paneRecovery{phase: paneRecoveryValidating}
+}
+
+func (r *paneRecovery) listingStarted(generation uint64, intent tui.Intent) {
+	if r.phase != paneRecoveryValidating || generation == 0 || intent.Kind != tui.IntentList {
+		return
+	}
+	r.generation = generation
+	r.intent = intent
+}
+
+func (r *paneRecovery) listingFailed(failure tui.ListingFailed) (tui.Intent, bool) {
+	if r.phase != paneRecoveryValidating || r.generation == 0 || failure.Generation != r.generation {
+		return tui.Intent{}, false
+	}
+	if failure.Code != domain.CodeNotFound && failure.Code != domain.CodePermissionDenied {
+		*r = paneRecovery{}
+		return tui.Intent{}, false
+	}
+	parent, ok := recoveryParent(failure.Location)
+	if !ok {
+		*r = paneRecovery{}
+		return tui.Intent{}, false
+	}
+	next := r.intent
+	next.Location = parent
+	r.generation = 0
+	r.fallback = true
+	return next, true
+}
+
+func (r *paneRecovery) listingCompleted(page tui.ListingPage) bool {
+	if r.phase != paneRecoveryValidating || r.generation == 0 || page.Generation != r.generation || !page.Done {
+		return false
+	}
+	recovered := r.fallback
+	*r = paneRecovery{}
+	return recovered
+}
 
 type reconnectPolicy struct {
 	Delays []time.Duration

@@ -27,8 +27,8 @@ type Config struct {
 type cursorState struct {
 	location    domain.Location
 	sort        *providerapi.SortHint
-	entries     []os.FileInfo
-	index       int
+	reader      *pkgsftp.ReadDirCursor
+	pending     []os.FileInfo
 	fingerprint domain.Fingerprint
 }
 type Provider struct {
@@ -115,35 +115,46 @@ func (p *Provider) List(ctx context.Context, request providerapi.ListRequest) (p
 		if err != nil {
 			return providerapi.ListPage{}, p.mapError("list", &request.Location, err)
 		}
-		entries, err := p.client.ReadDirContext(ctx, p.remotePath(request.Location))
+		reader, err := p.client.OpenReadDir(ctx, p.remotePath(request.Location))
 		if err != nil {
 			return providerapi.ListPage{}, p.mapError("list", &request.Location, err)
 		}
-		state = &cursorState{location: request.Location, sort: cloneSort(request.Sort), entries: entries, fingerprint: fingerprint(info)}
+		state = &cursorState{location: request.Location, sort: cloneSort(request.Sort), reader: reader, fingerprint: fingerprint(info)}
 	} else {
 		p.mu.Lock()
 		state = p.cursors[request.Cursor]
-		p.mu.Unlock()
 		if state == nil {
+			p.mu.Unlock()
 			return providerapi.ListPage{}, p.invalid("list", &request.Location, "unknown cursor")
 		}
 		if state.location != request.Location || !sameSort(state.sort, request.Sort) {
+			p.mu.Unlock()
 			return providerapi.ListPage{}, p.invalid("list", &request.Location, "cursor binding mismatch")
 		}
-		p.mu.Lock()
 		delete(p.cursors, request.Cursor)
 		p.mu.Unlock()
 		info, err := p.client.Stat(p.remotePath(request.Location))
 		if err != nil {
+			_ = state.close()
 			return providerapi.ListPage{}, p.mapError("list", &request.Location, err)
 		}
 		if !equalFingerprint(state.fingerprint, fingerprint(info)) {
+			_ = state.close()
 			return providerapi.ListPage{}, p.opError(domain.CodeConflict, "list", &request.Location, "directory changed", errRetryConflict, nil)
 		}
 	}
-	end := min(state.index+int(request.Limit), len(state.entries))
-	result := make([]domain.Entry, 0, end-state.index)
-	for _, info := range state.entries[state.index:end] {
+	keepCursor := false
+	defer func() {
+		if !keepCursor {
+			_ = state.close()
+		}
+	}()
+	infos, done, err := state.read(ctx, int(request.Limit))
+	if err != nil {
+		return providerapi.ListPage{}, p.mapError("list", &request.Location, err)
+	}
+	result := make([]domain.Entry, 0, len(infos))
+	for _, info := range infos {
 		if err := ctx.Err(); err != nil {
 			return providerapi.ListPage{}, p.mapError("list", &request.Location, err)
 		}
@@ -153,11 +164,13 @@ func (p *Provider) List(ctx context.Context, request providerapi.ListRequest) (p
 		}
 		result = append(result, entry)
 	}
-	state.index = end
-	done := end == len(state.entries)
 	var next providerapi.PageCursor
 	if !done {
 		p.mu.Lock()
+		if p.closed {
+			p.mu.Unlock()
+			return providerapi.ListPage{}, p.mapError("list", &request.Location, os.ErrClosed)
+		}
 		if len(p.cursors) >= p.maxCursors {
 			p.mu.Unlock()
 			return providerapi.ListPage{}, p.opError(domain.CodeResourceExhausted, "list", &request.Location, "too many open directory cursors", errRetryNever, nil)
@@ -166,6 +179,7 @@ func (p *Provider) List(ctx context.Context, request providerapi.ListRequest) (p
 		next = providerapi.PageCursor(fmt.Sprintf("sftp-%d", p.next))
 		p.cursors[next] = state
 		p.mu.Unlock()
+		keepCursor = true
 	}
 	return providerapi.ListPage{Entries: result, NextCursor: next, Done: done, RequestedSortApplied: false, Consistency: providerapi.ConsistencyBestEffort, DirectoryFingerprint: state.fingerprint}, nil
 }
@@ -214,8 +228,15 @@ func (p *Provider) OpenRead(ctx context.Context, request providerapi.OpenReadReq
 }
 func (p *Provider) DiscardCursor(cursor providerapi.PageCursor) error {
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	state := p.cursors[cursor]
 	delete(p.cursors, cursor)
+	p.mu.Unlock()
+	if state == nil {
+		return nil
+	}
+	if err := state.close(); err != nil {
+		return p.mapError("discard_cursor", &state.location, err)
+	}
 	return nil
 }
 func (p *Provider) Close() error {
@@ -225,12 +246,51 @@ func (p *Provider) Close() error {
 		return nil
 	}
 	p.closed = true
+	states := make([]*cursorState, 0, len(p.cursors))
+	for _, state := range p.cursors {
+		states = append(states, state)
+	}
 	p.cursors = make(map[providerapi.PageCursor]*cursorState)
 	p.mu.Unlock()
-	if p.close != nil {
-		return p.close()
+	var closeErr error
+	for _, state := range states {
+		closeErr = errors.Join(closeErr, state.close())
 	}
-	return p.client.Close()
+	if p.close != nil {
+		return errors.Join(closeErr, p.close())
+	}
+	return errors.Join(closeErr, p.client.Close())
+}
+
+func (s *cursorState) read(ctx context.Context, limit int) ([]os.FileInfo, bool, error) {
+	result := make([]os.FileInfo, 0, limit)
+	for len(result) < limit {
+		if len(s.pending) != 0 {
+			count := min(limit-len(result), len(s.pending))
+			result = append(result, s.pending[:count]...)
+			s.pending = s.pending[count:]
+			continue
+		}
+		batch, err := s.reader.Read(ctx)
+		if errors.Is(err, io.EOF) {
+			return result, true, nil
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		s.pending = batch
+	}
+	return result, false, nil
+}
+
+func (s *cursorState) close() error {
+	if s == nil || s.reader == nil {
+		return nil
+	}
+	reader := s.reader
+	s.reader = nil
+	s.pending = nil
+	return reader.Close()
 }
 func (p *Provider) entry(parent domain.Location, info os.FileInfo) (domain.Entry, error) {
 	location, _ := domain.NewLocation(p.endpoint.ID, domain.CanonicalPath(path.Join(string(parent.Path), info.Name())))

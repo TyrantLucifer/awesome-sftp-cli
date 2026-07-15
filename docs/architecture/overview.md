@@ -36,6 +36,7 @@
 - [ADR-0008：pure-Go SQLite 与前向迁移](adr/0008-modernc-sqlite-and-forward-migrations.md)
 - [ADR-0009：支持平台、CI 与首发包装](adr/0009-supported-platform-ci-and-packaging-baseline.md)
 - [ADR-0010：Helper 产物信任与分发](adr/0010-helper-artifact-trust-and-distribution.md)
+- [ADR-0011：SFTP 流式目录游标窄 fork](adr/0011-pkg-sftp-streaming-directory-cursor.md)
 
 ## 2. 架构原则
 
