@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -36,6 +37,26 @@ func TestSSHConnectStageErrorPreservesSafeStageAndClassification(t *testing.T) {
 	}
 	if operationError.Error() == cause.Error() {
 		t.Fatal("public error exposed the private cause")
+	}
+}
+
+func TestClientErrorMessageAppendsSafeRemoteCorrelation(t *testing.T) {
+	requestID := domain.RequestID("req_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	remote := &daemon.RemoteError{RequestID: requestID, RPC: ipc.RPCError{
+		Code:    domain.CodePermissionDenied,
+		Message: "access denied",
+		Retry:   domain.RetryAdvice{Kind: domain.RetryNever},
+		Effect:  domain.EffectNone,
+	}}
+	message := clientErrorMessage(remote)
+	for _, want := range []string{"access denied", string(requestID), "error_code=permission_denied"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("clientErrorMessage() = %q, want %q", message, want)
+		}
+	}
+	local := errors.New("local failure")
+	if got := clientErrorMessage(local); got != local.Error() {
+		t.Fatalf("local clientErrorMessage() = %q", got)
 	}
 }
 

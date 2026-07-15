@@ -341,7 +341,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if invocation.Workspace != "" {
 		var response workspace.LoadResponse
 		if err := client.Call(ctx, daemon.WorkspaceLoad, workspace.LoadRequest{Name: invocation.Workspace}, &response); err != nil {
-			locations, restored, err = pickStartLocations(ctx, screen, events, client, "Cannot open workspace "+invocation.Workspace+": "+err.Error())
+			locations, restored, err = pickStartLocations(ctx, screen, events, client, "Cannot open workspace "+invocation.Workspace+": "+clientErrorMessage(err))
 			if errors.Is(err, errPickerCanceled) {
 				return nil
 			}
@@ -442,7 +442,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				releaseErr := activeClient.Call(runCtx, daemon.ProviderRelease, ipc.ProviderReleaseRequest{EndpointID: string(intent.EndpointID)}, &response)
 				if releaseErr != nil && runCtx.Err() == nil {
 					select {
-					case actions <- tui.WorkspaceSaveResult{Message: "old endpoint cleanup failed: " + releaseErr.Error()}:
+					case actions <- tui.WorkspaceSaveResult{Message: "old endpoint cleanup failed: " + clientErrorMessage(releaseErr)}:
 					case <-runCtx.Done():
 					}
 				}
@@ -460,7 +460,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				saveErr := activeClient.Call(runCtx, daemon.WorkspaceSave, workspace.SaveRequest{Name: intent.Name, Document: document}, &response)
 				result := tui.WorkspaceSaveResult{Name: intent.Name}
 				if saveErr != nil {
-					result.Message = "workspace save failed: " + saveErr.Error()
+					result.Message = "workspace save failed: " + clientErrorMessage(saveErr)
 				}
 				select {
 				case actions <- result:
@@ -663,7 +663,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			recoveringDaemon = false
 			if result.err != nil {
 				for pane := tui.Left; pane <= tui.Right; pane++ {
-					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateFailed, Message: "daemon recovery failed: " + result.err.Error()})
+					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateFailed, Message: "daemon recovery failed: " + clientErrorMessage(result.err)})
 				}
 				continue
 			}
@@ -702,7 +702,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			recovering[result.pane] = false
 			if result.err != nil {
 				state := connectionFailureState(model, result.pane, result.switching)
-				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: result.pane, State: state, Message: "connect " + result.host + " failed: " + result.err.Error()})
+				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: result.pane, State: state, Message: "connect " + result.host + " failed: " + clientErrorMessage(result.err)})
 				continue
 			}
 			var intents []tui.Intent
@@ -834,7 +834,7 @@ func pickStartLocations(
 	message := initialMessage
 	var listed workspace.ListResponse
 	if err := client.Call(ctx, daemon.WorkspaceList, workspace.ListRequest{}, &listed); err != nil {
-		message = appendPickerMessage(message, "Cannot list workspaces: "+err.Error())
+		message = appendPickerMessage(message, "Cannot list workspaces: "+clientErrorMessage(err))
 	}
 	var aliases []string
 	home, err := os.UserHomeDir()
@@ -885,7 +885,7 @@ func pickStartLocations(
 						}
 						var loaded workspace.LoadResponse
 						if err := client.Call(ctx, daemon.WorkspaceLoad, workspace.LoadRequest{Name: choice.Name}, &loaded); err != nil {
-							message = "Cannot open workspace " + choice.Name + ": " + err.Error()
+							message = "Cannot open workspace " + choice.Name + ": " + clientErrorMessage(err)
 							continue
 						}
 						locations, err := workspaceStartLocations(loaded.Document)
@@ -1069,7 +1069,7 @@ func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, g
 		if err != nil {
 			if ctx.Err() == nil {
 				code, retry, daemonLost := providerCallFailure(err)
-				actions <- tui.ListingFailed{Pane: pane, Generation: generation, Message: err.Error(), Code: code, Retry: retry, DaemonLost: daemonLost, Location: location}
+				actions <- tui.ListingFailed{Pane: pane, Generation: generation, Message: clientErrorMessage(err), Code: code, Retry: retry, DaemonLost: daemonLost, Location: location}
 			}
 			return
 		}
@@ -1077,7 +1077,7 @@ func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, g
 		for _, wire := range response.Entries {
 			entry, err := ipc.DecodeEntry(wire)
 			if err != nil {
-				actions <- tui.ListingFailed{Pane: pane, Generation: generation, Message: err.Error()}
+				actions <- tui.ListingFailed{Pane: pane, Generation: generation, Message: clientErrorMessage(err)}
 				return
 			}
 			entries = append(entries, entry)
@@ -1096,6 +1096,18 @@ func providerCallFailure(err error) (domain.Code, domain.RetryKind, bool) {
 		return remote.RPC.Code, remote.RPC.Retry.Kind, false
 	}
 	return domain.CodeTransportInterrupted, domain.RetryAfterReconnect, true
+}
+
+func clientErrorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	summary := daemon.DiagnosticSummary(err)
+	if summary.RequestID == "" {
+		return message
+	}
+	return message + " [" + summary.String() + "]"
 }
 
 func daemonConnectionLost(err error) bool {
@@ -1134,7 +1146,7 @@ func previewLocation(ctx context.Context, client *daemon.Client, generation uint
 	err := client.Call(ctx, daemon.ProviderRead, ipc.ProviderReadRequest{Location: ipc.EncodeLocation(location), Limit: tui.PreviewByteLimit}, &response)
 	if err != nil {
 		if ctx.Err() == nil {
-			actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
+			actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: clientErrorMessage(err)}
 		}
 		return
 	}

@@ -18,6 +18,7 @@ This repository treats documentation as part of the product contract. A feature 
 
 - [Local testing and quality gates](development/testing.md) documents the repeatable Make entrypoints, exact toolchains, and platform matrix.
 - [Dependency and supply-chain policy](security/dependency-policy.md) defines dependency review, pinned tools, and immutable CI actions.
+- [Read-only Explorer guide](user/read-only-explorer.md) documents the current Stage 1 launch, OpenSSH reuse, keys, workspaces, recovery, and diagnostics behavior.
 
 ## Required reading order for a new session
 

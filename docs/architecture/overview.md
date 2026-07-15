@@ -8,7 +8,7 @@
 
 ### 当前实现边界
 
-本文主体描述 1.0 目标架构，不代表所有运行时组件已经存在。Stage 0 foundation 已完成；Stage 1 M1.1 已交付私有 Unix socket daemon、framed IPC、LocalFS 与本地双栏 TUI，M1.2 正在接入 validated system OpenSSH stdio 与结构化 SFTP Provider。SQLite、传输引擎、Auth Broker、workspace 恢复和 remote helper 仍未交付，项目也未达到 production readiness。当前证据见 [Stage 1 verification](../verification/stage-01.md)；生产/发行就绪只由 Stage 6 门禁判定。
+本文主体描述 1.0 目标架构，不代表所有运行时组件已经存在。Stage 0 foundation 以及 Stage 1 M1.1–M1.3 已完成；M1.4 已实现 CLI Location/Host picker、secret-free 原子 workspace、双栏恢复、能力快照替换和有界结构化 daemon 日志，正在完成真实恢复/平台门禁。SQLite、传输引擎、内容缓存、外部编辑和 remote helper 仍未交付，项目也未达到 production readiness。当前证据见 [Stage 1 verification](../verification/stage-01.md)；生产/发行就绪只由 Stage 6 门禁判定。
 
 ### 已冻结兼容与发行基线
 
@@ -85,6 +85,10 @@
 客户端退出不得取消后台任务。显式取消必须作为 RPC 命令发送给守护进程。
 
 渲染边界固定使用 `github.com/gdamore/tcell/v3 v3.4.0`；项目自己的纯 Go model/reducer 维护 Vim 模式和两栏状态，tcell 只处理终端事件与可见 cell。目录视图必须窗口化，不能为 5 万条记录构造完整 View。结构化日志统一使用注入的标准库 `log/slog`，不得依赖全局 logger。精确约束见 [ADR-0006](adr/0006-public-identity-toolchain-and-runtime-libraries.md)。
+
+Stage 1 的实际 daemon 为每个已附着 client session 创建 Provider 路由：一个共享只读 LocalFS 基线，加上该 session 明确连接的 SSH Provider。远端切换先创建候选 endpoint、获取完整 capability snapshot，并在目标位置第一批列表成功后原子提交 PaneState；随后才释放旧 SSH Provider/游标。连接 epoch、列表 generation 和预览 generation 分别阻止被取消或旧 daemon/session 的迟到结果覆盖当前状态。client 分离会关闭其远端 Provider；持久 workspace 用 Host alias 和路径在下一次附着时重建会话，而不是持久化活连接或认证材料。
+
+daemon 启动后在平台 LogFile 打开 owner-only JSON 日志。业务 server 显式接收 `*slog.Logger`；持久 handler 在 JSON 编码前把消息替换为固定 token，只保留已注册且验证过的 `component`、`event`、`endpoint_id`、`job_id`、`request_id`、`error_code` 字符串。rolling writer 在互斥写入下限制为 4 MiB 当前文件与三份备份；每次打开/轮转均复用 ADR-0007 私有目录/文件验证。RPC RemoteError 保留 request ID，TUI 可显示不含路径、命令或 raw cause 的稳定诊断摘要。
 
 ### 3.2 本机守护进程
 
