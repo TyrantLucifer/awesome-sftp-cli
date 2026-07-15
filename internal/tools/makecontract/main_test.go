@@ -397,6 +397,56 @@ func TestCanonicalMakefileAcceptsCommandLineOutputDirectoriesWithSpaces(t *testi
 	}
 }
 
+func TestCanonicalMakefileClassifiesSyntheticPropagatedFlags(t *testing.T) {
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("os.Getwd() returned %v", err)
+	}
+	canonicalPath := filepath.Join(workingDirectory, "..", "..", "..", "Makefile")
+	canonical, err := os.ReadFile(canonicalPath) //nolint:gosec // path uses only the package cwd and fixed repository-relative components.
+	if err != nil {
+		t.Fatalf("read canonical Makefile: %v", err)
+	}
+
+	const probe = `
+synthetic-make-flags:
+	@printf '%s\n' '$(strip $(foreach flag,$(call make_execution_flag_candidates,$(SYNTHETIC_MAKEFLAGS)),$(call make_execution_skip_word,$(flag))))'
+`
+	tests := []struct {
+		name      string
+		makeFlags string
+		wantSkip  bool
+	}{
+		{name: "GNU Make 4 include path with escaped space", makeFlags: `I/tmp/include\ n --no-print-directory`},
+		{name: "GNU Make 4 attached include path", makeFlags: `-I/tmp/include\ n --no-print-directory`},
+		{name: "short dry run", makeFlags: `n --no-print-directory`, wantSkip: true},
+		{name: "clustered dry run", makeFlags: `kn --no-print-directory`, wantSkip: true},
+		{name: "dash short dry run", makeFlags: `-n --no-print-directory`, wantSkip: true},
+		{name: "long dry run", makeFlags: `--dry-run --no-print-directory`, wantSkip: true},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.WriteFile(filepath.Join(root, "Makefile"), append(canonical, probe...), 0o600); err != nil { //nolint:gosec // root is a testing.T-owned temporary directory and the filename is fixed.
+				t.Fatalf("write temporary Makefile: %v", err)
+			}
+			//nolint:gosec // executable, target, and synthetic flags are test-owned values passed without a shell.
+			command := exec.Command("make", "--no-print-directory", "SYNTHETIC_MAKEFLAGS="+test.makeFlags, "synthetic-make-flags")
+			command.Dir = root
+			command.Env = cleanMakeEnvironment(os.Environ())
+			output, runErr := command.CombinedOutput()
+			if runErr != nil {
+				t.Fatalf("synthetic Make flag classification failed: %v\n%s", runErr, output)
+			}
+			gotSkip := strings.TrimSpace(string(output)) != ""
+			if gotSkip != test.wantSkip {
+				t.Fatalf("synthetic Make flag classification skip = %t, want %t; output %q", gotSkip, test.wantSkip, output)
+			}
+		})
+	}
+}
+
 func TestCanonicalMakefileRejectsCommandLineGuardOverrides(t *testing.T) {
 	workingDirectory, err := os.Getwd()
 	if err != nil {

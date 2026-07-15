@@ -14,7 +14,7 @@ Stage 0 正在实施；Stage 1–6 保持 Not Started，且在 Stage 0 全部门
 
 **Status**: In Progress
 
-**Current checkpoint**: 第三个 Task 11 候选的本地门禁无污染通过，但整树审查发现并随后关闭一个 Make 内部门禁变量覆盖 Medium；该精确树已作废。修复后的替代树 `c91ea59…` 已完成 Go 1.26.5/1.25.12 全量本地门禁、污染比较与独立证据审计。两轮独立 cold-start audit 已完成：第一轮推动 exact-command ledger 修复，第二轮的唯一 stale sentence 修复后复核 PASS。最终本地 closeout 树 `5d598ee…` 也已通过 evidence-only gate 与污染比较。八个 hosted native/oldstable legs 仍未执行，Stage 0 保持 In Progress，Stage 1 保持关闭。
+**Current checkpoint**: 本地实现、独立审查、两轮 cold-start audit 与最终本地 closeout 均已完成。首轮 Hosted implementation-candidate run `29394164471` 绑定提交 `1da7254…`/树 `5880f05…`；四个 native、两个 macOS oldstable、四目标 build 和独立缓存 reproducibility compare 通过，但 `quality` 与两个 Ubuntu oldstable 因 GNU Make 4.x 安全 `-I` 路径误判而失败，该提交已作废。合成 GNU Make 4.x 表示的回归测试先红后绿，最小分类修复已通过本地 Go 1.26.5 `make ci` 与精确 Go 1.25.12 `make check`。替代 implementation-candidate Hosted run 与其后的 evidence-only final run 尚未完成，Stage 0 保持 In Progress，Stage 1 保持关闭。
 
 ## Stage 1: Read-only Explorer
 

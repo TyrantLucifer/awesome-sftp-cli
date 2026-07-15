@@ -5,7 +5,7 @@
 - **前置条件**：已批准的产品设计、架构决策和阶段路线
 - **完成后进入**：仅在本阶段本地、双平台 CI 与 cold-start 门禁全部通过后进入 [Stage 1 — Read-only Explorer](01-read-only-explorer.md)
 
-当前检查点：Tasks 1–10 已在当前 dirty implementation worktree 中实现并独立复审。Task 11 的决策真相链、Make/provenance/nightly、IPC 控制字段与 lint 修复均已完成。第三份候选 `4b60326…` 的本地门禁全部通过，但整树审查发现一个 Make 内部门禁变量覆盖 Medium，因此该树与前两份候选一样明确作废。完整依赖链 override、命令行 Make 输入来源拒绝和 `-e` 环境回归矩阵已通过唯一一次修复后复审；替代树 `c91ea59…` 随后完成 Bash 3.2、Go 1.26.5/1.25.12、10 轮 race、四目标构建、污染门禁与独立证据审计。两轮独立 cold-start audit 已关闭命令 ledger 和 stale checkpoint 两个文档缺口，最终复核 PASS。只剩最后的 evidence-only closeout gate；GitHub 托管的原生 macOS/Linux、artifact/reproducibility/provenance 仍未获授权运行。详细证据与阻塞见 [Stage 0 verification](../verification/stage-00.md)。
+当前检查点：Tasks 1–10、Task 11 的决策真相链与本地 closeout、两轮独立 cold-start audit 均已完成。首轮 Hosted implementation-candidate run `29394164471` 在提交 `1da7254…` 上证明四个 native、两个 macOS oldstable、四目标 build 和独立缓存 reproducibility compare 可运行，但 `quality` 与两个 Ubuntu oldstable 暴露 GNU Make 4.x 对安全 `-I` 路径的跨版本误判，该提交已作废。回归测试和最小分类修复已通过本地 Go 1.26.5/1.25.12 门禁；Stage 0 仍需替代 implementation-candidate Hosted run 全绿、受限 evidence-only closeout 更新以及最终精确树 Hosted run 全绿。详细证据与阻塞见 [Stage 0 verification](../verification/stage-00.md)。
 
 ## 1. 阶段目标
 

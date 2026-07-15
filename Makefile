@@ -4,10 +4,12 @@
 
 # GNU Make either normalizes execution-skipping options into the first short
 # option word or preserves them as dash-prefixed words beside long options.
-# Arguments to safe options such as "-C n" and "-I n" are never candidates.
+# GNU Make 4.x can propagate an include directory as I/path or -I/path; that
+# safe option word is not a short-option cluster even when the path contains
+# n/i/q/t. Arguments to other safe options such as "-C n" are not candidates.
 override make_contract_value_changed = $(strip $(filter-out $(1),$(2)) $(filter-out $(2),$(1)))
 override make_execution_skip_letters = $(strip $(foreach letter,n i q t,$(if $(findstring $(letter),$(1)),$(letter))))
-override make_execution_skip_word = $(if $(filter --just-print --dry-run --recon --ignore-errors --question --touch,$(1)),yes,$(if $(filter --%,$(1)),,$(call make_execution_skip_letters,$(patsubst -%,%,$(1)))))
+override make_execution_skip_word = $(if $(filter --just-print --dry-run --recon --ignore-errors --question --touch,$(1)),yes,$(if $(filter --% I% -I%,$(1)),,$(call make_execution_skip_letters,$(patsubst -%,%,$(1)))))
 override make_flag_option_prefix = $(strip $(if $(1),$(if $(filter --,$(firstword $(1))),,$(if $(findstring =,$(firstword $(1))),,$(firstword $(1)) $(call make_flag_option_prefix,$(wordlist 2,$(words $(1)),$(1)))))))
 override make_execution_flag_candidates = $(firstword $(call make_flag_option_prefix,$(1))) $(filter -%,$(call make_flag_option_prefix,$(1)))
 override MAKE_CONTRACT_MAKE_INPUT_CHANGED = $(if $(filter command,$(origin MAKEFLAGS) $(origin MFLAGS)),yes)
