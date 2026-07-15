@@ -210,6 +210,25 @@ common_config() {
 EOF
 }
 
+stop_client_daemon() {
+  local daemon_pattern deadline
+  daemon_pattern="^${installed} daemon$"
+  if ! pgrep -u "${client_user}" -f "${daemon_pattern}" >/dev/null; then
+    printf 'authentication case did not leave a daemon to stop\n' >&2
+    return 1
+  fi
+  pkill -TERM -u "${client_user}" -f "${daemon_pattern}"
+  deadline=$((SECONDS + 5))
+  while pgrep -u "${client_user}" -f "${daemon_pattern}" >/dev/null; do
+    if test "${SECONDS}" -ge "${deadline}"; then
+      ps -o pid=,ppid=,stat=,args= -u "${client_user}" | sed -n '1,80p' >&2
+      printf 'authentication daemon did not stop after SIGTERM\n' >&2
+      return 1
+    fi
+    sleep 0.1
+  done
+}
+
 run_case() {
   name="$1"
   mode="$2"
@@ -217,16 +236,12 @@ run_case() {
   remote_user="$4"
   marker="$5"
   case_root="${client_home}/cases/${name}"
-  for directory in "${case_root}" "${case_root}/runtime" "${case_root}/config" "${case_root}/state" "${case_root}/cache"; do
-    install -d -o "${client_user}" -g "${client_user}" -m 0700 "${directory}"
-  done
+  install -d -o "${client_user}" -g "${client_user}" -m 0700 "${case_root}"
   output="${case_root}/terminal.log"
-  if ! runuser -u "${client_user}" -- env \
+  if ! runuser -u "${client_user}" -- env -i \
     HOME="${client_home}" \
-    XDG_RUNTIME_DIR="${case_root}/runtime" \
-    XDG_CONFIG_HOME="${case_root}/config" \
-    XDG_STATE_HOME="${case_root}/state" \
-    XDG_CACHE_HOME="${case_root}/cache" \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    TERM=xterm-256color \
     AMSFTP_INSTALLED="${installed}" \
     AMSFTP_OUTPUT="${output}" \
     AMSFTP_LOCATION="${alias_name}:${remote_user}" \
@@ -237,14 +252,20 @@ run_case() {
     AMSFTP_KEY_PASSPHRASE="${key_passphrase}" \
     SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-}" \
     /usr/bin/expect -f "${expect_script}"; then
-    sed -n '1,200p' "${output}" 2>/dev/null | sed \
+    /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,200p' | sed \
       -e "s/${password}/[redacted]/g" \
       -e "s/${mfa_password}/[redacted]/g" \
       -e "s/${key_passphrase}/[redacted]/g" >&2 || true
+    output_bytes=0
+    if test -f "${output}"; then
+      output_bytes="$(wc -c <"${output}")"
+    fi
+    printf 'terminal output bytes: %s\n' "${output_bytes}" >&2
     printf 'authentication case %s failed\n' "${name}" >&2
     exit 1
   fi
   test -s "${output}"
+  stop_client_daemon
 }
 
 common="$(common_config)"
