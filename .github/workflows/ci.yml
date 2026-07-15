@@ -25,7 +25,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make check
         env:
           BUILD_DIR: ${{ runner.temp }}/quality/build
@@ -97,7 +97,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make fmt-check
       - run: make vet
       - run: make test
@@ -178,7 +178,7 @@ jobs:
         with:
           go-version: 1.25.12
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make check
         env:
           BUILD_DIR: ${{ runner.temp }}/oldstable/build
@@ -255,7 +255,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
       - run: mkdir -p "${{ runner.temp }}/build/${{ matrix.artifact }}"
       - name: Cross-build
         env:

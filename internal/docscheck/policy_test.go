@@ -76,7 +76,7 @@ func TestWorkflowGenericPolicy(t *testing.T) {
 		},
 		{
 			name: "second checkout omission", path: ".github/workflows/ci.yml",
-			old: "          cache-dependency-path: tools/go.sum\n      - run: make check\n", new: "          cache-dependency-path: tools/go.sum\n      - uses: actions/checkout@" + checkoutSHA + "\n      - run: make check\n",
+			old: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n      - run: make check\n", new: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n      - uses: actions/checkout@" + checkoutSHA + "\n      - run: make check\n",
 			occurrence: 1,
 			finding:    policyFinding{Path: ".github/workflows/ci.yml", Line: 19, Rule: "workflow.persist_credentials", Message: "checkout must explicitly set persist-credentials to false"},
 		},
@@ -128,6 +128,43 @@ func TestWorkflowGenericPolicy(t *testing.T) {
 			} else {
 				replacePolicyFile(t, root, test.path, test.old, test.new)
 			}
+			assertPolicyFinding(t, root, test.finding)
+		})
+	}
+}
+
+func TestCISetupGoRequiresBothModuleLocks(t *testing.T) {
+	const (
+		path      = ".github/workflows/ci.yml"
+		canonical = "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n"
+	)
+	tests := []struct {
+		name        string
+		replacement string
+		occurrence  int
+		finding     policyFinding
+	}{
+		{
+			name: "current root only", replacement: "          cache-dependency-path: go.sum\n", occurrence: 1,
+			finding: policyFinding{Path: path, Line: 7, Rule: "workflow.ci_quality", Message: "quality job must run on ubuntu-24.04 and execute make check and make supply-chain"},
+		},
+		{
+			name: "current tools only", replacement: "          cache-dependency-path: tools/go.sum\n", occurrence: 1,
+			finding: policyFinding{Path: path, Line: 7, Rule: "workflow.ci_quality", Message: "quality job must run on ubuntu-24.04 and execute make check and make supply-chain"},
+		},
+		{
+			name: "oldstable root only", replacement: "          cache-dependency-path: go.sum\n", occurrence: 3,
+			finding: policyFinding{Path: path, Line: 57, Rule: "workflow.ci_oldstable_toolchain", Message: "oldstable job must select Go 1.25.12 with actions/setup-go"},
+		},
+		{
+			name: "oldstable tools only", replacement: "          cache-dependency-path: tools/go.sum\n", occurrence: 3,
+			finding: policyFinding{Path: path, Line: 57, Rule: "workflow.ci_oldstable_toolchain", Message: "oldstable job must select Go 1.25.12 with actions/setup-go"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := prepareFixture(t, "valid")
+			replacePolicyFileOccurrence(t, root, path, canonical, test.replacement, test.occurrence)
 			assertPolicyFinding(t, root, test.finding)
 		})
 	}
@@ -490,23 +527,23 @@ func TestCIRequiredCommandCreditRejectsUntrustedPredecessors(t *testing.T) {
 		message    string
 	}{
 		{
-			name: "quality", anchor: "          cache-dependency-path: tools/go.sum\n      - run: make check\n",
-			prefix: "          cache-dependency-path: tools/go.sum\n", suffix: "      - run: make check\n",
+			name: "quality", anchor: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n      - run: make check\n",
+			prefix: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n", suffix: "      - run: make check\n",
 			line: 7, occurrence: 1, rule: "workflow.ci_quality", message: "quality job must run on ubuntu-24.04 and execute make check and make supply-chain",
 		},
 		{
-			name: "native", anchor: "          cache-dependency-path: tools/go.sum\n      - run: make fmt-check\n",
-			prefix: "          cache-dependency-path: tools/go.sum\n", suffix: "      - run: make fmt-check\n",
+			name: "native", anchor: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n      - run: make fmt-check\n",
+			prefix: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n", suffix: "      - run: make fmt-check\n",
 			line: 26, occurrence: 1, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "make fmt-check"`,
 		},
 		{
-			name: "oldstable", anchor: "          cache-dependency-path: tools/go.sum\n      - run: make check\n",
-			prefix: "          cache-dependency-path: tools/go.sum\n", suffix: "      - run: make check\n",
+			name: "oldstable", anchor: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n      - run: make check\n",
+			prefix: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n", suffix: "      - run: make check\n",
 			line: 57, occurrence: 2, rule: "workflow.ci_oldstable_check", message: "oldstable job must execute unconditional make check",
 		},
 		{
-			name: "build", anchor: "          cache-dependency-path: tools/go.sum\n      - run: mkdir -p \"${{ runner.temp }}/build/${{ matrix.artifact }}\"\n",
-			prefix: "          cache-dependency-path: tools/go.sum\n", suffix: "      - run: mkdir -p \"${{ runner.temp }}/build/${{ matrix.artifact }}\"\n",
+			name: "build", anchor: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n      - run: mkdir -p \"${{ runner.temp }}/build/${{ matrix.artifact }}\"\n",
+			prefix: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n", suffix: "      - run: mkdir -p \"${{ runner.temp }}/build/${{ matrix.artifact }}\"\n",
 			line: 79, occurrence: 1, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 		},
 	}
@@ -1146,7 +1183,7 @@ func TestCIOldstableContract(t *testing.T) {
 }
 
 func TestCIOldstableSetupMustBeUnconditionalAndPrecedeCheck(t *testing.T) {
-	setup := "      - uses: actions/setup-go@" + setupGoSHA + "\n        with:\n          go-version: 1.25.12\n          cache: true\n          cache-dependency-path: tools/go.sum\n"
+	setup := "      - uses: actions/setup-go@" + setupGoSHA + "\n        with:\n          go-version: 1.25.12\n          cache: true\n          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n"
 	check := "      - run: make check\n        env:\n          BUILD_DIR: ${{ runner.temp }}/oldstable/build\n          COVERAGE_DIR: ${{ runner.temp }}/oldstable/coverage\n"
 	tests := []struct {
 		name        string
@@ -1155,7 +1192,7 @@ func TestCIOldstableSetupMustBeUnconditionalAndPrecedeCheck(t *testing.T) {
 		{
 			name: "false condition before uses",
 			replacement: "      - if: false\n        uses: actions/setup-go@" + setupGoSHA +
-				"\n        with:\n          go-version: 1.25.12\n          cache: true\n          cache-dependency-path: tools/go.sum\n" + check,
+				"\n        with:\n          go-version: 1.25.12\n          cache: true\n          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n" + check,
 		},
 		{
 			name:        "empty condition after with",
@@ -1168,7 +1205,7 @@ func TestCIOldstableSetupMustBeUnconditionalAndPrecedeCheck(t *testing.T) {
 		{
 			name: "wrong version before correct setup",
 			replacement: "      - uses: actions/setup-go@" + setupGoSHA +
-				"\n        with:\n          go-version: 1.26.5\n          cache: true\n          cache-dependency-path: tools/go.sum\n" + setup + check,
+				"\n        with:\n          go-version: 1.26.5\n          cache: true\n          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n" + setup + check,
 		},
 	}
 	for _, test := range tests {
@@ -1185,7 +1222,7 @@ func TestCIOldstableSetupMustBeUnconditionalAndPrecedeCheck(t *testing.T) {
 }
 
 func TestCIOldstableTrustedPrefixAllowsOnlySuffixExtensions(t *testing.T) {
-	setup := "      - uses: actions/setup-go@" + setupGoSHA + "\n        with:\n          go-version: 1.25.12\n          cache: true\n          cache-dependency-path: tools/go.sum\n"
+	setup := "      - uses: actions/setup-go@" + setupGoSHA + "\n        with:\n          go-version: 1.25.12\n          cache: true\n          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n"
 	check := "      - run: make check\n        env:\n          BUILD_DIR: ${{ runner.temp }}/oldstable/build\n          COVERAGE_DIR: ${{ runner.temp }}/oldstable/coverage\n"
 	tests := []struct {
 		name        string

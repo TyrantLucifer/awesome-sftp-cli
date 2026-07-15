@@ -1,6 +1,6 @@
 # Stage 1 — Read-only Explorer
 
-- **状态**：Not Started
+- **状态**：In Progress
 - **阶段类型**：第一个端到端用户切片
 - **前置条件**：[Stage 0 — Foundation & Knowledge](00-foundation.md) 已通过退出门禁
 - **完成后进入**：[Stage 2 — Durable Transfers](02-durable-transfers.md)

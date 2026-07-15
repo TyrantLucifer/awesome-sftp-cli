@@ -2,14 +2,14 @@
 
 > - 产品：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
 > - 基线：已批准产品设计
-> - 实现状态：Stage 0 已完成；Stage 1–6 尚未开始
+> - 实现状态：Stage 0 已完成；Stage 1 正在实施；Stage 2–6 尚未开始
 > - 最后更新：2026-07-15
 
 ## 1. 使用规则
 
 本矩阵是 1.0 交付范围的逐项事实源。每条能力使用稳定 ID；ID 一经进入矩阵不得复用，能力被取消时保留原行并将状态改为 `Removed`，同时链接对应 ADR。实现不得只在代码或聊天中增加能力而不更新本矩阵。
 
-Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Planned`。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
+Stage 0 行已按完成证据标记为 `Verified`；M1.1 的本地候选能力标记为 `In Progress`，其余 Stage 1–6 行仍为 `Planned`。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
 
 状态词义：
 
@@ -64,7 +64,7 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| CONN-001 | 本地文件系统端点 | 1 | Planned | 任一栏可浏览本地绝对路径，并使用与远端一致的导航、选择和能力展示模型。 | 未实施；预期证据：LocalFS provider contract suite 与权限/符号链接测试。 |
+| CONN-001 | 本地文件系统端点 | 1 | In Progress | 任一栏可浏览本地绝对路径，并使用与远端一致的导航、选择和能力展示模型。 | LocalFS contract、分页/取消/符号链接/范围读取测试与 local/local PTY 已通过；Hosted native evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
 | CONN-002 | OpenSSH stdio 上的结构化 SFTP | 1 | Planned | daemon 按 ADR-0001 的 validated-absolute-ssh-path 与精确 argv 从子进程 stdin/stdout 创建 SFTP client；binary/host 均不可经 PATH 或选项注入，也不解析人类可读 `sftp` 命令输出。 | 未实施；预期证据：default/override binary 完整 ancestor+ACL+special-bits、poisoned PATH、argv/host、真实 sshd list/stat/read、副作用冲突配置和协议错误注入测试。 |
 | CONN-003 | CLI 双路径启动 | 1 | Planned | `amsftp <left> <right>` 接受本地路径与 `host:path`，两个初始位置均被解析、连接并独立报告错误。 | 未实施；预期证据：local/local、local/remote、remote/remote 参数契约测试。 |
 | CONN-004 | 无参数 SSH host 模糊选择 | 1 | Planned | 无参数启动从 OpenSSH 配置可见 Host alias 构建可搜索列表；通配符和不可直接选择项有确定处理。 | 未实施；预期证据：多文件 Include/通配 Host fixture 的 picker 快照与选择测试。 |
@@ -79,11 +79,11 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| PANE-001 | 两个平等文件栏 | 1 | Planned | 启动后始终存在左右两栏；每栏拥有独立端点、路径、光标、选择、排序和加载状态。 | 未实施；预期证据：PaneState 单元测试与左右栏独立操作 TUI 快照测试。 |
+| PANE-001 | 两个平等文件栏 | 1 | In Progress | 启动后始终存在左右两栏；每栏拥有独立端点、路径、光标、选择、排序和加载状态。 | 双栏 reducer/render tests 与 local/local PTY 通过；排序控制和 Hosted native evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
 | PANE-002 | 任意端点组合 | 1 | Planned | local/local、local/remote、remote/local、同 remote 双路径和 remote A/remote B 均能浏览。 | 未实施；预期证据：五种组合的端到端浏览矩阵。 |
 | PANE-003 | 栏内独立切换端点 | 1 | Planned | 用户可只改变活动栏的端点，另一栏路径、选择和连接保持不变。 | 未实施；预期证据：端点 picker 交互测试和非活动栏状态保持断言。 |
-| PANE-004 | 增量目录加载 | 1 | Planned | 目录项以流式/分页方式进入模型，首屏无需等待完整目录读取，加载可取消。 | 未实施；预期证据：延迟 provider 下首批渲染、取消和不完整结果标识测试。 |
-| PANE-005 | 虚拟化文件列表 | 1 | Planned | renderer 只构造可见行与有界 overscan，不为数万条目录项创建等量 UI 组件；5 万项结构性基准证明渲染与分配规模只随可见窗口增长。 | 未实施；预期证据：纯 renderer/cell 快照、窗口边界测试和 50,000 项结构性分配基准；最终延迟/RSS/滚动曲线由 SCALE-001 在 Stage 5 验收。 |
+| PANE-004 | 增量目录加载 | 1 | In Progress | 目录项以流式/分页方式进入模型，首屏无需等待完整目录读取，加载可取消。 | 256-entry RPC pages、generation-safe reducer and cancellation pass locally; delayed real SFTP evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
+| PANE-005 | 虚拟化文件列表 | 1 | In Progress | renderer 只构造可见行与有界 overscan，不为数万条目录项创建等量 UI 组件；5 万项结构性基准证明渲染与分配规模只随可见窗口增长。 | Visible-window/overscan tests and 50,000-entry structural benchmark pass locally; Hosted evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
 | PANE-006 | 文件元数据与类型展示 | 1 | Planned | 名称、类型、大小、修改时间、权限和链接信息按端点可用数据展示；未知字段不伪造。 | 未实施；预期证据：local/SFTP 元数据 fixture 快照与缺失字段测试。 |
 | PANE-007 | 排序、隐藏文件与刷新 | 1 | Planned | 每栏可独立选择排序、显示隐藏文件和手动刷新；刷新尽量保留规范化路径对应的光标/标记。 | 未实施；预期证据：排序稳定性、隐藏切换和刷新选择保持测试。 |
 | PANE-008 | 直接路径导航 | 1 | Planned | 用户可输入绝对路径或进入父/子目录；无权限、不存在和非目录路径保留原位置并显示原因。 | 未实施；预期证据：根目录、深路径、权限拒绝和不存在路径交互测试。 |
@@ -106,8 +106,8 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
 | VIM-001 | 默认 Normal 模式 | 1 | Planned | 启动与退出弹层后回到 Normal；当前模式始终可见，普通字母不会意外输入路径。 | 未实施；预期证据：模式状态机单元测试与状态栏快照。 |
-| VIM-002 | `h/j/k/l` 导航 | 1 | Planned | `j/k` 移动光标，`h` 返回父目录，`l` 打开目录或触发默认文件动作；边界行为稳定。 | 未实施；预期证据：导航表驱动测试与空目录/根目录边界测试。 |
-| VIM-003 | `Tab` 切换活动栏 | 1 | Planned | `Tab` 只改变活动栏，两个 PaneState 均完整保留；视觉焦点清晰。 | 未实施；预期证据：反复切栏状态保持测试与 TUI 快照。 |
+| VIM-002 | `h/j/k/l` 导航 | 1 | In Progress | `j/k` 移动光标，`h` 返回父目录，`l` 打开目录或触发默认文件动作；边界行为稳定。 | Pure reducer and tcell translation tests pass for local navigation; remote evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
+| VIM-003 | `Tab` 切换活动栏 | 1 | In Progress | `Tab` 只改变活动栏，两个 PaneState 均完整保留；视觉焦点清晰。 | Pane independence and renderer focus tests pass locally; Hosted PTY evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
 | VIM-004 | `v`/`V` 连续选择 | 1 | Planned | Visual 选择可扩展、收缩、确认或取消；刷新后按规范化条目身份重映射，无法重映射时明确移除。 | 未实施；预期证据：选择状态机、目录刷新与条目消失测试。 |
 | VIM-005 | `Space` 离散标记 | 1 | Planned | Normal 模式下 `Space` 独立增减当前条目标记，与连续 Visual 选择可合并为操作集合且不重复。 | 未实施；预期证据：离散/连续选择合并与去重单元测试。 |
 | VIM-006 | `y` 复制引用 | 2 | Planned | `y` 将选中 Location 引用写入内部剪贴板，不读取文件内容、不立即启动传输。 | 未实施；预期证据：跨端点 clipboard 序列化与源变化前计划测试。 |
@@ -129,8 +129,8 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| DAEM-001 | 按用户自动启动 daemon | 1 | Planned | 客户端连接不到 daemon 时可安全拉起一个当前用户实例；并发启动最终只有一个有效监听者。 | 未实施；预期证据：并发十客户端启动竞争测试。 |
-| DAEM-002 | 权限受限 Unix socket 与路径信任链 | 1 | Planned | config/state/cache/log/runtime应用根为euid-owned真实`0700`，文件/socket不宽于`0600`；ancestor/ssh用integrity-only，owner roots/files用owner-private。仅受测APFS/ext4/XFS（runtime可含受测tmpfs）明确no-ACL/unsupported可回到DAC；真实ACL查询/解析错误、NFSv4/CIFS/未知FS、不安全path/override均fail closed。runtime唯一宽松DAC回退是root-owned sticky`01777 /tmp`；peer非当前uid不可连接且无TCP。 | 未实施；预期证据：macOS/Linux path/owner/mode、allow/deny/inherited ACL、allowlisted no-ACL fallback与query/parse/network-FS拒绝、回退竞态、peer/端口。 |
+| DAEM-001 | 按用户自动启动 daemon | 1 | In Progress | 客户端连接不到 daemon 时可安全拉起一个当前用户实例；并发启动最终只有一个有效监听者。 | Binary auto-start is wired; lock convergence, five reconnects, cancellation and clean shutdown pass locally. Ten-process and Hosted native evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
+| DAEM-002 | 权限受限 Unix socket 与路径信任链 | 1 | In Progress | config/state/cache/log/runtime应用根为euid-owned真实`0700`，文件/socket不宽于`0600`；ancestor/ssh用integrity-only，owner roots/files用owner-private。仅受测APFS/ext4/XFS（runtime可含受测tmpfs）明确no-ACL/unsupported可回到DAC；真实ACL查询/解析错误、NFSv4/CIFS/未知FS、不安全path/override均fail closed。runtime唯一宽松DAC回退是root-owned sticky`01777 /tmp`；peer非当前uid不可连接且无TCP。 | Paths, ACL parsers/native no-ACL, preparation, lock, stale socket, mode and peer tests pass on darwin; Linux native and hostile UID evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
 | DAEM-003 | TUI 可附着/分离 | 1 | Planned | TUI 退出只关闭客户端连接；重新启动可恢复 panes/workspace 并订阅现有任务。 | 未实施；预期证据：运行中任务期间退出/重连端到端测试。 |
 | DAEM-004 | TUI 退出后任务继续 | 2 | Planned | 最后一个 TUI 退出后，非交互任务继续运行；需要交互时进入等待状态。 | 未实施；预期证据：大文件复制中退出 TUI 后完成及 waiting_auth/waiting_conflict 测试。 |
 | DAEM-005 | 事件流与重放游标 | 2 | Planned | 客户端按游标接收任务/连接事件；短暂断连后可补齐或用一致快照恢复，不重复执行命令。 | 未实施；预期证据：断连、事件缺口、重连重放与快照回退测试。 |
@@ -142,7 +142,7 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| PREV-001 | 基础文本预览 | 1 | Planned | 活动栏文件可在底部 Preview 抽屉中查看有界文本；预览不阻塞目录导航。 | 未实施；预期证据：本地/远端 UTF-8 文本、延迟读取与导航并发测试。 |
+| PREV-001 | 基础文本预览 | 1 | In Progress | 活动栏文件可在底部 Preview 抽屉中查看有界文本；预览不阻塞目录导航。 | 64 KiB RPC/model cap, binary detection, UTF-8 chunking and cancellation pass locally; remote/Hosted evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
 | PREV-002 | 代码与 JSON 结构化显示 | 3 | Planned | 常见代码按语法高亮，合法 JSON 可格式化且保留原始查看；解析失败回退为纯文本并说明。 | 未实施；预期证据：语言 fixture、合法/非法/超大 JSON 快照测试。 |
 | PREV-003 | 元数据预览 | 3 | Planned | 文件、目录、链接和二进制对象均可显示端点、规范化路径、大小、时间、权限、类型和可用哈希。 | 未实施；预期证据：四类对象的 LocalFS/SFTP 元数据快照。 |
 | PREV-004 | 有界读取与继续加载 | 3 | Planned | 初次只读取配置上限；用户可继续加载，取消后停止远端读；内存不随文件总大小线性增长。 | 未实施；预期证据：100 GB 稀疏文件预览内存曲线、继续/取消测试。 |
@@ -276,7 +276,7 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| SRCH-001 | `/` 当前目录即时过滤 | 1 | Planned | 输入时由本地 daemon 对已加载目录项增量过滤，不产生远端命令；清空过滤恢复原列表与合理光标。 | 未实施；预期证据：大小写/模糊规则、增量加载和清空状态测试。 |
+| SRCH-001 | `/` 当前目录即时过滤 | 1 | In Progress | 输入时由本地 daemon 对已加载目录项增量过滤，不产生远端命令；清空过滤恢复原列表与合理光标。 | Incremental loaded/incoming filtering, clear and filter-mode key translation tests pass locally; Hosted PTY evidence pending. See [Stage 1 verification](../verification/stage-01.md). |
 | SRCH-002 | `f` 递归文件名搜索 | 4 | Planned | 从活动栏路径流式返回匹配路径、类型和必要元数据；结果可逐条打开或加入选择。 | 未实施；预期证据：LocalFS、Level 0 SFTP、helper 三种后端结果一致性测试。 |
 | SRCH-003 | `g/` 递归内容搜索 | 4 | Planned | 从活动栏路径流式返回文件、行号和有界摘要；二进制、编码和超长行有明确处理。 | 未实施；预期证据：文本/二进制/多编码/超长行 fixture 的三后端对照测试。 |
 | SRCH-004 | 搜索结果流式展示 | 4 | Planned | 首批结果无需等待全树结束；结果带进行中、完成、partial 或 canceled 状态，总量未知时不伪造百分比。 | 未实施；预期证据：延迟百万 fixture 首结果时间和状态快照。 |

@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0 已完成；Stage 1–6 保持 Not Started。下一次功能实现从 Stage 1 的 M1.1 开始。
+Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。当前只推进 Stage 1 的 M1.1，后续里程碑不得绕过前置门禁。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -24,7 +24,49 @@ Stage 0 已完成；Stage 1–6 保持 Not Started。下一次功能实现从 St
 
 **Tests**: 单元与 Provider 契约测试；ADR-0007 路径的 XDG/TMPDIR/override/symlink/owner/mode、Darwin系统别名、integrity-only与owner-private deny/allow-read/write/inherited ACL、Linux access/default ACL、sticky `/tmp` 回退和竞态；ADR-0001 默认`/usr/bin/ssh`/安全absolute override完整链、poisoned PATH、special-bits/ACL/替换与精确argv/冲突配置；临时sshd、ProxyCommand、MIT Kerberos/GSSAPI、重启/断网/认证等待和macOS/Linux TUI冒烟。
 
-**Status**: Not Started
+**Status**: In Progress
+
+### M1.1: 本地只读端到端
+
+**Goal**: 完成 `tcell/v3 v3.4.0` intake、ADR-0007 平台安全边界、daemon/IPC/LocalFS 接入，以及完全离线可用的本地/本地双栏 TUI。
+
+**Success Criteria**: daemon 自动启动并收敛为当前用户单实例；私有 `control-v1.sock`、完整 ancestor/ACL 验证和双向 peer UID 检查 fail closed；LocalFS 通过共享 Provider contract；双栏支持窗口化列表、Vim 导航、过滤、选择和有界基础预览；反复退出重入后资源回到稳定基线。
+
+**Tests**: 精确依赖许可证/module graph/漏洞/Go 1.25.12+1.26.5/四目标 intake；路径、ACL、lock、peer UID 与 stale socket 单元/平台测试；daemon 并发启动、握手、重连、取消和泄漏集成测试；LocalFS contract；纯 reducer/renderer、`vt.NewMockTerm`、50k 结构性基准和离线 PTY smoke。
+
+**Milestone Status**: In Progress
+
+**Current checkpoint**: 本地候选已完成并通过 Go 1.25.12/1.26.5、四目标构建、`make check`、`make lint`、`make supply-chain`、focused race、50k benchmark 与 darwin/arm64 离线 PTY smoke；等待首次里程碑提交及 Hosted native/oldstable 门禁后关闭 M1.1。
+
+### M1.2: 真实 SFTP Endpoint
+
+**Goal**: 完成 `pkg/sftp v1.13.10` intake，并仅通过 ADR-0001 的 validated absolute system OpenSSH stdio 实现 SFTP Provider 与双远端浏览。
+
+**Success Criteria**: 默认 `/usr/bin/ssh` 且 PATH fake 0-hit；host alias 与精确 argv 无注入面；stderr 脱敏限长，取消/退出回收子进程；本地/远端和远端/远端可独立浏览并传播 partial/degraded 状态。
+
+**Tests**: 同等级依赖 intake；binary 完整链/ACL/special-bits/替换、逐参数 argv 与冲突 ssh_config；真实临时 sshd、Host alias、非默认端口、两个隔离 sshd、断线与 Provider contract。
+
+**Milestone Status**: Not Started
+
+### M1.3: 认证与复杂 SSH 配置
+
+**Goal**: 实现单次消费的 askpass/Auth Broker，并证明系统 OpenSSH 的 ProxyCommand/ProxyJump、Agent、密钥、交互认证和 Kerberos/GSSAPI 路径可用且不泄密。
+
+**Success Criteria**: challenge 唯一关联 endpoint/connection/client；附着、无客户端、超时、取消和多提示均有界恢复；认证失败不无限重试；秘密不进入日志、配置、工作区、缓存或测试产物。
+
+**Tests**: Broker 状态机/race/秘密扫描；代理与双提示 MFA；agent/key/password；MIT Kerberos 临时 realm 的 GSSAPI-only 成功、ticket 缺失/过期/外部续期恢复；host-key 语义不降级。
+
+**Milestone Status**: Not Started
+
+### M1.4: 工作区与恢复
+
+**Goal**: 完成 CLI Location、SSH Host 模糊选择、双栏工作区保存恢复，以及 SSH/daemon/能力/位置变化后的可预测恢复。
+
+**Success Criteria**: `amsftp` 的零/一/二 Location 与 `--workspace` 入口可用；工作区原子、无秘密且损坏可恢复；三种 Endpoint 组合和所有恢复路径有证据；macOS/Linux 的窄终端、resize、信号和退出重入通过。
+
+**Tests**: Location/Host parser 与 Include/通配 fixture；workspace round-trip/中断/损坏/秘密扫描；断网、sshd/daemon 重启、能力变化和失效目录；macOS/Linux PTY、SIGWINCH、窄终端、退出重入及完整 Stage 1 gate。
+
+**Milestone Status**: Not Started
 
 ## Stage 2: Durable Transfers
 

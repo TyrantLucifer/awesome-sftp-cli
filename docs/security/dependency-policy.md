@@ -48,4 +48,4 @@ Dependabot 每周检查根 gomod、`/tools` gomod 和 GitHub Actions；每个 ec
 
 每次更新审查必须运行 lint、全部测试、race、四个独立 fuzz smoke、govulncheck、actionlint、docscheck、Go 1.25.12 oldstable、四目标构建和独立缓存的可复现构建字节比较。审查者还要检查传递依赖图、许可证、上游 changelog 与兼容影响，并记录已发现漏洞的适用性、处置或接受原因。
 
-CI 的 Go 缓存依赖路径只能使用已提交的 `tools/go.sum`；根 module 为标准库-only，不得伪造或引用不存在的根 `go.sum`。
+CI 的 Go 缓存依赖路径必须同时、精确使用已提交的根 `go.sum` 与 `tools/go.sum`；前者锁定 Stage 1 起的产品依赖图，后者锁定独立工具图。不得用只覆盖其中一份或会吸收未审查 module 的宽泛 glob 代替。

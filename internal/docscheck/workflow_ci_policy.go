@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const setupGoCacheDependencyPath = "go.sum\ntools/go.sum"
+
 type shellCommand struct {
 	words []string
 }
@@ -233,7 +235,7 @@ func stepIsExactCurrentSetupGo(step workflowStep) bool {
 		mappingHasExactScalars(step.with, map[string]string{
 			"go-version-file":       "go.mod",
 			"cache":                 "true",
-			"cache-dependency-path": "tools/go.sum",
+			"cache-dependency-path": setupGoCacheDependencyPath,
 		})
 }
 
@@ -243,7 +245,7 @@ func stepIsExactOldstableSetupGo(step workflowStep) bool {
 		mappingHasExactScalars(step.with, map[string]string{
 			"go-version":            "1.25.12",
 			"cache":                 "true",
-			"cache-dependency-path": "tools/go.sum",
+			"cache-dependency-path": setupGoCacheDependencyPath,
 		})
 }
 
