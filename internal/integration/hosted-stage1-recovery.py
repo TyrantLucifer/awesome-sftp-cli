@@ -13,114 +13,29 @@ import termios
 import time
 
 
-def replay_terminal(output, patterns=(), observe_after=0, columns=200, rows=30):
-    screen = [bytearray(b" " * columns) for _ in range(rows)]
-    observed = set()
-    row = 0
-    column = 0
-    saved = (0, 0)
-    index = 0
-
-    def csi_values(raw):
-        raw = raw.lstrip(b"?<>")
-        if not raw:
-            return []
-        values = []
-        for value in raw.split(b";"):
-            try:
-                values.append(int(value) if value else 0)
-            except ValueError:
-                values.append(0)
-        return values
-
-    while index < len(output):
-        value = output[index]
-        if value == 0x1B:
-            if index + 1 < len(output) and output[index + 1] == ord("["):
-                end = index + 2
-                while end < len(output) and not 0x40 <= output[end] <= 0x7E:
-                    end += 1
-                if end >= len(output):
-                    break
-                command = chr(output[end])
-                raw_values = output[index + 2:end]
-                values = csi_values(raw_values)
-                amount = values[0] if values and values[0] else 1
-                if command in ("H", "f"):
-                    row = max(0, min(rows - 1, (values[0] if values and values[0] else 1) - 1))
-                    column = max(0, min(columns - 1, (values[1] if len(values) > 1 and values[1] else 1) - 1))
-                elif command == "A":
-                    row = max(0, row - amount)
-                elif command == "B":
-                    row = min(rows - 1, row + amount)
-                elif command == "C":
-                    column = min(columns - 1, column + amount)
-                elif command == "D":
-                    column = max(0, column - amount)
-                elif command == "G":
-                    column = max(0, min(columns - 1, amount - 1))
-                elif command == "d":
-                    row = max(0, min(rows - 1, amount - 1))
-                elif command == "J" and values and values[0] == 2:
-                    screen = [bytearray(b" " * columns) for _ in range(rows)]
-                elif command == "K":
-                    mode = values[0] if values else 0
-                    if mode == 0:
-                        screen[row][column:] = b" " * (columns - column)
-                    elif mode == 1:
-                        screen[row][:column + 1] = b" " * (column + 1)
-                    elif mode == 2:
-                        screen[row][:] = b" " * columns
-                elif command == "X":
-                    count = min(amount, columns - column)
-                    screen[row][column:column + count] = b" " * count
-                elif command == "s":
-                    saved = (row, column)
-                elif command == "u":
-                    row, column = saved
-                if command == "l" and raw_values.startswith(b"?2026") and end + 1 >= observe_after:
-                    visible = b"\n".join(screen)
-                    observed.update(pattern for pattern in patterns if pattern in visible)
-                index = end + 1
-                continue
-            if index + 2 < len(output) and output[index + 1] in (ord("("), ord(")")):
-                index += 3
-            else:
-                index += min(2, len(output) - index)
-            continue
-        if value == 0x0D:
-            column = 0
-        elif value == 0x0A:
-            row = min(rows - 1, row + 1)
-        elif value == 0x08:
-            column = max(0, column - 1)
-        elif 0x20 <= value <= 0x7E:
-            screen[row][column] = value
-            column = min(columns - 1, column + 1)
-        index += 1
-    visible = b"\n".join(screen)
-    if len(output) >= observe_after:
-        observed.update(pattern for pattern in patterns if pattern in visible)
-    return visible, len(observed) == len(patterns)
-
-
-def terminal_screen(output, columns=200, rows=30):
-    visible, _ = replay_terminal(output, columns=columns, rows=rows)
-    return visible
-
-
-def terminal_screen_observed(output, patterns, observe_after=0, columns=200, rows=30):
-    _, observed = replay_terminal(
-        output,
-        patterns=patterns,
-        observe_after=observe_after,
-        columns=columns,
-        rows=rows,
+def terminal_screen_observed(observer, output, patterns, observe_after=0, columns=200, rows=30):
+    command = [
+        observer,
+        "-checkpoint", str(observe_after),
+        "-columns", str(columns),
+        "-rows", str(rows),
+        *(pattern.decode("utf-8") for pattern in patterns),
+    ]
+    result = subprocess.run(
+        command,
+        input=output,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
     )
-    return observed
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise RuntimeError(f"VT observer failed with exit {result.returncode}: {result.stderr.decode(errors='replace')}")
 
 
-def run_self_test():
+def run_self_test(observer):
     prelude = (
         b"\x1b[?2026h\x1b[30;13Hloading | caps:1@1 | sort:name\x1b[?2026l"
     )
@@ -137,15 +52,12 @@ def run_self_test():
         b"\x1b[?2026l"
     )
     expected = (b"reconnected at nearest accessible parent", b"a-recovered-marker.txt")
-    final_screen = terminal_screen(split_status)
-    if all(pattern in final_screen for pattern in expected):
-        raise RuntimeError("self-test did not overwrite the transient success frame")
-    if not terminal_screen_observed(split_status, expected, observe_after=checkpoint):
+    if not terminal_screen_observed(observer, bytearray(split_status), expected, observe_after=checkpoint):
         raise RuntimeError("transient split terminal status was not reconstructed")
 
 
-if sys.argv[1:] == ["--self-test"]:
-    run_self_test()
+if len(sys.argv) == 3 and sys.argv[1] == "--self-test":
+    run_self_test(sys.argv[2])
     sys.exit(0)
 
 
@@ -161,6 +73,7 @@ SSHD_A_CONFIG = os.environ["AMSFTP_RECOVERY_SSHD_A_CONFIG"]
 SSHD_A_LOG = os.environ["AMSFTP_RECOVERY_SSHD_A_LOG"]
 SSHD_A_PORT = int(os.environ["AMSFTP_RECOVERY_SSHD_A_PORT"])
 STATE_HOME = os.environ["AMSFTP_RECOVERY_STATE_HOME"]
+VT_OBSERVER = os.environ["AMSFTP_RECOVERY_VT_OBSERVER"]
 
 
 def wait_until(predicate, description, timeout=20):
@@ -311,10 +224,13 @@ class PtyApp:
     def wait_for_screen(self, *patterns, start=0, timeout=30):
         encoded = [pattern.encode() for pattern in patterns]
         deadline = time.monotonic() + timeout
+        checked_bytes = -1
         while time.monotonic() < deadline:
             self._drain()
-            if terminal_screen_observed(self.output, encoded, observe_after=start):
-                return
+            if checked_bytes != len(self.output):
+                checked_bytes = len(self.output)
+                if terminal_screen_observed(VT_OBSERVER, self.output, encoded, observe_after=start):
+                    return
             if self.process.poll() is not None:
                 raise RuntimeError(f"amsftp exited {self.process.returncode} before screen showed {patterns}")
             time.sleep(0.05)

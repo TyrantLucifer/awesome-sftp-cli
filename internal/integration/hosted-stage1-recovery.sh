@@ -213,6 +213,10 @@ EOF
 chown "${client_user}:${client_user}" "${client_home}/.ssh/config"
 chmod 0600 "${client_home}/.ssh/config"
 
+vt_observer="${root}/vt-observer"
+go build -trimpath -o "${vt_observer}" ./internal/integration/vt-observer
+chmod 0755 "${vt_observer}"
+
 env -i \
   PATH=/usr/local/bin:/usr/bin:/bin \
   TERM=xterm-256color \
@@ -234,6 +238,7 @@ env -i \
   AMSFTP_RECOVERY_SSHD_A_PID="${sshd_a_pid}" \
   AMSFTP_RECOVERY_SSHD_A_PORT="${port_a}" \
   AMSFTP_RECOVERY_STATE_HOME="${state_home}" \
+  AMSFTP_RECOVERY_VT_OBSERVER="${vt_observer}" \
   python3 ./internal/integration/hosted-stage1-recovery.py
 
 printf 'hosted Stage 1 recovery matrix passed\n'
