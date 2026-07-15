@@ -225,6 +225,16 @@ jobs:
       - run: go build -trimpath -o "${{ runner.temp }}/native/bin/amsftp" ./cmd/amsftp
       - run: '"${{ runner.temp }}/native/bin/amsftp" --help'
       - run: '"${{ runner.temp }}/native/bin/amsftp" --version'
+      - name: Run native platform kernel security fixtures
+        run: |
+          set -euo pipefail
+          platform_test="${RUNNER_TEMP}/native-platform.test"
+          go test -c -o "${platform_test}" ./internal/platform
+          "${platform_test}" -test.v -test.run '^(Test(Darwin|Linux)KernelACL.*|TestAcquireInstanceLockIsExclusiveAcrossProcesses)$'
+          sudo env \
+            AMSFTP_HOSTILE_UID="$(id -u)" \
+            AMSFTP_HOSTILE_GID="$(id -g)" \
+            "${platform_test}" -test.v -test.run '^TestControlSocketRejectsOtherUIDPeer$'
       - name: Run native PTY resize and recovery smoke
         run: python3 ./internal/integration/hosted-pty.py "${{ runner.temp }}/native/bin/amsftp"
       - name: Record provenance
