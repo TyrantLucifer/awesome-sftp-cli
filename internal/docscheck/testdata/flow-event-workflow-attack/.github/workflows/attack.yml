@@ -1,0 +1,4 @@
+name: flow event policy attack
+on: {pull_request_target: {}}
+permissions: {contents: read}
+jobs: {}

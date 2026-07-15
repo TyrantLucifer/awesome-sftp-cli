@@ -102,12 +102,13 @@
 ### S6-D05 发行物与安装渠道
 
 - 产出支持矩阵中 macOS/Linux、amd64/arm64 的发行二进制或明确排除并说明依据。
-- 每个归档包含许可证/通知、版本信息、安装/卸载说明和 SHA-256 清单。
-- 至少提供各支持平台可重复验证的安装路径；具体包管理渠道在阶段开始时由 ADR 固定，并纳入干净机测试。
+- 每个归档包含许可证/通知、版本信息、安装/卸载说明；release 同时发布精确命名的 `checksums.txt`、`sbom.spdx.json` 和 GitHub artifact attestation/provenance。
+- 首发渠道已由 ADR-0009 固定为不可变 GitHub Release，资产名为 `amsftp_<version>_{darwin,linux}_{arm64,amd64}.tar.gz`；第二渠道是名为 `amsftp` 的 Homebrew formula，只引用不可变 release URL/hash。两条路径都纳入干净机测试。
+- darwin arm64/amd64 binary 在打包前使用 Developer ID Application、hardened runtime 与 timestamp 签名，并以 byte-identical 临时 ZIP 获得 Apple notarization `Accepted`；Accepted 后才冻结同一 platform binary、生成并离线签署 Helper manifest，再生成包含 byte-identical binary 的 tar/checksum/SBOM/attestation。Linux Helper manifest 同样只绑定最终 unsigned release binary。Developer ID/notary 凭据仅存在于受保护 release environment，PR/普通构建无权限，任何失败都阻止 macOS 正式 release。
 - 安装不要求 root 才能运行核心功能；系统级包可使用平台标准权限但不创建常驻远端服务。
-- 守护进程的启动方式、升级停机、Socket 清理和多版本冲突有安装器无关规则。
+- 用户级守护进程标识固定为 launchd `io.github.tyrantlucifer.amsftp.daemon` 与 systemd `amsftp-daemon.service`；它们是同一产品的服务标识而非额外产品名，启动、升级停机、Socket 清理和多版本冲突遵守安装器无关规则。
 - Helper 产物与主客户端发布同源、版本可追溯；仍需用户逐 Endpoint 明确批准安装。
-- 发布流程生成变更说明、校验和和构建 provenance；签名/公证按分发渠道要求执行。
+- 发布流程生成变更说明、校验和、SPDX SBOM 和构建 provenance/attestation；应用/包标识固定为 `io.github.tyrantlucifer.amsftp`，签名/公证按分发渠道要求执行。
 
 ### S6-D06 安全审查
 
@@ -152,13 +153,15 @@
 
 发布门禁：
 
-- 功能矩阵每项为 `Complete`、明确推迟或明确不支持，并有理由；不得有无主状态。
+- 功能矩阵每项为 `Verified`、`Deferred` 或 `Removed`，并有证据或理由；不得有无主状态。
 - 所有 Stage Verification 与当前候选版本对应。
 - 全量单元、契约、集成、race、fuzz、故障、规模、兼容、安装/升级和长稳满足阈值。
 - 安全评审无未处置高风险，许可证/依赖审查完成。
 - 干净安装、从支持版本升级、备份恢复和卸载在矩阵平台验证。
 - 用户快速开始、键位、配置、认证、传输安全、缓存/编辑、Helper、直传、故障排查和隐私文档齐全。
 - 发布候选冻结期间只接受阻塞缺陷修复；每个修复重跑受影响门禁。
+- 两种 macOS 架构在干净 macOS 15 上以带 quarantine 的实际 release tar.gz 完成解压、strict codesign、Gatekeeper `spctl --assess --type execute` 和版本 smoke；记录 CDHash、notary submission 与二进制 byte identity。
+- 四个平台逐一证明 Helper manifest `size`/`sha256` 等于最终 tar 中同一 `amsftp` binary；darwin 还必须证明 pre-sign bytes 不进入 manifest，notary Accepted ZIP、manifest hash 与最终 tar binary byte-identical。
 
 ## 5. 里程碑顺序
 
@@ -230,7 +233,7 @@
 ## 8. 失败与回滚策略
 
 - 任一发布门禁失败都阻止 1.0；不通过跳过测试、放宽安全默认或删除兼容声明解决。
-- 迁移失败使用预迁移备份恢复并保留失败副本；应用进入只读诊断，禁止用空库继续写。
+- 迁移失败保留当前原库/WAL、verified pre-upgrade backup 与诊断并进入只读模式；不得自动恢复或用空库继续写，恢复必须由用户显式选择并重新验证 identity/integrity/compatibility。
 - RC 发现核心语义缺陷时回到对应阶段修复和验证，不在 Stage 6 另建旁路。
 - 某平台/架构无法满足安全与质量门禁时，可从 1.0 支持矩阵明确移除并说明，而不是发布未验证包。
 - 渠道包有问题时撤回该渠道并保留可校验归档；发布说明给出受影响版本和恢复步骤。

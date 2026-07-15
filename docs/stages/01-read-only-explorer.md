@@ -17,7 +17,7 @@
 
 1. 单个 Go 二进制的 TUI/客户端与守护进程运行角色。
 2. 守护进程自动启动、单用户私有 Unix Socket、客户端重连和协议协商。
-3. LocalFS Provider 与基于系统 `ssh <host> -s sftp` 标准输入输出的 SFTP Provider。
+3. LocalFS Provider 与基于 ADR-0001 精确 system-ssh argv 标准输入输出的 SFTP Provider。
 4. 复用 `~/.ssh/config`、Host 别名、ProxyJump/ProxyCommand、Agent、硬件密钥及 Kerberos/GSSAPI 等系统 OpenSSH 能力。
 5. 无终端守护进程的认证提示代理：附着 TUI 可响应，未附着时进入可恢复的 `waiting_auth` 状态。
 6. 两栏独立 Endpoint/Location、栏间切换、目录导航、排序、选择状态和增量列表。
@@ -40,10 +40,13 @@
 - IPC 信封、Provider 契约、能力模型和 Fake Provider。
 - macOS/Linux 构建测试入口。
 - 文档真相链和阶段验证模板。
+- [ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md) 冻结的 tcell v3.4.0、pkg/sftp v1.13.10 与 `log/slog` 边界。
+- [ADR-0007](../architecture/adr/0007-platform-paths-runtime-socket-and-ipc.md) 冻结的平台路径、peer UID、单实例和 `control-v1.sock` 规则。
+- [ADR-0009](../architecture/adr/0009-supported-platform-ci-and-packaging-baseline.md) 冻结的 macOS 15/Ubuntu 22.04、架构与 OpenSSH 测试基线。
 
 ### 3.2 安全边界
 
-- 守护进程 Socket 必须位于当前用户私有运行目录，权限不宽于 `0600`；服务端核验对端用户身份（平台支持时）。
+- 守护进程 Socket 必须位于 ADR-0007 规定的当前用户私有运行目录，权限不宽于 `0600`；TMPDIR/XDG/override 与完整 ancestor chain 必须通过 owner/mode/no-symlink/ACL 验证，Darwin 允许不扩权的标准 deny ACL，Linux 拒绝扩权 access/default ACL，唯一宽松 DAC 祖先特例是 runtime 回退使用的 root-owned sticky `01777 /tmp`。Linux/macOS 均须核验对端 uid，查询失败时拒绝连接。
 - 不把密码、私钥、SSH Agent 内容或 Kerberos ticket 写入配置、数据库、日志或缓存。
 - 主机密钥检查遵循用户 OpenSSH 配置，不自动关闭或绕过。
 - 认证提示只在明确关联的连接尝试上展示，响应有超时和单次消费语义。
@@ -62,8 +65,10 @@
 
 ### S1-D02 系统 OpenSSH 传输适配
 
-- 使用系统 `ssh` 进程建立 SFTP 子系统通道，由 Go SFTP 协议层处理结构化文件操作。
+- 使用 ADR-0001 验证后的 absolute OpenSSH binary 和精确 argv 建立 SFTP 子系统通道，由 Go SFTP 协议层处理结构化文件操作；正式平台默认 `/usr/bin/ssh` 且不搜索 `PATH`，显式 override 每次启动前重验完整 owner/mode/ACL/no-symlink/special-bits 链。
 - 保留用户的 Host 别名和 OpenSSH 配置解析权，不自行重新解释完整 SSH 配置。
+- 固定关闭 TTY、交互式 escape、agent/X11/端口转发、LocalCommand/RemoteCommand、后台化和 tunnel，并保证 stdin 可用；不得关闭 host key、认证、GSSAPI/Kerberos、登录所用 agent、ProxyJump/ProxyCommand 或 ControlMaster。
+- host alias 必须拒绝空值、前导短横线、NUL 和 ASCII 控制字符；使用直接进程 argv，禁止经过 shell 或允许输入插入额外 ssh 选项。poisoned `PATH` fake ssh 必须 0-hit，不安全 absolute override 在 exec 前拒绝。
 - 捕获可分类的启动失败、主机密钥失败、认证失败、子系统缺失、网络断开和远端退出。
 - 进程标准错误以脱敏、限长方式关联到连接诊断，不混入 SFTP 数据流。
 - 连接取消和守护进程退出时正确终止子进程并回收管道。
@@ -96,12 +101,12 @@
 
 ### S1-D06 启动、主机选择与工作区
 
-支持以下入口语义，具体命令名由工程基线确定：
+公开命令已冻结为 `amsftp`，支持以下入口语义：
 
-- 两个显式 Location：本地路径或 `host-alias:/remote/path`。
-- 一个显式 Location 加默认另一栏。
-- 无参数时从保存工作区或 SSH Host 选择器进入。
-- 通过工作区名称恢复两个 Pane State。
+- `amsftp <left-location> <right-location>`：两个显式 Location，分别为本地路径或 `host-alias:/remote/path`。
+- `amsftp <location>`：一个显式 Location 加默认另一栏。
+- `amsftp`：从保存工作区或 SSH Host 选择器进入。
+- `amsftp --workspace <name>`：通过工作区名称恢复两个 Pane State。
 
 主机选择器读取系统 OpenSSH 可见的 Host 别名，过滤明显的通配模板；用户仍可手工输入有效别名。工作区只保存位置、视图和非敏感偏好，不复制 SSH 认证配置。
 
@@ -123,15 +128,16 @@
 
 ### M1.1 — 本地只读端到端
 
-1. 守护进程自动启动与 IPC 连接。
-2. LocalFS Provider 接入。
-3. 双栏 TUI 在本地/本地模式完成导航、过滤和基础预览。
+1. 按 ADR-0006 精确引入 tcell v3.4.0，完成许可证/module graph/双 Go/四目标 intake；先以测试实现 ADR-0007 的 Paths、单实例 lock 与 peer UID 平台边界。
+2. 守护进程自动启动与 IPC 连接。
+3. LocalFS Provider 接入。
+4. 双栏 TUI 在本地/本地模式完成窗口化导航、过滤和基础预览。
 
 门禁：完全离线环境下可稳定浏览，客户端多次退出/重进不泄漏守护进程资源。
 
 ### M1.2 — 真实 SFTP Endpoint
 
-1. 通过系统 OpenSSH 启动 SFTP 子系统。
+1. 按 ADR-0006 精确引入 pkg/sftp v1.13.10 并完成依赖 intake，再按 ADR-0001 精确 argv 通过系统 OpenSSH 启动 SFTP 子系统。
 2. 接入 SFTP Provider 和错误映射。
 3. 完成本地/远端与远端/远端独立浏览。
 
@@ -157,7 +163,7 @@
 
 - [ ] 本地/本地、本地/远端、远端/远端三种组合可在任一栏独立切换和导航。
 - [ ] UI、RPC 和 CLI 均没有文件写入入口；权限受限夹具证明只读边界。
-- [ ] Unix Socket 权限和单实例行为在 macOS/Linux 均验证。
+- [ ] config/state/cache/log/runtime 根、完整 ancestor chain、Darwin `/var -> /private/var` 与 `/tmp -> /private/tmp` 别名/deny-vs-allow ACL、Linux XDG/access+default ACL、sticky `/tmp` 回退、Unix Socket 权限和单实例行为在 macOS/Linux 均验证；不安全持久/override 路径 fail closed 且不产生隐蔽回退状态。
 - [ ] 系统 OpenSSH 的 Host 别名、ProxyCommand/ProxyJump 与至少一种非密码认证通过。
 - [ ] MIT Kerberos/GSSAPI 受控验证成功，且 ticket/秘密未出现在日志、工作区或数据库。
 - [ ] 认证等待在无客户端、超时和取消场景可恢复。

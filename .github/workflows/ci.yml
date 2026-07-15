@@ -1,0 +1,765 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LEG: quality
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: tools/go.sum
+      - run: make check
+        env:
+          BUILD_DIR: ${{ runner.temp }}/quality/build
+          COVERAGE_DIR: ${{ runner.temp }}/quality/coverage
+      - run: make lint
+      - run: make fuzz-smoke
+      - run: make supply-chain
+      - name: Record provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/provenance"
+          porcelain="${RUNNER_TEMP}/provenance/${LEG}.porcelain"
+          record="${RUNNER_TEMP}/provenance/${LEG}.env"
+          : "${RUNNER_OS:?RUNNER_OS is required}"
+          : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+          : "${ImageOS:?ImageOS is required}"
+          : "${ImageVersion:?ImageVersion is required}"
+          go_env_goos="$(go env GOOS)"
+          go_env_goarch="$(go env GOARCH)"
+          test -n "${go_env_goos}"
+          test -n "${go_env_goarch}"
+          git status --porcelain=v1 -uall >"${porcelain}"
+          {
+            printf 'schema=amsftp-provenance-v1\n'
+            printf 'workflow=%s\n' "${GITHUB_WORKFLOW}"
+            printf 'job=%s\n' "${GITHUB_JOB}"
+            printf 'leg=%s\n' "${LEG}"
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'go_version=%s\n' "$(go version)"
+            printf 'runner_os=%s\n' "${RUNNER_OS}"
+            printf 'runner_arch=%s\n' "${RUNNER_ARCH}"
+            printf 'runner_image_os=%s\n' "${ImageOS}"
+            printf 'runner_image_version=%s\n' "${ImageVersion}"
+            printf 'go_env_goos=%s\n' "${go_env_goos}"
+            printf 'go_env_goarch=%s\n' "${go_env_goarch}"
+            if test -s "${porcelain}"; then
+              printf 'status=dirty\n'
+            else
+              printf 'status=clean\n'
+            fi
+          } >"${record}"
+          test ! -s "${porcelain}"
+      - name: Upload provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provenance-${{ env.LEG }}
+          path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
+          if-no-files-found: error
+
+  native:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - macos-15
+          - macos-15-intel
+    env:
+      LEG: native-${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: tools/go.sum
+      - run: make fmt-check
+      - run: make vet
+      - run: make test
+        env:
+          BUILD_DIR: ${{ runner.temp }}/native/build
+          COVERAGE_DIR: ${{ runner.temp }}/native/coverage
+      - run: make test-contract
+        env:
+          BUILD_DIR: ${{ runner.temp }}/native/build
+          COVERAGE_DIR: ${{ runner.temp }}/native/coverage
+      - run: make test-race
+      - run: mkdir -p "${{ runner.temp }}/native/bin"
+      - run: go build -trimpath -o "${{ runner.temp }}/native/bin/amsftp" ./cmd/amsftp
+      - run: '"${{ runner.temp }}/native/bin/amsftp" --help'
+      - run: '"${{ runner.temp }}/native/bin/amsftp" --version'
+      - name: Record provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/provenance"
+          porcelain="${RUNNER_TEMP}/provenance/${LEG}.porcelain"
+          record="${RUNNER_TEMP}/provenance/${LEG}.env"
+          : "${RUNNER_OS:?RUNNER_OS is required}"
+          : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+          : "${ImageOS:?ImageOS is required}"
+          : "${ImageVersion:?ImageVersion is required}"
+          go_env_goos="$(go env GOOS)"
+          go_env_goarch="$(go env GOARCH)"
+          test -n "${go_env_goos}"
+          test -n "${go_env_goarch}"
+          git status --porcelain=v1 -uall >"${porcelain}"
+          {
+            printf 'schema=amsftp-provenance-v1\n'
+            printf 'workflow=%s\n' "${GITHUB_WORKFLOW}"
+            printf 'job=%s\n' "${GITHUB_JOB}"
+            printf 'leg=%s\n' "${LEG}"
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'go_version=%s\n' "$(go version)"
+            printf 'runner_os=%s\n' "${RUNNER_OS}"
+            printf 'runner_arch=%s\n' "${RUNNER_ARCH}"
+            printf 'runner_image_os=%s\n' "${ImageOS}"
+            printf 'runner_image_version=%s\n' "${ImageVersion}"
+            printf 'go_env_goos=%s\n' "${go_env_goos}"
+            printf 'go_env_goarch=%s\n' "${go_env_goarch}"
+            if test -s "${porcelain}"; then
+              printf 'status=dirty\n'
+            else
+              printf 'status=clean\n'
+            fi
+          } >"${record}"
+          test ! -s "${porcelain}"
+      - name: Upload provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provenance-${{ env.LEG }}
+          path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
+          if-no-files-found: error
+
+  oldstable:
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-22.04
+          - ubuntu-24.04
+          - macos-15
+          - macos-15-intel
+    env:
+      GOTOOLCHAIN: local
+      LEG: oldstable-${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.25.12
+          cache: true
+          cache-dependency-path: tools/go.sum
+      - run: make check
+        env:
+          BUILD_DIR: ${{ runner.temp }}/oldstable/build
+          COVERAGE_DIR: ${{ runner.temp }}/oldstable/coverage
+      - name: Record provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/provenance"
+          porcelain="${RUNNER_TEMP}/provenance/${LEG}.porcelain"
+          record="${RUNNER_TEMP}/provenance/${LEG}.env"
+          : "${RUNNER_OS:?RUNNER_OS is required}"
+          : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+          : "${ImageOS:?ImageOS is required}"
+          : "${ImageVersion:?ImageVersion is required}"
+          go_env_goos="$(go env GOOS)"
+          go_env_goarch="$(go env GOARCH)"
+          test -n "${go_env_goos}"
+          test -n "${go_env_goarch}"
+          git status --porcelain=v1 -uall >"${porcelain}"
+          {
+            printf 'schema=amsftp-provenance-v1\n'
+            printf 'workflow=%s\n' "${GITHUB_WORKFLOW}"
+            printf 'job=%s\n' "${GITHUB_JOB}"
+            printf 'leg=%s\n' "${LEG}"
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'go_version=%s\n' "$(go version)"
+            printf 'runner_os=%s\n' "${RUNNER_OS}"
+            printf 'runner_arch=%s\n' "${RUNNER_ARCH}"
+            printf 'runner_image_os=%s\n' "${ImageOS}"
+            printf 'runner_image_version=%s\n' "${ImageVersion}"
+            printf 'go_env_goos=%s\n' "${go_env_goos}"
+            printf 'go_env_goarch=%s\n' "${go_env_goarch}"
+            if test -s "${porcelain}"; then
+              printf 'status=dirty\n'
+            else
+              printf 'status=clean\n'
+            fi
+          } >"${record}"
+          test ! -s "${porcelain}"
+      - name: Upload provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provenance-${{ env.LEG }}
+          path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
+          if-no-files-found: error
+
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+            artifact: amsftp-darwin-arm64
+          - goos: darwin
+            goarch: amd64
+            artifact: amsftp-darwin-amd64
+          - goos: linux
+            goarch: arm64
+            artifact: amsftp-linux-arm64
+          - goos: linux
+            goarch: amd64
+            artifact: amsftp-linux-amd64
+    env:
+      LEG: build-${{ matrix.artifact }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: tools/go.sum
+      - run: mkdir -p "${{ runner.temp }}/build/${{ matrix.artifact }}"
+      - name: Cross-build
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -buildvcs=false -o "${{ runner.temp }}/build/${{ matrix.artifact }}/${{ matrix.artifact }}" ./cmd/amsftp
+      - name: Record build metadata
+        run: |
+          set -euo pipefail
+          directory="${RUNNER_TEMP}/build/${{ matrix.artifact }}"
+          binary="${directory}/${{ matrix.artifact }}"
+          sha256sum "${binary}" | awk '{print $1}' >"${directory}/${{ matrix.artifact }}.sha256"
+          go version -m "${binary}" >"${directory}/${{ matrix.artifact }}.version-m"
+          test -s "${directory}/${{ matrix.artifact }}.sha256"
+          test -s "${directory}/${{ matrix.artifact }}.version-m"
+      - name: Upload build artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: build-${{ matrix.artifact }}
+          path: ${{ runner.temp }}/build/${{ matrix.artifact }}
+          if-no-files-found: error
+      - name: Record provenance
+        run: |
+          set -euo pipefail
+          directory="${RUNNER_TEMP}/build/${{ matrix.artifact }}"
+          binary="${directory}/${{ matrix.artifact }}"
+          artifact_sha256="$(sha256sum "${binary}" | awk '{print $1}')"
+          saved_sha256="$(cat "${directory}/${{ matrix.artifact }}.sha256")"
+          test "${artifact_sha256}" = "${saved_sha256}"
+          printf '%s\n' "${artifact_sha256}" | grep -Eq '^[0-9a-f]{64}$'
+          mkdir -p "${RUNNER_TEMP}/provenance"
+          porcelain="${RUNNER_TEMP}/provenance/${LEG}.porcelain"
+          record="${RUNNER_TEMP}/provenance/${LEG}.env"
+          : "${RUNNER_OS:?RUNNER_OS is required}"
+          : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+          : "${ImageOS:?ImageOS is required}"
+          : "${ImageVersion:?ImageVersion is required}"
+          go_env_goos="$(GOOS='${{ matrix.goos }}' GOARCH='${{ matrix.goarch }}' go env GOOS)"
+          go_env_goarch="$(GOOS='${{ matrix.goos }}' GOARCH='${{ matrix.goarch }}' go env GOARCH)"
+          test -n "${go_env_goos}"
+          test -n "${go_env_goarch}"
+          git status --porcelain=v1 -uall >"${porcelain}"
+          {
+            printf 'schema=amsftp-provenance-v1\n'
+            printf 'workflow=%s\n' "${GITHUB_WORKFLOW}"
+            printf 'job=%s\n' "${GITHUB_JOB}"
+            printf 'leg=%s\n' "${LEG}"
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'go_version=%s\n' "$(go version)"
+            printf 'runner_os=%s\n' "${RUNNER_OS}"
+            printf 'runner_arch=%s\n' "${RUNNER_ARCH}"
+            printf 'runner_image_os=%s\n' "${ImageOS}"
+            printf 'runner_image_version=%s\n' "${ImageVersion}"
+            printf 'go_env_goos=%s\n' "${go_env_goos}"
+            printf 'go_env_goarch=%s\n' "${go_env_goarch}"
+            printf 'target_goos=%s\n' '${{ matrix.goos }}'
+            printf 'target_goarch=%s\n' '${{ matrix.goarch }}'
+            printf 'artifact=%s\n' '${{ matrix.artifact }}'
+            printf 'artifact_sha256=%s\n' "${artifact_sha256}"
+            if test -s "${porcelain}"; then
+              printf 'status=dirty\n'
+            else
+              printf 'status=clean\n'
+            fi
+          } >"${record}"
+          test ! -s "${porcelain}"
+      - name: Upload provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provenance-${{ env.LEG }}
+          path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
+          if-no-files-found: error
+
+  reproducibility:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: arm64
+            artifact: amsftp-darwin-arm64
+            replica: a
+          - goos: darwin
+            goarch: arm64
+            artifact: amsftp-darwin-arm64
+            replica: b
+          - goos: darwin
+            goarch: amd64
+            artifact: amsftp-darwin-amd64
+            replica: a
+          - goos: darwin
+            goarch: amd64
+            artifact: amsftp-darwin-amd64
+            replica: b
+          - goos: linux
+            goarch: arm64
+            artifact: amsftp-linux-arm64
+            replica: a
+          - goos: linux
+            goarch: arm64
+            artifact: amsftp-linux-arm64
+            replica: b
+          - goos: linux
+            goarch: amd64
+            artifact: amsftp-linux-amd64
+            replica: a
+          - goos: linux
+            goarch: amd64
+            artifact: amsftp-linux-amd64
+            replica: b
+    env:
+      LEG: repro-${{ matrix.artifact }}-${{ matrix.replica }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Prepare independent caches
+        run: |
+          set -euo pipefail
+          build_cache="${RUNNER_TEMP}/repro-cache/${{ matrix.artifact }}-${{ matrix.replica }}/build"
+          module_cache="${RUNNER_TEMP}/repro-cache/${{ matrix.artifact }}-${{ matrix.replica }}/modules"
+          mkdir -p "${build_cache}" "${module_cache}" "${RUNNER_TEMP}/repro/${{ matrix.artifact }}"
+          printf 'GOCACHE=%s\n' "${build_cache}" >>"${GITHUB_ENV}"
+          printf 'GOMODCACHE=%s\n' "${module_cache}" >>"${GITHUB_ENV}"
+      - name: Reproducible build
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build -trimpath -buildvcs=false -o "${{ runner.temp }}/repro/${{ matrix.artifact }}/${{ matrix.artifact }}" ./cmd/amsftp
+      - name: Record build metadata
+        run: |
+          set -euo pipefail
+          directory="${RUNNER_TEMP}/repro/${{ matrix.artifact }}"
+          binary="${directory}/${{ matrix.artifact }}"
+          sha256sum "${binary}" | awk '{print $1}' >"${directory}/${{ matrix.artifact }}.sha256"
+          go version -m "${binary}" >"${directory}/${{ matrix.artifact }}.version-m"
+          test -s "${directory}/${{ matrix.artifact }}.sha256"
+          test -s "${directory}/${{ matrix.artifact }}.version-m"
+      - name: Upload reproducible artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: repro-${{ matrix.artifact }}-${{ matrix.replica }}
+          path: ${{ runner.temp }}/repro/${{ matrix.artifact }}
+          if-no-files-found: error
+      - name: Record provenance
+        run: |
+          set -euo pipefail
+          directory="${RUNNER_TEMP}/repro/${{ matrix.artifact }}"
+          binary="${directory}/${{ matrix.artifact }}"
+          artifact_sha256="$(sha256sum "${binary}" | awk '{print $1}')"
+          saved_sha256="$(cat "${directory}/${{ matrix.artifact }}.sha256")"
+          test "${artifact_sha256}" = "${saved_sha256}"
+          printf '%s\n' "${artifact_sha256}" | grep -Eq '^[0-9a-f]{64}$'
+          mkdir -p "${RUNNER_TEMP}/provenance"
+          porcelain="${RUNNER_TEMP}/provenance/${LEG}.porcelain"
+          record="${RUNNER_TEMP}/provenance/${LEG}.env"
+          : "${RUNNER_OS:?RUNNER_OS is required}"
+          : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+          : "${ImageOS:?ImageOS is required}"
+          : "${ImageVersion:?ImageVersion is required}"
+          go_env_goos="$(GOOS='${{ matrix.goos }}' GOARCH='${{ matrix.goarch }}' go env GOOS)"
+          go_env_goarch="$(GOOS='${{ matrix.goos }}' GOARCH='${{ matrix.goarch }}' go env GOARCH)"
+          test -n "${go_env_goos}"
+          test -n "${go_env_goarch}"
+          git status --porcelain=v1 -uall >"${porcelain}"
+          {
+            printf 'schema=amsftp-provenance-v1\n'
+            printf 'workflow=%s\n' "${GITHUB_WORKFLOW}"
+            printf 'job=%s\n' "${GITHUB_JOB}"
+            printf 'leg=%s\n' "${LEG}"
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'go_version=%s\n' "$(go version)"
+            printf 'runner_os=%s\n' "${RUNNER_OS}"
+            printf 'runner_arch=%s\n' "${RUNNER_ARCH}"
+            printf 'runner_image_os=%s\n' "${ImageOS}"
+            printf 'runner_image_version=%s\n' "${ImageVersion}"
+            printf 'go_env_goos=%s\n' "${go_env_goos}"
+            printf 'go_env_goarch=%s\n' "${go_env_goarch}"
+            printf 'target_goos=%s\n' '${{ matrix.goos }}'
+            printf 'target_goarch=%s\n' '${{ matrix.goarch }}'
+            printf 'artifact=%s\n' '${{ matrix.artifact }}'
+            printf 'artifact_sha256=%s\n' "${artifact_sha256}"
+            if test -s "${porcelain}"; then
+              printf 'status=dirty\n'
+            else
+              printf 'status=clean\n'
+            fi
+          } >"${record}"
+          test ! -s "${porcelain}"
+      - name: Upload provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provenance-${{ env.LEG }}
+          path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
+          if-no-files-found: error
+
+  reproducibility-compare:
+    needs: reproducibility
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LEG: reproducibility-compare
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Download reproducible artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: repro-*
+          path: ${{ runner.temp }}/repro-downloads
+      - name: Compare independent builds
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/repro-downloads"
+          expected="${RUNNER_TEMP}/expected-repro-artifacts.txt"
+          actual="${RUNNER_TEMP}/actual-repro-artifacts.txt"
+          comparison="${RUNNER_TEMP}/accepted-sha256.txt"
+          : >"${expected}"
+          : >"${comparison}"
+          for name in \
+            amsftp-darwin-arm64 \
+            amsftp-darwin-amd64 \
+            amsftp-linux-arm64 \
+            amsftp-linux-amd64; do
+            printf 'repro-%s-a\nrepro-%s-b\n' "${name}" "${name}" >>"${expected}"
+            directory_a="${root}/repro-${name}-a"
+            directory_b="${root}/repro-${name}-b"
+            for directory in "${directory_a}" "${directory_b}"; do
+              test "$(find "${directory}" -mindepth 1 -maxdepth 1 -print | wc -l | tr -d '[:space:]')" -eq 3
+              test -f "${directory}/${name}"
+              test -f "${directory}/${name}.sha256"
+              test -s "${directory}/${name}.version-m"
+              grep -Eq '^[0-9a-f]{64}$' "${directory}/${name}.sha256"
+            done
+            saved_a="$(cat "${directory_a}/${name}.sha256")"
+            saved_b="$(cat "${directory_b}/${name}.sha256")"
+            actual_a="$(sha256sum "${directory_a}/${name}" | awk '{print $1}')"
+            actual_b="$(sha256sum "${directory_b}/${name}" | awk '{print $1}')"
+            test "${saved_a}" = "${actual_a}"
+            test "${saved_b}" = "${actual_b}"
+            test "${actual_a}" = "${actual_b}"
+            cmp -s "${directory_a}/${name}" "${directory_b}/${name}"
+            printf '%s=%s\n' "${name}" "${actual_a}" >>"${comparison}"
+          done
+          find "${root}" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | LC_ALL=C sort >"${actual}"
+          LC_ALL=C sort -o "${expected}" "${expected}"
+          cmp -s "${expected}" "${actual}"
+          test "$(wc -l <"${comparison}" | tr -d '[:space:]')" -eq 4
+      - name: Upload comparison evidence
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: reproducibility-comparison
+          path: ${{ runner.temp }}/accepted-sha256.txt
+          if-no-files-found: error
+      - name: Record provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/provenance"
+          porcelain="${RUNNER_TEMP}/provenance/${LEG}.porcelain"
+          record="${RUNNER_TEMP}/provenance/${LEG}.env"
+          : "${RUNNER_OS:?RUNNER_OS is required}"
+          : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+          : "${ImageOS:?ImageOS is required}"
+          : "${ImageVersion:?ImageVersion is required}"
+          go_env_goos="$(go env GOOS)"
+          go_env_goarch="$(go env GOARCH)"
+          test -n "${go_env_goos}"
+          test -n "${go_env_goarch}"
+          git status --porcelain=v1 -uall >"${porcelain}"
+          {
+            printf 'schema=amsftp-provenance-v1\n'
+            printf 'workflow=%s\n' "${GITHUB_WORKFLOW}"
+            printf 'job=%s\n' "${GITHUB_JOB}"
+            printf 'leg=%s\n' "${LEG}"
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'go_version=%s\n' "$(go version)"
+            printf 'runner_os=%s\n' "${RUNNER_OS}"
+            printf 'runner_arch=%s\n' "${RUNNER_ARCH}"
+            printf 'runner_image_os=%s\n' "${ImageOS}"
+            printf 'runner_image_version=%s\n' "${ImageVersion}"
+            printf 'go_env_goos=%s\n' "${go_env_goos}"
+            printf 'go_env_goarch=%s\n' "${go_env_goarch}"
+            if test -s "${porcelain}"; then
+              printf 'status=dirty\n'
+            else
+              printf 'status=clean\n'
+            fi
+          } >"${record}"
+          test ! -s "${porcelain}"
+      - name: Upload provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provenance-${{ env.LEG }}
+          path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
+          if-no-files-found: error
+
+  compare:
+    needs:
+      - quality
+      - native
+      - oldstable
+      - build
+      - reproducibility
+      - reproducibility-compare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      LEG: compare
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Download provenance
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: provenance-*
+          path: ${{ runner.temp }}/provenance-downloads
+          merge-multiple: true
+      - name: Download reproducibility comparison
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: reproducibility-comparison
+          path: ${{ runner.temp }}/reproducibility-comparison
+      - name: Verify prerequisite provenance
+        run: |
+          set -euo pipefail
+          root="${RUNNER_TEMP}/provenance-downloads"
+          manifest="${RUNNER_TEMP}/expected-provenance.txt"
+          actual_env="${RUNNER_TEMP}/actual-provenance-env.txt"
+          actual_porcelain="${RUNNER_TEMP}/actual-provenance-porcelain.txt"
+          accepted_root="${RUNNER_TEMP}/reproducibility-comparison"
+          accepted="${accepted_root}/accepted-sha256.txt"
+          bindings="${RUNNER_TEMP}/expected-artifact-bindings.txt"
+          cat >"${manifest}" <<'LEGS'
+          quality
+          native-ubuntu-22.04
+          native-ubuntu-24.04
+          native-macos-15
+          native-macos-15-intel
+          oldstable-ubuntu-22.04
+          oldstable-ubuntu-24.04
+          oldstable-macos-15
+          oldstable-macos-15-intel
+          build-amsftp-darwin-arm64
+          build-amsftp-darwin-amd64
+          build-amsftp-linux-arm64
+          build-amsftp-linux-amd64
+          repro-amsftp-darwin-arm64-a
+          repro-amsftp-darwin-arm64-b
+          repro-amsftp-darwin-amd64-a
+          repro-amsftp-darwin-amd64-b
+          repro-amsftp-linux-arm64-a
+          repro-amsftp-linux-arm64-b
+          repro-amsftp-linux-amd64-a
+          repro-amsftp-linux-amd64-b
+          reproducibility-compare
+          LEGS
+          test "$(wc -l <"${manifest}" | tr -d '[:space:]')" -eq 22
+          find "${root}" -mindepth 1 -maxdepth 1 -type f -name '*.env' -exec basename {} .env \; | LC_ALL=C sort >"${actual_env}"
+          find "${root}" -mindepth 1 -maxdepth 1 -type f -name '*.porcelain' -exec basename {} .porcelain \; | LC_ALL=C sort >"${actual_porcelain}"
+          LC_ALL=C sort -o "${manifest}" "${manifest}"
+          cmp -s "${manifest}" "${actual_env}"
+          cmp -s "${manifest}" "${actual_porcelain}"
+          test "$(find "${root}" -mindepth 1 -print | wc -l | tr -d '[:space:]')" -eq 44
+          cat >"${bindings}" <<'BINDINGS'
+          amsftp-darwin-arm64|darwin|arm64|build-amsftp-darwin-arm64|repro-amsftp-darwin-arm64-a|repro-amsftp-darwin-arm64-b
+          amsftp-darwin-amd64|darwin|amd64|build-amsftp-darwin-amd64|repro-amsftp-darwin-amd64-a|repro-amsftp-darwin-amd64-b
+          amsftp-linux-arm64|linux|arm64|build-amsftp-linux-arm64|repro-amsftp-linux-arm64-a|repro-amsftp-linux-arm64-b
+          amsftp-linux-amd64|linux|amd64|build-amsftp-linux-amd64|repro-amsftp-linux-amd64-a|repro-amsftp-linux-amd64-b
+          BINDINGS
+          test "$(wc -l <"${bindings}" | tr -d '[:space:]')" -eq 4
+          test "$(find "${accepted_root}" -mindepth 1 -print | wc -l | tr -d '[:space:]')" -eq 1
+          test -f "${accepted}"
+          test ! -L "${accepted}"
+          test "$(wc -l <"${accepted}" | tr -d '[:space:]')" -eq 4
+          expected_head="$(git rev-parse HEAD)"
+          expected_tree="$(git rev-parse 'HEAD^{tree}')"
+          field_value() {
+            key="$1"
+            file="$2"
+            count="$(grep -c "^${key}=" "${file}" || true)"
+            if test "${count}" -ne 1; then
+              printf 'provenance field %s occurs %s times in %s\n' "${key}" "${count}" "${file}" >&2
+              return 1
+            fi
+            sed -n "s/^${key}=//p" "${file}"
+          }
+          while IFS= read -r leg; do
+            record="${root}/${leg}.env"
+            porcelain="${root}/${leg}.porcelain"
+            test -f "${record}"
+            test -f "${porcelain}"
+            test ! -s "${porcelain}"
+            expected_fields=14
+            case "${leg}" in
+              build-*|repro-*) expected_fields=18 ;;
+            esac
+            test "$(wc -l <"${record}" | tr -d '[:space:]')" -eq "${expected_fields}"
+            test "$(field_value schema "${record}")" = amsftp-provenance-v1
+            test -n "$(field_value workflow "${record}")"
+            test -n "$(field_value job "${record}")"
+            test "$(field_value leg "${record}")" = "${leg}"
+            test "$(field_value head "${record}")" = "${expected_head}"
+            test "$(field_value tree "${record}")" = "${expected_tree}"
+            test -n "$(field_value go_version "${record}")"
+            test -n "$(field_value runner_os "${record}")"
+            test -n "$(field_value runner_arch "${record}")"
+            test -n "$(field_value runner_image_os "${record}")"
+            test -n "$(field_value runner_image_version "${record}")"
+            test -n "$(field_value go_env_goos "${record}")"
+            test -n "$(field_value go_env_goarch "${record}")"
+            test "$(field_value status "${record}")" = clean
+          done <"${manifest}"
+          artifact_hash() {
+            leg="$1"
+            expected_artifact="$2"
+            expected_goos="$3"
+            expected_goarch="$4"
+            record="${root}/${leg}.env"
+            test "$(field_value target_goos "${record}")" = "${expected_goos}" || return 1
+            test "$(field_value target_goarch "${record}")" = "${expected_goarch}" || return 1
+            test "$(field_value go_env_goos "${record}")" = "${expected_goos}" || return 1
+            test "$(field_value go_env_goarch "${record}")" = "${expected_goarch}" || return 1
+            test "$(field_value artifact "${record}")" = "${expected_artifact}" || return 1
+            hash="$(field_value artifact_sha256 "${record}")" || return 1
+            printf '%s\n' "${hash}" | grep -Eq '^[0-9a-f]{64}$' || return 1
+            printf '%s\n' "${hash}"
+          }
+          while IFS='|' read -r artifact target_goos target_goarch build_leg repro_a_leg repro_b_leg; do
+            accepted_hash="$(field_value "${artifact}" "${accepted}")"
+            printf '%s\n' "${accepted_hash}" | grep -Eq '^[0-9a-f]{64}$'
+            repro_a_hash="$(artifact_hash "${repro_a_leg}" "${artifact}" "${target_goos}" "${target_goarch}")"
+            repro_b_hash="$(artifact_hash "${repro_b_leg}" "${artifact}" "${target_goos}" "${target_goarch}")"
+            test "${repro_a_hash}" = "${accepted_hash}"
+            test "${repro_b_hash}" = "${accepted_hash}"
+            if test -n "${build_leg}"; then
+              build_hash="$(artifact_hash "${build_leg}" "${artifact}" "${target_goos}" "${target_goarch}")"
+              test "${build_hash}" = "${accepted_hash}"
+            fi
+          done <"${bindings}"
+      - name: Record comparison provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/provenance"
+          porcelain="${RUNNER_TEMP}/provenance/${LEG}.porcelain"
+          record="${RUNNER_TEMP}/provenance/${LEG}.env"
+          : "${RUNNER_OS:?RUNNER_OS is required}"
+          : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+          : "${ImageOS:?ImageOS is required}"
+          : "${ImageVersion:?ImageVersion is required}"
+          go_env_goos="$(go env GOOS)"
+          go_env_goarch="$(go env GOARCH)"
+          test -n "${go_env_goos}"
+          test -n "${go_env_goarch}"
+          git status --porcelain=v1 -uall >"${porcelain}"
+          {
+            printf 'schema=amsftp-provenance-v1\n'
+            printf 'workflow=%s\n' "${GITHUB_WORKFLOW}"
+            printf 'job=%s\n' "${GITHUB_JOB}"
+            printf 'leg=%s\n' "${LEG}"
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'go_version=%s\n' "$(go version)"
+            printf 'runner_os=%s\n' "${RUNNER_OS}"
+            printf 'runner_arch=%s\n' "${RUNNER_ARCH}"
+            printf 'runner_image_os=%s\n' "${ImageOS}"
+            printf 'runner_image_version=%s\n' "${ImageVersion}"
+            printf 'go_env_goos=%s\n' "${go_env_goos}"
+            printf 'go_env_goarch=%s\n' "${go_env_goarch}"
+            printf 'workflow_ref=%s\n' "${GITHUB_WORKFLOW_REF}"
+            printf 'workflow_sha=%s\n' "${GITHUB_WORKFLOW_SHA}"
+            printf 'event=%s\n' "${GITHUB_EVENT_NAME}"
+            printf 'run_id=%s\n' "${GITHUB_RUN_ID}"
+            printf 'run_attempt=%s\n' "${GITHUB_RUN_ATTEMPT}"
+            if test -s "${porcelain}"; then
+              printf 'status=dirty\n'
+            else
+              printf 'status=clean\n'
+            fi
+          } >"${record}"
+          test ! -s "${porcelain}"
+      - name: Upload comparison provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provenance-${{ env.LEG }}
+          path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
+          if-no-files-found: error

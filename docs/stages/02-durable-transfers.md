@@ -40,6 +40,7 @@
 - Stage 1 已稳定提供守护进程生命周期、版本化 IPC、LocalFS/SFTP Provider、认证 Broker 和双栏 Location 模型。
 - 写操作必须扩展共享 Provider 契约，不能通过临时 shell 命令绕开系统 OpenSSH、结构化错误和取消语义。
 - Stage 0/1 的 Fake Provider、临时 `sshd`、断线和认证夹具可直接用于写入与恢复测试。
+- SQLite driver、连接策略和迁移机制必须直接实现 [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md)，不得临时切换 CGO driver 或通用 migration framework。
 
 ### 3.2 数据安全不变量
 
@@ -87,7 +88,8 @@
 - 保存 Job、不可变计划、可变状态、条目/步骤、检查点、冲突决策和有限事件历史。
 - 数据库只保存文件操作元数据，不保存密码、SSH 私钥、Askpass 响应或 Kerberos ticket。
 - 所有状态转换与关键检查点使用事务保证一致性。
-- 建立 schema 版本，为 Stage 6 迁移保留正向升级路径。
+- 状态库仅允许 statfs allowlist+跨进程 WAL/locking/full-durability smoke通过的本地 APFS/ext4/XFS；网络/未知filesystem要求显式安全本地`--state-dir`。唯一 pristine 是 final main及exact WAL/SHM/journal全不存在；任意existing final先做raw header/page-size/app-id identity，wrong DB的bytes/attrs/父目录listing与时间不变。project无sidecar才immutable strict validation，有合法sidecar则identity后先probe、再recovery并验证完整history/runner invariants/whole-main schema。final-absent v1通过durable intent+rollback-journal temp+no-replace发布；预置zero-byte/valid-empty appid0绝不接管。
+- migration statement须通过ADR-0008受测lexer/target-main allowlist，transaction边界只由runner控制。existing pending batch创建durable original..target attempt，先生成唯一modernc online backup；destination删除captured attempt并设置restore hold，fullsync/no-replace后入catalog。仅`ready`启动可自动推进，`preparing|running|interrupted|failed`须显式resume并复用同一backup；success按清attempt→retention→quick/FK/TRUNCATE/close/immutable。保留最近两份verified backup并做space gate，禁止raw DB/WAL/SHM copy/overwrite。Darwin source与hidden backup destination的pragma顺序、4096 page/8GiB main、2秒reader、64MiB soft/256MiB stop与4/8/264MiB online WAL预算全部服从ADR-0008。
 - 数据库损坏或迁移失败时停止写操作，保留原库和诊断；不得创建一个空库后假装无作业。
 
 ### S2-D04 执行器与有界中继
@@ -181,7 +183,7 @@
 - [ ] 跨 Endpoint 移动在目标验证/提交前绝不删除源。
 - [ ] 验证不足或源删除失败时状态为 `completed_with_source_retained`，且用户可定位两份文件。
 - [ ] `kill -9`、断网、短写、权限、磁盘满和陈旧 `stat` 故障矩阵通过。
-- [ ] SQLite 中无认证秘密，损坏/迁移失败会安全停止写操作。
+- [ ] SQLite中无认证秘密；filesystem/probe、final-absent intent bootstrap、wrong DB零目录写、sidecar recovery、checksum+SQL lexer、per-head whole-schema、exact runner tables、无/单/多pending attempt/backup sanitize/hold/显式resume、retention/space/fullsync/no-replace、最终清attempt→retention→checkpoint→immutable与4/8/264MiB online WAL预算均通过；损坏/历史不符/迁移失败保留原库/WAL/备份并安全停写。
 
 ## 7. 测试矩阵
 
@@ -203,7 +205,7 @@
 - 任一写入错误先停止该条目并保存上下文；默认不删除临时文件或源文件。
 - 直至 Stage 5 都不尝试未经预检的跨主机直传；双远端失败回到等待/重试，不换成不可审计 shell 命令。
 - 数据库事务失败立即停止领取新步骤；保留数据库、WAL 和日志用于恢复。
-- schema 迁移失败恢复原文件，守护进程只读诊断，不自动重建。
+- schema 迁移失败保留当前原库/WAL与已发布 pre-upgrade backup，守护进程进入只读诊断且不自动重建或恢复；恢复必须由用户显式选择并先验证 backup identity/integrity/compatibility。
 - 提交响应丢失时先检查最终名、临时名和指纹，再判定成功、重试或人工冲突。
 - 删除结果不确定时按“可能已删除”处理并重新 `stat`；不得无条件重复递归删除。
 - 若新版本发现安全不变量缺陷，关闭写操作能力并允许只读浏览；回退二进制前确保旧版本理解当前 schema，或使用已验证的数据库备份。

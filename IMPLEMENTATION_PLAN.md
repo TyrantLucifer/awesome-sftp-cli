@@ -2,17 +2,19 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-所有阶段当前均处于设计完成、尚未实施的状态。
+Stage 0 正在实施；Stage 1–6 保持 Not Started，且在 Stage 0 全部门禁完成前不得开启。
 
 ## Stage 0: Foundation & Knowledge
 
 **Goal**: 建立可在 macOS 与 Linux 构建、测试和持续续接的 Go 工程基线，冻结跨阶段共享的协议、端点与文档契约。
 
-**Success Criteria**: 两个平台均可构建；版本化 IPC 信封、Endpoint 能力契约和可控 Fake Provider 有契约测试；Vision、Architecture、Feature Matrix、ADR、Stage、Verification、Project State 的真相链与更新规则可执行。
+**Success Criteria**: 两个平台均可构建；版本化 IPC 信封、Endpoint 能力契约和可控 Fake Provider 有契约测试；公开身份、精确依赖、TUI/日志、平台路径、SQLite/迁移、支持矩阵/包装和 Helper 信任机制均由 Accepted ADR 冻结；Vision、Architecture、Feature Matrix、ADR、Stage、Verification、Project State 的真相链与更新规则可执行。
 
-**Tests**: `go test ./...`；`go test -race ./...`；`go vet ./...`；macOS/Linux 构建矩阵；协议兼容与 Fake Provider 契约测试；文档链接、功能矩阵字段和状态一致性检查。
+**Tests**: `make check`、`make lint`、`make supply-chain`、`make ci`；Go 1.25.12 oldstable；最低/当前 macOS/Linux 原生 CI 与四目标构建；协议兼容与 Fake Provider 契约测试；ADR 决策的版本/安全/可测试性审阅；文档链接、功能矩阵字段和严格阶段顺序检查；完整候选树污染检测与 cold-start audit。
 
-**Status**: Not Started
+**Status**: In Progress
+
+**Current checkpoint**: 第三个 Task 11 候选的本地门禁无污染通过，但整树审查发现并随后关闭一个 Make 内部门禁变量覆盖 Medium；该精确树已作废。修复后的替代树 `c91ea59…` 已完成 Go 1.26.5/1.25.12 全量本地门禁、污染比较与独立证据审计。两轮独立 cold-start audit 已完成：第一轮推动 exact-command ledger 修复，第二轮的唯一 stale sentence 修复后复核 PASS。最终本地 closeout 树 `5d598ee…` 也已通过 evidence-only gate 与污染比较。八个 hosted native/oldstable legs 仍未执行，Stage 0 保持 In Progress，Stage 1 保持关闭。
 
 ## Stage 1: Read-only Explorer
 
@@ -20,7 +22,7 @@
 
 **Success Criteria**: 本地/本地、本地/远端、远端/远端均可浏览；守护进程自动启动并通过私有 Unix Socket 服务 TUI；SSH 主机选择、工作区恢复、Vim 导航和有界文本预览可用；认证交互、断线和重连不会卡死或泄露凭据。
 
-**Tests**: 单元与 Provider 契约测试；临时 `sshd` 集成测试；`ProxyCommand` 集成测试；MIT Kerberos/GSSAPI 人工或受控环境验证；守护进程重启、网络中断与认证等待测试；macOS/Linux TUI 冒烟测试。
+**Tests**: 单元与 Provider 契约测试；ADR-0007 路径的 XDG/TMPDIR/override/symlink/owner/mode、Darwin系统别名、integrity-only与owner-private deny/allow-read/write/inherited ACL、Linux access/default ACL、sticky `/tmp` 回退和竞态；ADR-0001 默认`/usr/bin/ssh`/安全absolute override完整链、poisoned PATH、special-bits/ACL/替换与精确argv/冲突配置；临时sshd、ProxyCommand、MIT Kerberos/GSSAPI、重启/断网/认证等待和macOS/Linux TUI冒烟。
 
 **Status**: Not Started
 
@@ -30,7 +32,7 @@
 
 **Success Criteria**: `y`/`d`/`p` 语义、冲突处理、临时目标、验证后提交、暂停/取消/续传和守护进程重启恢复可用；跨端点移动在验证完成前绝不删除源；`kill -9`、断网、短写和目标磁盘故障不会留下被误认成完整文件的目标。
 
-**Tests**: 作业状态机与幂等性单元/模型测试；本地↔远端和远端↔远端集成测试；进程终止、网络抖动、短写、权限、磁盘满、陈旧元数据故障注入；大文件有界内存测试；重启恢复与跨端点移动安全测试。
+**Tests**: 作业状态机与幂等性；SQLite filesystem/probe、final-absent intent bootstrap、wrong DB零目录写与sidecar recovery、checksum+SQL lexer、per-head whole-schema/exact runner tables、无/单/多pending original..target attempt、backup sanitize/restore hold/非ready显式resume、catalog retention/space、Darwin source/hidden-destination fullsync顺序、no-replace及清attempt→retention→checkpoint→immutable，2秒reader与4/8/264MiB online WAL预算；四类传输、kill/断网/短写/权限/磁盘满、内存与恢复安全。
 
 **Status**: Not Started
 
@@ -50,7 +52,7 @@
 
 **Success Criteria**: Helper 安装、校验、握手、升级与移除流程安全可审计；`f`/`g/` 搜索可流式返回、取消并受资源预算约束；Helper 缺失、崩溃或版本不兼容时自动降级且不破坏 SFTP 会话；增强能力只在明确协商后启用。
 
-**Tests**: Helper 生命周期与协议兼容测试；篡改校验和、错误架构、版本错配和崩溃故障测试；百万节点夹具搜索、取消和内存预算测试；无 Helper 降级测试；macOS/Linux 远端目标矩阵。
+**Tests**: Helper lifecycle/protocol；current-policy manifest/Ed25519/revoke/compat/floor/high-water；preliminary取消=0 probe、final取消=0 app-tree create/content、drift重probe/确认；Stage4 testdata fixture-only、production trust拒fixture且installable binary/curated dist无fixture assets（自动source archive除外）；shared/unknown/双节点mapping、fresh ssh GSS-delegation+CM off、root-owned utilities/PATH、uid0/cwd/RealPath/uname；safe-home/path/temp/ancestor、128MiB/expected+1/O_EXCL/首write前Chmod0600、client回读、no-replace；shell-c/唯一command/banner/chroot/byte0/stderr边界。失败Level0且不外推node/object/ACL/same-euid/root/server；百万节点/取消/预算与远端矩阵。
 
 **Status**: Not Started
 
@@ -70,6 +72,6 @@
 
 **Success Criteria**: 全功能矩阵均有明确状态与证据；干净安装、受支持版本升级和回滚路径验证通过；配置/协议/数据库兼容策略落地；安全评审与权限边界无未处置高风险项；发行物、man page、补全、诊断包和运维文档完整。
 
-**Tests**: 全量单元/集成/契约/race/fuzz；macOS/Linux 安装与升级矩阵；配置和数据库迁移测试；协议兼容测试；安全负向测试；发行物校验与冒烟测试；发布候选长稳测试。
+**Tests**: 全量unit/integration/contract/race/fuzz；macOS/Linux安装升级、配置/DB/protocol/security；darwin两架构Developer ID/runtime/timestamp/strict verify/notary Accepted与ZIP↔final tar byte identity，pre-sign/pre-Accepted production manifest拒绝、Accepted后才offline签manifest；linux manifest绑定final unsigned bytes；四平台manifest size/hash↔final tar binary，并交叉验证checksums/SBOM/attestation同一archives；quarantine macOS15 Gatekeeper/version、发行冒烟与长稳。
 
 **Status**: Not Started

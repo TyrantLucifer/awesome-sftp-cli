@@ -44,9 +44,12 @@
 ### 3.2 外部程序边界
 
 - 外部编辑器、打开器和预览器只接收受管本地文件路径，不接收守护进程 Socket、认证响应或内部数据库路径。
-- 可执行程序与参数来自经过验证的配置或平台默认；路径作为独立参数传递，不拼接进隐式 shell。
-- 只有 `!` 是用户明确请求 shell 语义的入口；其执行位置、Endpoint 和命令文本必须在运行前清楚展示。
-- `gs` 使用本地 shell或系统 OpenSSH 交互会话，TUI 暂停期间守护进程仍拥有后台作业。
+- 严格owner/ACL executable resolver只适用于OpenSSH。编辑器/opener是同UID用户授权代码执行边界：显式配置保存`executable+argv[]`；`VISUAL`/`EDITOR`只做受限POSIX词法切分（quotes/backslash可组词，拒绝expansion、substitution、glob、pipe/redirection/operator与控制字符），不经shell。bare name/PATH只用于发现，启动前解析/显示并重验absolute regular executable；文件使用canonical absolute path独立末参数。
+- `!`/`gs`是仅有的用户明确shell surface；执行位置、Endpoint、cwd/fallback与命令文本在运行前展示，不能由Provider或任意RPC隐式触发。本地`!`用进程cwd+shell`-c`独立arg，本地`gs`用进程cwd；remote严格服从ADR-0001 fresh transport/marker/TTY契约。
+
+### 3.3 Helper 信任交接门禁
+
+Stage 3 不实现 Helper，但在进入 Stage 4 的任何下载、上传或安装工作前，必须按 [ADR-0010](../architecture/adr/0010-helper-artifact-trust-and-distribution.md) 完成第一组 Ed25519 public key/key ID、离线私钥 custody/恢复 runbook、撤销窗口和双 key 轮换演练。缺少任一项时仍可规划/实现 Level 0 SFTP 搜索，不得开始 Helper 分发实现。
 
 ## 4. 详细交付物
 
@@ -97,7 +100,7 @@
 
 1. 守护进程记录来源 Location、下载前远端指纹和编辑会话 ID。
 2. 文件进入受管缓存并获得编辑租约；内容完整性在交给编辑器前验证。
-3. TUI 正确挂起，使用 `$EDITOR`；未配置时采用 Vim-first 安全默认，并允许用户在配置中覆盖。
+3. TUI正确挂起；解析优先级为显式结构化配置、`VISUAL`、`EDITOR`、`nvim`、`vim`、`vi`。按上项受限lexer解析并把first token经PATH发现/realpath固化为本次absolute executable，余项保持argv；拒绝相对含slash、空命令、shell operator/expansion。启动前显示最终program/args，direct exec并把canonical absolute cache file作为最后独立arg。
 4. 编辑器退出后比较本地内容与初始本地内容，同时重新读取远端指纹。
 5. 根据结果处理：
    - 本地未改：不上传；若远端变化则提示刷新。
@@ -110,7 +113,7 @@
 
 ### S3-D06 `o` 默认打开器工作流
 
-- 本地文件直接通过平台安全参数调用默认打开器。
+- 本地/缓存文件以canonical absolute path独立参数direct exec；macOS默认固定`/usr/bin/open`，Ubuntu默认固定`/usr/bin/xdg-open`，不存在时要求显式结构化opener。自定义项按上节解析为本次absolute executable；不经shell，下游同UID GUI/app是用户/OS信任边界。
 - 远端文件下载到受管缓存并持有打开租约；UI 明确这是本地副本。
 - 若打开器退出可观察，按与编辑类似的变化检测执行；若平台打开器立即返回，租约采用心跳/宽限期和显式“检查更改”机制。
 - 默认不因外部程序可能写入而自动上传；用户明确选择同步时才建立 Job。
@@ -118,19 +121,19 @@
 
 ### S3-D07 `!` 一次性命令
 
-- 命令输入区显示当前活动栏是本地还是哪个 SSH Endpoint，以及工作目录。
-- 本地命令在当前本地 Location 执行；远端命令通过系统 OpenSSH 在当前远端目录执行。
-- 用户输入按其明确选择的 shell 语义执行，但 Location 切换和远端选择由程序单独控制，防止路径被当命令拼接。
-- 标准输出/错误采用有界流展示，可取消；退出码和超时明确显示。
+- 命令输入区显示当前活动栏是local还是哪个SSH Endpoint、canonical cwd、所用shell以及remote不支持cwd时的明确降级；命令须再次确认且为UTF-8、NUL/CR/LF-free单行≤32768 bytes。
+- local通过进程`Dir`设置cwd并以用户shell的`-c`、用户原文两个独立args direct exec；cwd不拼入command。
+- remote使用ADR-0001 exact `ssh -T` fresh-transport argv。app生成的唯一bootstrap只含受测POSIX byte-quoted canonical cwd；stdout byte0 marker成功前发送0 command bytes，成功后才把用户原文作为一行stdin并close。banner、custom/non-POSIX shell、unsafe/non-roundtrip path、cd/printf失败明确拒绝，不猜cwd且v1无interactive stdin。
+- stdout/stderr各1MiB ring并发持续drain；超限discard仍防阻塞并显示truncated/discarded count。取消/超时终止local ssh process group并关pipe；remote命令可能detach，结果标`remote effect unknown`，不能宣称终止。
 - 命令完成后刷新当前目录，任何文件变化都视为外部变化，不伪装成受管理 Job。
 - 工作区可保存命令偏好，但默认不保存命令输出；日志仍执行敏感信息脱敏。
 
 ### S3-D08 `gs` 交互 shell
 
-- 本地栏启动用户 shell 并切换到当前目录；远端栏启动系统 SSH 交互 shell并尝试进入当前远端目录。
-- TUI 在交互期间完整释放/恢复终端模式，守护进程和后台作业继续运行。
+- local栏以进程`Dir`进入用户shell。remote栏使用ADR-0001 exact fresh `ssh -tt`；默认home模式host后无command。current-cwd模式只在独立non-PTY POSIX/Q/cd capability probe成功后用最后恰一bootstrap，正式失败先恢复终端再明确offer home retry，不静默谎称cwd。
+- `gs`不capture/log terminal bytes。TUI保存termios，退出alternate/raw并把TTY/foreground pgrp交给ssh；正常/非零/信号返回后reacquire TTY、恢复termios/alternate/cursor、replay SIGWINCH并refresh。守护进程/后台Job继续运行。
 - shell 退出后重新握手终端能力、刷新两栏和抽屉，不依赖进入前的陈旧目录快照。
-- SSH shell 认证继续由系统 OpenSSH 负责；不复用或导出内部 Askpass 响应。
+- SSH认证继续由系统OpenSSH负责；fresh transport固定GSS delegation/ControlMaster off，不复用或导出Askpass响应，但remote same-euid既有cache仍是环境边界。
 - 不提供嵌入式终端滚屏、分屏或 shell 生命周期管理。
 
 ### S3-D09 异常恢复与诊断
@@ -182,10 +185,11 @@
 - [ ] 缓存配额、LRU、固定项、内容去重和活跃租约行为有确定测试。
 - [ ] 编辑无变化不上传；仅本地变化需确认；双方变化必进入冲突；判断不确定也不覆盖。
 - [ ] 编辑上传复用 Stage 2 Job，并在失败/重启后保留可恢复本地副本。
-- [ ] macOS/Linux 默认打开器均通过，立即返回的打开器不会导致过早逐出。
-- [ ] `!` 显示正确执行上下文，可取消并返回退出码；路径不通过字符串拼接注入命令。
-- [ ] `gs` 退出后终端、两栏、能力和作业状态正确恢复。
+- [ ] editor优先级/受限env lexer/PATH发现后absolute direct exec及macOS`/usr/bin/open`、Ubuntu`/usr/bin/xdg-open`通过；路径始终独立absolute arg，立即返回opener不导致过早逐出。
+- [ ] `!`覆盖local Dir+shell arg与remote exact fresh argv、byte-safe cwd/marker-before-input、32KiB、1MiB双stream持续drain、cancel/detach unknown/refresh；shell/路径失败发送0 command bytes。
+- [ ] `gs`覆盖home无command/current-cwd probe+显式fallback、`-tt`、TTY/foreground pgrp/SIGWINCH，以及正常/非零/信号后termios/alternate/cursor、两栏与Job正确恢复。
 - [ ] 日志、缓存元数据和配置中无认证秘密或无界文件内容。
+- [ ] Helper key custody/恢复、第一组 public key、撤销窗口与双 key 轮换演练有可审查证据；否则 Stage 4 Helper 分发保持关闭。
 
 ## 7. 测试矩阵
 
@@ -232,6 +236,7 @@ Stage 4 开始前必须记录：
 4. 外部命令参数化与日志脱敏规则。
 5. Stage 4 搜索结果如何进入 TUI，而不污染当前目录列表和缓存真相。
 6. Helper 的 tail/watch 如何复用预览边界而不绕过缓存/资源预算。
-7. 最后绿色命令、人工验证清单和仍保留的孤立编辑恢复限制。
+7. ADR-0010 的 key ID/public key、custody/恢复、撤销与双 key 轮换演练证据。
+8. 最后绿色命令、人工验证清单和仍保留的孤立编辑恢复限制。
 
 Helper 增强不得改变本阶段“无 Helper 仍可预览、编辑和传输”的基线。

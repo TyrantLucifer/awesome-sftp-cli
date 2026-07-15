@@ -1,15 +1,17 @@
 # Vim-first Two-pane SFTP Commander — Approved Design
 
-- **Status**: Approved for implementation planning
+- **Status**: Approved; Stage 0 implementation in progress
 - **Approval date**: 2026-07-14
+- **Last synchronized**: 2026-07-15
 - **Audience**: product, implementation, testing, security, and future continuation sessions
+- **Product / public command**: `AMSFTP` / `amsftp`
 - **Repository working title**: `awesome-mac-sftp`
 
 ## 1. Executive summary
 
 This product is a keyboard-first terminal file commander for people whose working files live across a local macOS or Linux machine and one or more Linux development hosts. It combines the speed and muscle memory of a Vim-style two-pane interface with reliable SFTP operations, local-editor and default-application workflows, durable background transfers, and full reuse of the user's existing OpenSSH setup—including Kerberos/GSSAPI authentication.
 
-The central architecture decision is to avoid reimplementing SSH. The local daemon launches the system `ssh` executable with a selected host alias and the SFTP subsystem, then attaches a Go SFTP client to the process's stdin/stdout. OpenSSH remains responsible for `~/.ssh/config`, `Include`, `Match`, host keys, `ProxyJump`, `ProxyCommand`, Kerberos, agents, tokens, and security policy. The application owns structured filesystem operations, presentation, job durability, conflict handling, preview/cache behavior, and optional capability negotiation.
+The central architecture decision is to avoid reimplementing SSH. The local daemon launches an ADR-0001 validated absolute OpenSSH executable—`/usr/bin/ssh` by default, never a `PATH` lookup—with a selected host alias and the SFTP subsystem, then attaches a Go SFTP client to the process's stdin/stdout. OpenSSH remains responsible for `~/.ssh/config`, `Include`, `Match`, host keys, `ProxyJump`, `ProxyCommand`, Kerberos, agents, tokens, and security policy. The application owns structured filesystem operations, presentation, job durability, conflict handling, preview/cache behavior, and optional capability negotiation.
 
 The product is delivered as vertical slices. Standard SFTP always works without remote deployment. Advanced remote behavior is provided by an explicitly approved, versioned, unprivileged helper invoked over SSH stdio; failure or absence of that helper must degrade to normal SFTP rather than break access.
 
@@ -37,7 +39,7 @@ The first user is the project owner. Defaults therefore optimize for a Vim workf
 3. **Durability before speed**: no optimization may weaken atomic commit, conflict checks, restart recovery, or move safety.
 4. **Capability, not assumption**: probe endpoint abilities and choose an explainable route; every optimization has a safe fallback.
 5. **Bounded resources**: previews, directory listings, searches, relays, logs, and queues are streamed and bounded.
-6. **No invisible remote footprint**: the helper is optional, versioned, auditable, unprivileged, and non-resident.
+6. **No unapproved application-managed remote footprint**: the helper is optional, versioned, auditable, unprivileged, and non-resident; SSH server/shell audit side effects remain environment behavior.
 7. **Documentation is state**: implementation is incomplete until code, tests, matrix, verification evidence, and handoff state agree.
 
 ### 2.4 Non-goals for 1.0
@@ -57,14 +59,15 @@ The first user is the project owner. Defaults therefore optimize for a Vim workf
 Supported entry paths are equivalent:
 
 ```text
-awesome-mac-sftp ~/Downloads devbox:/data/output
-awesome-mac-sftp --workspace release
-awesome-mac-sftp
+amsftp ~/Downloads devbox:/data/output
+amsftp devbox:/data/output
+amsftp --workspace release
+amsftp
 ```
 
 With no explicit locations, the client opens a fuzzy picker over saved workspaces, local locations, and hosts resolved from OpenSSH configuration. A workspace contains two independent pane locations plus view preferences, pinned cache policy, and non-secret endpoint references. Either pane may be local or connected to any remote, including two locations on the same host or two unrelated remotes.
 
-The public binary name is finalized in Stage 0. The examples use the repository working title and do not constrain the architecture.
+The public binary name is finalized as `amsftp` by ADR-0006. The repository working title remains historical metadata and does not constrain the architecture.
 
 ### 3.2 Screen layout
 
@@ -109,32 +112,33 @@ The editor flow is:
 
 1. acquire a cache lease for the remote object identity and baseline metadata;
 2. materialize or reuse content in the local content-addressed cache;
-3. suspend the terminal UI and launch `$EDITOR` (Vim is the default preference);
+3. suspend the terminal UI and resolve explicit config, `VISUAL`, `EDITOR`, then `nvim`/`vim`/`vi`; environment text uses a restricted no-expansion/operator lexer, PATH is discovery-only, and the selected absolute executable is direct-exec'd with the canonical cache path as an independent final argument;
 4. after exit, compare local content and current remote identity/metadata;
 5. if only local changed, show an upload plan; if both changed, enter conflict handling with diff/save-as/overwrite choices; if neither changed, do nothing;
 6. upload through the normal temporary-file, verify, and atomic-commit pipeline.
 
-The default-application flow uses the same lease and conflict rules. Because GUI launch semantics differ between macOS and Linux, platform adapters may use a watcher and an explicit return-to-application event, but they may never silently overwrite a concurrently modified remote file.
+The default-application flow uses the same lease and conflict rules. macOS uses absolute `/usr/bin/open`, Ubuntu uses `/usr/bin/xdg-open`, and custom openers use structured executable/argv configuration resolved to an absolute direct-exec target; the file path is never shell text. Because GUI launch semantics differ, platform adapters may use a watcher and an explicit return-to-application event, but they may never silently overwrite a concurrently modified remote file.
 
 ### 3.5 Shell commands
 
-`!` executes one explicit command at the focused location and returns captured, bounded output to the Log drawer. `gs` suspends the TUI and opens the user's shell locally or a system-SSH interactive session remotely, attempting to enter the focused directory using safely quoted arguments. This product does not implement terminal emulation.
+`!` executes one user-confirmed command at the focused location. Local execution sets process cwd and passes the command as the shell `-c` argument. Remote execution uses ADR-0001's fresh exact SSH argv and a byte-safe cwd bootstrap; no command bytes are sent until a byte-zero marker succeeds, then one bounded line is sent over stdin. Stdout/stderr use independent bounded rings that continue draining; cancellation may leave detached remote effects unknown and always triggers a refresh. `gs` either opens the local shell from process cwd or uses fresh `ssh -tt`: remote home has no command, while focused-cwd mode requires a separate capability probe and explicitly offers home retry on failure. The TUI transfers and restores termios, foreground process group, alternate screen, cursor, and SIGWINCH; it does not implement terminal emulation.
 
 ## 4. Process architecture
 
-### 4.1 One distribution, three roles
+### 4.1 One distribution, four dispatch roles
 
-The Go distribution supports three explicit roles:
+The Go distribution supports four explicit dispatch roles:
 
 - **TUI/CLI client**: input, rendering, fuzzy selection, external editor/opener coordination, and user prompts.
 - **Local per-user daemon**: sessions, workspace state, directory/search streams, cache, persistent jobs, scheduling, checkpoints, and logs.
+- **Short-lived askpass broker entry**: carries one bounded OpenSSH authentication challenge between the daemon/client boundary; it is not a resident service and never persists the answer.
 - **Remote helper invocation**: an optional versioned executable run on demand through SSH stdio; it never listens or remains resident.
 
 One Go program exposes explicit client, daemon, askpass, and remote-helper roles. Releases may contain OS/architecture-specific builds of that same program so a macOS client can install the matching Linux helper build, but there is no separate helper codebase or independently designed helper application. Role entry points do not change the trust boundaries.
 
 ### 4.2 Client-daemon IPC
 
-The daemon auto-starts on demand and listens only on a per-user Unix domain socket with owner-only permissions. Runtime paths follow platform conventions selected in Stage 0. Messages use a versioned, framed protocol with request IDs, cancellation, stream sequence numbers, structured error codes, and event replay boundaries. JSON is the initial readability-first encoding unless Stage 0 measurements prove it inadequate; protocol versioning is mandatory regardless of encoding.
+The daemon auto-starts on demand and listens only on a per-user Unix domain socket with owner-only permissions. Runtime paths and peer checks are frozen by ADR-0007. ADR-0005 freezes the wire format as a 4-byte uint32 big-endian length prefix, an 8 MiB maximum JSON payload, base64 for raw path bytes, and epoch+sequence event cursors; changing that encoding requires a new versioned ADR and compatibility tests rather than an implementation-time choice.
 
 The TUI contains no durable job authority. Closing or crashing the TUI does not cancel background work. On reconnect, the client fetches snapshots and resumes event streams from a durable or declared replay cursor.
 
@@ -151,7 +155,7 @@ The TUI contains no durable job authority. Closing or crashing the TUI does not 
 
 ### 4.4 Authentication broker
 
-The daemon spawns the user's system `ssh`; it never parses, imports, or stores private keys, Kerberos tickets, agent material, passwords, or one-time codes. To support a background process without a controlling terminal, the distribution exposes a short-lived `SSH_ASKPASS` broker entry point and launches SSH with the platform-required environment. The broker forwards a structured prompt over the owner-only local IPC channel to an attached TUI, receives one response, writes it to SSH, then discards it.
+The daemon spawns the ADR-0001 validated absolute system OpenSSH binary; it never parses, imports, or stores private keys, Kerberos tickets, agent material, passwords, or one-time codes. To support a background process without a controlling terminal, the distribution exposes a short-lived `SSH_ASKPASS` broker entry point and launches SSH with the platform-required environment. The broker forwards a structured prompt over the owner-only local IPC channel to an attached TUI, receives one response, writes it to SSH, then discards it.
 
 When no trusted client is attached, a job or session enters `waiting_auth`. It does not retry prompts in a loop, write secrets to logs, or fall back to an application credential store. Host-key prompts and changed-host-key failures remain OpenSSH decisions and are displayed distinctly.
 
@@ -186,13 +190,13 @@ Any helper protocol/version/capability error removes only the affected capabilit
 
 ## 6. SSH and SFTP transport
 
-For an SSH-config host alias, the daemon launches the equivalent of:
+For an SSH-config host alias, the daemon launches this exact argv contract:
 
 ```text
-ssh <host-alias> -s sftp
+<validated-absolute-ssh-path> -T -oEscapeChar=none -oForwardAgent=no -oForwardX11=no -oPermitLocalCommand=no -oClearAllForwardings=yes -oRemoteCommand=none -oStdinNull=no -oForkAfterAuthentication=no -oTunnel=no -oGSSAPIDelegateCredentials=no -s <validated-host-alias> sftp
 ```
 
-with noninteractive-safe arguments only where they preserve the user's policy. Its stdin/stdout are connected to a Go SFTP protocol client; stderr is captured separately as bounded, redacted diagnostic output. The application does not reconstruct hostname/user/port/proxy options already expressed by OpenSSH configuration.
+The default executable is `/usr/bin/ssh`; an enterprise override must be an explicit real absolute path whose complete owner/mode/ACL/no-symlink chain and final special bits are revalidated before every launch. Poisoned `PATH` cannot select it. Stdin/stdout connect to a Go SFTP client and stderr is bounded/redacted. Fixed arguments prevent TTY, escape processing, forwarding, local/remote commands, backgrounding, tunnels, null stdin, and new GSS credential delegation. They retain host-key, endpoint, GSSAPI/Kerberos authentication, local-agent use, IdentityFile, proxy, Match/Include, and ControlMaster policy. `ForwardAgent=no` does not prevent local-agent authentication; `GSSAPIDelegateCredentials=no` does not disable GSSAPI authentication. Standard SFTP may reuse a user ControlMaster; delegation/forwards already present on that transport remain an explicit trusted-user-config boundary and cannot be claimed as revoked. Helper and remote `!`/`gs` instead force fresh transports with ControlMaster/Path/Persist and GSS delegation disabled, as frozen by ADR-0001/0010.
 
 This design supports Kerberos/GSSAPI when the user's OpenSSH client and environment support it. The application does not promise to make an invalid or expired ticket work; it reports OpenSSH's auth state and can wait for user action. Connection pooling is endpoint- and policy-aware. Idle sessions may close without invalidating durable jobs; reconnect resumes only from a safe checkpoint.
 
@@ -283,13 +287,15 @@ Meeting the envelope requires incremental listing, virtualized rendering, bounde
 
 Helper installation is an explicit operation:
 
-1. probe remote OS, architecture, home location, and installability through normal SSH/SFTP;
-2. show the exact version, destination, checksum, requested permissions, and capabilities;
-3. after approval, upload to a temporary versioned path;
-4. verify SHA-256, set mode `0700`, and atomically install under a per-user application directory;
-5. invoke a protocol/capability handshake over SSH stdio.
+1. validate the current-policy canonical manifest/signature, revocation/denylist, protocol/min-client, and release floor without reading artifact bytes or touching the remote install tree;
+2. obtain preliminary consent for the Endpoint, `shared-session-stable-home` assertion, read-only binding probe, and possible sshd/audit side effects, explicitly stating that actual uid/home/path are not yet known; cancellation means zero probe;
+3. use fresh validated-absolute SSH and root-owned utilities to obtain non-root uid/cwd/OS/arch, treating cwd/RealPath only as compatibility preflight; then match target and apply Endpoint high-water;
+4. stream-verify the local artifact, derive the safe home/content-addressed path, enforce 255-byte components/1000-byte app paths, and read-only validate ancestors/create plan;
+5. obtain final consent showing the fresh observed non-root numeric uid (without inventing a username), target/path/create list/modes/hash/key/capabilities, and trust limits; cancellation or plan drift means zero app-tree create/content and requires a new probe/confirmation;
+6. only then create directories and exclusive-create the 44-byte CSPRNG temp, verify handle/path mode `0600` before the first byte, upload, client-readback expected+1, chmod `0700`, and standard no-replace publish; before every exec rerun current policy, fresh binding/high-water, ancestor/final/hash;
+7. launch with ADR-0010's fresh-transport restricted command string—GSS delegation and ControlMaster reuse disabled—then require byte-zero preface and the 65536-byte stderr cap. User paths/search options travel only as framed stdin data; same-uid remote environment remains a trust boundary.
 
-The helper never listens on a port, installs a service, escalates privileges, edits shell startup files, or runs outside the SSH user's permissions. Multiple compatible versions may coexist during upgrades. Version mismatch, missing executable, crash, truncated output, or unsupported capability is reported and downgraded without breaking SFTP browsing.
+The helper refuses remote uid 0 and never listens on a port, installs a service, escalates privileges, edits shell startup files, or runs outside the non-root SSH user's permissions. Multiple compatible versions may coexist during upgrades. Version mismatch, missing executable, custom/forced shell behavior, namespace mismatch, banner, crash, truncated output, or unsupported capability is reported and downgraded without breaking SFTP browsing. Remote root/admin, same-uid processes, login shell/startup configuration, shared-home mapping, ACL/LSM/export policy, and a malicious server remain explicit trust boundaries.
 
 Helper messages are length-bounded, versioned, cancellable, and treated as untrusted remote input. The daemon validates every path, size, checksum, sequence, and capability claim.
 
@@ -387,6 +393,8 @@ These choices do not alter the approved product design, but they depend on repos
 - helper artifact signing/distribution mechanism before helper work begins.
 
 Each choice requires a short comparison, a testability/security check, and an ADR when it constrains compatibility. None authorizes a change to the approved system-OpenSSH, daemon, transfer-safety, or helper trust boundaries.
+
+These choices were resolved on 2026-07-15 by [ADR-0006 through ADR-0010](../../architecture/overview.md). The ADRs freeze public identity and exact dependency pins, tcell/slog/SFTP boundaries, platform paths and IPC endpoint, pure-Go SQLite/migrations, supported OS/CI/package identifiers, and Helper Ed25519 distribution trust. They do not claim that the owning Stage 1–4 runtime features have been implemented.
 
 ## 16. Design acceptance
 

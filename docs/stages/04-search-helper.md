@@ -40,6 +40,7 @@
 - Stage 1–3 的标准 SFTP、守护进程会话、后台 Job、预览流、缓存预算和 TUI 抽屉保持为 Level 0 基线。
 - Helper 安装和调用必须继续使用系统 OpenSSH/SFTP 与现有认证边界，不建立第二套凭据或网络入口。
 - Helper 的 same-host copy、hash 和 tail/watch 必须接入既有 Planner、Job、Preview 与诊断接口，不能形成不可恢复旁路。
+- Helper 分发必须实现 [ADR-0010](../architecture/adr/0010-helper-artifact-trust-and-distribution.md)；Stage 3 应已交付第一组 public key/key ID、custody/恢复、撤销窗口与轮换演练。未满足时只允许推进 Level 0 SFTP 搜索基线。
 
 ### Level 0 — 标准 SFTP
 
@@ -58,7 +59,7 @@
 1. 能力来自当前 Helper 会话握手，不能仅凭文件存在推断。
 2. Helper 结果必须可追溯到 Endpoint、Helper 版本、请求 ID 和搜索范围。
 3. Helper 崩溃不会使 SFTP 会话失效；客户端自动标记降级并可继续基础操作。
-4. Helper 不接收本地认证秘密，不默认继承不必要环境变量。
+4. Helper的fresh ssh transport固定不请求GSS delegation、不复用ControlMaster；framed protocol不传入或持久化Askpass回答/ticket/agent内容，也不主动注入无关环境。remote same-euid既有cache、root/admin/server与登录环境仍是声明的信任边界，不能绝对声称远端“无任何secret”。
 5. 任何增强操作都遵守当前远端用户的文件权限和路径边界。
 
 ## 4. 详细交付物
@@ -66,35 +67,34 @@
 ### S4-D01 Helper 产物与 Manifest
 
 - 为受支持远端 OS/架构构建同一 Go 程序的 Helper 角色产物；它与客户端共享代码库和版本，但远端支持矩阵单独记录。
-- 每个产物有版本、协议范围、OS/架构、SHA-256、构建来源和能力 manifest。
-- 客户端内置或可信分发 manifest，不从未验证远端响应中接受新的预期校验和。
+- 每个产物的签名 distribution manifest 严格只含 ADR-0010 Manifest v1 固定字段；未知字段必须拒绝，不能把 provenance 或运行时能力临时塞入 v1。
+- 构建来源由 release provenance/attestation 记录；minor 兼容范围由版本兼容表记录，实际能力只在启动后的受限握手中声明。
+- 每个manifest使用ADR-0010 canonical bytes+Ed25519 detached signature；客户端只接受production内置trust set，绝不从remote响应学习hash/key。
+- 客户端同时执行每个协议/平台的 release floor、精确 artifact denylist 和已安装版本单调 high-water mark；全新安装也不得重放低于 floor 的旧但签名有效产物，break-glass 不得绕过撤销/denylist/floor。
 - Helper 与客户端版本不要求完全相同，但必须在协商的协议/能力范围内。
-- 可重复构建和供应链签名策略在 Stage 6 完成；本阶段至少保证本地产物校验链闭合。
+- Stage4只用`testdata` non-release Ed25519 fixture闭合parser/verifier/install/handshake与四target测试：fixture key只可由test-only constructor显式注入，production trust set永不接受；fixture private key/manifest/artifact不得进入installable binary、curated`dist/`归档或production helper asset，静态门禁扫描。repository与托管平台自动source archive可包含公开testdata fixture，不得误称production asset/secret。所有production helper assets/manifests在Stage4保持Planned/unpublishable。Stage6须先冻结Linux final unsigned bytes；Darwin须Developer ID+hardened runtime+timestamp+strict verify+notary`Accepted`并确认Accepted ZIP bytes后，受保护release job才生成/离线签manifest，再验证与final tar一致。Stage4不得给dev/pre-sign Darwin bytes生成production manifest或声称release-ready。
 
 ### S4-D02 用户批准的安装生命周期
 
-安装前客户端必须展示：
+安装有两个不同确认点。preliminary consent只展示Endpoint、manifest声明target、`shared-session-stable-home`含义、即将运行的read-only probe及可能的sshd/audit/atime/startup副作用，并明确observed uid/home/path尚未知；未确认不probe。final consent在probe与全部read-only plan完成后展示fresh observed non-root numeric uid、OS/arch/home、create目录、final/temp/mode、version/key/source/hash/floor/high-water、能力/移除与mapping/object/ACL边界；probe不解析/承诺username。plan任一字段变化必须重新确认，确认前app install tree零create/零content。
 
-- Endpoint 和实际远端用户。
-- 目标版本、OS/架构、安装目录、预计文件和权限。
-- SHA-256 和来源。
-- Helper 的安全边界、可获得能力、禁用/移除方式。
+执行顺序严格服从ADR-0010：
 
-执行顺序：
+1. current-policy parse/signature/revoke/denylist/protocol/`min_client`/floor；Stage4仅可使用test-only fixture，production asset不可发布。
+2. preliminary mapping/probe consent；default unknown、node-local/per-session/异构mapping保持Level0。
+3. SFTP验证root-owned `/usr/bin` utilities，再以validated absolute fresh ssh fixed probe取得non-root uid/cwd/OS/arch；PATH planted 0-hit，stdout byte0/4096与stderr65536边界。
+4. cwd/RealPath只作compatibility preflight；safe-home component≤255，target match后检查Endpoint high-water。
+5. 之后才local artifact expected+1/size≤128MiB/SHA-256；再派生≤1000-byte path，read-only逐级验证ancestor并列create plan。
+6. final actual-plan consent；取消或变化不得创建目录/temp/content。
+7. 确认后创建/复核exact0700目录，以44-byte CSPRNG basename和`O_EXCL`开temp；首byte前handle`Chmod(0600)`+handle/path attrs复核。写signed size、client expected+1回读复算，通过才chmod0700并standard no-replace publish；不posix-rename/delete-first，final重验。
+8. 每次enable/exec重跑current policy→fresh binding/target/high-water→ancestor/final/hash；helper argv含GSS delegation off与ControlMaster/Path/Persist off，最后恰一restricted string。byte0 preface、stderr cap与framed handshake通过才enabled；业务path/pattern只走stdin。
 
-1. 通过标准 SSH/SFTP 探测 OS、架构、home 和目标目录权限。
-2. 上传到唯一临时路径。
-3. 在可用机制下核对 SHA-256；至少由客户端回读/验证，不能只信上传成功。
-4. 设置仅当前用户可执行/访问的权限（目标可执行文件不宽于 `0700`）。
-5. 原子重命名到版本化路径，不覆盖正在使用版本。
-6. 通过 SSH stdio 启动并完成协议/能力握手。
-7. 仅在握手成功后把该版本标为可用。
-
-升级并行安装新版本，成功后切换；旧版本在无活跃会话后清理。移除只删除本项目版本化目录内已验证文件，不递归删除模糊路径。
+升级并行安装新版本，成功后切换；旧版本在无活跃会话后清理。移除只删除本项目版本化目录内已验证文件，不递归删除模糊路径。SFTP uid/mode 依赖受信 sshd/root/admin/ACL/LSM/export policy 如实执行普通 POSIX DAC，不能证明所有 other principal 都不可访问；same-euid/root/admin/server 主动进程属于信任边界。受管环境只有第二 principal 真实拒绝测试通过后才可声明用户隔离。扩大边界必须新增稳定 file-id/handle-publish 与可验证 authorization 能力 ADR。
 
 ### S4-D03 Helper 会话与协议
 
-- 客户端通过系统 OpenSSH 以参数化远端命令启动已知版本 Helper，通信只使用 stdio。
+- 客户端通过系统 OpenSSH 的精确**本地 argv**发送 ADR-0010 唯一受限 remote command string；明确承认服务端通常交给登录 shell `-c`，不把它误称为远端结构化 argv。通信只使用 stdio。
+- remote command 只由 fixed template + 本次 fresh probe 的 strict-safe canonical absolute home + 当前重新验签的 protocol/version/os/arch/hash typed fields组成；用户路径、文件名、搜索模式和 arbitrary manifest value 永不进入 command，全部作为 framed request data。
 - 首帧协商协议版本、最大帧、能力、路径/时间语义和资源限制。
 - 请求、流式结果、进度、部分完成、结构化错误和取消有明确关联。
 - 帧大小、结果数量、字符串长度、嵌套深度和并发请求有硬上限。
@@ -172,9 +172,12 @@
 
 ## 6. 可验证退出标准
 
-- [ ] 用户在安装前能看到并确认 Endpoint、路径、版本、校验和、权限和能力计划。
-- [ ] Helper 经临时上传、SHA-256 校验、`0700` 权限和原子版本化安装后才可启用。
-- [ ] Helper 不监听、不常驻、不提权，不接收或持久化本地认证秘密。
+- [ ] preliminary consent明确observed uid/path未知且取消时0 probe；final consent展示fresh numeric uid/actual plan且不伪称username，取消时0 app-tree create/content，任一manifest/probe/attrs变化强制重新probe/确认。
+- [ ] Stage4四target只用testdata non-release fixture；production verifier拒绝fixture key，installable binary/curated dist/production helper assets不含fixture材料（自动source archive除外），production manifests保持Planned直到Stage6 final bytes/sign-notary链。
+- [ ] Helper manifest 的 Ed25519 签名、key ID、key/artifact 撤销、OS/arch/protocol/`min_client`、canonical 数值版本、fresh-install 旧签名重放、release floor、high-water mark、同版本同/异 hash 和降级策略通过规范/负向/轮换测试；创建 temp 前拒绝分支保持 application-managed install tree 零创建/零内容写入，不把 sshd/shell审计副作用误写成整个远端零写。
+- [ ] Helper 经当前-policy Ed25519/撤销/denylist/floor/high-water、128 MiB/expected+1、显式 shared-session-stable-home policy、absolute root-owned utilities、non-root uid+SFTP/exec namespace compatibility、safe absolute home/component 与1000-byte路径上限、无可写祖先、exclusive-open 后首字节前 `Chmod(0600)`/双复核、上传前后 SHA-256、standard no-replace、每次 exec raw metadata 重验与受限 command-string 后才启用；不覆盖 final、不递归/模糊删除、不执行校验失败对象，也不误报 node/mount/object 或 ACL/same-euid/root/server 隔离保证。
+- [ ] validated absolute local ssh path、OpenSSH 8.9 shell `-c`、最后恰一 remote-command arg、uname 四个支持映射/未知值、poisoned PATH 0-hit、safe absolute home 与 component/path 255/256/1000/1001 边界、profile `cd /tmp`、SessionType/RemoteCommand、ForceCommand/custom shell/`sshrc` banner、SFTP `-d`/chroot、双节点同 path 异 bytes、stdout byte0 preface、stderr 65536/65537 和 client-upgrade revoke/floor 负向矩阵全部安全降级 Level 0。
+- [ ] Helper不监听/常驻/提权；fresh transport不请求GSS delegation、不复用ControlMaster，protocol/日志/DB不传入或持久化Askpass/ticket/agent内容；报告明确remote same-euid既有cache/root/server是环境边界。
 - [ ] 缺失、错误架构、被篡改、版本错配、协议畸形、超时和崩溃均安全降级 Level 0。
 - [ ] `f` 和 `g/` 都能流式显示、取消、限制范围与预算，并标识部分结果。
 - [ ] 百万节点夹具搜索不全量载入内存，取消延迟和资源占用符合阶段记录的预算。

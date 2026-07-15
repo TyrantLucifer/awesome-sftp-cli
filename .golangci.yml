@@ -1,0 +1,21 @@
+version: "2"
+run:
+  timeout: 5m
+linters:
+  default: none
+  enable:
+    - errorlint
+    - gosec
+    - govet
+    - ineffassign
+    - misspell
+    - nilerr
+    - staticcheck
+    - unconvert
+    - unparam
+formatters:
+  enable:
+    - gofmt
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

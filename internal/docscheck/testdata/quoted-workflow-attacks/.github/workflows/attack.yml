@@ -1,0 +1,14 @@
+name: quoted policy attacks
+"on":
+  "pull_request_target":
+"permissions": "write-all"
+jobs:
+  test:
+    "timeout-minutes": "5"
+    "permissions":
+      "contents": "write"
+    runs-on: ubuntu-24.04
+    steps:
+      - "uses": "actions/checkout@v7"
+        with:
+          "persist-credentials": "true"

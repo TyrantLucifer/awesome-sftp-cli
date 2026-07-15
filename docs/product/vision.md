@@ -1,9 +1,9 @@
 # Vim-first 双栏 SFTP Commander：产品愿景
 
-> - 工作名：`awesome-mac-sftp`
-> - 文档状态：设计已批准，尚未进入实现
+> - 产品名：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
+> - 文档状态：设计已批准，Stage 0 基础工程实施中
 > - 目标版本：1.0
-> - 最后更新：2026-07-14
+> - 最后更新：2026-07-15
 
 ## 1. 为什么要做
 
@@ -42,9 +42,9 @@
 启动方式同时覆盖直接路径、已保存工作区和交互式选择：
 
 ```text
-awesome-mac-sftp ~/Downloads devbox:/data/output
-awesome-mac-sftp --workspace release
-awesome-mac-sftp
+amsftp ~/Downloads devbox:/data/output
+amsftp --workspace release
+amsftp
 ```
 
 无参数启动时，从 `~/.ssh/config` 中提取可连接主机并模糊选择；工作区保存两个端点、路径和视图设置，但绝不保存密码、私钥或 Kerberos 票据。
@@ -71,7 +71,7 @@ awesome-mac-sftp
 
 只要系统有 OpenSSH 并且远端提供标准 SFTP，核心浏览、传输、恢复和有限搜索就必须可用。远端 helper 不是前置条件，只在用户明确批准后安装，用于高速遍历、内容搜索、强哈希、磁盘空间、tail/watch、同机复制和直传预检。
 
-helper 采用按用户安装的版本化可执行文件：先探测 OS/架构和目录，再展示安装计划，上传临时文件，校验 SHA-256，设为 `0700`，最后原子安装并完成协议/能力握手。它不监听端口、不常驻、不提权；崩溃、缺失或版本不匹配时必须安全降级到 SFTP。
+helper 采用按用户安装的版本化可执行文件，并服从两次确认：先按当前 policy 完成 Ed25519 验签、key/artifact 撤销、签名目标/协议/`min_client`、release floor 与兼容检查，再展示 preliminary mapping/probe consent；取消时必须产生零次 probe。获准后才做 fresh OS/架构/uid/home namespace probe、目标与安装 `(version, hash)` high-water 检查、本地产物校验并派生只读安装计划，再展示 final actual-plan consent；取消时 application-managed install tree 必须保持零 create/content。最终获准后才上传临时文件，上传前后均校验 SHA-256，设为 `0700`，最后 no-replace 原子安装并完成协议/能力握手。它不监听端口、不常驻、不提权；崩溃、缺失或版本不匹配时必须安全降级到 SFTP。
 
 ### 4.7 大规模不是事后优化
 

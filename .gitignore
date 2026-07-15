@@ -1,1 +1,6 @@
 .superpowers/
+.idea/
+.cache/
+bin/
+dist/
+coverage/
