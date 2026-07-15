@@ -184,6 +184,9 @@ def run_and_close(arguments, markers):
         app.wait_for(*markers)
         app.close()
     except Exception:
+        app._drain()
+        printable = bytes(byte for byte in app.output[-12000:] if byte in b"\n\r\t" or 32 <= byte < 127)
+        sys.stderr.write(printable.decode(errors="replace")[-4000:] + "\n")
         app.abort()
         raise
 

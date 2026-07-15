@@ -65,6 +65,15 @@ for user_name in "${client_user}" "${target_a}" "${target_b}"; do
   useradd --create-home --shell /bin/bash "${user_name}"
 done
 
+# OpenSSH rejects locked local accounts before evaluating authorized_keys on
+# the hosted Ubuntu runners. Give only the two SFTP targets random, test-local
+# passwords while every recovery sshd keeps password authentication disabled.
+recovery_account_password="$(openssl rand -hex 24)"
+printf '%s:%s\n%s:%s\n' \
+  "${target_a}" "${recovery_account_password}" \
+  "${target_b}" "${recovery_account_password}" | chpasswd
+unset recovery_account_password
+
 install -d -o root -g root -m 0755 "${root}"
 install -o root -g root -m 0755 "${AMSFTP_RECOVERY_BINARY}" "${installed}"
 
