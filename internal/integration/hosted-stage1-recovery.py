@@ -35,6 +35,13 @@ def terminal_screen_observed(observer, output, patterns, observe_after=0, column
     raise RuntimeError(f"VT observer failed with exit {result.returncode}: {result.stderr.decode(errors='replace')}")
 
 
+def terminate_if_running(pid):
+    try:
+        os.kill(pid, signal.SIGTERM)
+    except ProcessLookupError:
+        pass
+
+
 def run_self_test(observer):
     prelude = (
         b"\x1b[?2026h\x1b[30;13Hloading | caps:1@1 | sort:name\x1b[?2026l"
@@ -54,6 +61,7 @@ def run_self_test(observer):
     expected = (b"reconnected at nearest accessible parent", b"a-recovered-marker.txt")
     if not terminal_screen_observed(observer, bytearray(split_status), expected, observe_after=checkpoint):
         raise RuntimeError("transient split terminal status was not reconstructed")
+    terminate_if_running(2_147_483_647)
 
 
 if len(sys.argv) == 3 and sys.argv[1] == "--self-test":
@@ -406,7 +414,7 @@ def main():
         assert_private_runtime()
         app.close()
 
-        os.kill(new_daemon, signal.SIGTERM)
+        terminate_if_running(new_daemon)
         wait_until(lambda: not daemon_pids(), "final daemon exit")
     except Exception:
         app._drain()
