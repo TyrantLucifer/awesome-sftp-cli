@@ -47,6 +47,9 @@ if id "${client_user}" >/dev/null 2>&1; then
   userdel -r "${client_user}" >/dev/null 2>&1 || true
 fi
 useradd --create-home --shell /bin/bash "${client_user}"
+account_password="$(openssl rand -hex 24)"
+printf '%s:%s\n' "${client_user}" "${account_password}" | chpasswd
+unset account_password
 client_home="$(getent passwd "${client_user}" | cut -d: -f6)"
 
 rm -rf "${root}"
