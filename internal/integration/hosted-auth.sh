@@ -16,7 +16,7 @@ case "${root}" in
     exit 1
     ;;
 esac
-installed=
+installed=/usr/bin/amsftp-auth-test
 client_user=amsftp-client
 target_user=amsftp-target
 mfa_user=amsftp-mfa
@@ -27,9 +27,7 @@ cleanup() {
     kill -TERM -- "-${sshd_pid}" 2>/dev/null || true
     wait "${sshd_pid}" 2>/dev/null || true
   fi
-  if test -n "${installed}"; then
-    pkill -KILL -u "${client_user}" -f "${installed}" 2>/dev/null || true
-  fi
+  pkill -KILL -u "${client_user}" -f "${installed}" 2>/dev/null || true
   pkill -KILL -u "${client_user}" -x ssh-agent 2>/dev/null || true
 }
 trap cleanup EXIT
@@ -43,13 +41,11 @@ done
 
 rm -rf "${root}"
 install -d -o root -g root -m 0755 "${root}"
+install -o root -g root -m 0755 "${AMSFTP_AUTH_BINARY}" "${installed}"
 
 client_home="$(getent passwd "${client_user}" | cut -d: -f6)"
 target_home="$(getent passwd "${target_user}" | cut -d: -f6)"
 mfa_home="$(getent passwd "${mfa_user}" | cut -d: -f6)"
-installed="${client_home}/bin/amsftp-auth-test"
-install -d -o "${client_user}" -g "${client_user}" -m 0700 "${client_home}/bin"
-install -o "${client_user}" -g "${client_user}" -m 0700 "${AMSFTP_AUTH_BINARY}" "${installed}"
 password="$(openssl rand -hex 18)"
 mfa_password="$(openssl rand -hex 18)"
 key_passphrase="$(openssl rand -hex 18)"
