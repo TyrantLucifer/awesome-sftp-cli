@@ -8,7 +8,7 @@
 
 ### 当前实现边界
 
-本文主体描述 1.0 目标架构，不代表这些运行时组件已经存在。Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates. 当前实现与缺失证据见 [Stage 0 verification](../verification/stage-00.md)。
+本文主体描述 1.0 目标架构，不代表这些运行时组件已经存在。Stage 0 has completed and verified foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Stage 1 is not started. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates. 已完成证据见 [Stage 0 verification](../verification/stage-00.md)。
 
 ### 已冻结兼容与发行基线
 

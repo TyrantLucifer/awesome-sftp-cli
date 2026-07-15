@@ -2,14 +2,14 @@
 
 > - 产品：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
 > - 基线：已批准产品设计
-> - 实现状态：Stage 0 实施中；Stage 1–6 尚未开始
+> - 实现状态：Stage 0 已完成；Stage 1–6 尚未开始
 > - 最后更新：2026-07-15
 
 ## 1. 使用规则
 
 本矩阵是 1.0 交付范围的逐项事实源。每条能力使用稳定 ID；ID 一经进入矩阵不得复用，能力被取消时保留原行并将状态改为 `Removed`，同时链接对应 ADR。实现不得只在代码或聊天中增加能力而不更新本矩阵。
 
-Stage 0 行按当前证据使用 `In Progress`、`Implemented` 或 `Planned`；Stage 1–6 行仍为 `Planned`。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
+Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Planned`。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
 
 状态词义：
 
@@ -36,14 +36,14 @@ Stage 0 行按当前证据使用 `In Progress`、`Implemented` 或 `Planned`；S
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| CORE-001 | 单一程序、多运行角色 | 0 | Implemented | 同一 Go 程序具有稳定、互斥且可测试的 client、daemon、askpass 与 helper 角色分发边界；四个目标 OS/架构由同一源码构建，具体角色功能由所属后续阶段交付。 | 角色参数/退出码/流契约测试、四目标交叉构建及 darwin/arm64 本机 help/version 冒烟已通过；原生 Ubuntu/macOS CI 仍是 Stage 0 外部门禁。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
-| CORE-002 | 版本化本地 IPC envelope | 0 | Implemented | 冻结带协议版本、请求 ID、类型、载荷和结构化错误的 framed JSON 编解码与握手契约；不兼容版本在进入业务处理前被确定拒绝，实际 TUI↔daemon 连接由 Stage 1 交付。 | 信封、握手、帧、字节路径、取消与 fuzz 测试已本地通过；Stage 0 总门禁未完成。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
-| CORE-003 | Endpoint/Provider 统一契约 | 0 | Implemented | 冻结传输无关的只读 Provider、可选 MutableProvider、分页/游标和句柄契约，Fake 通过可复用 contract suite；LocalFS、SFTP 和 helper 在各自阶段接入同一套件。 | Provider 验证器、共享 contract suite 与 Fake conformance 已本地通过；Stage 0 总门禁未完成。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
-| CORE-004 | 能力协商模型 | 0 | Implemented | 冻结 SessionID、单调 generation、complete/unknown 语义和能力丢失错误；Fake 可确定复现 complete/incomplete、撤回与恢复，实际路由/UI 由后续阶段验证。 | 能力值对象、Provider contract、D3 session-local bookkeeping 与 E1 typed operation gating 已本地通过；Stage 0 总门禁未完成。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
-| CORE-005 | 可控 fake provider | 0 | Implemented | 测试 Provider 可确定注入延迟、gate、短读/短写、权限错误、断线、磁盘满、陈旧 stat 与非原子 rename 报告，且在并发/race 下可重复。 | Fake 基线与故障脚本 Groups A–E 已实现；完整 Task 8 在 Go 1.26.5/1.25.12、重复/race/fuzz 门禁和独立终审下通过，终审为零 High/Medium/Low findings。Stage 0 双平台总门禁尚未完成。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
-| CORE-006 | 配置 schema 与默认值 | 0 | Implemented | 配置有版本号、确定默认值、严格类型和可定位错误；未知安全关键字段不被静默忽略。 | 严格 schema、默认值、版本、未知字段与 deterministic clock 测试已本地通过；Stage 0 总门禁未完成。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
-| CORE-007 | 跨平台持续集成基线 | 0 | Implemented | 每次变更至少在 macOS 与 Linux 执行 build、unit、contract 和格式检查，Go race/fuzz 按阶段接入。 | 固定 SHA 的 CI/nightly workflow、双平台 native/oldstable、四目标构建、artifact/reproducibility/provenance、Dependabot 和本地 Make 门禁已实现并通过静态/策略复审；首轮 Hosted run 暴露 GNU Make 4.x 安全 `-I` 路径误判，回归修复已在本地双工具链通过，替代与最终 Hosted run 尚未完成。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
-| CORE-008 | 文档真相链 | 0 | Implemented | Vision、Feature Matrix、Stage Spec、Verification、Project State 可双向追溯；新会话按固定读取顺序恢复当前阶段。 | docscheck、持久计划及 Task 11 候选/审查证据已同步；两轮独立 cold-start audit 关闭 exact-command ledger 与 stale checkpoint 后复核 PASS。Stage 0 外部总门禁仍未完成。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
+| CORE-001 | 单一程序、多运行角色 | 0 | Verified | 同一 Go 程序具有稳定、互斥且可测试的 client、daemon、askpass 与 helper 角色分发边界；四个目标 OS/架构由同一源码构建，具体角色功能由所属后续阶段交付。 | 角色参数/退出码/流契约测试、四目标构建、darwin/arm64 本机 help/version 冒烟及 Hosted 四平台 native/oldstable 全部通过。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
+| CORE-002 | 版本化本地 IPC envelope | 0 | Verified | 冻结带协议版本、请求 ID、类型、载荷和结构化错误的 framed JSON 编解码与握手契约；不兼容版本在进入业务处理前被确定拒绝，实际 TUI↔daemon 连接由 Stage 1 交付。 | 信封、握手、帧、字节路径、取消、严格 UTF-8 和 fuzz 测试通过本地完整门禁与 Hosted quality/native 门禁。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
+| CORE-003 | Endpoint/Provider 统一契约 | 0 | Verified | 冻结传输无关的只读 Provider、可选 MutableProvider、分页/游标和句柄契约，Fake 通过可复用 contract suite；LocalFS、SFTP 和 helper 在各自阶段接入同一套件。 | Provider 验证器、共享 contract suite 与 Fake conformance 通过本地双工具链和 Hosted 门禁。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
+| CORE-004 | 能力协商模型 | 0 | Verified | 冻结 SessionID、单调 generation、complete/unknown 语义和能力丢失错误；Fake 可确定复现 complete/incomplete、撤回与恢复，实际路由/UI 由后续阶段验证。 | 能力值对象、Provider contract、D3 session-local bookkeeping 与 E1 typed operation gating 通过完整门禁。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
+| CORE-005 | 可控 fake provider | 0 | Verified | 测试 Provider 可确定注入延迟、gate、短读/短写、权限错误、断线、磁盘满、陈旧 stat 与非原子 rename 报告，且在并发/race 下可重复。 | Fake 故障脚本 Groups A–E、重复/race/fuzz、双工具链和独立终审全部通过，终审为零 High/Medium/Low findings。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
+| CORE-006 | 配置 schema 与默认值 | 0 | Verified | 配置有版本号、确定默认值、严格类型和可定位错误；未知安全关键字段不被静默忽略。 | 严格 schema、默认值、版本、未知字段与 deterministic clock 测试通过本地及 Hosted 门禁。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
+| CORE-007 | 跨平台持续集成基线 | 0 | Verified | 每次变更至少在 macOS 与 Linux 执行 build、unit、contract 和格式检查，Go race/fuzz 按阶段接入。 | 固定 SHA workflow、双平台 native/oldstable、四目标 build、八份独立缓存 reproducibility producer、compare 与 final provenance aggregation 在 Hosted run 29394698864 全部通过。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
+| CORE-008 | 文档真相链 | 0 | Verified | Vision、Feature Matrix、Stage Spec、Verification、Project State 可双向追溯；新会话按固定读取顺序恢复当前阶段。 | docscheck、持久计划和两轮独立 cold-start audit 均通过；完成证据与 Stage 1 M1.1 第一动作已归档。见 [Stage 0 verification](../verification/stage-00.md#core-evidence)。 |
 
 ## 4. 认证与信任链
 

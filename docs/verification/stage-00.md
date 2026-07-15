@@ -1,17 +1,18 @@
 # Stage 0 Verification Record
 
-- **Status**: In Progress
+- **Status**: Complete
 - **Updated**: 2026-07-15
 - **Repository root**: `/Users/bytedance/Documents/Codex/2026-07-14/wo-x/work/stage0-foundation`
 - **Branch**: `codex/stage0-foundation`
-- **Base and pre-commit verification HEAD**: `e14159cef930ffa513ebf6a9a5319f8f0fab1f9f`
+- **Foundation base**: `e14159cef930ffa513ebf6a9a5319f8f0fab1f9f`
+- **Verified implementation commit/tree**: `cf8e6efd2814d835f8c1f5c2739608477b5216ed` / `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5`
 - **Staging at evidence capture**: empty
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
 ## Current checkpoint
 
-The Go module, role/domain/IPC/Provider/Fake contracts, docscheck, Make/tooling, supply-chain checks and pinned workflows exist. Tasks1–10 have snapshot-scoped local reports/PASS reviews. Task11 repaired the whole-tree decision chain and focused Make/provenance/nightly/IPC findings. The first two replacement candidates failed local gates. The third candidate completed every local gate without pollution, but its whole-tree review found one Medium command-line override of Make's internal guard variables; that exact tree is therefore superseded too. The fix passed its one permitted re-review with no remaining High, Medium or Low finding. Post-fix replacement tree `c91ea59…` then passed the complete local gate without pollution. Both independent cold-start audit cycles are complete and their documentation gaps are closed. Final local closeout tree `5d598ee…` passed its evidence-only gate without pollution. The first Hosted implementation candidate `1da7254…` failed on a GNU Make 4.x safe-flag false positive and is superseded; its focused fix passes both local toolchains. A complete green replacement Hosted run and final closeout run are still missing.
+The Go module, role/domain/IPC/Provider/Fake contracts, docscheck, Make/tooling, supply-chain checks and pinned workflows exist. Tasks1–11, independent reviews, two cold-start audits, the dual-toolchain local gate and pollution checks are complete. Hosted attempt 1 exposed a GNU Make 4.x safe-flag false positive and is superseded. Its focused regression and minimal fix pass locally and are bound to implementation commit `cf8e6ef…`, tree `e70a8f0…`. Replacement Hosted run [`29394698864`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) passed all 23 jobs and published the complete artifact/provenance set. CORE-001–008 are Verified; Stage 0 is Complete and Stage 1 is unlocked but Not Started.
 
 At Task 11 review time, most new Stage 0 files were untracked relative to the base commit, so a plain `git diff` was not a complete review artifact. The review and closeout captures therefore used a temporary full-tree index, tracked patch, untracked-file manifest and content digest. The user-owned `.idea/` directory was classified as unrelated local IDE metadata, added to the root ignore policy, and preserved unchanged outside the product candidate.
 
@@ -34,7 +35,13 @@ Commit-readiness documentation is revalidated immediately before the authorized 
 
 The three failures had one root cause: GNU Make 4.x propagates a safe `-I` include path containing a space and `n` as an `I/path` or `-I/path` word in `MAKEFLAGS`, while the existing guard treated that option word as a short-option cluster and reported a forbidden dry-run flag. macOS GNU Make 3.81 does not expose the option in that form, so the prior local gate could not reproduce it. The regression test `TestCanonicalMakefileClassifiesSyntheticPropagatedFlags` first reproduced both GNU Make 4.x forms, then the Make helper was narrowed to exempt only `I%`/`-I%` option words while preserving short/clustered/dash/long dry-run detection.
 
-The replacement fix passed Go 1.26.5 `make ci` and exact Go 1.25.12 `make check` locally with external output directories at `/var/folders/l7/7379px6d495gzqjf6df3953m0000gn/T/amsftp-hosted-fix.DidhXr`. Log SHA-256 values are `7119159da8046236db4c5f2ba38406a8b7fc07da6b750d7e49d73092b43460ee` (`make-ci.log`) and `8a82c6e82b8d8ca2e7d44ced51021f715995df75ad81782473f747f37c11ad1e` (`oldstable-check.log`). This local evidence does not make attempt 1 green; a new exact-tree Hosted run is mandatory.
+The replacement fix passed Go 1.26.5 `make ci` and exact Go 1.25.12 `make check` locally on frozen tree `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5`, with evidence at `/var/folders/l7/7379px6d495gzqjf6df3953m0000gn/T/amsftp-hosted-fix-final.5yKPjp`. Log SHA-256 values are `9f210ed08fb4eabbcd7a305890d952efcce67d3d7a0b62ab042b7aa26ad857d2` (`make-ci.log`) and `b3d32bd9a99fb2092e652dbb5b2de3a32061ea4fe3b9ce35e39d049bbdbf04f9` (`oldstable-check.log`). Candidate/post tree and status were identical and native smoke passed.
+
+## Hosted implementation candidate attempt 2 — passed
+
+[CI run 29394698864](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) executed on 2026-07-15 for exact commit `cf8e6efd2814d835f8c1f5c2739608477b5216ed`, tree `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5`, on branch `codex/stage0-foundation`. All 23 jobs passed: quality; four native and four exact-oldstable platform jobs (`ubuntu-22.04`, `ubuntu-24.04`, `macos-15`, `macos-15-intel`); four target builds; eight independent-cache reproducibility builds; `reproducibility-compare`; and final [`compare`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864/job/87285699309).
+
+The run published 36 unexpired artifacts. The final compare downloaded 22 provenance artifacts plus the reproducibility comparison, verified the expected commit/tree/clean status and four accepted target hashes, then published [provenance-compare artifact 8334635589](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864/artifacts/8334635589), digest `sha256:5e0b1ce400c43c0156fa7c2ad1e4089e83c41708115de688a045f3678f337712`. The reproducibility comparison artifact `8334617155` has digest `sha256:e58475afb5741fd2b9a1d9608a3d8e17bf3c2807445acc8ee8670f870057da8b`; the quality provenance artifact `8334630055` has digest `sha256:03b5d893caedc45508902c26b4e765bb6e0f02a97625bac34d703e2fe5d96014`.
 
 ## Task 10 controller-run local checks
 
@@ -190,34 +197,31 @@ The four artifact hashes and `go version -m` metadata are identical to the table
 
 Cold-start audit 1 used only `docs/README.md` and its documented new-session reading order, without `.superpowers`, chat/Git history, network or file changes. It recovered the current stage and reason, replacement tree/evidence path, missing hosted evidence, conditional Stage 1 M1.1 action, IPC 1.0 framing/cursor/error rules, read-only Provider plus optional mutable facet and capability identity, and the non-production-ready boundary. It returned FAIL solely because the then-labelled exact command block left `ROOT`, `EVIDENCE_TMP`, `GO125` undefined and used an `<all cmd/internal Go files>` placeholder. The literal replay ledger above closed that gap.
 
-Cold-start audit 2 independently recovered the same facts and confirmed the literal ledger/evidence, but strictly returned FAIL on one stale Current checkpoint sentence that still said both audits remained. After that single sentence was corrected, the same independent Agent rechecked the reading chain and returned PASS with no blocking documentation gap. It confirmed Stage 0 remains In Progress, Stage 1 remains closed, the immediate post-closeout action is explicit authorization for exact-tree hosted CI, and the product remains non-production-ready. Neither audit modified files or used full CI, network, Git history or `.superpowers`.
+Cold-start audit 2 independently recovered the same facts and confirmed the literal ledger/evidence, but strictly returned FAIL on one stale Current checkpoint sentence that still said both audits remained. After that single sentence was corrected, the same independent Agent rechecked the reading chain and returned PASS with no blocking documentation gap. At that checkpoint it correctly confirmed Stage 0 remained In Progress and Stage 1 remained closed pending Hosted CI. Neither audit modified files or used full CI, network, Git history or `.superpowers`. The later green exact-tree Hosted run closes that external gate; the product remains non-production-ready.
 
-## External evidence still required
+## Deferred evidence outside the Stage 0 exit gate
 
-- Attempt 1 produced valid historical run/job/artifact links, but it is not a green implementation candidate and its passing jobs cannot attest the changed replacement tree.
-- All four native and all four oldstable legs must rerun and pass on the replacement implementation candidate.
-- Four-target build, two independent-cache replicas per target, reproducibility comparison and final provenance aggregation must pass on that same replacement tree.
-- After the evidence/status-only closeout commit, the entire final exact-tree CI must pass once more; its external check is reported in the handoff rather than self-referenced from the commit it verifies.
-- Native arm64 nightly runner availability — Not verified.
-- Docker-based supplemental Linux check — Not run; the installed client has no available daemon socket.
+- Native arm64 nightly runner availability — Not verified; Stage 6 must supply native Linux arm64 install/smoke evidence before a production support claim.
+- Docker-based supplemental Linux check — Not run; the installed client had no available daemon socket. Hosted native Ubuntu 22.04/24.04 jobs are the accepted Stage 0 Linux evidence.
+- The evidence/status-only closeout commit receives its own exact-tree CI attestation after push; that run is reported in the external handoff because a commit cannot self-reference its future run URL.
 
-Cross-compilation on macOS will not be treated as native Linux or Linux race evidence. Until the required exact-tree CI exists, Stage 0 remains In Progress and Stage 1 is closed.
+Cross-compilation on macOS is not treated as native Linux or Linux race evidence. Hosted run 29394698864 supplies the required native platform evidence for the verified implementation tree.
 
 ## CORE evidence
 
-| ID | Current state | Evidence and remaining gate |
+| ID | Result | Evidence |
 |---|---|---|
-| CORE-001 | Implemented | Role dispatch/buildinfo tests, four-target cross-builds, metadata checks, and native darwin/arm64 help/version smoke passed. Attempt 1 passed all four native and two macOS oldstable jobs, but the changed replacement tree must rerun all eight hosted legs. |
-| CORE-002 | Implemented | IPC envelope, handshake, frame, byte-path, cancellation and fuzz tests passed locally. Task 11 added strict UTF-8 encode/decode, canonical error-control and non-negative retry validation after independent review; replacement full/cross-platform stage gates remain. |
-| CORE-003 | Implemented | Provider validators, reusable contract suite and Fake conformance passed locally; final stage gate remains. |
-| CORE-004 | Implemented | Capability values/contracts plus D3 bookkeeping and E1 operation enforcement cover session generations, complete/incomplete withdrawal, restoration, new-session reset, and typed capability-loss errors locally; final stage gate remains. |
-| CORE-005 | Implemented | Deterministic Fake Groups A–E cover scripting, deterministic waits, short I/O, disk-full, non-atomic Rename, immutable history/stale Stat, atomic ReplaceNode, snapshot/session/capability transitions, handle epochs, reconnect, Disconnect, and permission/authorization precedence. Complete repeated/race/fuzz/cross-toolchain gates and an independent whole-task review passed locally; Stage 0's external platform gates remain. |
-| CORE-006 | Implemented | Strict schema/default/version tests and deterministic clock tests passed locally; final stage gate remains. |
-| CORE-007 | Implemented | Make, pinned tools, lint/supply-chain, native/oldstable/build/reproducibility/provenance workflows, nightly fuzz/concurrency, and Dependabot exist. Attempt 1 exercised Hosted build/reproducibility and six platform legs but exposed and closed a GNU Make 4.x safe-flag false positive; the replacement and final closeout Hosted runs remain. |
-| CORE-008 | Implemented | Docscheck and durable plans exist; candidate/gate/review/fix evidence is durable and the replacement local gate/evidence audit passed. Two independent cold-start audit cycles closed the literal-ledger and stale-checkpoint gaps and ended PASS; only the stage-wide external gate prevents Verified. |
+| CORE-001 | PASS | Role dispatch/buildinfo tests, four-target builds, metadata checks, native darwin/arm64 smoke and all eight Hosted native/oldstable legs passed. |
+| CORE-002 | PASS | IPC envelope, handshake, frame, byte-path, cancellation, strict UTF-8, canonical controls and fuzz tests passed local and Hosted gates. |
+| CORE-003 | PASS | Provider validators, reusable contract suite and Fake conformance passed local dual-toolchain and Hosted gates. |
+| CORE-004 | PASS | Capability values/contracts plus D3 bookkeeping and E1 operation enforcement cover session generations, complete/incomplete withdrawal, restoration, new-session reset and typed capability-loss errors. |
+| CORE-005 | PASS | Deterministic Fake Groups A–E, repeated/race/fuzz/cross-toolchain gates and independent whole-task review passed. |
+| CORE-006 | PASS | Strict schema/default/version/unknown-field behavior and deterministic clock tests passed local and Hosted gates. |
+| CORE-007 | PASS | Pinned workflows, every native/oldstable leg, four builds, eight reproducibility producers, comparison and final provenance aggregation passed run 29394698864. |
+| CORE-008 | PASS | Docscheck and durable plans passed; two independent cold-start audit cycles closed the literal-ledger and stale-checkpoint gaps and ended PASS. |
 
-No row is Verified at this checkpoint.
+All Stage 0 CORE rows are Verified.
 
 ## Immediate next action
 
-Commit and push the locally green GNU Make 4.x regression fix, then require the complete replacement exact-tree Hosted CI to pass. The user-owned `.idea/` drift remains preserved ignored metadata. The next action is not Stage1, and Stage 0 must remain In Progress until both the replacement implementation-candidate run and final evidence-only closeout run pass.
+Begin Stage 1 M1.1 in a separate implementation change: perform exact `tcell/v3 v3.4.0` dependency intake, then implement ADR-0007 Paths, single-instance lock and peer-UID boundaries test-first. The user-owned `.idea/` drift remains preserved ignored metadata. Stage 0 completion does not make the product usable or production-ready.

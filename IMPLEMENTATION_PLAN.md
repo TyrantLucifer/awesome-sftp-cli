@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0 正在实施；Stage 1–6 保持 Not Started，且在 Stage 0 全部门禁完成前不得开启。
+Stage 0 已完成；Stage 1–6 保持 Not Started。下一次功能实现从 Stage 1 的 M1.1 开始。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -12,9 +12,9 @@ Stage 0 正在实施；Stage 1–6 保持 Not Started，且在 Stage 0 全部门
 
 **Tests**: `make check`、`make lint`、`make supply-chain`、`make ci`；Go 1.25.12 oldstable；最低/当前 macOS/Linux 原生 CI 与四目标构建；协议兼容与 Fake Provider 契约测试；ADR 决策的版本/安全/可测试性审阅；文档链接、功能矩阵字段和严格阶段顺序检查；完整候选树污染检测与 cold-start audit。
 
-**Status**: In Progress
+**Status**: Complete
 
-**Current checkpoint**: 本地实现、独立审查、两轮 cold-start audit 与最终本地 closeout 均已完成。首轮 Hosted implementation-candidate run `29394164471` 绑定提交 `1da7254…`/树 `5880f05…`；四个 native、两个 macOS oldstable、四目标 build 和独立缓存 reproducibility compare 通过，但 `quality` 与两个 Ubuntu oldstable 因 GNU Make 4.x 安全 `-I` 路径误判而失败，该提交已作废。合成 GNU Make 4.x 表示的回归测试先红后绿，最小分类修复已通过本地 Go 1.26.5 `make ci` 与精确 Go 1.25.12 `make check`。替代 implementation-candidate Hosted run 与其后的 evidence-only final run 尚未完成，Stage 0 保持 In Progress，Stage 1 保持关闭。
+**Current checkpoint**: 本地实现、独立审查、两轮 cold-start audit 与最终本地 closeout 均已完成。首轮 Hosted run `29394164471` 暴露并固定了 GNU Make 4.x 安全 `-I` 路径误判。修复提交 `cf8e6efd2814d835f8c1f5c2739608477b5216ed`、树 `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5` 的替代 Hosted run [`29394698864`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) 随后 23/23 作业通过：四个 native、四个 oldstable、quality、四目标 build、八个独立缓存 reproducibility producer、compare 与最终 provenance aggregation 均为绿色。Stage 0 的 CORE-001–008 已有可追溯完成证据；Stage 1 已解锁但尚未开始。
 
 ## Stage 1: Read-only Explorer
 

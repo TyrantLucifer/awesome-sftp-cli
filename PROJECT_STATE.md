@@ -1,14 +1,14 @@
 # Project State
 
 - **Updated**: 2026-07-15
-- **Lifecycle**: Stage 0 foundation implementation in progress
-- **Active stage**: Stage 0 — Foundation and Knowledge
+- **Lifecycle**: Stage 1 read-only explorer not started
+- **Active stage**: Stage 1 — Read-only Explorer
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
 
-The approved design now has a Go foundation implementation in the isolated `codex/stage0-foundation` worktree. Module/toolchain, role dispatch, domain/config/clock, framed IPC, Provider contracts, deterministic Fake base, docscheck, Make/tooling, supply-chain checks, and pinned CI/reproducibility workflows exist. Tasks 1–10 are implemented; their frozen code partitions passed independent review and the prior Bash 3.2 local acceptance block. Task 11 then repaired whole-tree SQLite, remote-shell, Helper-install, release, Make, provenance, nightly-workload and IPC truth-chain gaps. The first two post-remediation candidates (`d30a1f4…`, `6f33b11a…`) failed their local gates. The third candidate (`4b60326…`) completed its entire local gate without pollution, but its independent whole-tree review found one Medium command-line override of Make's internal guards, so that exact tree is also superseded. The guard fix and sole fix re-review pass with no remaining High, Medium or Low finding. The post-fix replacement candidate (`c91ea59…`) passed the entire Bash 3.2 local gate without pollution on Go 1.26.5 and 1.25.12, and an independent evidence audit passed. Cold-start audit 1 recovered every requested fact and exposed only a placeholder command ledger; after that ledger was made literal, cold-start audit 2 found one stale checkpoint sentence, whose minimal fix then passed recheck. Both independent audit cycles are complete. Final local closeout tree `5d598ee…` also passed its evidence-only gate without pollution. The first Hosted CI implementation-candidate run for commit `1da7254…` failed `quality` and both Ubuntu oldstable jobs because GNU Make 4.x propagated a safe `-I` path containing `n` in a form the Make guard misclassified; all four native jobs, both macOS oldstable jobs, four builds and independent reproducibility comparison passed. That commit is superseded. A focused cross-version regression and minimal Make classification fix now pass local Go 1.26.5 `make ci` and exact Go 1.25.12 `make check`; the replacement Hosted run remains, so Stage 0 stays In Progress and Stage 1 stays closed.
+The approved design now has a verified Go foundation on branch `codex/stage0-foundation`. Module/toolchain, role dispatch, domain/config/clock, framed IPC, Provider contracts, deterministic Fake base, docscheck, Make/tooling, supply-chain checks, and pinned CI/reproducibility workflows exist. Tasks 1–11, independent reviews, two cold-start audit cycles, local dual-toolchain gates and pollution checks are complete. The first Hosted run `29394164471` exposed a GNU Make 4.x safe `-I` propagation false positive and was superseded. The focused regression and minimal fix are committed as `cf8e6efd2814d835f8c1f5c2739608477b5216ed`, tree `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5`; replacement Hosted run [`29394698864`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) passed all 23 jobs, including every native/oldstable leg, quality, four builds, eight independent reproducibility producers, comparison and final provenance aggregation. CORE-001–008 are Verified and Stage 0 is Complete. Stage 1 is unlocked but Not Started.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -36,17 +36,17 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Commit and push the locally green GNU Make 4.x classification fix as a replacement implementation candidate, then require an exact-tree Hosted CI pass across all eight native/oldstable legs, artifact handoff, reproducibility and provenance. If that run is green, restrict the closeout delta to the documented evidence/status allowlist and require one final exact-tree CI pass before marking Stage 0 Complete or beginning Stage 1.
+Begin Stage 1 M1.1 only in a dedicated implementation change: perform the exact `tcell/v3 v3.4.0` dependency intake, then implement ADR-0007 Paths, single-instance lock and peer-UID boundaries test-first. Do not infer production readiness from the Stage 0 foundation.
 
 ## Required reading for the next session
 
 1. [Documentation map](docs/README.md)
-2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 0
-3. [Feature matrix](docs/product/feature-matrix.md), Stage 0 rows
-4. [Stage 0 specification](docs/stages/00-foundation.md)
-5. [Stage 0 verification](docs/verification/stage-00.md)
+2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 1
+3. [Feature matrix](docs/product/feature-matrix.md), Stage 1 rows
+4. [Stage 1 specification](docs/stages/01-read-only-explorer.md)
+5. [Stage 0 verification](docs/verification/stage-00.md), as the completed foundation handoff
 6. [Approved design](docs/superpowers/specs/2026-07-14-vim-first-sftp-commander-design.md)
-7. ADRs referenced by Stage 0
+7. ADRs referenced by Stage 1
 
 ## Validation record
 
@@ -54,7 +54,7 @@ The current command/result ledger is [Stage 0 verification](docs/verification/st
 
 Task 11 focused revalidation now also passes: the final cross-document decision review is clean; GNU Make 3.81 rejects late/continued execution flags, target-specific controls, internal-guard command-line overrides and `-e` environment overrides while preserving all 14 forced guards and 11 Go probes and accepting safe output-directory assignments. Provenance policy binds actual artifact hashes and target tuples to comparison evidence, requires `-buildvcs=false` for cross/repro builds, compares canonical shell content with exact semantic whitespace, and fixes nightly fuzz/concurrency workloads into the producer profile. IPC envelope/control JSON is strict UTF-8 on decode and encode; Code/Retry/Effect are canonical and retry delay is non-negative while raw error paths remain base64 diagnostic context. Focused package/race/vet/lint/docscheck checks and independent re-reviews passed with staging empty.
 
-The accepted final pre-Hosted local closeout checkpoint is tree `5d598eea00fac2b5580bc04596d2bb2c435f4799` at `/private/var/folders/l7/7379px6d495gzqjf6df3953m0000gn/T/amsftp-stage0-final.b5i0FK`; its compact attestation and the earlier exact replay ledger are in Stage 0 verification. Hosted run [29394164471](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394164471) bound commit `1da725478aa772ebc408885427df23f3b9f4c53c` and tree `5880f05d52d618a9b128a37f6925467666fe7cc8`, but is permanently superseded by its GNU Make 4.x false-positive fix. The replacement local logs are at `/var/folders/l7/7379px6d495gzqjf6df3953m0000gn/T/amsftp-hosted-fix.DidhXr`; Go 1.26.5 `make ci` and exact Go 1.25.12 `make check` passed. A complete green replacement run and final closeout run remain. Cross-compilation is not native evidence. The prior Task 9 clean-main result remains revoked; its correct-root replacement remains accepted only for that snapshot.
+The accepted final pre-Hosted local closeout checkpoint is tree `5d598eea00fac2b5580bc04596d2bb2c435f4799` at `/private/var/folders/l7/7379px6d495gzqjf6df3953m0000gn/T/amsftp-stage0-final.b5i0FK`; its compact attestation and the earlier exact replay ledger are in Stage 0 verification. Hosted run [29394164471](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394164471) bound commit `1da725478aa772ebc408885427df23f3b9f4c53c` and tree `5880f05d52d618a9b128a37f6925467666fe7cc8`, but is permanently superseded. The fixed candidate's final local evidence is at `/var/folders/l7/7379px6d495gzqjf6df3953m0000gn/T/amsftp-hosted-fix-final.5yKPjp`; Go 1.26.5 `make ci` and exact Go 1.25.12 `make check` passed on tree `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5`. Replacement Hosted run [29394698864](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) bound that exact tree and passed 23/23 jobs. Its final comparison artifact is [provenance-compare 8334635589](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864/artifacts/8334635589), digest `sha256:5e0b1ce400c43c0156fa7c2ad1e4089e83c41708115de688a045f3678f337712`. Cross-compilation is not native evidence; the run's native legs provide the platform proof. The prior Task 9 clean-main result remains revoked; its correct-root replacement remains accepted only for that snapshot.
 
 ## Known constraints and deliberately deferred choices
 
