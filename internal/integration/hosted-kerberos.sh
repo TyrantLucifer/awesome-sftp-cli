@@ -22,6 +22,7 @@ client_user=amsftp-krb-client
 installed=/usr/bin/amsftp-kerberos-test
 kdc_pid=
 sshd_pid=
+state_home="/var/lib/amsftp-kerberos-state"
 
 stop_group() {
   local pid="$1"
@@ -36,6 +37,7 @@ cleanup() {
   stop_group "${kdc_pid}"
   pkill -KILL -u "${client_user}" -f "${installed}" 2>/dev/null || true
   rm -f "${installed}"
+  rm -rf "${state_home}"
   if id "${client_user}" >/dev/null 2>&1; then
     userdel -r "${client_user}" >/dev/null 2>&1 || true
   fi
@@ -51,6 +53,7 @@ account_password="$(openssl rand -hex 24)"
 printf '%s:%s\n' "${client_user}" "${account_password}" | chpasswd
 unset account_password
 client_home="$(getent passwd "${client_user}" | cut -d: -f6)"
+install -d -o "${client_user}" -g "${client_user}" -m 0700 "${state_home}"
 
 rm -rf "${root}"
 install -d -o root -g root -m 0755 "${root}"
@@ -275,6 +278,7 @@ run_case() {
   set +e
   runuser -u "${client_user}" -- env -i \
     HOME="${client_home}" \
+    XDG_STATE_HOME="${state_home}" \
     PATH=/usr/bin:/bin \
     TERM=xterm-256color \
     KRB5_CONFIG="${krb5_config}" \

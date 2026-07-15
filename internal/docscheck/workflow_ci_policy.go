@@ -145,8 +145,12 @@ func jobHasTrustedQualityPrefix(job workflowJob) bool {
 		!stepIsExactCheckout(job.steps[0]) || !stepIsExactCurrentSetupGo(job.steps[1]) {
 		return false
 	}
+	offset := trustedPersistentTestRootOffset(job.steps)
+	if len(job.steps) < 6+offset {
+		return false
+	}
 	for index, target := range []string{"check", "lint", "fuzz-smoke", "supply-chain"} {
-		step := job.steps[index+2]
+		step := job.steps[index+2+offset]
 		if !stepExecutesMakeTarget(job, step, target) || !stepHasTrustedMakeEnvironment(job, step, "quality", target) {
 			return false
 		}
@@ -164,30 +168,34 @@ func trustedNativePrefixCredit(job workflowJob) nativePrefixCredit {
 		!stepIsExactCheckout(job.steps[0]) || !stepIsExactCurrentSetupGo(job.steps[1]) {
 		return credit
 	}
+	offset := trustedPersistentTestRootOffset(job.steps)
+	if len(job.steps) < 11+offset {
+		return credit
+	}
 
 	makeCredits := []*bool{&credit.fmtCheck, &credit.vet, &credit.test, &credit.testContract, &credit.testRace}
 	for index, target := range []string{"fmt-check", "vet", "test", "test-contract", "test-race"} {
-		step := job.steps[index+2]
+		step := job.steps[index+2+offset]
 		if !stepExecutesMakeTarget(job, step, target) || !stepHasTrustedMakeEnvironment(job, step, "native", target) {
 			return credit
 		}
 		*makeCredits[index] = true
 	}
 
-	directory, ok := trustedMkdirPath(job, job.steps[7])
+	directory, ok := trustedMkdirPath(job, job.steps[7+offset])
 	if !ok || directory != nativeDirectory || !isRunnerTempPath(directory) {
 		return credit
 	}
-	build, ok := trustedGoBuild(job, job.steps[8], false)
+	build, ok := trustedGoBuild(job, job.steps[8+offset], false)
 	if !ok || !build.trimpath || build.output != nativeOutput || !isRunnerTempPath(build.output) {
 		return credit
 	}
 	credit.build = true
-	if !stepExecutesExactBinaryFlag(job, job.steps[9], build.output, "--help") {
+	if !stepExecutesExactBinaryFlag(job, job.steps[9+offset], build.output, "--help") {
 		return credit
 	}
 	credit.help = true
-	if !stepExecutesExactBinaryFlag(job, job.steps[10], build.output, "--version") {
+	if !stepExecutesExactBinaryFlag(job, job.steps[10+offset], build.output, "--version") {
 		return credit
 	}
 	credit.version = true
@@ -199,7 +207,11 @@ func jobHasTrustedOldstablePrefix(job workflowJob) bool {
 		!stepIsExactCheckout(job.steps[0]) || !stepIsExactOldstableSetupGo(job.steps[1]) {
 		return false
 	}
-	step := job.steps[2]
+	offset := trustedPersistentTestRootOffset(job.steps)
+	if len(job.steps) < 3+offset {
+		return false
+	}
+	step := job.steps[2+offset]
 	return stepExecutesOldstableMakeTarget(job, step, "check") && stepHasTrustedMakeEnvironment(job, step, "oldstable", "check")
 }
 
@@ -247,6 +259,24 @@ func stepIsExactOldstableSetupGo(step workflowStep) bool {
 			"cache":                 "true",
 			"cache-dependency-path": setupGoCacheDependencyPath,
 		})
+}
+
+func stepPreparesTrustedPersistentTestRoot(step workflowStep) bool {
+	const script = `set -euo pipefail
+if test "${RUNNER_OS}" = Linux; then
+  sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+  sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+fi`
+	return step.name != nil && step.name.value == "Prepare trusted persistent test root" &&
+		step.run != nil && strings.TrimSpace(step.run.value) == script &&
+		stepHasOnlyKeys(step, "name", "run")
+}
+
+func trustedPersistentTestRootOffset(steps []workflowStep) int {
+	if len(steps) > 2 && stepPreparesTrustedPersistentTestRoot(steps[2]) {
+		return 1
+	}
+	return 0
 }
 
 func mappingHasExactScalars(node *policyYAMLNode, want map[string]string) bool {

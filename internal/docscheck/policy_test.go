@@ -1015,6 +1015,28 @@ func TestCIRequiredCommandCreditRejectsUnapprovedEnvironmentKeys(t *testing.T) {
 	}
 }
 
+func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) {
+	const step = `      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          if test "${RUNNER_OS}" = Linux; then
+            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+          fi
+`
+	root := prepareFixture(t, "valid")
+	path := filepath.Join(root, ".github", "workflows", "ci.yml")
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(content), "      - run: make check\n", step+"      - run: make check\n", 1)
+	if updated == string(content) {
+		t.Fatal("quality make check anchor not found")
+	}
+	assertNoWorkflowRule(t, ".github/workflows/ci.yml", updated, "workflow.ci_quality")
+}
+
 func TestCIMakeControlEnvironmentPrecedence(t *testing.T) {
 	const (
 		path        = ".github/workflows/ci.yml"

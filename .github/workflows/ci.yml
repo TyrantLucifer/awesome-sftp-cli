@@ -26,6 +26,13 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          if test "${RUNNER_OS}" = Linux; then
+            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+          fi
       - run: make check
         env:
           BUILD_DIR: ${{ runner.temp }}/quality/build
@@ -196,6 +203,13 @@ jobs:
           go-version-file: go.mod
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          if test "${RUNNER_OS}" = Linux; then
+            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+          fi
       - run: make fmt-check
       - run: make vet
       - run: make test
@@ -279,6 +293,13 @@ jobs:
           go-version: 1.25.12
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          if test "${RUNNER_OS}" = Linux; then
+            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+          fi
       - run: make check
         env:
           BUILD_DIR: ${{ runner.temp }}/oldstable/build

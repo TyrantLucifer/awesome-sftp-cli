@@ -21,6 +21,7 @@ client_user=amsftp-client
 target_user=amsftp-target
 mfa_user=amsftp-mfa
 sshd_pid=
+state_home="/var/lib/amsftp-auth-state"
 
 cleanup() {
   if test -n "${sshd_pid}"; then
@@ -30,6 +31,7 @@ cleanup() {
   pkill -KILL -u "${client_user}" -f "${installed}" 2>/dev/null || true
   pkill -KILL -u "${client_user}" -x ssh-agent 2>/dev/null || true
   rm -f "${installed}"
+  rm -rf "${state_home}"
 }
 trap cleanup EXIT
 
@@ -50,6 +52,7 @@ mfa_home="$(getent passwd "${mfa_user}" | cut -d: -f6)"
 password="$(openssl rand -hex 18)"
 mfa_password="$(openssl rand -hex 18)"
 key_passphrase="$(openssl rand -hex 18)"
+install -d -o "${client_user}" -g "${client_user}" -m 0700 "${state_home}"
 printf '%s:%s\n%s:%s\n' "${target_user}" "${password}" "${mfa_user}" "${mfa_password}" | chpasswd
 
 install -d -o "${client_user}" -g "${client_user}" -m 0700 "${client_home}/.ssh"
@@ -270,6 +273,7 @@ preflight_sftp_transport() {
   local preflight_stderr="${client_home}/preflight-${alias_name}.stderr"
   if ! runuser -u "${client_user}" -- env -i \
     HOME="${client_home}" \
+    XDG_STATE_HOME="${state_home}" \
     PATH=/usr/local/bin:/usr/bin:/bin \
     /usr/bin/timeout 10 /usr/bin/ssh \
       -T -oEscapeChar=none -oForwardAgent=no -oForwardX11=no \
@@ -299,6 +303,7 @@ run_case() {
   set +e
   runuser -u "${client_user}" -- env -i \
     HOME="${client_home}" \
+    XDG_STATE_HOME="${state_home}" \
     PATH=/usr/local/bin:/usr/bin:/bin \
     TERM=xterm-256color \
     AMSFTP_DIAGNOSTIC="${diagnostic}" \
@@ -342,6 +347,7 @@ run_case() {
     set +e
     runuser -u "${client_user}" -- env -i \
       HOME="${client_home}" \
+      XDG_STATE_HOME="${state_home}" \
       PATH=/usr/local/bin:/usr/bin:/bin \
       /usr/bin/timeout --signal=TERM 2 "${installed}" daemon \
       </dev/null >"${daemon_diagnostic}" 2>&1
@@ -382,7 +388,7 @@ EOF
 chown "${client_user}:${client_user}" "${include_directory}/included.conf"
 chmod 0600 "${include_directory}/included.conf"
 write_config "Include ${include_directory}/*.conf
-Match host auth-include-match
+Match originalhost auth-include-match
   IdentityFile ${client_home}/.ssh/client_key
   IdentitiesOnly yes
   PreferredAuthentications publickey"
@@ -523,7 +529,7 @@ run_case host-key-changed failure auth-host-key-changed "${target_home}" endpoin
 test "$(sha256sum "${changed_known_hosts}" | cut -d' ' -f1)" = "${changed_known_hosts_digest}"
 
 for secret in "${password}" "${mfa_password}" "${key_passphrase}"; do
-  if find "${root}" "${client_home}" -type f -readable -exec grep -IlF -- "${secret}" {} + | grep -q .; then
+  if find "${root}" "${client_home}" "${state_home}" -type f -readable -exec grep -IlF -- "${secret}" {} + | grep -q .; then
     printf 'authentication plaintext persisted in test-owned files\n' >&2
     exit 1
   fi

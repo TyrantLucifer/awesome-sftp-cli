@@ -100,7 +100,16 @@ def main():
     binary = os.path.realpath(sys.argv[1])
     if not os.path.isabs(binary) or not os.access(binary, os.X_OK):
         raise SystemExit("amsftp binary must be an executable absolute path")
-    root = tempfile.mkdtemp(prefix="amsftp-pty-")
+    persistent_root = os.environ.get("AMSFTP_TEST_PERSISTENT_ROOT")
+    if persistent_root is None and sys.platform.startswith("linux"):
+        candidate = "/var/lib/amsftp-tests/%d" % os.geteuid()
+        if os.path.isdir(candidate):
+            persistent_root = candidate
+    if persistent_root is not None:
+        persistent_root = os.path.realpath(persistent_root)
+        if not os.path.isabs(persistent_root) or not os.path.isdir(persistent_root):
+            raise SystemExit("AMSFTP_TEST_PERSISTENT_ROOT must be an existing absolute directory")
+    root = tempfile.mkdtemp(prefix="amsftp-pty-", dir=persistent_root)
     daemon_group = None
     try:
         home = os.path.join(root, "home")

@@ -2,6 +2,9 @@ package testkit
 
 import (
 	"os"
+	"path/filepath"
+	"runtime"
+	"strconv"
 	"testing"
 )
 
@@ -10,11 +13,24 @@ import (
 // resolves beneath sticky /tmp on Linux, which persistent storage must reject.
 func PersistentTempDir(t testing.TB) string {
 	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("resolve home directory for persistent test storage: %v", err)
+	base := os.Getenv("AMSFTP_TEST_PERSISTENT_ROOT")
+	if base == "" && runtime.GOOS == "linux" {
+		candidate := filepath.Join("/var/lib/amsftp-tests", strconv.Itoa(os.Geteuid()))
+		if info, err := os.Stat(candidate); err == nil && info.IsDir() {
+			base = candidate
+		}
 	}
-	path, err := os.MkdirTemp(home, ".amsftp-test-")
+	if base == "" {
+		var err error
+		base, err = os.UserHomeDir()
+		if err != nil {
+			t.Fatalf("resolve home directory for persistent test storage: %v", err)
+		}
+	}
+	if !filepath.IsAbs(base) || filepath.Clean(base) != base {
+		t.Fatalf("persistent test root must be canonical absolute: %q", base)
+	}
+	path, err := os.MkdirTemp(base, ".amsftp-test-")
 	if err != nil {
 		t.Fatalf("create persistent test directory: %v", err)
 	}
