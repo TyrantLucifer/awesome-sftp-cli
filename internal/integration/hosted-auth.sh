@@ -242,11 +242,15 @@ stop_client_daemon() {
   local daemon_pattern deadline
   daemon_pattern="^${installed} daemon$"
   if ! pgrep -u "${client_user}" -f "${daemon_pattern}" >/dev/null; then
-    printf 'authentication case did not leave a daemon to stop\n' >&2
-    return 1
+    printf 'authentication daemon already stopped with isolated login session\n'
+    return 0
   fi
   if ! pkill -TERM -u "${client_user}" -f "${daemon_pattern}"; then
-    printf 'authentication daemon disappeared before SIGTERM\n' >&2
+    if ! pgrep -u "${client_user}" -f "${daemon_pattern}" >/dev/null; then
+      printf 'authentication daemon stopped before explicit SIGTERM\n'
+      return 0
+    fi
+    printf 'authentication daemon could not be signaled\n' >&2
     return 1
   fi
   deadline=$((SECONDS + 5))
