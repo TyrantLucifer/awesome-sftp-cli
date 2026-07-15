@@ -595,7 +595,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		go func() {
 			result := daemonRecoveryResult{}
-			result.client, result.err = connectDaemon(runCtx, paths, purpose)
+			result.client, result.err = connectDaemonAfterLoss(runCtx, defaultReconnectPolicy(), func(ctx context.Context) (*daemon.Client, error) {
+				return connectDaemon(ctx, paths, purpose)
+			})
 			if result.err == nil {
 				result.local, result.err = daemonLocalEndpoint(runCtx, result.client)
 			}

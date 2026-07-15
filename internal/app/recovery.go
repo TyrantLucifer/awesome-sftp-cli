@@ -137,6 +137,38 @@ func runReconnect(ctx context.Context, policy reconnectPolicy, attempt func() er
 	return lastErr
 }
 
+func connectDaemonAfterLoss(
+	ctx context.Context,
+	policy reconnectPolicy,
+	connect func(context.Context) (*daemon.Client, error),
+) (*daemon.Client, error) {
+	if policy.Sleep == nil {
+		policy.Sleep = defaultReconnectPolicy().Sleep
+	}
+	var lastErr error
+	for index := 0; index <= len(policy.Delays); index++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		client, err := connect(ctx)
+		if err == nil {
+			return client, nil
+		}
+		lastErr = err
+		if index == len(policy.Delays) {
+			return nil, lastErr
+		}
+		delay := policy.Delays[index]
+		if policy.Jitter != nil {
+			delay = policy.Jitter(delay)
+		}
+		if err := policy.Sleep(ctx, delay); err != nil {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
 func retryAfterReconnect(err error) bool {
 	var remote *daemon.RemoteError
 	return errors.As(err, &remote) && remote.RPC.Retry.Kind == domain.RetryAfterReconnect

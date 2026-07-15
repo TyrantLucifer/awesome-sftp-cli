@@ -64,6 +64,25 @@ func TestRunReconnectUsesBoundedBackoffAndStopsOnNonRetryableError(t *testing.T)
 	}
 }
 
+func TestConnectDaemonAfterLossRetriesStartupRace(t *testing.T) {
+	want := &daemon.Client{}
+	attempts := 0
+	policy := reconnectPolicy{
+		Delays: []time.Duration{time.Millisecond},
+		Sleep:  func(context.Context, time.Duration) error { return nil },
+	}
+	got, err := connectDaemonAfterLoss(context.Background(), policy, func(context.Context) (*daemon.Client, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("previous daemon still owns the instance lock")
+		}
+		return want, nil
+	})
+	if err != nil || got != want || attempts != 2 {
+		t.Fatalf("connect daemon after loss = (%p, %v), attempts=%d, want (%p, nil), attempts=2", got, err, attempts, want)
+	}
+}
+
 func TestProviderCallFailureSeparatesEndpointAndDaemonLoss(t *testing.T) {
 	code, retry, daemonLost := providerCallFailure(remoteRetryError(domain.RetryAfterReconnect))
 	if code != domain.CodeTransportInterrupted || retry != domain.RetryAfterReconnect || daemonLost {
