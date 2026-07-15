@@ -94,18 +94,43 @@ func TestProviderCallFailureSeparatesEndpointAndDaemonLoss(t *testing.T) {
 	}
 }
 
-func TestDaemonConnectionLostFollowsWrappedTransportButNotRemotePolicy(t *testing.T) {
-	if !daemonConnectionLost(&authRPCError{operation: "claim", cause: errors.New("socket closed")}) {
+func TestAuthFailureProbesCanceledClaimBeforeRecoveringDaemon(t *testing.T) {
+	probes := 0
+	if !authFailureLostDaemon(&authRPCError{operation: "claim", cause: errors.New("socket closed")}, func() error {
+		probes++
+		return nil
+	}) {
 		t.Fatal("wrapped local transport was not treated as daemon loss")
 	}
-	serverCanceledClaim := &daemon.RemoteError{RPC: ipc.RPCError{Code: domain.CodeCanceled}}
-	if !daemonConnectionLost(&authRPCError{operation: "claim", cause: serverCanceledClaim}) {
-		t.Fatal("server-canceled authentication claim was not treated as daemon loss")
+	if probes != 0 {
+		t.Fatalf("local transport loss ran %d probes, want 0", probes)
 	}
-	if daemonConnectionLost(&authRPCError{operation: "claim", cause: remoteRetryError(domain.RetryNever)}) {
+	serverCanceledClaim := &daemon.RemoteError{RPC: ipc.RPCError{Code: domain.CodeCanceled}}
+	if authFailureLostDaemon(&authRPCError{operation: "claim", cause: serverCanceledClaim}, func() error {
+		probes++
+		return nil
+	}) {
+		t.Fatal("server-canceled authentication claim from a live daemon was treated as daemon loss")
+	}
+	if !authFailureLostDaemon(&authRPCError{operation: "claim", cause: serverCanceledClaim}, func() error {
+		probes++
+		return errors.New("daemon socket closed")
+	}) {
+		t.Fatal("server-canceled authentication claim from a lost daemon was not recovered")
+	}
+	if authFailureLostDaemon(&authRPCError{operation: "claim", cause: remoteRetryError(domain.RetryNever)}, func() error {
+		probes++
+		return errors.New("unexpected probe")
+	}) {
 		t.Fatal("structured remote failure was treated as daemon loss")
 	}
-	if daemonConnectionLost(context.Canceled) {
+	if probes != 2 {
+		t.Fatalf("canceled claims ran %d probes, want 2", probes)
+	}
+	if authFailureLostDaemon(context.Canceled, func() error {
+		probes++
+		return errors.New("unexpected probe")
+	}) {
 		t.Fatal("context cancellation was treated as daemon loss")
 	}
 }

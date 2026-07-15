@@ -633,7 +633,12 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		case <-runCtx.Done():
 			return nil
 		case err := <-authErrors:
-			if daemonConnectionLost(err) {
+			if authFailureLostDaemon(err, func() error {
+				probeCtx, cancel := context.WithTimeout(runCtx, daemonReadyTimeout)
+				defer cancel()
+				_, probeErr := daemonLocalEndpoint(probeCtx, client)
+				return probeErr
+			}) {
 				startDaemonRecovery()
 				continue
 			}
@@ -1115,10 +1120,18 @@ func daemonConnectionLost(err error) bool {
 		return false
 	}
 	var remote *daemon.RemoteError
-	if errors.As(err, &remote) {
-		return remote.RPC.Code == domain.CodeCanceled
+	return !errors.As(err, &remote)
+}
+
+func authFailureLostDaemon(err error, probe func() error) bool {
+	if daemonConnectionLost(err) {
+		return true
 	}
-	return true
+	var remote *daemon.RemoteError
+	if !errors.As(err, &remote) || remote.RPC.Code != domain.CodeCanceled {
+		return false
+	}
+	return probe() != nil
 }
 
 func daemonLocalEndpoint(ctx context.Context, client *daemon.Client) (domain.Endpoint, error) {
