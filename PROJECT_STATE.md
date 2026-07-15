@@ -8,7 +8,7 @@
 
 ## Current outcome
 
-The approved Stage 0 baseline remains `d637474ac52ef2c5b9f78c9be663e52c6a9f441c`. M1.1 is complete at `8e649f534b500e494ec2984a763e4491711df5fe` with fully green Hosted run [29399674061](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29399674061). M1.2 now has an in-progress candidate: exact pkg/sftp v1.13.10 intake, ADR-0001 exact-argv validated system OpenSSH transport, structured SFTP Provider contract coverage, and client/daemon routing for local/remote or remote/remote pane starts. Remote capability is not yet claimed because the guarded real-sshd Hosted gate and remaining transport-negative matrix have not passed.
+The approved Stage 0 baseline remains `d637474ac52ef2c5b9f78c9be663e52c6a9f441c`. M1.1 is complete at `8e649f534b500e494ec2984a763e4491711df5fe` with fully green Hosted run [29399674061](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29399674061). M1.2 is complete at `28f8731604201763e48bf43c5a7f7e2a7014ca6c`: exact pkg/sftp v1.13.10 intake, ADR-0001 exact-argv validated system OpenSSH transport, process-group cleanup, structured SFTP Provider contract/error coverage, and independent local/remote or remote/remote daemon routing are implemented. Hosted run [29401801663](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401801663) passed the dual real-sshd, Host alias, non-default port, conflicting ssh_config, poisoned PATH and disconnect-isolation fixture plus the complete CI/provenance matrix. M1.3 authentication and complex SSH configuration is now the only active milestone.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -36,7 +36,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Complete the exact `github.com/pkg/sftp v1.13.10` dependency intake, then implement ADR-0001's validated absolute system-OpenSSH stdio transport and SFTP Provider test-first. Require a real temporary sshd with Host alias and non-default port before closing M1.2.
+Implement the daemon-global askpass/Auth Broker state machine test-first: short-lived attempt tokens, bounded single-consumption challenges, session-derived ownership, attach/detach, timeout and cancellation. Do not wire OpenSSH or TUI input until its focused race suite is green.
 
 ## Required reading for the next session
 
@@ -63,7 +63,7 @@ The accepted final pre-Hosted local closeout checkpoint is tree `5d598eea00fac2b
 - Cross-host direct transfer is not assumed to work with Kerberos. It is an optional capability that must prove destination reachability and non-interactive credentials on the source host without forwarding or copying user credentials; otherwise the route is local relay.
 - GUI opener behavior differs by platform. Stage 3 must implement platform adapters and validate lease/change detection on both macOS and Linux.
 - Two user-owned IDE files, `.idea/.gitignore` and `.idea/misc.xml`, appeared concurrently during the Task 8 final review. Task 11 classified `.idea/` as local JetBrains/Java IDE metadata and excluded it through the repository root `.gitignore`; the files themselves were preserved and are not product-candidate content.
-- M1.1 has local implementation evidence only. Remote browsing, SSH transport, authentication broker, workspace persistence, recovery, Kerberos and Stage 1 Hosted CI are not yet delivered or claimed.
+- M1.1 and M1.2 have local and Hosted implementation evidence. Authentication broker, ProxyCommand/ProxyJump/Agent/Kerberos matrix, workspace persistence and recovery remain M1.3–M1.4 work and are not yet claimed. The current pkg/sftp public API completes a remote `ReadDirContext` before daemon pages are emitted; true source-streamed enumeration remains an explicit Stage 1 exit item, not a hidden M1.2 claim.
 
 ## Working-tree policy
 

@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1 已通过，当前只推进 Stage 1 的 M1.2，后续里程碑不得绕过前置门禁。
+Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1–M1.2 已通过，当前只推进 Stage 1 的 M1.3，后续里程碑不得绕过前置门禁。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -46,7 +46,9 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Tests**: 同等级依赖 intake；binary 完整链/ACL/special-bits/替换、逐参数 argv 与冲突 ssh_config；真实临时 sshd、Host alias、非默认端口、两个隔离 sshd、断线与 Provider contract。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
+
+**Current checkpoint**: 提交 `28f8731604201763e48bf43c5a7f7e2a7014ca6c` 的精确 pkg/sftp intake、validated `/usr/bin/ssh`、进程组回收、SFTP contract、双远端路由与错误映射均通过本地双 Go/race/四目标门禁；Hosted run [29401801663](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401801663) 的真实双 sshd、poisoned PATH 0-hit、冲突 ssh_config、非默认端口、断线隔离及完整 CI/provenance 矩阵全绿。
 
 ### M1.3: 认证与复杂 SSH 配置
 
@@ -56,7 +58,7 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Tests**: Broker 状态机/race/秘密扫描；代理与双提示 MFA；agent/key/password；MIT Kerberos 临时 realm 的 GSSAPI-only 成功、ticket 缺失/过期/外部续期恢复；host-key 语义不降级。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
 
 ### M1.4: 工作区与恢复
 

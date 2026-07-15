@@ -5,8 +5,8 @@
 - **Repository root**: `/Users/bytedance/Downloads/projects/awesome-mac-sftp`
 - **Branch**: `codex/stage1-read-only-explorer`
 - **Stage 0 baseline commit/tree**: `d637474ac52ef2c5b9f78c9be663e52c6a9f441c` / `83a515607f44f7edb85f8103962b6d9d1173c02d`
-- **Current milestone**: M1.2 — Real SFTP endpoints
-- **Current candidate**: M1.1 complete at `8e649f534b500e494ec2984a763e4491711df5fe`
+- **Current milestone**: M1.3 — Authentication and complex SSH configuration
+- **Current candidate**: M1.2 complete at `28f8731604201763e48bf43c5a7f7e2a7014ca6c`
 
 Stage 1 delivers the read-only explorer only. It does not deliver Stage 2 transfer or mutation operations, Stage 3 external editing/cache, Stage 4 helper/search, Stage 5 direct transfer/scale hardening, or Stage 6 release readiness.
 
@@ -71,7 +71,7 @@ Hosted Linux native ACL/SO_PEERCRED/flock/socket execution and both macOS runner
 
 ### M1.2 — Real SFTP endpoints
 
-- **Status**: In Progress
+- **Status**: Complete
 - **Goal**: exact pkg/sftp intake, ADR-0001 system OpenSSH transport, SFTP Provider, local/remote and remote/remote browsing.
 
 Current candidate evidence:
@@ -80,13 +80,14 @@ Current candidate evidence:
 - `govulncheck ./...` reports zero reachable vulnerabilities. It reports vulnerable symbols in required modules that the candidate does not call; the exact scan output is retained as a dependency-risk note rather than mislabeled as a clean module graph.
 - `internal/transport/openssh` validates `/usr/bin/ssh` or a clean absolute override from root through final inode, rejects symlink/writable/special-bit/non-executable paths, compares the final inode immediately before start, uses the exact ADR-0001 argv, rejects option/control-byte host aliases, and bounds sanitized stderr to 64 KiB.
 - `internal/provider/sftp` runs structured SFTP over the OpenSSH stdio pipes and passes the shared read-only Provider contract against a real in-process SFTP protocol server. Client RPC can add per-connection SSH endpoints, so local/remote and remote/remote pane combinations use the same daemon routes.
-- The quality job now provisions a temporary real `sshd` and runs `TestRealOpenSSHSFTPHostAliasAndNonDefaultPort` with the current account's ephemeral `ssh_config`. Local runs intentionally skip that guarded test because modifying a developer's real SSH config is outside the safe local fixture boundary; Hosted success is required before M1.2 completion.
+- The quality job provisions two temporary real `sshd` instances and runs `TestRealOpenSSHSFTPHostAliasAndNonDefaultPort` with the isolated runner account's ephemeral `ssh_config`. It proves two independently browsable endpoints, Host aliases, non-default ports, poisoned-PATH fake ssh 0-hit, ADR-0001 overrides against conflicting TTY/escape/session/forward/local/remote-command/stdin/background/tunnel settings, and disconnect isolation. Local runs intentionally skip that guarded test because modifying a developer's real SSH config is outside the safe local fixture boundary.
+- Commit `28f8731604201763e48bf43c5a7f7e2a7014ca6c` passed local `make check`, `make lint`, `make docs-check`, `make supply-chain`, full race, exact Go 1.25.12 and four CGO-disabled target builds. Hosted run [29401801663](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401801663) passed quality including the strengthened real-sshd fixture, all native/oldstable/build/reproducibility jobs, compare and provenance aggregation.
 
-Still open: Hosted real-sshd evidence, poisoned-PATH/override replacement negatives beyond inode comparison, conflicting ssh_config matrix, stderr/error classification, disconnect recovery, and two isolated remote endpoints.
+Stage-level carry-forward: pkg/sftp v1.13.10 exposes `ReadDirContext` as a complete slice, so daemon/UI pages are bounded but the source listing is not yet truly streamed; the Stage 1 exit gate remains open until that limitation is resolved. Durable reconnect, degraded-state UI and location recovery are M1.4 work. Root/current-euid replacement after final inode validation remains ADR-0001's declared same-user machine trust boundary.
 
 ### M1.3 — Authentication and complex SSH configuration
 
-- **Status**: Not Started
+- **Status**: In Progress
 - **Goal**: askpass/Auth Broker plus ProxyCommand/ProxyJump, agent/key/password/MFA and real MIT Kerberos/GSSAPI evidence without secret persistence.
 
 ### M1.4 — Workspace and recovery
@@ -96,7 +97,7 @@ Still open: Hosted real-sshd evidence, poisoned-PATH/override replacement negati
 
 ## Stage 1 exit evidence
 
-The checklist in [Stage 1 specification](../stages/01-read-only-explorer.md#6-可验证退出标准) remains entirely open. Feature Matrix rows remain `Planned` until implementation begins and may become `Verified` only when code, focused tests, required real-environment evidence, this ledger and `PROJECT_STATE.md` agree.
+The checklist in [Stage 1 specification](../stages/01-read-only-explorer.md#6-可验证退出标准) remains open until the final cross-milestone audit. Feature Matrix rows remain `In Progress` or `Planned` and may become `Verified` only when code, focused tests, required real-environment evidence, this ledger and `PROJECT_STATE.md` agree.
 
 Mandatory final commands include:
 
@@ -113,4 +114,4 @@ They must be supplemented by Stage 1 integration, PTY, sshd, Kerberos, Provider 
 
 ## Failures, fixes and skipped gates
 
-The first PTY smoke found that daemon context cancellation did not interrupt an idle framed read. `TestServeConnContextCancellationClosesIdleConnection` now reproduces that case, `ServeConn` closes the connection on cancellation, focused race tests pass, and the repeated PTY smoke exits both client and daemon cleanly. Required Hosted environment evidence cannot be replaced by mocks, skips or weakened assertions and remains necessary for Complete status.
+The first PTY smoke found that daemon context cancellation did not interrupt an idle framed read. `TestServeConnContextCancellationClosesIdleConnection` now reproduces that case, `ServeConn` closes the connection on cancellation, focused race tests pass, and the repeated PTY smoke exits both client and daemon cleanly. M1.2's first strengthened sshd run [29401311147](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401311147) exposed an unbounded fixture wait on forked sshd children; the second [29401550909](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401550909) proved listener termination was not a deterministic established-session disconnect. The final fixture closes the product-owned OpenSSH session, verifies typed interruption and second-endpoint isolation, and passed on [29401801663](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401801663). Required Hosted environment evidence cannot be replaced by mocks, skips or weakened assertions.
