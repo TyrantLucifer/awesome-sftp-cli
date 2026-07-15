@@ -79,6 +79,10 @@ func TestDaemonConnectionLostFollowsWrappedTransportButNotRemotePolicy(t *testin
 	if !daemonConnectionLost(&authRPCError{operation: "claim", cause: errors.New("socket closed")}) {
 		t.Fatal("wrapped local transport was not treated as daemon loss")
 	}
+	serverCanceledClaim := &daemon.RemoteError{RPC: ipc.RPCError{Code: domain.CodeCanceled}}
+	if !daemonConnectionLost(&authRPCError{operation: "claim", cause: serverCanceledClaim}) {
+		t.Fatal("server-canceled authentication claim was not treated as daemon loss")
+	}
 	if daemonConnectionLost(&authRPCError{operation: "claim", cause: remoteRetryError(domain.RetryNever)}) {
 		t.Fatal("structured remote failure was treated as daemon loss")
 	}

@@ -1113,7 +1113,10 @@ func daemonConnectionLost(err error) bool {
 		return false
 	}
 	var remote *daemon.RemoteError
-	return !errors.As(err, &remote)
+	if errors.As(err, &remote) {
+		return remote.RPC.Code == domain.CodeCanceled
+	}
+	return true
 }
 
 func daemonLocalEndpoint(ctx context.Context, client *daemon.Client) (domain.Endpoint, error) {
