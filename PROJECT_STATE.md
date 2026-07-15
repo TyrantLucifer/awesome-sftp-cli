@@ -8,7 +8,7 @@
 
 ## Current outcome
 
-The approved Stage 0 baseline remains `d637474ac52ef2c5b9f78c9be663e52c6a9f441c`. M1.1–M1.3 are complete at their recorded commits and fully green Hosted runs. M1.4 implementation and platform evidence are present through candidate `56e5f4f6c4579cbafa6e38a237720efc1686b098`, including four-platform kernel ACL/lock/hostile-UID fixtures in [run 29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068). The two subsequently authorized blockers now have local implementations: an explicit pane recovery state machine preserves the reconnected Endpoint transaction across nearest-parent fallback, and ADR-0011 pins an immutable `pkg/sftp v1.13.11`-based fork whose packet-bounded cursor lets the Provider return a requested page before reading the next source batch. Focused current/oldstable/race tests pass. Stage 1 remains In Progress until dependency intake, complete local gates and an exact-head fully green Hosted run verify these changes.
+The approved Stage 0 baseline remains `d637474ac52ef2c5b9f78c9be663e52c6a9f441c`. M1.1–M1.3 are complete at their recorded commits and fully green Hosted runs. M1.4 platform evidence includes four-platform kernel ACL/lock/hostile-UID fixtures in [run 29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068). The two authorized blockers are implemented at `da4aa361c81ba93d14733819e21c3cba092b3590`: the pane recovery state machine preserves the reconnected Endpoint transaction, and ADR-0011's immutable `pkg/sftp v1.13.11` fork provides a packet-bounded source cursor. The first Hosted run's raw PTY transcript visibly proves nearest-parent recovery and the recovered marker, but its byte-substring assertion missed a tcell delta redraw that retained one unchanged screen cell. A deterministic terminal-screen replay test now drives the assertion repair. Stage 1 remains In Progress until the repair passes complete local and exact-head Hosted gates.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -36,7 +36,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Complete ADR-0011 dependency intake and the full local gate, then commit/push the exact M1.4 candidate and require a fully green exact-head Hosted Stage 1 run. If it passes, update the durable evidence, rerun the final docs-only head, and move Draft PR #1 to Ready without merging.
+Validate and push the terminal-screen assertion repair, then require a fully green exact-head Hosted Stage 1 run. If it passes, update the durable evidence, rerun the final docs-only head, and move Draft PR #1 to Ready without merging.
 
 ## Required reading for the next session
 
