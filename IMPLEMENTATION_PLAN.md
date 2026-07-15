@@ -72,7 +72,7 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Milestone Status**: In Progress
 
-**Current checkpoint**: CLI/workspace/picker、能力、诊断、Vim 与预览已通过既有本地/Hosted 子门禁；四平台 kernel ACL、cross-process lock 与 hostile other-UID peer fixtures 在 [Hosted run 29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068) 全绿。pane recovery state machine 与 ADR-0011 的不可变 `pkg/sftp v1.13.11` 窄 fork已通过 RED→GREEN、双工具链、race、恶意包、依赖准入和完整本地门禁。提交 `da4aa361c81ba93d14733819e21c3cba092b3590` 的首个 Hosted 输出已显示 recovered parent、marker 和成功状态，但 raw ANSI substring assertion 未识别 tcell 保留未变化 cell 的 delta redraw。新的确定性 200×30 terminal-screen replay self-test 保留原双重断言并正在进入完整门禁；Stage 1/M1.4 在 exact-candidate Hosted evidence 完成前保持 In Progress。
+**Current checkpoint**: CLI/workspace/picker、能力、诊断、Vim 与预览已通过既有本地/Hosted 子门禁；四平台 kernel ACL、cross-process lock 与 hostile other-UID peer fixtures 在 [Hosted run 29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068) 全绿。pane recovery state machine 与 ADR-0011 窄 fork已通过 RED→GREEN、双工具链、race、恶意包、依赖准入和完整本地门禁。提交 `da4aa361c81ba93d14733819e21c3cba092b3590` 与 `44f2f138951ca8277c2b20350b7903f1e7d3203b` 的 Hosted 输出均显示 recovered parent、marker 和成功状态；两次失败分别定位为 raw ANSI retained-cell 误判和同一 synchronized paint frame 的过约束。最终 self-test 将两项精确证据限定在 refresh checkpoint 后并跨完整 tcell frames 累计，正进入第三次也是最后一次 observation 候选；Stage 1/M1.4 在 exact-candidate Hosted evidence 完成前保持 In Progress。
 
 ## Stage 2: Durable Transfers
 

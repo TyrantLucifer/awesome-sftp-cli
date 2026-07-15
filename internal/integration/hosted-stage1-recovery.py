@@ -13,9 +13,9 @@ import termios
 import time
 
 
-def replay_terminal(output, patterns=(), columns=200, rows=30):
+def replay_terminal(output, patterns=(), observe_after=0, columns=200, rows=30):
     screen = [bytearray(b" " * columns) for _ in range(rows)]
-    observed = False
+    observed = set()
     row = 0
     column = 0
     saved = (0, 0)
@@ -78,9 +78,9 @@ def replay_terminal(output, patterns=(), columns=200, rows=30):
                     saved = (row, column)
                 elif command == "u":
                     row, column = saved
-                if command == "l" and raw_values.startswith(b"?2026") and patterns:
+                if command == "l" and raw_values.startswith(b"?2026") and end + 1 >= observe_after:
                     visible = b"\n".join(screen)
-                    observed = observed or all(pattern in visible for pattern in patterns)
+                    observed.update(pattern for pattern in patterns if pattern in visible)
                 index = end + 1
                 continue
             if index + 2 < len(output) and output[index + 1] in (ord("("), ord(")")):
@@ -99,8 +99,9 @@ def replay_terminal(output, patterns=(), columns=200, rows=30):
             column = min(columns - 1, column + 1)
         index += 1
     visible = b"\n".join(screen)
-    observed = observed or bool(patterns) and all(pattern in visible for pattern in patterns)
-    return visible, observed
+    if len(output) >= observe_after:
+        observed.update(pattern for pattern in patterns if pattern in visible)
+    return visible, len(observed) == len(patterns)
 
 
 def terminal_screen(output, columns=200, rows=30):
@@ -108,27 +109,38 @@ def terminal_screen(output, columns=200, rows=30):
     return visible
 
 
-def terminal_screen_observed(output, patterns, columns=200, rows=30):
-    _, observed = replay_terminal(output, patterns=patterns, columns=columns, rows=rows)
+def terminal_screen_observed(output, patterns, observe_after=0, columns=200, rows=30):
+    _, observed = replay_terminal(
+        output,
+        patterns=patterns,
+        observe_after=observe_after,
+        columns=columns,
+        rows=rows,
+    )
     return observed
 
 
 def run_self_test():
-    split_status = (
+    prelude = (
         b"\x1b[?2026h\x1b[30;13Hloading | caps:1@1 | sort:name\x1b[?2026l"
+    )
+    checkpoint = len(prelude)
+    split_status = prelude + (
         b"\x1b[?2026h"
         b"\x1b[30;13H\x1b[7mrecon"
         b"\x1b[30;19Hected at nearest accessible"
         b"\x1b[30;47Hparent"
+        b"\x1b[?2026l"
+        b"\x1b[?2026h"
+        b"\x1b[30;13Hold endpoint cleanup failed"
         b"\x1b[3;3Ha-recovered-marker.txt"
         b"\x1b[?2026l"
-        b"\x1b[?2026h\x1b[30;13Hold endpoint cleanup failed\x1b[?2026l"
     )
     expected = (b"reconnected at nearest accessible parent", b"a-recovered-marker.txt")
     final_screen = terminal_screen(split_status)
     if all(pattern in final_screen for pattern in expected):
         raise RuntimeError("self-test did not overwrite the transient success frame")
-    if not terminal_screen_observed(split_status, expected):
+    if not terminal_screen_observed(split_status, expected, observe_after=checkpoint):
         raise RuntimeError("transient split terminal status was not reconstructed")
 
 
@@ -296,12 +308,12 @@ class PtyApp:
             time.sleep(0.05)
         raise RuntimeError(f"timed out waiting for {patterns}")
 
-    def wait_for_screen(self, *patterns, timeout=30):
+    def wait_for_screen(self, *patterns, start=0, timeout=30):
         encoded = [pattern.encode() for pattern in patterns]
         deadline = time.monotonic() + timeout
         while time.monotonic() < deadline:
             self._drain()
-            if terminal_screen_observed(self.output, encoded):
+            if terminal_screen_observed(self.output, encoded, observe_after=start):
                 return
             if self.process.poll() is not None:
                 raise RuntimeError(f"amsftp exited {self.process.returncode} before screen showed {patterns}")
@@ -455,7 +467,7 @@ def main():
         os.environ["AMSFTP_RECOVERY_SSHD_A_PID"] = str(restarted_sshd_pid)
         checkpoint = app.checkpoint()
         app.send("R")
-        app.wait_for_screen("reconnected at nearest accessible parent", "a-recovered-marker.txt", timeout=35)
+        app.wait_for_screen("reconnected at nearest accessible parent", "a-recovered-marker.txt", start=checkpoint, timeout=35)
         checkpoint = app.checkpoint()
         app.send("\tR")
         app.wait_for("b-unaffected-marker.txt", start=checkpoint)
