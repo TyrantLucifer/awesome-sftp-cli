@@ -81,9 +81,9 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	first := connectSFTP(t, ctx, firstAlias, firstServer.root, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	first, firstTransport := connectSFTP(t, ctx, firstAlias, firstServer.root, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
 	defer first.Close()
-	second := connectSFTP(t, ctx, secondAlias, secondServer.root, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	second, _ := connectSFTP(t, ctx, secondAlias, secondServer.root, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
 	defer second.Close()
 	assertContainsEntry(t, ctx, first, "endpoint-first.txt")
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
@@ -91,7 +91,9 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 		t.Fatalf("poisoned PATH ssh executed: %v", err)
 	}
 
-	firstServer.stop()
+	if err := firstTransport.Close(); err != nil {
+		t.Fatalf("close first OpenSSH transport: %v", err)
+	}
 	root, err := first.Normalize(ctx, domain.NormalizeRequest{EndpointID: first.Descriptor().ID, Input: "/"})
 	if err != nil {
 		t.Fatal(err)
@@ -191,7 +193,7 @@ func sshHostConfig(alias string, server *testSSHD, username, clientKey string) s
 	return fmt.Sprintf("\nHost %s\n  HostName 127.0.0.1\n  Port %d\n  User %s\n  IdentityFile %s\n  IdentitiesOnly yes\n  BatchMode yes\n  StrictHostKeyChecking accept-new\n  UserKnownHostsFile %s\n  GlobalKnownHostsFile /dev/null\n  RequestTTY force\n  EscapeChar ~\n  SessionType none\n  ForwardAgent yes\n  ForwardX11 yes\n  PermitLocalCommand yes\n  LocalCommand /usr/bin/false\n  RemoteCommand /usr/bin/false\n  StdinNull yes\n  ForkAfterAuthentication yes\n  Tunnel yes\n  ClearAllForwardings no\n", alias, server.port, username, clientKey, knownHosts)
 }
 
-func connectSFTP(t *testing.T, ctx context.Context, alias, root string, endpointID domain.EndpointID) *sftpprovider.Provider {
+func connectSFTP(t *testing.T, ctx context.Context, alias, root string, endpointID domain.EndpointID) (*sftpprovider.Provider, *openssh.Session) {
 	t.Helper()
 	transport, err := openssh.Dial(ctx, openssh.Config{HostAlias: alias})
 	if err != nil {
@@ -202,7 +204,7 @@ func connectSFTP(t *testing.T, ctx context.Context, alias, root string, endpoint
 		_ = transport.Close()
 		t.Fatal(err)
 	}
-	return implementation
+	return implementation, transport
 }
 
 func assertContainsEntry(t *testing.T, ctx context.Context, implementation *sftpprovider.Provider, expected string) {
