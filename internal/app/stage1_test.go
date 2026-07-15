@@ -13,6 +13,8 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
 )
 
 func TestSSHConnectStageErrorPreservesSafeStageAndClassification(t *testing.T) {
@@ -36,6 +38,36 @@ func TestSSHConnectStageErrorPreservesSafeStageAndClassification(t *testing.T) {
 	}
 }
 
+func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
+	leftID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	rightID := domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	leftLocation, err := domain.NewLocation(leftID, "/Users/test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightLocation, err := domain.NewLocation(rightID, "/srv/release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := tui.NewModel(
+		tui.NewPaneState(domain.Endpoint{ID: leftID, Kind: domain.EndpointLocal, DisplayName: "local"}, leftLocation),
+		tui.NewPaneState(domain.Endpoint{ID: rightID, Kind: domain.EndpointSSH, DisplayName: "prod", SSHHostAlias: "prod"}, rightLocation),
+	)
+	model.Active = tui.Right
+	model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.Left, Query: "report"})
+	now := time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC)
+	document, err := workspaceDocument(model, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.UpdatedAt != now || document.Layout.ActivePane != 1 || document.Panes[0].Path != "/Users/test" || document.Panes[0].Filter != "report" {
+		t.Fatalf("document = %#v", document)
+	}
+	if document.Panes[1].Endpoint.Kind != domain.EndpointSSH || document.Panes[1].Endpoint.SSHHostAlias != "prod" || document.Panes[1].Path != "/srv/release" {
+		t.Fatalf("remote pane = %#v", document.Panes[1])
+	}
+}
+
 func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	base := filepath.Join("/tmp", "amsftp-test-"+strconv.Itoa(os.Getpid()))
 	if err := os.Mkdir(base, 0o700); err != nil && !os.IsExist(err) {
@@ -46,7 +78,7 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	if err := os.Chmod(base, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	paths := platform.Paths{RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
+	paths := platform.Paths{StateDir: filepath.Join(t.TempDir(), "state"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
 	purpose := platform.ValidateRuntimeFallback
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -73,6 +105,10 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Kind != "local" {
 		t.Fatalf("endpoints = %#v", endpoints.Endpoints)
+	}
+	var workspaces workspace.ListResponse
+	if err := client.Call(context.Background(), daemon.WorkspaceList, workspace.ListRequest{}, &workspaces); err != nil {
+		t.Fatalf("list daemon workspaces: %v", err)
 	}
 	_ = client.Close()
 	for index := 0; index < 5; index++ {
@@ -125,6 +161,16 @@ func TestStartLocationsParsesLocalAndRemote(t *testing.T) {
 	if locations[1] != (startLocation{host: "work-alias", path: "/srv/data"}) {
 		t.Fatalf("remote = %#v", locations[1])
 	}
+	colonPaths := []string{"/tmp/local:archive", "./local:archive", "../local:archive"}
+	for _, value := range colonPaths {
+		parsed, err := startLocations([]string{value})
+		if err != nil {
+			t.Fatalf("startLocations(%q): %v", value, err)
+		}
+		if parsed[0].host != "" || !filepath.IsAbs(parsed[0].path) {
+			t.Fatalf("colon local %q = %#v", value, parsed[0])
+		}
+	}
 	for _, value := range []string{"-bad:/", "host:relative", "host\nname:/"} {
 		if _, err := startLocations([]string{value}); err == nil {
 			t.Fatalf("startLocations(%q) error = nil", value)
@@ -143,5 +189,25 @@ func TestInitialPaneStateRepresentsRemoteWithoutConnectingIt(t *testing.T) {
 	}
 	if pane.Location.EndpointID != local.ID || pane.Location.Path != "/srv/data" || !pane.Listing.Loading {
 		t.Fatalf("placeholder pane = %#v", pane)
+	}
+}
+
+func TestWorkspaceStartLocationsUseStableEndpointReferences(t *testing.T) {
+	document := workspace.Document{
+		SchemaVersion: workspace.SchemaVersion,
+		UpdatedAt:     time.Now().UTC(),
+		Panes: [2]workspace.Pane{
+			{Endpoint: workspace.EndpointRef{Kind: domain.EndpointLocal}, Path: "/local", Sort: workspace.SortState{Key: workspace.SortName, Direction: workspace.SortAscending}},
+			{Endpoint: workspace.EndpointRef{Kind: domain.EndpointSSH, SSHHostAlias: "work"}, Path: "/remote", Sort: workspace.SortState{Key: workspace.SortName, Direction: workspace.SortAscending}},
+		},
+		CachePolicy: workspace.CacheEphemeral,
+	}
+	got, err := workspaceStartLocations(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [2]startLocation{{path: "/local"}, {host: "work", path: "/remote"}}
+	if got != want {
+		t.Fatalf("workspace locations = %#v, want %#v", got, want)
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
 )
 
 const (
@@ -27,6 +29,9 @@ const (
 	AuthPrompt         = "auth.prompt"
 	AuthClaim          = "auth.claim"
 	AuthResolve        = "auth.resolve"
+	WorkspaceList      = "workspace.list"
+	WorkspaceLoad      = "workspace.load"
+	WorkspaceSave      = "workspace.save"
 )
 
 type SSHConnector func(context.Context, string) (providerapi.Provider, error)
@@ -36,11 +41,13 @@ type ProviderSessions struct {
 	maxReadBytes uint32
 	connectSSH   SSHConnector
 	authBroker   *auth.Broker
+	workspace    *workspace.Store
 	nextOwner    atomic.Uint64
 }
 
-func (s *ProviderSessions) SetSSHConnector(connector SSHConnector) { s.connectSSH = connector }
-func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)      { s.authBroker = broker }
+func (s *ProviderSessions) SetSSHConnector(connector SSHConnector)   { s.connectSSH = connector }
+func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)        { s.authBroker = broker }
+func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store) { s.workspace = store }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	if len(providers) == 0 {
@@ -77,6 +84,7 @@ func (s *ProviderSessions) NewSession() Session {
 		connectSSH:   s.connectSSH,
 		owned:        make([]providerapi.Provider, 0),
 		cursors:      make(map[cursorKey]providerapi.Provider),
+		workspace:    s.workspace,
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -105,6 +113,7 @@ type providerSession struct {
 	owned        []providerapi.Provider
 	authBroker   *auth.Broker
 	authOwner    auth.OwnerID
+	workspace    *workspace.Store
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -121,6 +130,12 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.authClaim(ctx, payload)
 	case AuthResolve:
 		return s.authResolve(payload)
+	case WorkspaceList:
+		return s.listWorkspaces(payload)
+	case WorkspaceLoad:
+		return s.loadWorkspace(payload)
+	case WorkspaceSave:
+		return s.saveWorkspace(payload)
 	case ProviderConnectSSH:
 		return s.connect(ctx, payload)
 	case ProviderEndpoints:
@@ -143,6 +158,67 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 			Effect:  domain.EffectNone,
 		}
 	}
+}
+
+func (s *providerSession) listWorkspaces(payload json.RawMessage) (any, error) {
+	if s.workspace == nil {
+		return nil, unsupportedWorkspace()
+	}
+	var request workspace.ListRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode workspace list request", err)
+	}
+	summaries, err := s.workspace.List()
+	if err != nil {
+		return nil, internalError("list workspaces", err)
+	}
+	return workspace.ListResponse{Workspaces: summaries}, nil
+}
+
+func (s *providerSession) loadWorkspace(payload json.RawMessage) (any, error) {
+	if s.workspace == nil {
+		return nil, unsupportedWorkspace()
+	}
+	var request workspace.LoadRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode workspace load request", err)
+	}
+	if err := workspace.ValidateName(request.Name); err != nil {
+		return nil, invalidArgument("validate workspace name", err)
+	}
+	document, err := s.workspace.Load(request.Name)
+	if err != nil {
+		code := domain.CodeIntegrityFailed
+		if errors.Is(err, os.ErrNotExist) {
+			code = domain.CodeNotFound
+		}
+		return nil, &domain.OpError{Code: code, Message: "load workspace failed", Operation: "workspace.load", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone, Cause: err}
+	}
+	return workspace.LoadResponse{Document: document}, nil
+}
+
+func (s *providerSession) saveWorkspace(payload json.RawMessage) (any, error) {
+	if s.workspace == nil {
+		return nil, unsupportedWorkspace()
+	}
+	var request workspace.SaveRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode workspace save request", err)
+	}
+	if err := workspace.ValidateName(request.Name); err != nil {
+		return nil, invalidArgument("validate workspace name", err)
+	}
+	if err := request.Document.Validate(); err != nil {
+		return nil, invalidArgument("validate workspace document", err)
+	}
+	if err := s.workspace.Save(request.Name, request.Document); err != nil {
+		return nil, internalError("save workspace", err)
+	}
+	return workspace.SaveResponse{}, nil
+}
+
+func unsupportedWorkspace() error {
+	return &domain.OpError{Code: domain.CodeUnsupported, Message: "workspace store is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 }
 
 func (s *providerSession) Close() error {

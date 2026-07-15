@@ -31,6 +31,9 @@ func TestTranslateTCellEvents(t *testing.T) {
 		{name: "auth submit", event: tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone), mode: ModeAuth, want: KeyPress{Key: KeySubmit}},
 		{name: "auth cancel", event: tcell.NewEventKey(tcell.KeyEscape, "", tcell.ModNone), mode: ModeAuth, want: KeyPress{Key: KeyEscape}},
 		{name: "auth backspace", event: tcell.NewEventKey(tcell.KeyBackspace, "", tcell.ModNone), mode: ModeAuth, want: KeyPress{Key: KeyBackspace}},
+		{name: "workspace save", event: tcell.NewEventKey(tcell.KeyRune, "S", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeySave}},
+		{name: "workspace text", event: tcell.NewEventKey(tcell.KeyRune, "r", tcell.ModNone), mode: ModeWorkspace, want: TextInput{Text: "r"}},
+		{name: "workspace submit", event: tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone), mode: ModeWorkspace, want: KeyPress{Key: KeySubmit}},
 		{name: "resize", event: tcell.NewEventResize(91, 27), mode: ModeFilter, want: Resize{Width: 91, Height: 27}},
 	}
 	for _, test := range tests {

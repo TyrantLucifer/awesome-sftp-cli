@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"reflect"
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
@@ -74,6 +75,38 @@ func TestReducerTracksVisualAndDiscreteSelection(t *testing.T) {
 	}
 }
 
+func TestReducerCollectsWorkspaceNameAndEmitsSaveIntent(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeySave})
+	if model.Mode != ModeWorkspace {
+		t.Fatalf("mode = %q, want %q", model.Mode, ModeWorkspace)
+	}
+	model, _ = Reduce(model, TextInput{Text: "release界"})
+	model, intents := Reduce(model, KeyPress{Key: KeySubmit})
+	if model.Mode != ModeNormal || len(intents) != 1 || intents[0].Kind != IntentWorkspaceSave || intents[0].Name != "release界" {
+		t.Fatalf("save result model=%#v intents=%#v", model, intents)
+	}
+	model, _ = Reduce(model, WorkspaceSaveResult{Name: "release界"})
+	if model.Notice != "workspace saved: release界" {
+		t.Fatalf("notice = %q", model.Notice)
+	}
+}
+
+func TestWorkspaceSaveModalRequiresNameAndCanCancel(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeySave})
+	model, intents := Reduce(model, KeyPress{Key: KeySubmit})
+	if len(intents) != 0 || model.Mode != ModeWorkspace || model.Notice != "workspace name is required" {
+		t.Fatalf("empty submit model=%#v intents=%#v", model, intents)
+	}
+	model, _ = Reduce(model, TextInput{Text: "draft"})
+	model, _ = Reduce(model, KeyPress{Key: KeyBackspace})
+	model, _ = Reduce(model, KeyPress{Key: KeyEscape})
+	if model.Mode != ModeNormal || len(model.workspaceName) != 0 {
+		t.Fatalf("canceled workspace model=%#v", model)
+	}
+}
+
 func TestListingPagesIgnoreStaleGenerationsAndRetainPartialState(t *testing.T) {
 	model := testModel(t)
 	location := model.Panes[Left].Location
@@ -85,8 +118,8 @@ func TestListingPagesIgnoreStaleGenerationsAndRetainPartialState(t *testing.T) {
 		Entries:    []domain.Entry{testEntry(leftEndpointID, "/stale", domain.EntryFile)},
 		Done:       true,
 	})
-	if got := model.Panes[Left].VisibleCount(); got != 0 {
-		t.Fatalf("visible count after stale page = %d, want 0", got)
+	if got := model.Panes[Left].VisibleCount(); got != 3 {
+		t.Fatalf("visible count after stale page = %d, want committed 3", got)
 	}
 
 	model, _ = Reduce(model, ListingPage{
@@ -98,6 +131,61 @@ func TestListingPagesIgnoreStaleGenerationsAndRetainPartialState(t *testing.T) {
 	pane := model.Panes[Left]
 	if pane.VisibleCount() != 1 || pane.Listing.Loading || !pane.Listing.Partial {
 		t.Fatalf("listing state = %#v visible=%d, want one partial terminal page", pane.Listing, pane.VisibleCount())
+	}
+}
+
+func TestListingFailurePreservesCommittedPaneState(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, _ = Reduce(model, KeyPress{Key: KeyMark})
+	model, _ = Reduce(model, SetFilter{Pane: Left, Query: "file"})
+	before := model.Panes[Left]
+	target := mustLocation(t, leftEndpointID, "/left/missing")
+
+	model, _ = Reduce(model, BeginListing{Pane: Left, Generation: 9, Location: target})
+	if model.Panes[Left].Location != before.Location || model.Panes[Left].VisibleCount() != before.VisibleCount() {
+		t.Fatalf("BeginListing committed unverified target: %#v", model.Panes[Left])
+	}
+	model, _ = Reduce(model, ListingFailed{Pane: Left, Generation: 9, Message: "not found"})
+	after := model.Panes[Left]
+	if after.Location != before.Location || after.Cursor != before.Cursor || after.Filter != before.Filter ||
+		!reflect.DeepEqual(after.VisibleNames(), before.VisibleNames()) || !reflect.DeepEqual(after.SelectedLocations(), before.SelectedLocations()) {
+		t.Fatalf("failed navigation changed committed pane: before=%#v after=%#v", before, after)
+	}
+	if after.Listing.Loading || after.Listing.Message != "not found" {
+		t.Fatalf("failed listing state = %#v", after.Listing)
+	}
+}
+
+func TestListingFirstSuccessfulPageCommitsTargetIncludingEmptyDirectory(t *testing.T) {
+	model := testModel(t)
+	target := mustLocation(t, leftEndpointID, "/left/empty")
+	model, _ = Reduce(model, BeginListing{Pane: Left, Generation: 10, Location: target})
+	if model.Panes[Left].Location == target {
+		t.Fatal("target committed before a successful page")
+	}
+	model, _ = Reduce(model, ListingPage{Pane: Left, Generation: 10, Done: true})
+	pane := model.Panes[Left]
+	if pane.Location != target || pane.VisibleCount() != 0 || pane.Listing.Loading || !pane.Listing.Complete {
+		t.Fatalf("empty target pane = %#v", pane)
+	}
+}
+
+func TestRefreshRemapsCursorAndMarksByLocation(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, _ = Reduce(model, KeyPress{Key: KeyMark})
+	location := model.Panes[Left].Location
+	file := testEntry(leftEndpointID, "/left/file.txt", domain.EntryFile)
+	notes := testEntry(leftEndpointID, "/left/notes.md", domain.EntryFile)
+	model, _ = Reduce(model, BeginListing{Pane: Left, Generation: 11, Location: location})
+	model, _ = Reduce(model, ListingPage{Pane: Left, Generation: 11, Entries: []domain.Entry{notes, file}, Done: true})
+	pane := model.Panes[Left]
+	if current, ok := pane.currentLocation(); !ok || current != file.Location {
+		t.Fatalf("refresh cursor location = %#v, %v; want file", current, ok)
+	}
+	if selected := pane.SelectedLocations(); len(selected) != 1 || selected[0] != file.Location {
+		t.Fatalf("refresh marks = %#v, want file", selected)
 	}
 }
 

@@ -33,6 +33,57 @@ type RenderStats struct {
 	ListRows       int
 }
 
+func RenderPicker(surface Surface, picker Picker, message string) {
+	width, height := surface.Size()
+	surface.Clear()
+	if width <= 0 || height <= 0 {
+		return
+	}
+	surface.PutClipped(0, 0, width, "Open workspace or SSH host", StyleActiveHeader)
+	if height == 1 {
+		return
+	}
+	surface.PutClipped(0, 1, width, "Host: "+SanitizeTerminalText(picker.Query()), StyleStatus)
+	if height == 2 {
+		return
+	}
+	choices := picker.Visible()
+	choiceRows := max(0, height-3)
+	for index := 0; index < len(choices) && index < choiceRows; index++ {
+		choice := choices[index]
+		marker := "  "
+		style := StylePlain
+		if index == picker.SelectedIndex() {
+			marker = "> "
+			style = StyleCursor
+		}
+		line := fmt.Sprintf("%s%-10s %s", marker, pickerKindLabel(choice.Kind), SanitizeTerminalText(choice.Name))
+		if choice.Problem != "" {
+			line += " — " + SanitizeTerminalText(choice.Problem)
+			style = StyleError
+		}
+		surface.PutClipped(0, 2+index, width, line, style)
+	}
+	footer := "Type an SSH alias; ↑/↓ select; Enter open; Esc quit"
+	if message != "" {
+		footer = SanitizeTerminalText(message)
+	}
+	surface.PutClipped(0, height-1, width, footer, StyleStatus)
+}
+
+func pickerKindLabel(kind PickerKind) string {
+	switch kind {
+	case PickerWorkspace:
+		return "workspace"
+	case PickerHost:
+		return "host"
+	case PickerManualHost:
+		return "manual"
+	default:
+		return "unknown"
+	}
+}
+
 type Window struct {
 	Start        int
 	End          int
@@ -96,6 +147,9 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 		status += " | /" + SanitizeTerminalText(active.Filter)
 	}
 	status += " | " + string(model.Mode)
+	if model.Notice != "" {
+		status += " | " + SanitizeTerminalText(model.Notice)
+	}
 	surface.PutClipped(0, statusY, width, status, StyleStatus)
 
 	if previewRows != 0 {
@@ -114,7 +168,26 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Auth.Active {
 		renderAuthModal(surface, model.Auth, width, height)
 	}
+	if model.Mode == ModeWorkspace {
+		renderWorkspaceModal(surface, string(model.workspaceName), width, height)
+	}
 	return stats
+}
+
+func renderWorkspaceModal(surface Surface, name string, width, height int) {
+	modalWidth := min(width-4, 52)
+	if modalWidth < 20 || height < 7 {
+		return
+	}
+	const modalHeight = 5
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, "Save workspace", StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "Name: "+SanitizeTerminalText(name), StyleStatus)
+	surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] save  [Esc] cancel", StyleStatus)
 }
 
 func renderAuthModal(surface Surface, state AuthState, width, height int) {

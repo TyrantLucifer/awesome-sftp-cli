@@ -54,6 +54,33 @@ func TestRendererSnapshotShowsTwoPanesFocusReadOnlyAndPartialState(t *testing.T)
 	}
 }
 
+func TestRenderPickerShowsChoicesSelectionAndSanitizedProblem(t *testing.T) {
+	picker := NewPicker([]PickerChoice{
+		{Kind: PickerWorkspace, Name: "recent", Problem: "corrupt\x1b[2Jstate"},
+		{Kind: PickerHost, Name: "server"},
+	})
+	surface := newMemorySurface(48, 8)
+	RenderPicker(surface, picker, "Choose a workspace or SSH host")
+	got := surface.String()
+	for _, want := range []string{"Open workspace or SSH host", "> workspace  recent", "host       server", "corrupt�[2Jstate", "Choose a workspace or SSH host"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("picker render missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "\x1b") {
+		t.Fatalf("picker render contains raw escape:\n%s", got)
+	}
+}
+
+func TestRenderPickerStillExplainsManualEntryAtMinimumSize(t *testing.T) {
+	picker := NewPicker(nil)
+	surface := newMemorySurface(12, 3)
+	RenderPicker(surface, picker, "")
+	if got := surface.String(); !strings.Contains(got, "Host:") {
+		t.Fatalf("minimum picker render = %q", got)
+	}
+}
+
 func TestRendererUsesLocalFallbackForActivePaneWithoutDisplayName(t *testing.T) {
 	model := modelWithEntryCount(t, 1)
 	surface := newMemorySurface(40, 8)
@@ -78,6 +105,20 @@ func TestRendererMasksAuthenticationAnswer(t *testing.T) {
 	}
 	if strings.Contains(got, "stage1-secret-canary") {
 		t.Fatalf("auth modal rendered plaintext secret:\n%s", got)
+	}
+}
+
+func TestRendererShowsWorkspaceSaveModal(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeySave})
+	model, _ = Reduce(model, TextInput{Text: "release"})
+	surface := newMemorySurface(64, 12)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"Save workspace", "Name: release", "[Enter] save  [Esc] cancel"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("workspace modal missing %q:\n%s", want, got)
+		}
 	}
 }
 

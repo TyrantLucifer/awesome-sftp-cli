@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -102,6 +103,25 @@ func (d Document) Validate() error {
 	if d.CachePolicy != CacheEphemeral {
 		return errors.New("workspace cache_policy is unsupported")
 	}
+	return nil
+}
+
+func (d Document) MarshalJSON() ([]byte, error) {
+	if err := d.Validate(); err != nil {
+		return nil, fmt.Errorf("encode workspace: %w", err)
+	}
+	return json.Marshal(d.toWire())
+}
+
+func (d *Document) UnmarshalJSON(data []byte) error {
+	if d == nil {
+		return errors.New("decode workspace: nil destination")
+	}
+	decoded, err := Decode(bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	*d = decoded
 	return nil
 }
 

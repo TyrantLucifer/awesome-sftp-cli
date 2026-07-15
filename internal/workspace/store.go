@@ -39,7 +39,7 @@ func NewStore(root string) (*Store, error) {
 }
 
 func (s *Store) Save(name string, document Document) (resultErr error) {
-	if err := validateName(name); err != nil {
+	if err := ValidateName(name); err != nil {
 		return err
 	}
 	document.UpdatedAt = s.now().UTC()
@@ -92,7 +92,7 @@ func (s *Store) Save(name string, document Document) (resultErr error) {
 }
 
 func (s *Store) Load(name string) (Document, error) {
-	if err := validateName(name); err != nil {
+	if err := ValidateName(name); err != nil {
 		return Document{}, err
 	}
 	workspacePath := s.path(name)
@@ -129,7 +129,7 @@ func (s *Store) List() ([]Summary, error) {
 			continue
 		}
 		name := strings.TrimSuffix(entry.Name(), ".json")
-		if validateName(name) != nil {
+		if ValidateName(name) != nil {
 			continue
 		}
 		document, loadErr := s.Load(name)
@@ -157,7 +157,7 @@ func (s *Store) path(name string) string {
 	return filepath.Join(s.root, name+".json")
 }
 
-func validateName(name string) error {
+func ValidateName(name string) error {
 	if len(name) == 0 || len(name) > 64 || !isASCIIAlphaNumeric(rune(name[0])) {
 		return errors.New("workspace name must start with an ASCII letter or digit and contain at most 64 bytes")
 	}

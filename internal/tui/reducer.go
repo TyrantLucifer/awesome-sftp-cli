@@ -24,6 +24,13 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			model.Auth.answer = append(append([]rune(nil), model.Auth.answer...), []rune(action.Text)...)
 			return model, nil
 		}
+		if model.Mode == ModeWorkspace {
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.workspaceName))+len(action.Text) > 64 {
+				return model, nil
+			}
+			model.workspaceName = append(append([]rune(nil), model.workspaceName...), []rune(action.Text)...)
+			return model, nil
+		}
 		if model.Mode != ModeFilter || action.Text == "" {
 			return model, nil
 		}
@@ -41,16 +48,14 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		pane := model.Panes[action.Pane].clone()
-		if pane.Location != action.Location {
-			pane.Filter = ""
-			pane.marks = make(map[domain.Location]struct{})
+		anchor, hasAnchor := pane.currentLocation()
+		pane.Listing = ListingState{
+			Generation:      action.Generation,
+			Loading:         true,
+			pendingLocation: action.Location,
+			cursorAnchor:    anchor,
+			hasCursorAnchor: hasAnchor,
 		}
-		pane.Location = action.Location
-		pane.Entries = nil
-		pane.visible = nil
-		pane.Cursor = 0
-		pane.hasVisualAnchor = false
-		pane.Listing = ListingState{Generation: action.Generation, Loading: true}
 		model.Panes[action.Pane] = pane
 		return model, nil
 	case ListingPage:
@@ -58,13 +63,36 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		pane := model.Panes[action.Pane].clone()
-		pane.Entries = append([]domain.Entry(nil), pane.Entries...)
-		pane.visible = append([]int(nil), pane.visible...)
+		if !pane.Listing.hasPage {
+			target := pane.Listing.pendingLocation
+			if target.EndpointID == "" {
+				return model, nil
+			}
+			if target != pane.Location {
+				pane.Filter = ""
+				pane.marks = make(map[domain.Location]struct{})
+				pane.hasVisualAnchor = false
+				pane.Listing.hasCursorAnchor = false
+			}
+			pane.Location = target
+			pane.Entries = nil
+			pane.visible = nil
+			pane.Cursor = 0
+			pane.Listing.hasPage = true
+		} else {
+			pane.Entries = append([]domain.Entry(nil), pane.Entries...)
+			pane.visible = append([]int(nil), pane.visible...)
+		}
 		pane.appendEntries(action.Entries)
+		pane.rebindCursorAnchor()
 		pane.Listing.Partial = pane.Listing.Partial || action.Partial
 		if action.Done {
 			pane.Listing.Loading = false
 			pane.Listing.Complete = !pane.Listing.Partial
+			pane.Listing.pendingLocation = domain.Location{}
+			pane.pruneMarks()
+			pane.rebindVisualAnchor()
+			pane.rebindCursorAnchor()
 		}
 		model.Panes[action.Pane] = pane
 		return model, nil
@@ -75,8 +103,9 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		pane := model.Panes[action.Pane].clone()
 		pane.Listing.Loading = false
 		pane.Listing.Complete = false
-		pane.Listing.Partial = len(pane.Entries) != 0
+		pane.Listing.Partial = pane.Listing.hasPage && len(pane.Entries) != 0
 		pane.Listing.Message = action.Message
+		pane.Listing.pendingLocation = domain.Location{}
 		model.Panes[action.Pane] = pane
 		return model, nil
 	case SetFilter:
@@ -149,6 +178,13 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		pane := NewPaneState(action.Endpoint, action.Location)
 		model.Panes[action.Pane] = pane
 		return model, []Intent{{Kind: IntentList, Pane: action.Pane, Location: action.Location}}
+	case WorkspaceSaveResult:
+		if action.Message != "" {
+			model.Notice = action.Message
+		} else {
+			model.Notice = "workspace saved: " + action.Name
+		}
+		return model, nil
 	default:
 		return model, nil
 	}
@@ -174,6 +210,31 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			model.Auth = AuthState{}
 			model.Mode = returnMode
 			return model, []Intent{intent}
+		default:
+			return model, nil
+		}
+	}
+	if model.Mode == ModeWorkspace {
+		switch key {
+		case KeyBackspace:
+			if len(model.workspaceName) != 0 {
+				model.workspaceName = append([]rune(nil), model.workspaceName[:len(model.workspaceName)-1]...)
+			}
+			return model, nil
+		case KeyEscape:
+			model.workspaceName = nil
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			if len(model.workspaceName) == 0 {
+				model.Notice = "workspace name is required"
+				return model, nil
+			}
+			name := string(model.workspaceName)
+			model.workspaceName = nil
+			model.Mode = ModeNormal
+			model.Notice = "saving workspace: " + name
+			return model, []Intent{{Kind: IntentWorkspaceSave, Name: name}}
 		default:
 			return model, nil
 		}
@@ -209,6 +270,9 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	}
 
 	switch key {
+	case KeySave:
+		model.Mode = ModeWorkspace
+		model.workspaceName = nil
 	case KeyDown:
 		if pane.Cursor+1 < len(pane.visible) {
 			pane.Cursor++

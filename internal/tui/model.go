@@ -23,6 +23,7 @@ const (
 	ModeVisual     Mode = "visual"
 	ModeVisualLine Mode = "visual_line"
 	ModeAuth       Mode = "auth"
+	ModeWorkspace  Mode = "workspace_save"
 )
 
 const authAnswerByteLimit = 4096
@@ -33,6 +34,11 @@ type ListingState struct {
 	Complete   bool
 	Partial    bool
 	Message    string
+
+	pendingLocation domain.Location
+	hasPage         bool
+	cursorAnchor    domain.Location
+	hasCursorAnchor bool
 }
 
 type PaneState struct {
@@ -175,6 +181,36 @@ func (p *PaneState) rebindVisualAnchor() {
 	p.hasVisualAnchor = false
 }
 
+func (p *PaneState) rebindCursorAnchor() {
+	if !p.Listing.hasCursorAnchor {
+		return
+	}
+	for index := range p.visible {
+		if p.visibleEntry(index).Location == p.Listing.cursorAnchor {
+			p.Cursor = index
+			return
+		}
+	}
+	p.clampCursor()
+}
+
+func (p *PaneState) pruneMarks() {
+	if len(p.marks) == 0 {
+		return
+	}
+	available := make(map[domain.Location]struct{}, len(p.Entries))
+	for _, entry := range p.Entries {
+		available[entry.Location] = struct{}{}
+	}
+	marks := cloneMarks(p.marks)
+	for location := range marks {
+		if _, exists := available[location]; !exists {
+			delete(marks, location)
+		}
+	}
+	p.marks = marks
+}
+
 func (p PaneState) clone() PaneState {
 	return p
 }
@@ -225,8 +261,11 @@ type Model struct {
 	Mode    Mode
 	Preview PreviewState
 	Auth    AuthState
-	Width   int
-	Height  int
+	Notice  string
+
+	workspaceName []rune
+	Width         int
+	Height        int
 }
 
 func NewModel(left, right PaneState) Model {
@@ -246,9 +285,10 @@ func NewModel(left, right PaneState) Model {
 type IntentKind string
 
 const (
-	IntentList        IntentKind = "list"
-	IntentPreview     IntentKind = "preview"
-	IntentAuthResolve IntentKind = "auth_resolve"
+	IntentList          IntentKind = "list"
+	IntentPreview       IntentKind = "preview"
+	IntentAuthResolve   IntentKind = "auth_resolve"
+	IntentWorkspaceSave IntentKind = "workspace_save"
 )
 
 const PreviewByteLimit = 64 * 1024
@@ -261,6 +301,7 @@ type Intent struct {
 	ChallengeID string
 	Answer      []byte
 	Cancel      bool
+	Name        string
 }
 
 type Key string
@@ -278,6 +319,7 @@ const (
 	KeyBackspace  Key = "backspace"
 	KeyEscape     Key = "escape"
 	KeySubmit     Key = "submit"
+	KeySave       Key = "save"
 )
 
 type Action interface{ isAction() }
@@ -328,6 +370,10 @@ type PaneConnected struct {
 	Endpoint domain.Endpoint
 	Location domain.Location
 }
+type WorkspaceSaveResult struct {
+	Name    string
+	Message string
+}
 
 func (KeyPress) isAction()              {}
 func (TextInput) isAction()             {}
@@ -340,6 +386,7 @@ func (BeginPreview) isAction()          {}
 func (PreviewChunk) isAction()          {}
 func (AuthChallengeReceived) isAction() {}
 func (PaneConnected) isAction()         {}
+func (WorkspaceSaveResult) isAction()   {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

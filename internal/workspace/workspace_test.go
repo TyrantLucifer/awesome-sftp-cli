@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -56,6 +57,26 @@ func TestDocumentRoundTripPreservesInvalidUTF8PathBytes(t *testing.T) {
 	}
 	if got.Panes[0].Path != want.Panes[0].Path {
 		t.Fatalf("path bytes = %x, want %x", []byte(got.Panes[0].Path), []byte(want.Panes[0].Path))
+	}
+}
+
+func TestDocumentJSONContractPreservesPathBytesAndRejectsUnknownFields(t *testing.T) {
+	want := testDocument()
+	want.Panes[1].Path = string([]byte{'/', 'r', 'e', 'm', 'o', 't', 'e', '-', 0xfe})
+	encoded, err := json.Marshal(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got Document
+	if err := json.Unmarshal(encoded, &got); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("JSON round trip = %#v, want %#v", got, want)
+	}
+	withUnknown := strings.Replace(string(encoded), `"cache_policy":"ephemeral"`, `"cache_policy":"ephemeral","password":"secret"`, 1)
+	if err := json.Unmarshal([]byte(withUnknown), &got); err == nil {
+		t.Fatal("JSON unknown field error = nil")
 	}
 }
 

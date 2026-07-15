@@ -22,8 +22,10 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/sshconfig"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
 	"github.com/gdamore/tcell/v3"
 )
 
@@ -107,6 +109,11 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	if err != nil {
 		return err
 	}
+	workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
+	if err != nil {
+		return err
+	}
+	sessions.SetWorkspaceStore(workspaceStore)
 	authBroker, err := auth.NewBroker(auth.Config{MaxPrompts: 8})
 	if err != nil {
 		return err
@@ -214,6 +221,10 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 }
 
 func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
+	invocation, err := parseClientInvocation(args)
+	if err != nil {
+		return err
+	}
 	paths, purpose, err := runtimePaths()
 	if err != nil {
 		return err
@@ -234,9 +245,47 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
-	locations, err := startLocations(args)
+	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
+	}
+	if err := screen.Init(); err != nil {
+		return err
+	}
+	defer screen.Fini()
+	events := screen.EventQ()
+	var restored *workspace.Document
+	var locations [2]startLocation
+	if invocation.Workspace != "" {
+		var response workspace.LoadResponse
+		if err := client.Call(ctx, daemon.WorkspaceLoad, workspace.LoadRequest{Name: invocation.Workspace}, &response); err != nil {
+			locations, restored, err = pickStartLocations(ctx, screen, events, client, "Cannot open workspace "+invocation.Workspace+": "+err.Error())
+			if errors.Is(err, errPickerCanceled) {
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+		} else {
+			locations, err = workspaceStartLocations(response.Document)
+			if err != nil {
+				return err
+			}
+			restored = &response.Document
+		}
+	} else if invocation.Pick {
+		locations, restored, err = pickStartLocations(ctx, screen, events, client, "")
+		if errors.Is(err, errPickerCanceled) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	} else {
+		locations, err = startLocations(invocation.Locations)
+		if err != nil {
+			return err
+		}
 	}
 	localEndpoint := domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal, DisplayName: "local"}
 	left, err := initialPaneState(localEndpoint, locations[0])
@@ -248,14 +297,12 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		return err
 	}
 	model := tui.NewModel(left, right)
-	screen, err := tcell.NewScreen()
-	if err != nil {
-		return err
+	if restored != nil {
+		model.Active = tui.PaneID(restored.Layout.ActivePane)
+		for index, paneState := range restored.Panes {
+			model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.PaneID(index), Query: paneState.Filter})
+		}
 	}
-	if err := screen.Init(); err != nil {
-		return err
-	}
-	defer screen.Fini()
 	runCtx, stop := context.WithCancel(ctx)
 	authClient, err := connectDaemon(runCtx, paths, purpose)
 	if err != nil {
@@ -266,7 +313,6 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		stop()
 		_ = authClient.Close()
 	}()
-	events := screen.EventQ()
 	actions := make(chan tui.Action, 32)
 	authResolutions := make(chan tui.Intent, 1)
 	authErrors := make(chan error, 1)
@@ -281,6 +327,25 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	var previewCancel context.CancelFunc
 	startIntent := func(intent tui.Intent) {
 		switch intent.Kind {
+		case tui.IntentWorkspaceSave:
+			document, documentErr := workspaceDocument(model, time.Now().UTC())
+			if documentErr != nil {
+				actions <- tui.WorkspaceSaveResult{Name: intent.Name, Message: "workspace save failed: " + documentErr.Error()}
+				return
+			}
+			go func() {
+				var response workspace.SaveResponse
+				saveErr := client.Call(runCtx, daemon.WorkspaceSave, workspace.SaveRequest{Name: intent.Name, Document: document}, &response)
+				result := tui.WorkspaceSaveResult{Name: intent.Name}
+				if saveErr != nil {
+					result.Message = "workspace save failed: " + saveErr.Error()
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
 		case tui.IntentAuthResolve:
 			select {
 			case authResolutions <- intent:
@@ -378,6 +443,150 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	}
 }
 
+func workspaceDocument(model tui.Model, updatedAt time.Time) (workspace.Document, error) {
+	document := workspace.Document{
+		SchemaVersion: workspace.SchemaVersion,
+		UpdatedAt:     updatedAt.UTC(),
+		Layout:        workspace.LayoutState{ActivePane: int(model.Active)},
+		CachePolicy:   workspace.CacheEphemeral,
+	}
+	for index, paneState := range model.Panes {
+		endpoint := workspace.EndpointRef{Kind: paneState.Endpoint.Kind}
+		if paneState.Endpoint.Kind == domain.EndpointSSH {
+			endpoint.SSHHostAlias = paneState.Endpoint.SSHHostAlias
+		}
+		document.Panes[index] = workspace.Pane{
+			Endpoint: endpoint,
+			Path:     string(paneState.Location.Path),
+			Filter:   paneState.Filter,
+			Sort: workspace.SortState{
+				Key:              workspace.SortName,
+				Direction:        workspace.SortAscending,
+				DirectoriesFirst: true,
+			},
+		}
+	}
+	if err := document.Validate(); err != nil {
+		return workspace.Document{}, err
+	}
+	return document, nil
+}
+
+var errPickerCanceled = errors.New("startup picker canceled")
+
+func pickStartLocations(
+	ctx context.Context,
+	screen tcell.Screen,
+	events <-chan tcell.Event,
+	client *daemon.Client,
+	initialMessage string,
+) ([2]startLocation, *workspace.Document, error) {
+	var empty [2]startLocation
+	message := initialMessage
+	var listed workspace.ListResponse
+	if err := client.Call(ctx, daemon.WorkspaceList, workspace.ListRequest{}, &listed); err != nil {
+		message = appendPickerMessage(message, "Cannot list workspaces: "+err.Error())
+	}
+	var aliases []string
+	home, err := os.UserHomeDir()
+	if err != nil {
+		message = appendPickerMessage(message, "Cannot locate SSH config: "+err.Error())
+	} else {
+		sshDirectory := filepath.Join(home, ".ssh")
+		aliases, err = sshconfig.DiscoverAliases(filepath.Join(sshDirectory, "config"), sshDirectory)
+		if err != nil {
+			message = appendPickerMessage(message, "Cannot read SSH config: "+err.Error())
+		}
+	}
+	picker := tui.NewPicker(startupPickerChoices(listed.Workspaces, aliases))
+	for {
+		tui.RenderPicker(tui.NewTCellSurface(screen), picker, message)
+		screen.Show()
+		select {
+		case <-ctx.Done():
+			return empty, nil, ctx.Err()
+		case event, open := <-events:
+			if !open {
+				return empty, nil, errPickerCanceled
+			}
+			switch value := event.(type) {
+			case *tcell.EventResize:
+				screen.Sync()
+			case *tcell.EventKey:
+				switch value.Key() {
+				case tcell.KeyEscape, tcell.KeyCtrlC:
+					return empty, nil, errPickerCanceled
+				case tcell.KeyUp:
+					picker.Move(-1)
+				case tcell.KeyDown:
+					picker.Move(1)
+				case tcell.KeyBackspace, tcell.KeyBackspace2:
+					picker.SetQuery(removeLastRune(picker.Query()))
+					message = ""
+				case tcell.KeyEnter:
+					choice, ok := picker.Selected()
+					if !ok {
+						message = "Type an SSH alias to continue"
+						continue
+					}
+					if choice.Kind == tui.PickerWorkspace {
+						if choice.Problem != "" {
+							message = "Workspace " + choice.Name + " needs repair: " + choice.Problem
+							continue
+						}
+						var loaded workspace.LoadResponse
+						if err := client.Call(ctx, daemon.WorkspaceLoad, workspace.LoadRequest{Name: choice.Name}, &loaded); err != nil {
+							message = "Cannot open workspace " + choice.Name + ": " + err.Error()
+							continue
+						}
+						locations, err := workspaceStartLocations(loaded.Document)
+						if err != nil {
+							message = "Cannot restore workspace " + choice.Name + ": " + err.Error()
+							continue
+						}
+						return locations, &loaded.Document, nil
+					}
+					locations, err := startLocations([]string{choice.Name + ":/"})
+					if err != nil {
+						message = "Invalid SSH host alias: " + err.Error()
+						continue
+					}
+					return locations, nil, nil
+				case tcell.KeyRune:
+					picker.SetQuery(picker.Query() + value.Str())
+					message = ""
+				}
+			}
+		}
+	}
+}
+
+func startupPickerChoices(summaries []workspace.Summary, aliases []string) []tui.PickerChoice {
+	choices := make([]tui.PickerChoice, 0, len(summaries)+len(aliases))
+	for _, summary := range summaries {
+		choices = append(choices, tui.PickerChoice{Kind: tui.PickerWorkspace, Name: summary.Name, Recent: summary.UpdatedAt, Problem: summary.Problem})
+	}
+	for _, alias := range aliases {
+		choices = append(choices, tui.PickerChoice{Kind: tui.PickerHost, Name: alias})
+	}
+	return choices
+}
+
+func appendPickerMessage(current, addition string) string {
+	if current == "" {
+		return addition
+	}
+	return current + " | " + addition
+}
+
+func removeLastRune(value string) string {
+	runes := []rune(value)
+	if len(runes) == 0 {
+		return value
+	}
+	return string(runes[:len(runes)-1])
+}
+
 func initialPaneState(local domain.Endpoint, start startLocation) (tui.PaneState, error) {
 	endpoint := local
 	if start.host != "" {
@@ -407,7 +616,7 @@ func startLocations(args []string) ([2]startLocation, error) {
 		return result, errors.New("client accepts at most two locations")
 	}
 	for index, raw := range args {
-		if host, remote, ok := strings.Cut(raw, ":"); ok {
+		if host, remote, ok := remoteLocationParts(raw); ok {
 			if _, err := openssh.Arguments(host); err != nil {
 				return result, err
 			}
@@ -427,6 +636,31 @@ func startLocations(args []string) ([2]startLocation, error) {
 		result[index] = startLocation{path: filepath.Clean(absolute)}
 	}
 	return result, nil
+}
+
+func workspaceStartLocations(document workspace.Document) ([2]startLocation, error) {
+	var result [2]startLocation
+	if err := document.Validate(); err != nil {
+		return result, err
+	}
+	for index, paneState := range document.Panes {
+		result[index] = startLocation{path: paneState.Path}
+		if paneState.Endpoint.Kind == domain.EndpointSSH {
+			result[index].host = paneState.Endpoint.SSHHostAlias
+		}
+	}
+	return result, nil
+}
+
+func remoteLocationParts(raw string) (string, string, bool) {
+	if filepath.IsAbs(raw) || strings.HasPrefix(raw, "./") || strings.HasPrefix(raw, "../") {
+		return "", "", false
+	}
+	host, remote, found := strings.Cut(raw, ":")
+	if !found || strings.ContainsAny(host, `/\\`) {
+		return "", "", false
+	}
+	return host, remote, true
 }
 
 func resolveStartLocation(ctx context.Context, client *daemon.Client, local domain.Endpoint, start startLocation) (domain.Endpoint, domain.Location, error) {
