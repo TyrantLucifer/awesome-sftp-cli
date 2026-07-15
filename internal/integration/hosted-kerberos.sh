@@ -316,7 +316,32 @@ destroy_ticket() {
   rm -f "${client_ccache}"
 }
 
+preflight_sftp_transport() {
+  local preflight_stderr="${root}/preflight.stderr"
+  if ! runuser -u "${client_user}" -- env -i \
+    HOME="${client_home}" \
+    PATH=/usr/bin:/bin \
+    KRB5_CONFIG="${krb5_config}" \
+    KRB5CCNAME="FILE:${client_ccache}" \
+    /usr/bin/timeout 10 /usr/bin/ssh \
+      -T -oEscapeChar=none -oForwardAgent=no -oForwardX11=no \
+      -oPermitLocalCommand=no -oClearAllForwardings=yes -oRemoteCommand=none \
+      -oStdinNull=no -oForkAfterAuthentication=no -oTunnel=no \
+      -oGSSAPIDelegateCredentials=no -s auth-gssapi sftp \
+      </dev/null >/dev/null 2>"${preflight_stderr}"; then
+    printf 'exact OpenSSH Kerberos SFTP preflight failed\n' >&2
+    sed -n '1,120p' "${preflight_stderr}" >&2 || true
+    runuser -u "${client_user}" -- env KRB5_CONFIG="${krb5_config}" \
+      /usr/bin/klist -c "FILE:${client_ccache}" >&2 || true
+    sed -n '1,160p' "${sshd_root}/sshd.log" >&2 || true
+    sed -n '1,160p' "${kdc_log}" >&2 || true
+    exit 1
+  fi
+  rm -f "${preflight_stderr}"
+}
+
 acquire_ticket 5m
+preflight_sftp_transport
 run_case valid yes
 
 destroy_ticket
