@@ -1,5 +1,7 @@
 package app
 
+import "github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
+
 type Role string
 
 const (
@@ -13,6 +15,13 @@ type Invocation struct {
 	Role        Role
 	ShowHelp    bool
 	ShowVersion bool
+}
+
+func InternalRoleArgs(args []string, getenv func(string) string) []string {
+	if getenv != nil && getenv(auth.EnvInternalRole) == string(auth.InternalRoleAskpass) {
+		return append([]string{string(RoleAskpass)}, args...)
+	}
+	return args
 }
 
 func ParseInvocation(args []string) (Invocation, error) {

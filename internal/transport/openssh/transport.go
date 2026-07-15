@@ -30,6 +30,7 @@ var fixedSFTPArguments = []string{
 type Config struct {
 	Binary, HostAlias string
 	Environment       []string
+	Redact            []string
 }
 
 func Arguments(hostAlias string) ([]string, error) {
@@ -80,7 +81,17 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	commandCtx, cancel := context.WithCancel(ctx)
+	commandCtx, cancel := context.WithCancel(context.Background())
+	var lifecycleMu sync.Mutex
+	established := false
+	stopParentCancel := context.AfterFunc(ctx, func() {
+		lifecycleMu.Lock()
+		defer lifecycleMu.Unlock()
+		if !established {
+			cancel()
+		}
+	})
+	defer stopParentCancel()
 	// #nosec G204 -- binary has a validated absolute trust chain and arguments are fixed plus a validated host alias.
 	command := exec.CommandContext(commandCtx, binary, arguments...)
 	configureProcessGroup(command)
@@ -115,7 +126,7 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 		cancel()
 		return nil, fmt.Errorf("start OpenSSH SFTP subsystem: %w", err)
 	}
-	collector := &boundedBuffer{}
+	collector := &boundedBuffer{redactions: append([]string(nil), config.Redact...)}
 	go func() { _, _ = io.Copy(collector, stderrPipe) }()
 	client, err := pkgsftp.NewClientPipe(stdout, stdin)
 	if err != nil {
@@ -123,6 +134,16 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 		_ = command.Wait()
 		return nil, fmt.Errorf("negotiate SFTP subsystem: %w: %s", err, collector.String())
 	}
+	lifecycleMu.Lock()
+	if err := ctx.Err(); err != nil {
+		lifecycleMu.Unlock()
+		_ = client.Close()
+		cancel()
+		_ = command.Wait()
+		return nil, fmt.Errorf("negotiate SFTP subsystem: %w", err)
+	}
+	established = true
+	lifecycleMu.Unlock()
 	return &Session{client: client, command: command, cancel: cancel, stderr: collector}, nil
 }
 
@@ -161,9 +182,10 @@ func isExpectedExit(err error) bool {
 }
 
 type boundedBuffer struct {
-	mu        sync.Mutex
-	data      []byte
-	discarded int64
+	mu         sync.Mutex
+	data       []byte
+	discarded  int64
+	redactions []string
 }
 
 func (b *boundedBuffer) Write(value []byte) (int, error) {
@@ -189,6 +211,11 @@ func (b *boundedBuffer) String() string {
 		return -1
 	}, b.data)
 	text := strings.TrimSpace(string(cleaned))
+	for _, sensitive := range b.redactions {
+		if sensitive != "" {
+			text = strings.ReplaceAll(text, sensitive, "[redacted]")
+		}
+	}
 	if b.discarded > 0 {
 		return fmt.Sprintf("%s [stderr truncated; %d bytes discarded]", text, b.discarded)
 	}

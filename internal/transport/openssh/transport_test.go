@@ -1,9 +1,18 @@
 package openssh
 
 import (
+	"context"
+	"errors"
+	"io"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
+
+	pkgsftp "github.com/pkg/sftp"
 )
 
 func TestArgumentsMatchADR0001Exactly(t *testing.T) {
@@ -45,3 +54,66 @@ func TestExpectedExitOnlyAcceptsCancellationSignal(t *testing.T) {
 		t.Fatalf("cancellation signal classified as unexpected: %v", err)
 	}
 }
+
+func TestBoundedBufferRedactsSensitiveValues(t *testing.T) {
+	buffer := boundedBuffer{redactions: []string{"stage1-secret-canary"}}
+	if _, err := buffer.Write([]byte("proxy failed with stage1-secret-canary\n")); err != nil {
+		t.Fatal(err)
+	}
+	diagnostic := buffer.String()
+	if strings.Contains(diagnostic, "stage1-secret-canary") || !strings.Contains(diagnostic, "[redacted]") {
+		t.Fatalf("diagnostic = %q", diagnostic)
+	}
+}
+
+func TestDialParentCancellationAfterNegotiationKeepsSessionAlive(t *testing.T) {
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp(filepath.Dir(executable), "amsftp-ssh-helper-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	// #nosec G302 -- the private executable-fixture directory must be owner-only and searchable.
+	if err := os.Chmod(directory, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	binary := filepath.Join(directory, "ssh")
+	// #nosec G306 -- executable fixture intentionally requires owner execute permission.
+	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexec \"$AMSFTP_TEST_BINARY\" -test.run=^TestSFTPServerHelperProcess$ --\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	session, err := Dial(ctx, Config{Binary: binary, HostAlias: "test-host", Environment: append(os.Environ(), "AMSFTP_TEST_SFTP_SERVER=1", "AMSFTP_TEST_BINARY="+executable)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	if _, err := session.Client().Stat("."); err != nil {
+		t.Fatalf("SFTP session closed with completed dial context: %v", err)
+	}
+}
+
+func TestSFTPServerHelperProcess(t *testing.T) {
+	if os.Getenv("AMSFTP_TEST_SFTP_SERVER") != "1" {
+		return
+	}
+	server, err := pkgsftp.NewServer(stdioReadWriteCloser{})
+	if err != nil {
+		os.Exit(2)
+	}
+	if err := server.Serve(); err != nil && !errors.Is(err, io.EOF) {
+		os.Exit(3)
+	}
+	os.Exit(0)
+}
+
+type stdioReadWriteCloser struct{}
+
+func (stdioReadWriteCloser) Read(value []byte) (int, error)  { return os.Stdin.Read(value) }
+func (stdioReadWriteCloser) Write(value []byte) (int, error) { return os.Stdout.Write(value) }
+func (stdioReadWriteCloser) Close() error                    { return nil }

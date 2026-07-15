@@ -1,9 +1,11 @@
 package app_test
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/app"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
 )
 
 func TestParseInvocation(t *testing.T) {
@@ -36,5 +38,22 @@ func TestParseInvocation(t *testing.T) {
 				t.Fatalf("got %#v want %#v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestInternalRoleArgsSelectsAskpassOnlyFromExactMarker(t *testing.T) {
+	args := []string{"Password:"}
+	got := app.InternalRoleArgs(args, func(key string) string {
+		if key == auth.EnvInternalRole {
+			return string(auth.InternalRoleAskpass)
+		}
+		return ""
+	})
+	if want := []string{"askpass", "Password:"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("InternalRoleArgs() = %#v, want %#v", got, want)
+	}
+	unchanged := app.InternalRoleArgs(args, func(string) string { return "client" })
+	if !reflect.DeepEqual(unchanged, args) {
+		t.Fatalf("unmarked args = %#v", unchanged)
 	}
 }

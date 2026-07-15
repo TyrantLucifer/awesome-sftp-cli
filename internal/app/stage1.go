@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
@@ -27,12 +28,13 @@ import (
 )
 
 const daemonReadyTimeout = 5 * time.Second
+const authenticationTimeout = 2 * time.Minute
 
 func DefaultHandlers() Handlers {
 	unsupported := func(context.Context, []string, io.Writer, io.Writer) error {
 		return errors.New("role is not available in this stage")
 	}
-	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: unsupported, Helper: unsupported}
+	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: unsupported}
 }
 
 func runtimePaths() (platform.Paths, platform.ValidationPurpose, error) {
@@ -105,8 +107,29 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	if err != nil {
 		return err
 	}
+	authBroker, err := auth.NewBroker(auth.Config{MaxPrompts: 8})
+	if err != nil {
+		return err
+	}
+	sessions.SetAuthBroker(authBroker)
 	sessions.SetSSHConnector(func(connectCtx context.Context, hostAlias string) (provider.Provider, error) {
-		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: hostAlias})
+		attempt, err := authBroker.BeginAttempt(connectCtx, hostAlias, authenticationTimeout)
+		if err != nil {
+			return nil, err
+		}
+		defer attempt.Close()
+		executable, err := os.Executable()
+		if err != nil {
+			return nil, fmt.Errorf("find askpass executable: %w", err)
+		}
+		if err := platform.ValidateExecutable(executable); err != nil {
+			return nil, fmt.Errorf("validate askpass executable: %w", err)
+		}
+		environment, err := auth.OpenSSHEnvironment(os.Environ(), executable, attempt.Token())
+		if err != nil {
+			return nil, err
+		}
+		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: hostAlias, Environment: environment, Redact: []string{string(attempt.Token())}})
 		if err != nil {
 			return nil, err
 		}

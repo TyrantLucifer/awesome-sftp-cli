@@ -14,7 +14,7 @@ func main() {
 	defer stop()
 	os.Exit(app.Run(
 		ctx,
-		os.Args[1:],
+		app.InternalRoleArgs(os.Args[1:], os.Getenv),
 		os.Stdout,
 		os.Stderr,
 		app.DefaultHandlers(),
