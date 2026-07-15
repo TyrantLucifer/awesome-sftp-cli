@@ -121,39 +121,63 @@ log_user 0
 log_file -noappend $env(AMSFTP_OUTPUT)
 spawn -noecho $env(AMSFTP_INSTALLED) $env(AMSFTP_LOCATION) /tmp
 
+proc expect_marker {} {
+  global env
+  expect {
+    -exact $env(AMSFTP_MARKER) { return }
+    eof { exit 91 }
+    timeout { exit 92 }
+  }
+}
+
+proc expect_prompt {pattern} {
+  expect {
+    -re $pattern { return }
+    eof { exit 93 }
+    timeout { exit 94 }
+  }
+}
+
+proc expect_process_exit {} {
+  expect {
+    eof { return }
+    timeout { exit 95 }
+  }
+}
+
 switch -- $env(AMSFTP_CASE_MODE) {
   none {
-    expect -exact $env(AMSFTP_MARKER)
+    expect_marker
   }
   password {
-    expect -re {(?i)password:}
+    expect_prompt {(?i)password:}
     send -- "$env(AMSFTP_PASSWORD)\r"
-    expect -exact $env(AMSFTP_MARKER)
+    expect_marker
   }
   mfa {
-    expect -re {(?i)passphrase}
+    expect_prompt {(?i)passphrase}
     send -- "$env(AMSFTP_KEY_PASSPHRASE)\r"
-    expect -re {(?i)password:}
+    expect_prompt {(?i)password:}
     send -- "$env(AMSFTP_MFA_PASSWORD)\r"
-    expect -exact $env(AMSFTP_MARKER)
+    expect_marker
   }
   confirm {
-    expect -re {(?i)(authenticity|continue connecting|yes/no)}
+    expect_prompt {(?i)(authenticity|continue connecting|yes/no)}
     send -- "\r"
-    expect -re {(?i)password:}
+    expect_prompt {(?i)password:}
     send -- "$env(AMSFTP_PASSWORD)\r"
-    expect -exact $env(AMSFTP_MARKER)
+    expect_marker
   }
   wrong {
-    expect -re {(?i)password:}
+    expect_prompt {(?i)password:}
     send -- "definitely-wrong\r"
-    expect eof
+    expect_process_exit
     exit 0
   }
   cancel {
-    expect -re {(?i)password:}
+    expect_prompt {(?i)password:}
     send -- "\033"
-    expect eof
+    expect_process_exit
     exit 0
   }
   default {
@@ -162,7 +186,7 @@ switch -- $env(AMSFTP_CASE_MODE) {
 }
 
 send -- "q"
-expect eof
+expect_process_exit
 EXPECT
 chmod 0644 "${expect_script}"
 
@@ -192,7 +216,7 @@ run_case() {
   alias_name="$3"
   remote_user="$4"
   marker="$5"
-  case_root="${root}/cases/${name}"
+  case_root="${client_home}/cases/${name}"
   for directory in "${case_root}" "${case_root}/runtime" "${case_root}/config" "${case_root}/state" "${case_root}/cache"; do
     install -d -o "${client_user}" -g "${client_user}" -m 0700 "${directory}"
   done
@@ -298,7 +322,7 @@ ${common}
   PreferredAuthentications publickey,password"
 run_case mfa mfa auth-mfa "${mfa_home}" endpoint-mfa.txt
 
-confirm_known_hosts="${root}/cases/confirm/confirmed-known-hosts"
+confirm_known_hosts="${client_home}/cases/confirm/confirmed-known-hosts"
 write_config "Host auth-confirm
   HostName 127.0.0.1
   Port ${port}
@@ -315,7 +339,7 @@ run_case confirm confirm auth-confirm "${target_home}" endpoint-auth.txt
 test -s "${confirm_known_hosts}"
 
 for secret in "${password}" "${mfa_password}" "${key_passphrase}"; do
-  if find "${root}/cases" "${client_home}" -type f -readable -exec grep -IlF -- "${secret}" {} + | grep -q .; then
+  if find "${root}" "${client_home}" -type f -readable -exec grep -IlF -- "${secret}" {} + | grep -q .; then
     printf 'authentication plaintext persisted in test-owned files\n' >&2
     exit 1
   fi

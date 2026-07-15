@@ -71,7 +71,11 @@ func TestDialParentCancellationAfterNegotiationKeepsSessionAlive(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	directory, err := os.MkdirTemp(filepath.Dir(executable), "amsftp-ssh-helper-")
+	workingDirectory, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	directory, err := os.MkdirTemp(workingDirectory, ".amsftp-ssh-helper-")
 	if err != nil {
 		t.Fatal(err)
 	}
