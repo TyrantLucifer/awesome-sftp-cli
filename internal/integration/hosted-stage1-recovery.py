@@ -56,6 +56,31 @@ def process_uid(pid):
     return None
 
 
+def process_parent(pid):
+    try:
+        with open(f"/proc/{pid}/status", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("PPid:"):
+                    return int(line.split()[1])
+    except (FileNotFoundError, ProcessLookupError, ValueError):
+        pass
+    return None
+
+
+def process_tree(root_pid):
+    result = {root_pid}
+    while True:
+        before = len(result)
+        for name in os.listdir("/proc"):
+            if not name.isdigit():
+                continue
+            pid = int(name)
+            if process_parent(pid) in result:
+                result.add(pid)
+        if len(result) == before:
+            return result
+
+
 def daemon_pids():
     result = []
     for name in os.listdir("/proc"):
@@ -192,20 +217,38 @@ def run_and_close(arguments, markers):
 
 
 def stop_process_group(pid):
-    try:
-        os.killpg(pid, signal.SIGTERM)
-    except ProcessLookupError:
-        return
-
-    def stopped():
+    # OpenSSH accepted-session children may create their own process groups.
+    # Snapshot and terminate the full descendant tree, rescanning while the
+    # listener is still alive so no accepted SFTP session survives the restart.
+    tracked = set()
+    deadline = time.monotonic() + 8
+    while time.monotonic() < deadline:
+        tracked.update(process_tree(pid))
+        live = []
+        for process_pid in sorted(tracked, reverse=True):
+            try:
+                os.kill(process_pid, 0)
+                live.append(process_pid)
+            except ProcessLookupError:
+                continue
+        if not live:
+            return
+        for process_pid in live:
+            try:
+                os.kill(process_pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+        time.sleep(0.05)
+    for process_pid in sorted(tracked, reverse=True):
         try:
-            os.kill(pid, 0)
-            return False
+            os.kill(process_pid, signal.SIGKILL)
         except ProcessLookupError:
-            return True
-
-    if not wait_until(stopped, f"process group {pid} stop", timeout=8):
-        raise RuntimeError(f"process group {pid} did not stop")
+            pass
+    wait_until(
+        lambda: all(not os.path.exists(f"/proc/{process_pid}") for process_pid in tracked),
+        f"process tree {pid} stop",
+        timeout=5,
+    )
 
 
 def start_sshd_a():
