@@ -23,6 +23,7 @@ installed=/usr/bin/amsftp-kerberos-test
 kdc_pid=
 sshd_pid=
 state_home="/var/lib/amsftp-kerberos-state"
+daemon_log="${state_home}/amsftp/log/daemon.jsonl"
 
 stop_group() {
   local pid="$1"
@@ -216,6 +217,9 @@ chown "${client_user}:${client_user}" "${client_home}/.ssh/config"
 chmod 0600 "${client_home}/.ssh/config"
 
 expect_script="${root}/kerberos.expect"
+vt_observer="${root}/vt-observer"
+go build -trimpath -o "${vt_observer}" ./internal/integration/vt-observer
+chmod 0755 "${vt_observer}"
 cat >"${expect_script}" <<'EXPECT'
 set timeout 30
 match_max 200000
@@ -234,11 +238,27 @@ if {$env(AMSFTP_EXPECT_SUCCESS) == "yes"} {
     timeout { exit 93 }
   }
 }
-expect {
-  eof { exit 0 }
-  -exact $env(AMSFTP_MARKER) { exit 94 }
-  timeout { exit 95 }
+set timeout 1
+for {set attempt 0} {$attempt < 30} {incr attempt} {
+  expect {
+    eof { exit 90 }
+    -exact $env(AMSFTP_MARKER) { exit 94 }
+    timeout {}
+  }
+  if {![catch {
+    set handle [open $env(AMSFTP_DAEMON_LOG) r]
+    set daemon_log [read $handle]
+    close $handle
+  }] && [string first {"event":"rpc_request_failed"} $daemon_log] >= 0 && [string first {"error_code":"auth_required"} $daemon_log] >= 0} {
+    send -- "q"
+    set timeout 5
+    expect {
+      eof { exit 0 }
+      timeout { exit 96 }
+    }
+  }
 }
+exit 95
 EXPECT
 chmod 0644 "${expect_script}"
 
@@ -275,6 +295,7 @@ run_case() {
   local output="${case_root}/terminal.log"
   local client_stderr="${case_root}/client.stderr"
   install -d -o "${client_user}" -g "${client_user}" -m 0700 "${case_root}"
+  rm -f "${daemon_log}"
   set +e
   runuser -u "${client_user}" -- env -i \
     HOME="${client_home}" \
@@ -289,6 +310,7 @@ run_case() {
     AMSFTP_EXPECT_SUCCESS="${expect_success}" \
     AMSFTP_OUTPUT="${output}" \
     AMSFTP_STDERR="${client_stderr}" \
+    AMSFTP_DAEMON_LOG="${daemon_log}" \
     /usr/bin/expect -f "${expect_script}"
   expect_exit=$?
   set -e
@@ -300,10 +322,17 @@ run_case() {
     sed -n '1,160p' "${kdc_log}" >&2 || true
     exit 1
   fi
-  if test "${expect_success}" != yes && ! grep -Fq 'establish OpenSSH SFTP session' "${client_stderr}"; then
-    printf 'Kerberos case %s did not report a bounded transport failure\n' "${name}" >&2
-    /usr/bin/strings "${client_stderr}" 2>/dev/null | sed -n '1,120p' >&2 || true
-    exit 1
+  if test "${expect_success}" != yes; then
+    if ! grep -F '"event":"rpc_request_failed"' "${daemon_log}" | grep -Fq '"error_code":"auth_required"'; then
+      printf 'Kerberos case %s did not record a bounded authentication failure\n' "${name}" >&2
+      sed -n '1,120p' "${daemon_log}" >&2 || true
+      exit 1
+    fi
+    if ! "${vt_observer}" -columns 200 -rows 30 'connect auth-gssapi failed' <"${output}"; then
+      printf 'Kerberos case %s did not render its authentication failure\n' "${name}" >&2
+      /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,160p' >&2 || true
+      exit 1
+    fi
   fi
   stop_client_daemon
   printf 'Kerberos case %s passed\n' "${name}"

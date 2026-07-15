@@ -2,8 +2,10 @@ package integration
 
 import (
 	"bytes"
+	"os"
 	"os/exec"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -44,5 +46,22 @@ func TestHostedStage1RecoveryNormalizesSplitTerminalWrites(t *testing.T) {
 	command := exec.Command("python3", "hosted-stage1-recovery.py", "--self-test", observer)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("recovery harness self-test failed: %v\n%s", err, output)
+	}
+}
+
+func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
+	script, err := os.ReadFile("hosted-kerberos.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`"event":"rpc_request_failed"`,
+		`"error_code":"auth_required"`,
+		`connect auth-gssapi failed`,
+		`vt-observer`,
+	} {
+		if !strings.Contains(string(script), required) {
+			t.Fatalf("Kerberos harness does not require %q", required)
+		}
 	}
 }
