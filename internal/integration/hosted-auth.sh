@@ -244,7 +244,10 @@ stop_client_daemon() {
     printf 'authentication case did not leave a daemon to stop\n' >&2
     return 1
   fi
-  pkill -TERM -u "${client_user}" -f "${daemon_pattern}"
+  if ! pkill -TERM -u "${client_user}" -f "${daemon_pattern}"; then
+    printf 'authentication daemon disappeared before SIGTERM\n' >&2
+    return 1
+  fi
   deadline=$((SECONDS + 5))
   while pgrep -u "${client_user}" -f "${daemon_pattern}" >/dev/null; do
     if test "${SECONDS}" -ge "${deadline}"; then
@@ -337,8 +340,12 @@ run_case() {
     printf 'authentication case %s failed\n' "${name}" >&2
     exit 1
   fi
-  test -s "${output}"
+  if ! test -s "${output}"; then
+    printf 'authentication case %s produced an empty terminal log\n' "${name}" >&2
+    return 1
+  fi
   stop_client_daemon
+  printf 'authentication case %s passed\n' "${name}"
 }
 
 common="$(common_config)"
