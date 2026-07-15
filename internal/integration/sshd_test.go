@@ -169,9 +169,20 @@ func startTestSSHD(t *testing.T, username string, publicKey []byte, label string
 func (s *testSSHD) stop() {
 	s.stopOnce.Do(func() {
 		if s.command.Process != nil {
+			pid := strconv.Itoa(s.command.Process.Pid)
+			// #nosec G204 -- the fixed pkill path receives only the decimal PID of the test-owned sshd.
+			_ = exec.Command("/usr/bin/pkill", "-KILL", "-P", pid).Run()
 			_ = syscall.Kill(-s.command.Process.Pid, syscall.SIGKILL)
 		}
-		_ = s.command.Wait()
+		waitDone := make(chan struct{})
+		go func() {
+			_ = s.command.Wait()
+			close(waitDone)
+		}()
+		select {
+		case <-waitDone:
+		case <-time.After(2 * time.Second):
+		}
 	})
 }
 
