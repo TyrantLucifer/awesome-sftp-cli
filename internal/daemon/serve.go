@@ -5,6 +5,9 @@ import (
 	"errors"
 	"net"
 	"sync"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 )
 
 type ConnectionListener interface {
@@ -36,6 +39,11 @@ func Serve(ctx context.Context, listener ConnectionListener, server *Server) err
 			return err
 		}
 		connections.Add(1)
-		go func() { defer connections.Done(); _ = server.ServeConn(ctx, connection) }()
+		go func() {
+			defer connections.Done()
+			if err := server.ServeConn(ctx, connection); err != nil {
+				server.logger.Error("daemon connection failed", diagnostic.Component("daemon"), diagnostic.Event("connection_failed"), diagnostic.ErrorCode(domain.CodeTransportInterrupted))
+			}
+		}()
 	}
 }

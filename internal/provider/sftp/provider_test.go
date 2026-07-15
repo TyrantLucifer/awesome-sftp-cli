@@ -102,3 +102,27 @@ func TestMapErrorClassifiesRemoteStatusAndConnectionLoss(t *testing.T) {
 		})
 	}
 }
+
+func TestSFTPMetadataReportsProtocolSecondPrecision(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "entry")
+	if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider := &Provider{endpoint: domain.Endpoint{ID: testEndpointID}}
+	location, err := domain.NewLocation(testEndpointID, "/entry")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entry := provider.entryFromInfo(location, "entry", info)
+	if entry.Metadata.ModifiedPrecision == nil || *entry.Metadata.ModifiedPrecision != "second" {
+		t.Fatalf("metadata precision = %#v, want second", entry.Metadata.ModifiedPrecision)
+	}
+	if entry.Fingerprint.ModifiedPrecision == nil || *entry.Fingerprint.ModifiedPrecision != "second" {
+		t.Fatalf("fingerprint precision = %#v, want second", entry.Fingerprint.ModifiedPrecision)
+	}
+}

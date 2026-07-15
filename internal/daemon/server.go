@@ -7,11 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 )
@@ -39,6 +41,7 @@ type ServerConfig struct {
 	MaxInFlight      int
 	HandshakeTimeout time.Duration
 	VerifyPeer       func(net.Conn) error
+	Logger           *slog.Logger
 }
 
 type Server struct {
@@ -50,6 +53,7 @@ type Server struct {
 	maxInFlight      int
 	handshakeTimeout time.Duration
 	verifyPeer       func(net.Conn) error
+	logger           *slog.Logger
 }
 
 func NewServer(config ServerConfig) (*Server, error) {
@@ -71,6 +75,9 @@ func NewServer(config ServerConfig) (*Server, error) {
 	if config.VerifyPeer == nil {
 		return nil, errors.New("create daemon server: peer verifier is nil")
 	}
+	if config.Logger == nil {
+		return nil, errors.New("create daemon server: logger is nil")
+	}
 	return &Server{
 		buildVersion:     config.BuildVersion,
 		epoch:            config.Epoch,
@@ -80,6 +87,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		maxInFlight:      config.MaxInFlight,
 		handshakeTimeout: config.HandshakeTimeout,
 		verifyPeer:       config.VerifyPeer,
+		logger:           config.Logger,
 	}, nil
 }
 
@@ -214,17 +222,36 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 			defer requests.Done()
 			defer func() { <-semaphore }()
 			defer cancelRequest()
+			s.logRequest("rpc_request_started", request.RequestID, nil)
 			payload, handleErr := session.Handle(requestCtx, request.Name, request.Payload)
 			activeMu.Lock()
 			delete(active, request.RequestID)
 			activeMu.Unlock()
 			if handleErr != nil {
+				wireError := rpcError(handleErr)
+				s.logRequest("rpc_request_failed", request.RequestID, wireError)
 				_ = writer.writeError(selected, request, handleErr)
 				return
 			}
+			s.logRequest("rpc_request_succeeded", request.RequestID, nil)
 			_ = writer.writePayload(selected, request, payload)
 		}(request)
 	}
+}
+
+func (s *Server) logRequest(event string, requestID domain.RequestID, failure *ipc.RPCError) {
+	attributes := []slog.Attr{
+		diagnostic.Component("daemon"),
+		diagnostic.Event(event),
+		diagnostic.RequestID(requestID),
+	}
+	if failure != nil {
+		attributes = append(attributes, diagnostic.ErrorCode(failure.Code))
+		if failure.EndpointID != "" {
+			attributes = append(attributes, diagnostic.EndpointID(failure.EndpointID))
+		}
+	}
+	s.logger.LogAttrs(context.Background(), slog.LevelInfo, "daemon request", attributes...)
 }
 
 func (s *Server) handleHello(request ipc.Envelope, writer *connectionWriter) (ipc.ProtocolVersion, error) {

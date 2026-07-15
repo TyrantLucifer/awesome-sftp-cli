@@ -36,6 +36,37 @@ func TestReducerKeepsPaneStateIndependent(t *testing.T) {
 	}
 }
 
+func TestReducerAppliesBoundedCountsOnlyToSafeNavigation(t *testing.T) {
+	model := modelWithEntryCount(t, 20)
+	model, _ = Reduce(model, CountDigit{Digit: 1})
+	model, _ = Reduce(model, CountDigit{Digit: 2})
+	if model.Count != 12 {
+		t.Fatalf("pending count = %d, want 12", model.Count)
+	}
+	model, intents := Reduce(model, KeyPress{Key: KeyDown})
+	if len(intents) != 0 || model.Panes[Left].Cursor != 12 || model.Count != 0 {
+		t.Fatalf("counted down model=%#v intents=%#v", model, intents)
+	}
+
+	model, _ = Reduce(model, CountDigit{Digit: 9})
+	model, intents = Reduce(model, KeyPress{Key: KeyOpen})
+	if len(intents) != 0 || model.Panes[Left].Cursor != 12 || model.Count != 0 {
+		t.Fatalf("unsafe counted action changed state: model=%#v intents=%#v", model, intents)
+	}
+
+	model, _ = Reduce(model, CountDigit{Digit: 9})
+	model, _ = Reduce(model, KeyPress{Key: KeyUp})
+	if model.Panes[Left].Cursor != 3 {
+		t.Fatalf("counted up cursor = %d, want 3", model.Panes[Left].Cursor)
+	}
+
+	model.Count = navigationCountLimit
+	model, _ = Reduce(model, CountDigit{Digit: 9})
+	if model.Count != navigationCountLimit {
+		t.Fatalf("overflowing count = %d, want bounded %d", model.Count, navigationCountLimit)
+	}
+}
+
 func TestReducerEmitsOnlyReadOnlyNavigationIntents(t *testing.T) {
 	model := testModel(t)
 
@@ -197,16 +228,26 @@ func TestConnectionRecoveryStateIsPaneLocalAndReplacesCapabilities(t *testing.T)
 
 func TestEndpointSwitchCommitsEndpointAndLocationOnFirstSuccessfulPage(t *testing.T) {
 	model := testModel(t)
+	oldCapabilities := mustCapabilitySnapshot(t, "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", 9, "read")
+	left := model.Panes[Left]
+	left.Endpoint.Kind = domain.EndpointSSH
+	left.Endpoint.DisplayName = "old"
+	left.Endpoint.SSHHostAlias = "old"
+	left.Capabilities = oldCapabilities
+	left.CapabilityGeneration = oldCapabilities.Revision.Generation
+	model.Panes[Left] = left
 	before := model.Panes[Left]
 	newEndpoint := domain.Endpoint{ID: domain.EndpointID("ep_cccccccccccccccccccccccccc"), Kind: domain.EndpointSSH, DisplayName: "work", SSHHostAlias: "work"}
 	newLocation := mustLocation(t, newEndpoint.ID, "/srv/data")
+	newCapabilities := mustCapabilitySnapshot(t, "sess_bbbbbbbbbbbbbbbbbbbbbbbbbb", 1, "metadata")
 
 	model, intents := Reduce(model, PaneConnected{
 		Pane:                 Left,
 		Endpoint:             newEndpoint,
 		Location:             newLocation,
 		State:                domain.StateReady,
-		CapabilityGeneration: 7,
+		CapabilityGeneration: newCapabilities.Revision.Generation,
+		Capabilities:         newCapabilities,
 		PreserveCommitted:    true,
 	})
 	intent := assertSingleIntent(t, intents, IntentList, "/srv/data")
@@ -224,13 +265,14 @@ func TestEndpointSwitchCommitsEndpointAndLocationOnFirstSuccessfulPage(t *testin
 		Endpoint:             intent.Endpoint,
 		Connection:           intent.Connection,
 		CapabilityGeneration: intent.CapabilityGeneration,
+		Capabilities:         intent.Capabilities,
 		CommitEndpoint:       intent.CommitEndpoint,
 	})
 	if model.Panes[Left].Endpoint != before.Endpoint || model.Panes[Left].Location != before.Location {
 		t.Fatalf("begin switch committed before validation: %#v", model.Panes[Left])
 	}
 	model, _ = Reduce(model, ListingFailed{Pane: Left, Generation: 20, Message: "permission denied"})
-	if model.Panes[Left].Endpoint != before.Endpoint || model.Panes[Left].Location != before.Location || model.Panes[Left].Connection != before.Connection {
+	if model.Panes[Left].Endpoint != before.Endpoint || model.Panes[Left].Location != before.Location || model.Panes[Left].Connection != before.Connection || !reflect.DeepEqual(model.Panes[Left].Capabilities, oldCapabilities) {
 		t.Fatalf("failed switch changed committed pane: before=%#v after=%#v", before, model.Panes[Left])
 	}
 
@@ -239,7 +281,8 @@ func TestEndpointSwitchCommitsEndpointAndLocationOnFirstSuccessfulPage(t *testin
 		Endpoint:             newEndpoint,
 		Location:             newLocation,
 		State:                domain.StateReady,
-		CapabilityGeneration: 7,
+		CapabilityGeneration: newCapabilities.Revision.Generation,
+		Capabilities:         newCapabilities,
 		PreserveCommitted:    true,
 	})
 	intent = assertSingleIntent(t, intents, IntentList, "/srv/data")
@@ -250,16 +293,33 @@ func TestEndpointSwitchCommitsEndpointAndLocationOnFirstSuccessfulPage(t *testin
 		Endpoint:             intent.Endpoint,
 		Connection:           intent.Connection,
 		CapabilityGeneration: intent.CapabilityGeneration,
+		Capabilities:         intent.Capabilities,
 		CommitEndpoint:       intent.CommitEndpoint,
 	})
-	model, _ = Reduce(model, ListingPage{Pane: Left, Generation: 21, Done: true})
+	model, intents = Reduce(model, ListingPage{Pane: Left, Generation: 21, Done: true})
 	pane := model.Panes[Left]
-	if pane.Endpoint != newEndpoint || pane.Location != newLocation || pane.Connection != domain.StateReady || pane.CapabilityGeneration != 7 {
+	if pane.Endpoint != newEndpoint || pane.Location != newLocation || pane.Connection != domain.StateReady || pane.CapabilityGeneration != 1 || !reflect.DeepEqual(pane.Capabilities, newCapabilities) {
 		t.Fatalf("successful switch pane = %#v", pane)
 	}
 	if pane.Endpoint.ID != pane.Location.EndpointID {
 		t.Fatalf("endpoint/location invariant broken after listing: %#v", pane)
 	}
+	if len(intents) != 1 || intents[0].Kind != IntentReleaseEndpoint || intents[0].EndpointID != before.Endpoint.ID {
+		t.Fatalf("endpoint release intents = %#v, want old endpoint", intents)
+	}
+}
+
+func mustCapabilitySnapshot(t *testing.T, sessionID domain.SessionID, generation uint64, names ...domain.CapabilityName) domain.CapabilitySnapshot {
+	t.Helper()
+	items := make([]domain.Capability, len(names))
+	for index, name := range names {
+		items[index] = domain.Capability{Name: name, Version: 1}
+	}
+	snapshot, err := domain.NewCapabilitySnapshot(domain.CapabilityRevision{SessionID: sessionID, Generation: generation}, true, items)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return snapshot
 }
 
 func TestEndpointModeEmitsActivePaneConnectionWithoutChangingOtherPane(t *testing.T) {

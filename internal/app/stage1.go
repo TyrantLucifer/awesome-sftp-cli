@@ -16,6 +16,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
@@ -59,7 +60,7 @@ func runDaemon(ctx context.Context, _ []string, _ io.Writer, _ io.Writer) error 
 	return runDaemonWithPaths(ctx, paths, purpose)
 }
 
-func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) error {
+func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (returnErr error) {
 	lock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
 	if errors.Is(err, platform.ErrInstanceLocked) {
 		return nil
@@ -68,6 +69,13 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	defer lock.Close()
+	daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
+	if err != nil {
+		return err
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, daemonLog.Close())
+	}()
 	if _, err := os.Lstat(paths.ControlSocket); err == nil {
 		probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		connection, probeErr := platform.DialControlSocket(probeCtx, paths.ControlSocket, purpose)
@@ -158,7 +166,7 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		}
 		return implementation, nil
 	})
-	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, VerifyPeer: func(conn net.Conn) error {
+	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: daemonLog.Logger, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {
 			return fmt.Errorf("unexpected peer connection %T", conn)
@@ -427,6 +435,19 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			case <-runCtx.Done():
 			}
 			return
+		case tui.IntentReleaseEndpoint:
+			activeClient := client
+			go func() {
+				var response ipc.ProviderReleaseResponse
+				releaseErr := activeClient.Call(runCtx, daemon.ProviderRelease, ipc.ProviderReleaseRequest{EndpointID: string(intent.EndpointID)}, &response)
+				if releaseErr != nil && runCtx.Err() == nil {
+					select {
+					case actions <- tui.WorkspaceSaveResult{Message: "old endpoint cleanup failed: " + releaseErr.Error()}:
+					case <-runCtx.Done():
+					}
+				}
+			}()
+			return
 		case tui.IntentWorkspaceSave:
 			document, documentErr := workspaceDocument(model, time.Now().UTC())
 			if documentErr != nil {
@@ -468,6 +489,12 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				previewLocation(requestCtx, activeClient, generation, intent.Location, actions)
 			}()
 			return
+		case tui.IntentPreviewCancel:
+			if previewCancel != nil {
+				previewCancel()
+				previewCancel = nil
+			}
+			return
 		case tui.IntentList:
 		default:
 			return
@@ -488,6 +515,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			Endpoint:             intent.Endpoint,
 			Connection:           intent.Connection,
 			CapabilityGeneration: intent.CapabilityGeneration,
+			Capabilities:         intent.Capabilities,
 			CommitEndpoint:       intent.CommitEndpoint,
 		}
 		go func() {
@@ -503,6 +531,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		host                 string
 		state                domain.ConnectionState
 		capabilityGeneration uint64
+		capabilities         domain.CapabilitySnapshot
 		recovery             bool
 		switching            bool
 		err                  error
@@ -516,7 +545,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		if recovery {
 			recovering[pane] = true
 			if !switching {
-				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateConnecting, Message: "reconnecting"})
+				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateDisconnected, Message: "connection lost; reconnecting"})
 			}
 		}
 		activeLocal := localEndpoint
@@ -525,7 +554,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			result := connectionResult{pane: pane, epoch: epoch, host: start.host, recovery: recovery, switching: switching}
 			result.err = runReconnect(connectionCtx, defaultReconnectPolicy(), func() error {
 				var connectErr error
-				result.endpoint, result.location, result.state, result.capabilityGeneration, connectErr = resolveStartLocation(connectionCtx, activeClient, activeLocal, start)
+				result.endpoint, result.location, result.state, result.capabilities, connectErr = resolveStartLocation(connectionCtx, activeClient, activeLocal, start)
+				result.capabilityGeneration = result.capabilities.Revision.Generation
 				return connectErr
 			})
 			select {
@@ -676,7 +706,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				continue
 			}
 			var intents []tui.Intent
-			model, intents = tui.Reduce(model, tui.PaneConnected{Pane: result.pane, Endpoint: result.endpoint, Location: result.location, State: result.state, CapabilityGeneration: result.capabilityGeneration, PreserveCommitted: result.recovery})
+			model, intents = tui.Reduce(model, tui.PaneConnected{Pane: result.pane, Endpoint: result.endpoint, Location: result.location, State: result.state, CapabilityGeneration: result.capabilityGeneration, Capabilities: result.capabilities, PreserveCommitted: result.recovery})
 			validatingRecovery[result.pane] = result.recovery
 			recoveryFallback[result.pane] = false
 			for _, intent := range intents {
@@ -983,29 +1013,52 @@ func remoteLocationParts(raw string) (string, string, bool) {
 	return host, remote, true
 }
 
-func resolveStartLocation(ctx context.Context, client *daemon.Client, local domain.Endpoint, start startLocation) (domain.Endpoint, domain.Location, domain.ConnectionState, uint64, error) {
+func resolveStartLocation(ctx context.Context, client *daemon.Client, local domain.Endpoint, start startLocation) (domain.Endpoint, domain.Location, domain.ConnectionState, domain.CapabilitySnapshot, error) {
 	endpoint := local
 	state := domain.StateReady
-	var capabilityGeneration uint64
+	var capabilities domain.CapabilitySnapshot
 	if start.host != "" {
 		var response ipc.ProviderConnectSSHResponse
 		if err := client.Call(ctx, daemon.ProviderConnectSSH, ipc.ProviderConnectSSHRequest{HostAlias: start.host}, &response); err != nil {
-			return domain.Endpoint{}, domain.Location{}, "", 0, err
+			return domain.Endpoint{}, domain.Location{}, "", domain.CapabilitySnapshot{}, err
 		}
 		id, err := domain.ParseEndpointID(response.Endpoint.ID)
 		if err != nil {
-			return domain.Endpoint{}, domain.Location{}, "", 0, err
+			return domain.Endpoint{}, domain.Location{}, "", domain.CapabilitySnapshot{}, err
 		}
 		endpoint = domain.Endpoint{ID: id, Kind: response.Endpoint.Kind, DisplayName: response.Endpoint.DisplayName, SSHHostAlias: response.Endpoint.SSHHostAlias}
 		var snapshot ipc.ProviderSnapshotResponse
 		if err := client.Call(ctx, daemon.ProviderSnapshot, ipc.ProviderSnapshotRequest{EndpointID: response.Endpoint.ID}, &snapshot); err != nil {
-			return domain.Endpoint{}, domain.Location{}, "", 0, err
+			return domain.Endpoint{}, domain.Location{}, "", domain.CapabilitySnapshot{}, err
+		}
+		capabilities, err = capabilitySnapshotFromWire(snapshot)
+		if err != nil {
+			return domain.Endpoint{}, domain.Location{}, "", domain.CapabilitySnapshot{}, err
 		}
 		state = snapshot.State
-		capabilityGeneration = snapshot.Generation
 	}
 	location, err := domain.NewLocation(endpoint.ID, domain.CanonicalPath(start.path))
-	return endpoint, location, state, capabilityGeneration, err
+	return endpoint, location, state, capabilities, err
+}
+
+func capabilitySnapshotFromWire(response ipc.ProviderSnapshotResponse) (domain.CapabilitySnapshot, error) {
+	endpointID, err := domain.ParseEndpointID(response.EndpointID)
+	if err != nil {
+		return domain.CapabilitySnapshot{}, fmt.Errorf("decode provider capability endpoint: %w", err)
+	}
+	sessionID, err := domain.ParseSessionID(response.SessionID)
+	if err != nil {
+		return domain.CapabilitySnapshot{}, fmt.Errorf("decode provider capability session: %w", err)
+	}
+	items := make([]domain.Capability, len(response.Items))
+	for index, item := range response.Items {
+		items[index] = domain.Capability{Name: item.Name, Version: item.Version, Constraints: append([]domain.CapabilityConstraint(nil), item.Constraints...)}
+	}
+	snapshot, err := domain.NewCapabilitySnapshot(domain.CapabilityRevision{SessionID: sessionID, Generation: response.Generation}, response.Complete, items)
+	if err != nil {
+		return domain.CapabilitySnapshot{}, fmt.Errorf("decode provider capability snapshot for %s: %w", endpointID, err)
+	}
+	return snapshot, nil
 }
 
 func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, generation uint64, location domain.Location, actions chan<- tui.Action) {

@@ -101,6 +101,30 @@ func TestEndpointSwitchFailurePreservesCommittedConnectionState(t *testing.T) {
 	}
 }
 
+func TestCapabilitySnapshotFromWirePreservesCompleteSessionState(t *testing.T) {
+	response := ipc.ProviderSnapshotResponse{
+		EndpointID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SessionID:  "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Generation: 4,
+		Complete:   false,
+		Items: []ipc.WireCapability{
+			{Name: "metadata", Version: 2, Constraints: []domain.CapabilityConstraint{{Name: "precision", Value: "second"}}},
+			{Name: "read", Version: 1},
+		},
+	}
+	snapshot, err := capabilitySnapshotFromWire(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision.SessionID != "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa" || snapshot.Revision.Generation != 4 || snapshot.Complete || len(snapshot.Items) != 2 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	metadata, ok := snapshot.Lookup("metadata")
+	if !ok || metadata.Version != 2 || len(metadata.Constraints) != 1 || metadata.Constraints[0].Value != "second" {
+		t.Fatalf("metadata capability = %#v, %t", metadata, ok)
+	}
+}
+
 func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
 	leftID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
 	rightID := domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
@@ -153,7 +177,8 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	if err := os.Chmod(base, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	paths := platform.Paths{StateDir: filepath.Join(testkit.PersistentTempDir(t), "state"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
+	persistent := testkit.PersistentTempDir(t)
+	paths := platform.Paths{StateDir: filepath.Join(persistent, "state"), LogFile: filepath.Join(persistent, "log", "daemon.jsonl"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
 	purpose := platform.ValidateRuntimeFallback
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

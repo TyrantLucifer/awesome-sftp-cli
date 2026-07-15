@@ -1,13 +1,18 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
+	"log/slog"
 	"net"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 )
@@ -210,11 +215,34 @@ func newTestServer(t *testing.T, factory SessionFactory) *Server {
 		MaxInFlight:      4,
 		HandshakeTimeout: time.Second,
 		VerifyPeer:       func(net.Conn) error { return nil },
+		Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return server
+}
+
+func TestLogRequestWritesOnlySafeCorrelationFields(t *testing.T) {
+	var output bytes.Buffer
+	server := newTestServer(t, sessionFactory(func() Session { return &testSession{} }))
+	server.logger = slog.New(diagnostic.NewJSONHandler(&output, nil))
+	server.logRequest("rpc_request_failed", workRequestID, &ipc.RPCError{
+		Code:       domain.CodePermissionDenied,
+		Message:    "secret-canary /private/path",
+		EndpointID: domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
+	})
+	encoded := output.String()
+	for _, required := range []string{string(workRequestID), string(domain.CodePermissionDenied), "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"} {
+		if !strings.Contains(encoded, required) {
+			t.Fatalf("log does not contain %q: %s", required, encoded)
+		}
+	}
+	for _, forbidden := range []string{"secret-canary", "/private/path"} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("log contains %q: %s", forbidden, encoded)
+		}
+	}
 }
 
 func hello(t *testing.T, conn net.Conn) {

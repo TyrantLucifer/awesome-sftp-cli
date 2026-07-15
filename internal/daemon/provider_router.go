@@ -26,6 +26,7 @@ const (
 	ProviderStat       = "provider.stat"
 	ProviderRead       = "provider.read"
 	ProviderConnectSSH = "provider.connect_ssh"
+	ProviderRelease    = "provider.release"
 	AuthPrompt         = "auth.prompt"
 	AuthClaim          = "auth.claim"
 	AuthResolve        = "auth.resolve"
@@ -138,6 +139,8 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.saveWorkspace(payload)
 	case ProviderConnectSSH:
 		return s.connect(ctx, payload)
+	case ProviderRelease:
+		return s.release(payload)
 	case ProviderEndpoints:
 		return s.endpoints(), nil
 	case ProviderSnapshot:
@@ -369,6 +372,58 @@ func (s *providerSession) endpoints() ipc.ProviderEndpointsResponse {
 	}
 	sort.Slice(endpoints, func(left, right int) bool { return endpoints[left].ID < endpoints[right].ID })
 	return ipc.ProviderEndpointsResponse{Endpoints: endpoints}
+}
+
+func (s *providerSession) release(payload json.RawMessage) (any, error) {
+	var request ipc.ProviderReleaseRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode provider release request", err)
+	}
+	endpointID, err := domain.ParseEndpointID(request.EndpointID)
+	if err != nil {
+		return nil, invalidArgument("release endpoint ID is invalid", err)
+	}
+	s.mu.Lock()
+	implementation := s.providers[endpointID]
+	ownedIndex := -1
+	for index, candidate := range s.owned {
+		if candidate.Descriptor().ID == endpointID {
+			ownedIndex = index
+			break
+		}
+	}
+	if implementation == nil {
+		s.mu.Unlock()
+		return nil, &domain.OpError{Code: domain.CodeNotFound, Message: "endpoint is not registered", EndpointID: endpointID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	if ownedIndex < 0 {
+		s.mu.Unlock()
+		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "base endpoint cannot be released", EndpointID: endpointID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	delete(s.providers, endpointID)
+	s.owned = append(s.owned[:ownedIndex], s.owned[ownedIndex+1:]...)
+	var cursors []providerapi.PageCursor
+	for key := range s.cursors {
+		if key.endpointID == endpointID {
+			delete(s.cursors, key)
+			cursors = append(cursors, key.cursor)
+		}
+	}
+	s.mu.Unlock()
+
+	var result error
+	if discarder, ok := implementation.(cursorDiscarder); ok {
+		for _, cursor := range cursors {
+			result = errors.Join(result, discarder.DiscardCursor(cursor))
+		}
+	}
+	if closer, ok := implementation.(interface{ Close() error }); ok {
+		result = errors.Join(result, closer.Close())
+	}
+	if result != nil {
+		return nil, internalError("release SSH endpoint", result)
+	}
+	return ipc.ProviderReleaseResponse{}, nil
 }
 
 func (s *providerSession) snapshot(ctx context.Context, payload json.RawMessage) (any, error) {

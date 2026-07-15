@@ -64,6 +64,9 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint {
 				return TextInput{Text: event.Str()}, true
 			}
+			if value := event.Str(); len(value) == 1 && value[0] >= '0' && value[0] <= '9' {
+				return CountDigit{Digit: value[0] - '0'}, true
+			}
 			switch event.Str() {
 			case "h":
 				return KeyPress{Key: KeyParent}, true

@@ -46,6 +46,14 @@ func (s *Store) Save(name string, document Document) (resultErr error) {
 	if err := document.Validate(); err != nil {
 		return fmt.Errorf("save workspace %q: %w", name, err)
 	}
+	finalPath := s.path(name)
+	if _, err := os.Lstat(finalPath); err == nil {
+		if _, loadErr := s.Load(name); loadErr != nil {
+			return fmt.Errorf("save workspace %q: preserve invalid existing document: %w", name, loadErr)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("save workspace %q: inspect existing document: %w", name, err)
+	}
 	temporary, err := os.CreateTemp(s.root, ".workspace-*.tmp")
 	if err != nil {
 		return fmt.Errorf("save workspace %q: create temporary file: %w", name, err)
@@ -78,7 +86,6 @@ func (s *Store) Save(name string, document Document) (resultErr error) {
 			return fmt.Errorf("save workspace %q before replace: %w", name, err)
 		}
 	}
-	finalPath := s.path(name)
 	if err := os.Rename(temporaryPath, finalPath); err != nil {
 		return fmt.Errorf("save workspace %q: replace final file: %w", name, err)
 	}

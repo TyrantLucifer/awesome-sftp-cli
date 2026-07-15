@@ -154,6 +154,9 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if active.Listing.Message != "" {
 		status += " | " + SanitizeTerminalText(active.Listing.Message)
 	}
+	if active.CapabilityGeneration != 0 {
+		status += fmt.Sprintf(" | caps:%d@%d", len(active.Capabilities.Items), active.CapabilityGeneration)
+	}
 	direction := "↑"
 	if active.Sort.Descending {
 		direction = "↓"
@@ -164,6 +167,9 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	} else {
 		status += " | hidden:off"
 	}
+	if model.Count != 0 {
+		status += fmt.Sprintf(" | %d", model.Count)
+	}
 	status += " | " + string(model.Mode)
 	if model.Notice != "" {
 		status += " | " + SanitizeTerminalText(model.Notice)
@@ -172,7 +178,14 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 
 	if previewRows != 0 {
 		previewY := statusY + 1
-		surface.PutClipped(0, previewY, width, "Preview", StyleHeader)
+		previewHeader := "Preview " + string(model.Preview.Location.Path)
+		if model.Preview.Loading {
+			previewHeader += " [loading]"
+		}
+		if model.Preview.Truncated {
+			previewHeader += " [truncated]"
+		}
+		surface.PutClipped(0, previewY, width, previewHeader, StyleHeader)
 		previewText := model.Preview.DisplayText()
 		style := StylePreview
 		if model.Preview.Message != "" {

@@ -143,6 +143,13 @@ proc record_timeout {stage} {
   close $diagnostic
 }
 
+proc record_observation {observation} {
+  global env
+  set diagnostic [open $env(AMSFTP_DIAGNOSTIC) a]
+  puts $diagnostic "$observation observed"
+  close $diagnostic
+}
+
 if {[catch {
   spawn -noecho /bin/sh -c {exec "$AMSFTP_INSTALLED" "$AMSFTP_LOCATION" /tmp 2>"$AMSFTP_STDERR"}
 }]} {
@@ -203,14 +210,17 @@ switch -- $env(AMSFTP_CASE_MODE) {
     expect_prompt {(?i)password:}
     send -- "definitely-wrong\r"
     expect_prompt {(?i)(authentication failed|connect .* failed|failed)}
+    record_observation bounded_failure
   }
   cancel {
     expect_prompt {(?i)password:}
     send -- "\033"
     expect_prompt {(?i)(connect .* failed|authentication failed)}
+    record_observation bounded_failure
   }
   failure {
     expect_prompt {(?i)(host-key verification failed|connect .* failed)}
+    record_observation bounded_failure
   }
   default {
     exit 90
@@ -365,7 +375,7 @@ run_case() {
   fi
   case "${mode}" in
     wrong | cancel | failure)
-      if ! /usr/bin/strings "${output}" | grep -Eiq '(authentication failed|host-key verification failed|connect .* failed|failed)'; then
+      if ! grep -qx 'bounded_failure observed' "${diagnostic}"; then
         printf 'authentication case %s did not report a bounded pane-local failure\n' "${name}" >&2
         /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,120p' >&2 || true
         exit 1
@@ -534,5 +544,9 @@ for secret in "${password}" "${mfa_password}" "${key_passphrase}"; do
     exit 1
   fi
 done
+
+AMSFTP_RECOVERY_BINARY="${installed}" \
+  AMSFTP_RECOVERY_ROOT="${root}-recovery" \
+  bash ./internal/integration/hosted-stage1-recovery.sh
 
 printf 'hosted authentication matrix passed\n'

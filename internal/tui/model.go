@@ -55,6 +55,7 @@ type ListingState struct {
 	pendingEndpoint             domain.Endpoint
 	pendingConnection           domain.ConnectionState
 	pendingCapabilityGeneration uint64
+	pendingCapabilities         domain.CapabilitySnapshot
 	commitEndpoint              bool
 	hasPage                     bool
 	cursorAnchor                domain.Location
@@ -72,6 +73,7 @@ type PaneState struct {
 	Listing              ListingState
 	Connection           domain.ConnectionState
 	CapabilityGeneration uint64
+	Capabilities         domain.CapabilitySnapshot
 
 	visible          []int
 	marks            map[domain.Location]struct{}
@@ -354,6 +356,7 @@ type Model struct {
 	Panes   [2]PaneState
 	Active  PaneID
 	Mode    Mode
+	Count   int
 	Preview PreviewState
 	Auth    AuthState
 	Notice  string
@@ -384,9 +387,11 @@ type IntentKind string
 const (
 	IntentList            IntentKind = "list"
 	IntentPreview         IntentKind = "preview"
+	IntentPreviewCancel   IntentKind = "preview_cancel"
 	IntentAuthResolve     IntentKind = "auth_resolve"
 	IntentWorkspaceSave   IntentKind = "workspace_save"
 	IntentConnectEndpoint IntentKind = "connect_endpoint"
+	IntentReleaseEndpoint IntentKind = "release_endpoint"
 )
 
 const PreviewByteLimit = 64 * 1024
@@ -401,8 +406,10 @@ type Intent struct {
 	Cancel               bool
 	Name                 string
 	Endpoint             domain.Endpoint
+	EndpointID           domain.EndpointID
 	Connection           domain.ConnectionState
 	CapabilityGeneration uint64
+	Capabilities         domain.CapabilitySnapshot
 	CommitEndpoint       bool
 }
 
@@ -432,6 +439,7 @@ const (
 type Action interface{ isAction() }
 
 type KeyPress struct{ Key Key }
+type CountDigit struct{ Digit uint8 }
 type TextInput struct{ Text string }
 type Resize struct{ Width, Height int }
 type BeginListing struct {
@@ -441,6 +449,7 @@ type BeginListing struct {
 	Endpoint             domain.Endpoint
 	Connection           domain.ConnectionState
 	CapabilityGeneration uint64
+	Capabilities         domain.CapabilitySnapshot
 	CommitEndpoint       bool
 }
 type ListingPage struct {
@@ -486,6 +495,7 @@ type PaneConnected struct {
 	Location             domain.Location
 	State                domain.ConnectionState
 	CapabilityGeneration uint64
+	Capabilities         domain.CapabilitySnapshot
 	PreserveCommitted    bool
 }
 type PaneConnectionChanged struct {
@@ -499,6 +509,7 @@ type WorkspaceSaveResult struct {
 }
 
 func (KeyPress) isAction()              {}
+func (CountDigit) isAction()            {}
 func (TextInput) isAction()             {}
 func (Resize) isAction()                {}
 func (BeginListing) isAction()          {}

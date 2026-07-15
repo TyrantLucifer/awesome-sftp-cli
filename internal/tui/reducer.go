@@ -9,10 +9,24 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 )
 
+const navigationCountLimit = 1_000_000
+
 func Reduce(model Model, action Action) (Model, []Intent) {
 	switch action := action.(type) {
 	case KeyPress:
 		return reduceKey(model, action.Key)
+	case CountDigit:
+		if action.Digit > 9 || model.Mode != ModeNormal && model.Mode != ModeVisual && model.Mode != ModeVisualLine {
+			return model, nil
+		}
+		if model.Count == 0 && action.Digit == 0 {
+			return model, nil
+		}
+		if model.Count > (navigationCountLimit-int(action.Digit))/10 {
+			return model, nil
+		}
+		model.Count = model.Count*10 + int(action.Digit)
+		return model, nil
 	case TextInput:
 		if model.Auth.Active {
 			answerBytes := 0
@@ -47,6 +61,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		if model.Mode != ModeFilter || action.Text == "" {
+			model.Count = 0
 			return model, nil
 		}
 		pane := model.Panes[model.Active].clone()
@@ -77,6 +92,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			pendingEndpoint:             action.Endpoint,
 			pendingConnection:           action.Connection,
 			pendingCapabilityGeneration: action.CapabilityGeneration,
+			pendingCapabilities:         action.Capabilities,
 			commitEndpoint:              action.CommitEndpoint,
 			cursorAnchor:                anchor,
 			hasCursorAnchor:             hasAnchor,
@@ -88,18 +104,24 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		pane := model.Panes[action.Pane].clone()
+		var intents []Intent
 		if !pane.Listing.hasPage {
 			target := pane.Listing.pendingLocation
 			if target.EndpointID == "" {
 				return model, nil
 			}
 			if pane.Listing.commitEndpoint {
+				oldEndpoint := pane.Endpoint
 				pane.Endpoint = pane.Listing.pendingEndpoint
 				pane.Connection = pane.Listing.pendingConnection
 				if pane.Connection == "" {
 					pane.Connection = domain.StateReady
 				}
 				pane.CapabilityGeneration = pane.Listing.pendingCapabilityGeneration
+				pane.Capabilities = pane.Listing.pendingCapabilities
+				if oldEndpoint.Kind == domain.EndpointSSH && oldEndpoint.ID != pane.Endpoint.ID {
+					intents = append(intents, Intent{Kind: IntentReleaseEndpoint, Pane: action.Pane, EndpointID: oldEndpoint.ID})
+				}
 			}
 			if target != pane.Location {
 				pane.Filter = ""
@@ -115,6 +137,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			pane.Listing.pendingEndpoint = domain.Endpoint{}
 			pane.Listing.pendingConnection = ""
 			pane.Listing.pendingCapabilityGeneration = 0
+			pane.Listing.pendingCapabilities = domain.CapabilitySnapshot{}
 			pane.Listing.commitEndpoint = false
 		} else {
 			pane.Entries = append([]domain.Entry(nil), pane.Entries...)
@@ -135,7 +158,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			pane.rebindCursorAnchor()
 		}
 		model.Panes[action.Pane] = pane
-		return model, nil
+		return model, intents
 	case ListingFailed:
 		if !validPane(action.Pane) || model.Panes[action.Pane].Listing.Generation != action.Generation {
 			return model, nil
@@ -149,6 +172,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		pane.Listing.pendingEndpoint = domain.Endpoint{}
 		pane.Listing.pendingConnection = ""
 		pane.Listing.pendingCapabilityGeneration = 0
+		pane.Listing.pendingCapabilities = domain.CapabilitySnapshot{}
 		pane.Listing.commitEndpoint = false
 		if pane.Listing.Partial {
 			pane.Connection = domain.StateDegraded
@@ -234,6 +258,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 				Endpoint:             action.Endpoint,
 				Connection:           action.State,
 				CapabilityGeneration: action.CapabilityGeneration,
+				Capabilities:         action.Capabilities,
 				CommitEndpoint:       true,
 			}}
 		}
@@ -242,6 +267,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			pane.Connection = domain.StateReady
 		}
 		pane.CapabilityGeneration = action.CapabilityGeneration
+		pane.Capabilities = action.Capabilities
 		model.Panes[action.Pane] = pane
 		return model, []Intent{{Kind: IntentList, Pane: action.Pane, Location: action.Location}}
 	case PaneConnectionChanged:
@@ -366,6 +392,19 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			return model, nil
 		}
 	}
+	count := model.Count
+	model.Count = 0
+	if count != 0 && key != KeyDown && key != KeyUp {
+		return model, nil
+	}
+	steps := 1
+	if count != 0 {
+		steps = count
+	}
+	if key == KeyEscape && model.Preview.Generation != 0 {
+		model.Preview = PreviewState{}
+		return model, []Intent{{Kind: IntentPreviewCancel}}
+	}
 	if key == KeyTab {
 		if model.Active == Left {
 			model.Active = Right
@@ -425,13 +464,11 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		model.Mode = ModeEndpoint
 		model.endpointInput = nil
 	case KeyDown:
-		if pane.Cursor+1 < len(pane.visible) {
-			pane.Cursor++
+		if len(pane.visible) != 0 {
+			pane.Cursor = min(pane.Cursor+steps, len(pane.visible)-1)
 		}
 	case KeyUp:
-		if pane.Cursor > 0 {
-			pane.Cursor--
-		}
+		pane.Cursor = max(pane.Cursor-steps, 0)
 	case KeyParent:
 		location, ok := parentLocation(pane.Location)
 		if ok {

@@ -29,6 +29,12 @@ type ProviderConnectSSHResponse struct {
 	Endpoint WireEndpoint `json:"endpoint"`
 }
 
+type ProviderReleaseRequest struct {
+	EndpointID string `json:"endpoint_id"`
+}
+
+type ProviderReleaseResponse struct{}
+
 type ProviderSnapshotRequest struct {
 	EndpointID string `json:"endpoint_id"`
 }

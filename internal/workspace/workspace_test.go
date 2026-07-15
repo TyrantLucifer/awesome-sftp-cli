@@ -150,6 +150,20 @@ func TestStoreSaveIsPrivateAtomicAndCorruptionIsVisible(t *testing.T) {
 	if _, err := os.Lstat(store.path("release")); err != nil {
 		t.Fatalf("corrupt workspace was removed: %v", err)
 	}
+	corrupt, err := os.ReadFile(store.path("release"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("release", replacement); err == nil {
+		t.Fatal("Save() replaced a corrupt workspace")
+	}
+	afterRejectedSave, err := os.ReadFile(store.path("release"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterRejectedSave, corrupt) {
+		t.Fatalf("corrupt workspace changed: got %q, want %q", afterRejectedSave, corrupt)
+	}
 }
 
 func TestStoreListsRecentWorkspacesDeterministically(t *testing.T) {

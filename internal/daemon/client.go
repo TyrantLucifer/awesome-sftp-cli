@@ -14,9 +14,38 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 )
 
-type RemoteError struct{ RPC ipc.RPCError }
+type RemoteError struct {
+	RequestID domain.RequestID
+	RPC       ipc.RPCError
+}
 
 func (e *RemoteError) Error() string { return fmt.Sprintf("%s: %s", e.RPC.Code, e.RPC.Message) }
+
+type SafeDiagnosticSummary struct {
+	RequestID  domain.RequestID
+	ErrorCode  domain.Code
+	EndpointID domain.EndpointID
+	Retry      domain.RetryKind
+	Effect     domain.EffectStatus
+}
+
+func (summary SafeDiagnosticSummary) String() string {
+	return fmt.Sprintf("request_id=%s error_code=%s endpoint_id=%s retry=%s effect=%s", summary.RequestID, summary.ErrorCode, summary.EndpointID, summary.Retry, summary.Effect)
+}
+
+func DiagnosticSummary(err error) SafeDiagnosticSummary {
+	var remote *RemoteError
+	if !errors.As(err, &remote) || remote == nil {
+		return SafeDiagnosticSummary{}
+	}
+	return SafeDiagnosticSummary{
+		RequestID:  remote.RequestID,
+		ErrorCode:  remote.RPC.Code,
+		EndpointID: remote.RPC.EndpointID,
+		Retry:      remote.RPC.Retry.Kind,
+		Effect:     remote.RPC.Effect,
+	}
+}
 
 type Client struct {
 	conn      net.Conn
@@ -192,7 +221,7 @@ func (c *Client) fail(err error) {
 
 func decodeClientResponse(envelope ipc.Envelope, destination any) error {
 	if envelope.Error != nil {
-		return &RemoteError{RPC: *envelope.Error}
+		return &RemoteError{RequestID: envelope.RequestID, RPC: *envelope.Error}
 	}
 	if destination == nil {
 		return nil

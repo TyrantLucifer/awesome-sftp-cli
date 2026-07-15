@@ -157,6 +157,33 @@ func TestRendererShowsPaneConnectionAndFailureState(t *testing.T) {
 	}
 }
 
+func TestRendererShowsCapabilityRevisionAndMultilinePreviewState(t *testing.T) {
+	model := testModel(t)
+	snapshot, err := domain.NewCapabilitySnapshot(
+		domain.CapabilityRevision{SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Generation: 4},
+		true,
+		[]domain.Capability{{Name: "read", Version: 1}, {Name: "metadata", Version: 1}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := model.Panes[Left]
+	left.CapabilityGeneration = snapshot.Revision.Generation
+	left.Capabilities = snapshot
+	model.Panes[Left] = left
+	file := left.Entries[1].Location
+	model.Preview = PreviewState{Generation: 1, Location: file, Data: []byte("first\nsecond"), Truncated: true}
+	surface := newMemorySurface(120, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"caps:2@4", "Preview /left/file.txt [truncated]", "first", "second"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("preview/capability render missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestRendererShowsMinimumSizeGuidanceInsteadOfBlankScreen(t *testing.T) {
 	model := testModel(t)
 	surface := newMemorySurface(2, 2)

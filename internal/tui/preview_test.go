@@ -63,3 +63,13 @@ func TestPreviewPreservesLineStructureWhileSanitizingEachLine(t *testing.T) {
 		t.Fatalf("DisplayText() retained terminal control bytes: %q", got)
 	}
 }
+
+func TestEscapeClosesAndCancelsPreview(t *testing.T) {
+	model := testModel(t)
+	file := model.Panes[Left].visibleEntry(1).Location
+	model, _ = Reduce(model, BeginPreview{Generation: 5, Location: file})
+	model, intents := Reduce(model, KeyPress{Key: KeyEscape})
+	if model.Preview.Generation != 0 || len(intents) != 1 || intents[0].Kind != IntentPreviewCancel {
+		t.Fatalf("escaped preview model=%#v intents=%#v", model.Preview, intents)
+	}
+}

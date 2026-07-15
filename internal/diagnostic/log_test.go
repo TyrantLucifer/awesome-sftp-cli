@@ -1,0 +1,187 @@
+package diagnostic
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"testing"
+	"testing/slogtest"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+)
+
+const (
+	testRequestID  = domain.RequestID("req_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	testEndpointID = domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+)
+
+func TestAllowlistHandlerConformsToSlogContract(t *testing.T) {
+	var output bytes.Buffer
+	handler := newAllowlistHandler(
+		slog.NewJSONHandler(&output, nil),
+		func([]string, slog.Attr) bool { return true },
+		false,
+	)
+	err := slogtest.TestHandler(handler, func() []map[string]any {
+		var results []map[string]any
+		scanner := bufio.NewScanner(bytes.NewReader(output.Bytes()))
+		for scanner.Scan() {
+			var result map[string]any
+			if err := json.Unmarshal(scanner.Bytes(), &result); err != nil {
+				t.Fatalf("decode slog record: %v", err)
+			}
+			results = append(results, result)
+		}
+		if err := scanner.Err(); err != nil {
+			t.Fatal(err)
+		}
+		return results
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPersistentHandlerDropsSecretsAndUnregisteredFields(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(NewJSONHandler(&output, nil))
+	secret := "secret-canary-password"
+	logger.ErrorContext(context.Background(), secret,
+		Component("daemon"),
+		Event("rpc_request_failed"),
+		RequestID(testRequestID),
+		EndpointID(testEndpointID),
+		ErrorCode(domain.CodeAuthRequired),
+		slog.String("path", "/private/secret/path"),
+		slog.Any("error", domain.FromContext("open", testEndpointID, nil, context.Canceled)),
+		slog.String("request_id", "not-a-request-id"),
+	)
+	encoded := output.String()
+	for _, forbidden := range []string{secret, "/private/secret/path", "operation canceled", "not-a-request-id", "\"path\"", "\"error\""} {
+		if strings.Contains(encoded, forbidden) {
+			t.Fatalf("persistent log contains forbidden value %q: %s", forbidden, encoded)
+		}
+	}
+	var record map[string]any
+	if err := json.Unmarshal(output.Bytes(), &record); err != nil {
+		t.Fatal(err)
+	}
+	if record["msg"] != persistentMessage || record["request_id"] != string(testRequestID) || record["error_code"] != string(domain.CodeAuthRequired) {
+		t.Fatalf("unexpected safe record: %#v", record)
+	}
+}
+
+func TestDaemonLogLevelCanChangeAtRuntime(t *testing.T) {
+	var output bytes.Buffer
+	level := &slog.LevelVar{}
+	level.Set(slog.LevelWarn)
+	logger := slog.New(NewJSONHandler(&output, level))
+	logger.Info("hidden", Component("daemon"), Event("level_test"))
+	if output.Len() != 0 {
+		t.Fatalf("disabled info output = %q", output.String())
+	}
+	level.Set(slog.LevelDebug)
+	logger.Debug("visible", Component("daemon"), Event("level_test"))
+	if !strings.Contains(output.String(), `"level":"DEBUG"`) {
+		t.Fatalf("dynamic debug output = %q", output.String())
+	}
+}
+
+func TestOpenDaemonLogRotatesWithinBoundAndUsesPrivateModes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "daemon.jsonl")
+	log, err := OpenDaemon(path, Config{MaxBytes: 300, Backups: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index < 30; index++ {
+		log.Logger.Info("unsafe message", Component("daemon"), Event("rotation_test"), RequestID(testRequestID))
+	}
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []string{path, path + ".1", path + ".2"} {
+		info, err := os.Stat(candidate)
+		if err != nil {
+			t.Fatalf("stat %s: %v", candidate, err)
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("mode %s = %o, want 600", candidate, info.Mode().Perm())
+		}
+		if info.Size() > 300 {
+			t.Fatalf("size %s = %d, want <= 300", candidate, info.Size())
+		}
+	}
+	if _, err := os.Stat(path + ".3"); !os.IsNotExist(err) {
+		t.Fatalf("unexpected third backup: %v", err)
+	}
+}
+
+func TestDaemonLogConcurrentWritesRemainBoundedJSON(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "private", "daemon.jsonl")
+	log, err := OpenDaemon(path, Config{MaxBytes: 1024, Backups: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var writers sync.WaitGroup
+	for worker := 0; worker < 8; worker++ {
+		writers.Add(1)
+		go func() {
+			defer writers.Done()
+			for index := 0; index < 50; index++ {
+				log.Logger.Info("unsafe", Component("daemon"), Event("concurrent_test"), RequestID(testRequestID))
+			}
+		}()
+	}
+	writers.Wait()
+	if err := log.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for _, candidate := range []string{path, path + ".1", path + ".2"} {
+		// #nosec G304 -- candidates are fixed suffixes below t.TempDir().
+		file, err := os.Open(candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		scanner := bufio.NewScanner(file)
+		for scanner.Scan() {
+			var record map[string]any
+			if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+				_ = file.Close()
+				t.Fatalf("decode %s: %v", candidate, err)
+			}
+		}
+		if err := errors.Join(scanner.Err(), file.Close()); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestOpenDaemonLogRejectsSymlinkDestination(t *testing.T) {
+	root := t.TempDir()
+	target := filepath.Join(root, "target")
+	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(root, "daemon.jsonl")
+	if err := os.Symlink(target, path); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := OpenDaemon(path, Config{}); err == nil {
+		t.Fatal("OpenDaemon() error = nil, want symlink rejection")
+	}
+	// #nosec G304 -- target is a test-owned path below t.TempDir().
+	content, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "keep" {
+		t.Fatalf("target content = %q", content)
+	}
+}

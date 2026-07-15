@@ -17,6 +17,8 @@ func TestTranslateTCellEvents(t *testing.T) {
 	}{
 		{name: "tab", event: tcell.NewEventKey(tcell.KeyTab, "", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyTab}},
 		{name: "down", event: tcell.NewEventKey(tcell.KeyRune, "j", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyDown}},
+		{name: "count", event: tcell.NewEventKey(tcell.KeyRune, "3", tcell.ModNone), mode: ModeNormal, want: CountDigit{Digit: 3}},
+		{name: "filter digit", event: tcell.NewEventKey(tcell.KeyRune, "3", tcell.ModNone), mode: ModeFilter, want: TextInput{Text: "3"}},
 		{name: "filter text", event: tcell.NewEventKey(tcell.KeyRune, "界", tcell.ModNone), mode: ModeFilter, want: TextInput{Text: "界"}},
 		{name: "filter h", event: tcell.NewEventKey(tcell.KeyRune, "h", tcell.ModNone), mode: ModeFilter, want: TextInput{Text: "h"}},
 		{name: "filter j", event: tcell.NewEventKey(tcell.KeyRune, "j", tcell.ModNone), mode: ModeFilter, want: TextInput{Text: "j"}},

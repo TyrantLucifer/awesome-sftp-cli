@@ -185,6 +185,47 @@ func TestProviderSessionClosesSSHProviderThatConnectsAfterSessionClose(t *testin
 	}
 }
 
+func TestProviderSessionReleasesOwnedSSHEndpoint(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := &closingProvider{Provider: local, descriptor: domain.Endpoint{ID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Kind: domain.EndpointSSH, DisplayName: "work", SSHHostAlias: "work"}, closed: make(chan struct{})}
+	factory.SetSSHConnector(func(context.Context, string) (providerapi.Provider, error) { return remote, nil })
+	session := factory.NewSession()
+	defer session.Close()
+	connectPayload, err := json.Marshal(ipc.ProviderConnectSSHRequest{HostAlias: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Handle(context.Background(), ProviderConnectSSH, connectPayload); err != nil {
+		t.Fatal(err)
+	}
+	releasePayload, err := json.Marshal(ipc.ProviderReleaseRequest{EndpointID: string(remote.descriptor.ID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Handle(context.Background(), ProviderRelease, releasePayload); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-remote.closed:
+	case <-time.After(time.Second):
+		t.Fatal("released SSH provider was not closed")
+	}
+	snapshotPayload, err := json.Marshal(ipc.ProviderSnapshotRequest{EndpointID: string(remote.descriptor.ID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Handle(context.Background(), ProviderSnapshot, snapshotPayload); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("released provider snapshot error = %v, want not_found", err)
+	}
+	if _, err := session.Handle(context.Background(), ProviderRelease, releasePayload); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("second release error = %v, want not_found", err)
+	}
+}
+
 func TestProviderSessionsRouteAuthPromptToClaimingSession(t *testing.T) {
 	local := testLocalProvider(t)
 	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
