@@ -228,15 +228,15 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		return err
 	}
 	localEndpoint := domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal, DisplayName: "local"}
-	leftEndpoint, left, err := resolveStartLocation(ctx, client, localEndpoint, locations[0])
+	left, err := initialPaneState(localEndpoint, locations[0])
 	if err != nil {
 		return err
 	}
-	rightEndpoint, right, err := resolveStartLocation(ctx, client, localEndpoint, locations[1])
+	right, err := initialPaneState(localEndpoint, locations[1])
 	if err != nil {
 		return err
 	}
-	model := tui.NewModel(tui.NewPaneState(leftEndpoint, left), tui.NewPaneState(rightEndpoint, right))
+	model := tui.NewModel(left, right)
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -245,44 +245,102 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		return err
 	}
 	defer screen.Fini()
+	runCtx, stop := context.WithCancel(ctx)
+	authClient, err := connectDaemon(runCtx, paths, purpose)
+	if err != nil {
+		stop()
+		return err
+	}
+	defer func() {
+		stop()
+		_ = authClient.Close()
+	}()
 	events := screen.EventQ()
 	actions := make(chan tui.Action, 32)
+	authResolutions := make(chan tui.Intent, 1)
+	authErrors := make(chan error, 1)
+	go func() {
+		if err := runAuthClaimLoop(runCtx, authClient, actions, authResolutions); err != nil && runCtx.Err() == nil {
+			authErrors <- err
+		}
+	}()
 	var generations [2]uint64
 	var cancels [2]context.CancelFunc
 	var previewGeneration uint64
 	var previewCancel context.CancelFunc
 	startIntent := func(intent tui.Intent) {
-		if intent.Kind == tui.IntentPreview {
+		switch intent.Kind {
+		case tui.IntentAuthResolve:
+			select {
+			case authResolutions <- intent:
+			case <-runCtx.Done():
+			}
+			return
+		case tui.IntentPreview:
 			if previewCancel != nil {
 				previewCancel()
 			}
-			requestCtx, cancel := context.WithCancel(ctx)
+			requestCtx, cancel := context.WithCancel(runCtx)
 			previewCancel = cancel
 			previewGeneration++
 			generation := previewGeneration
 			actions <- tui.BeginPreview{Generation: generation, Location: intent.Location}
 			go func() { defer cancel(); previewLocation(requestCtx, client, generation, intent.Location, actions) }()
 			return
+		case tui.IntentList:
+		default:
+			return
 		}
 		pane := intent.Pane
 		if cancels[pane] != nil {
 			cancels[pane]()
 		}
-		requestCtx, cancel := context.WithCancel(ctx)
+		requestCtx, cancel := context.WithCancel(runCtx)
 		cancels[pane] = cancel
 		generations[pane]++
 		generation := generations[pane]
 		actions <- tui.BeginListing{Pane: pane, Generation: generation, Location: intent.Location}
 		go func() { defer cancel(); listLocation(requestCtx, client, pane, generation, intent.Location, actions) }()
 	}
-	startIntent(tui.Intent{Kind: tui.IntentList, Pane: tui.Left, Location: left})
-	startIntent(tui.Intent{Kind: tui.IntentList, Pane: tui.Right, Location: right})
+	type connectionResult struct {
+		pane     tui.PaneID
+		endpoint domain.Endpoint
+		location domain.Location
+		host     string
+		err      error
+	}
+	connections := make(chan connectionResult, 2)
+	for index, start := range locations {
+		pane := tui.PaneID(index)
+		if start.host == "" {
+			startIntent(tui.Intent{Kind: tui.IntentList, Pane: pane, Location: model.Panes[pane].Location})
+			continue
+		}
+		go func() {
+			endpoint, location, connectErr := resolveStartLocation(runCtx, client, localEndpoint, start)
+			select {
+			case connections <- connectionResult{pane: pane, endpoint: endpoint, location: location, host: start.host, err: connectErr}:
+			case <-runCtx.Done():
+			}
+		}()
+	}
 	for {
 		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
 		screen.Show()
 		select {
-		case <-ctx.Done():
+		case <-runCtx.Done():
 			return nil
+		case err := <-authErrors:
+			return err
+		case result := <-connections:
+			if result.err != nil {
+				return fmt.Errorf("connect SSH host %q: %w", result.host, result.err)
+			}
+			var intents []tui.Intent
+			model, intents = tui.Reduce(model, tui.PaneConnected{Pane: result.pane, Endpoint: result.endpoint, Location: result.location})
+			for _, intent := range intents {
+				startIntent(intent)
+			}
 		case action := <-actions:
 			var intents []tui.Intent
 			model, intents = tui.Reduce(model, action)
@@ -307,6 +365,22 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 		}
 	}
+}
+
+func initialPaneState(local domain.Endpoint, start startLocation) (tui.PaneState, error) {
+	endpoint := local
+	if start.host != "" {
+		endpoint.DisplayName = "connecting " + start.host
+	}
+	location, err := domain.NewLocation(local.ID, domain.CanonicalPath(start.path))
+	if err != nil {
+		return tui.PaneState{}, err
+	}
+	pane := tui.NewPaneState(endpoint, location)
+	if start.host != "" {
+		pane.Listing = tui.ListingState{Loading: true, Message: "connecting"}
+	}
+	return pane, nil
 }
 
 type startLocation struct{ host, path string }

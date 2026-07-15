@@ -27,6 +27,10 @@ func TestTranslateTCellEvents(t *testing.T) {
 		{name: "filter space", event: tcell.NewEventKey(tcell.KeyRune, " ", tcell.ModNone), mode: ModeFilter, want: TextInput{Text: " "}},
 		{name: "filter escape", event: tcell.NewEventKey(tcell.KeyEscape, "", tcell.ModNone), mode: ModeFilter, want: KeyPress{Key: KeyEscape}},
 		{name: "filter backspace", event: tcell.NewEventKey(tcell.KeyBackspace, "", tcell.ModNone), mode: ModeFilter, want: KeyPress{Key: KeyBackspace}},
+		{name: "auth text", event: tcell.NewEventKey(tcell.KeyRune, "界", tcell.ModNone), mode: ModeAuth, want: TextInput{Text: "界"}},
+		{name: "auth submit", event: tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone), mode: ModeAuth, want: KeyPress{Key: KeySubmit}},
+		{name: "auth cancel", event: tcell.NewEventKey(tcell.KeyEscape, "", tcell.ModNone), mode: ModeAuth, want: KeyPress{Key: KeyEscape}},
+		{name: "auth backspace", event: tcell.NewEventKey(tcell.KeyBackspace, "", tcell.ModNone), mode: ModeAuth, want: KeyPress{Key: KeyBackspace}},
 		{name: "resize", event: tcell.NewEventResize(91, 27), mode: ModeFilter, want: Resize{Width: 91, Height: 27}},
 	}
 	for _, test := range tests {

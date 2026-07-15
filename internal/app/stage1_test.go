@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 )
@@ -106,5 +107,19 @@ func TestStartLocationsParsesLocalAndRemote(t *testing.T) {
 		if _, err := startLocations([]string{value}); err == nil {
 			t.Fatalf("startLocations(%q) error = nil", value)
 		}
+	}
+}
+
+func TestInitialPaneStateRepresentsRemoteWithoutConnectingIt(t *testing.T) {
+	local := domain.Endpoint{ID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: domain.EndpointLocal, DisplayName: "local"}
+	pane, err := initialPaneState(local, startLocation{host: "work-alias", path: "/srv/data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pane.Endpoint.ID != local.ID || pane.Endpoint.Kind != domain.EndpointLocal || pane.Endpoint.DisplayName != "connecting work-alias" {
+		t.Fatalf("placeholder endpoint = %#v", pane.Endpoint)
+	}
+	if pane.Location.EndpointID != local.ID || pane.Location.Path != "/srv/data" || !pane.Listing.Loading {
+		t.Fatalf("placeholder pane = %#v", pane)
 	}
 }

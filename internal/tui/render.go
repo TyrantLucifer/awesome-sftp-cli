@@ -111,7 +111,32 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 			surface.PutClipped(0, previewY+1+row, width, lines[row], style)
 		}
 	}
+	if model.Auth.Active {
+		renderAuthModal(surface, model.Auth, width, height)
+	}
 	return stats
+}
+
+func renderAuthModal(surface Surface, state AuthState, width, height int) {
+	modalWidth := min(width-4, 52)
+	if modalWidth < 20 || height < 7 {
+		return
+	}
+	const modalHeight = 5
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	title := "Authentication — " + SanitizeTerminalText(state.Endpoint)
+	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
+	surface.PutClipped(x+1, y+1, modalWidth-2, SanitizeTerminalText(state.Prompt), StyleStatus)
+	if state.Kind == "confirm" {
+		surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] continue  [Esc] cancel", StyleStatus)
+		return
+	}
+	masked := strings.Repeat("•", len(state.answer))
+	surface.PutClipped(x+1, y+3, modalWidth-2, "Answer: "+masked, StyleStatus)
 }
 
 func putPaneHeader(surface Surface, pane PaneState, paneID, active PaneID, x, width int) {

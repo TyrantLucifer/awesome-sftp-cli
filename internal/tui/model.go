@@ -22,7 +22,10 @@ const (
 	ModeFilter     Mode = "filter"
 	ModeVisual     Mode = "visual"
 	ModeVisualLine Mode = "visual_line"
+	ModeAuth       Mode = "auth"
 )
+
+const authAnswerByteLimit = 4096
 
 type ListingState struct {
 	Generation uint64
@@ -195,6 +198,17 @@ type PreviewState struct {
 	Message    string
 }
 
+type AuthState struct {
+	Active      bool
+	ChallengeID string
+	Endpoint    string
+	Prompt      string
+	Kind        string
+	ReturnMode  Mode
+
+	answer []rune
+}
+
 func (p PreviewState) DisplayText() string {
 	if p.Binary {
 		return "[binary preview omitted]"
@@ -210,6 +224,7 @@ type Model struct {
 	Active  PaneID
 	Mode    Mode
 	Preview PreviewState
+	Auth    AuthState
 	Width   int
 	Height  int
 }
@@ -231,17 +246,21 @@ func NewModel(left, right PaneState) Model {
 type IntentKind string
 
 const (
-	IntentList    IntentKind = "list"
-	IntentPreview IntentKind = "preview"
+	IntentList        IntentKind = "list"
+	IntentPreview     IntentKind = "preview"
+	IntentAuthResolve IntentKind = "auth_resolve"
 )
 
 const PreviewByteLimit = 64 * 1024
 
 type Intent struct {
-	Kind     IntentKind
-	Pane     PaneID
-	Location domain.Location
-	Limit    int
+	Kind        IntentKind
+	Pane        PaneID
+	Location    domain.Location
+	Limit       int
+	ChallengeID string
+	Answer      []byte
+	Cancel      bool
 }
 
 type Key string
@@ -258,6 +277,7 @@ const (
 	KeyFilter     Key = "filter"
 	KeyBackspace  Key = "backspace"
 	KeyEscape     Key = "escape"
+	KeySubmit     Key = "submit"
 )
 
 type Action interface{ isAction() }
@@ -297,16 +317,29 @@ type PreviewChunk struct {
 	Truncated  bool
 	Message    string
 }
+type AuthChallengeReceived struct {
+	ChallengeID string
+	Endpoint    string
+	Prompt      string
+	Kind        string
+}
+type PaneConnected struct {
+	Pane     PaneID
+	Endpoint domain.Endpoint
+	Location domain.Location
+}
 
-func (KeyPress) isAction()      {}
-func (TextInput) isAction()     {}
-func (Resize) isAction()        {}
-func (BeginListing) isAction()  {}
-func (ListingPage) isAction()   {}
-func (ListingFailed) isAction() {}
-func (SetFilter) isAction()     {}
-func (BeginPreview) isAction()  {}
-func (PreviewChunk) isAction()  {}
+func (KeyPress) isAction()              {}
+func (TextInput) isAction()             {}
+func (Resize) isAction()                {}
+func (BeginListing) isAction()          {}
+func (ListingPage) isAction()           {}
+func (ListingFailed) isAction()         {}
+func (SetFilter) isAction()             {}
+func (BeginPreview) isAction()          {}
+func (PreviewChunk) isAction()          {}
+func (AuthChallengeReceived) isAction() {}
+func (PaneConnected) isAction()         {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

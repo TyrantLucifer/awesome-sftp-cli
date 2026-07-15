@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
@@ -12,6 +13,17 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 	case KeyPress:
 		return reduceKey(model, action.Key)
 	case TextInput:
+		if model.Auth.Active {
+			answerBytes := 0
+			for _, value := range model.Auth.answer {
+				answerBytes += utf8.RuneLen(value)
+			}
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || answerBytes+len(action.Text) > authAnswerByteLimit {
+				return model, nil
+			}
+			model.Auth.answer = append(append([]rune(nil), model.Auth.answer...), []rune(action.Text)...)
+			return model, nil
+		}
 		if model.Mode != ModeFilter || action.Text == "" {
 			return model, nil
 		}
@@ -112,12 +124,60 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		}
 		model.Preview = preview
 		return model, nil
+	case AuthChallengeReceived:
+		if model.Auth.Active || action.ChallengeID == "" || action.Prompt == "" {
+			return model, nil
+		}
+		returnMode := model.Mode
+		if returnMode == ModeAuth {
+			returnMode = ModeNormal
+		}
+		model.Mode = ModeAuth
+		model.Auth = AuthState{
+			Active:      true,
+			ChallengeID: action.ChallengeID,
+			Endpoint:    action.Endpoint,
+			Prompt:      action.Prompt,
+			Kind:        action.Kind,
+			ReturnMode:  returnMode,
+		}
+		return model, nil
+	case PaneConnected:
+		if !validPane(action.Pane) || action.Endpoint.ID == "" || action.Location.EndpointID != action.Endpoint.ID {
+			return model, nil
+		}
+		pane := NewPaneState(action.Endpoint, action.Location)
+		model.Panes[action.Pane] = pane
+		return model, []Intent{{Kind: IntentList, Pane: action.Pane, Location: action.Location}}
 	default:
 		return model, nil
 	}
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
+	if model.Auth.Active {
+		switch key {
+		case KeyBackspace:
+			if len(model.Auth.answer) != 0 {
+				model.Auth.answer = append([]rune(nil), model.Auth.answer[:len(model.Auth.answer)-1]...)
+			}
+			return model, nil
+		case KeySubmit, KeyEscape:
+			intent := Intent{Kind: IntentAuthResolve, ChallengeID: model.Auth.ChallengeID, Cancel: key == KeyEscape}
+			if !intent.Cancel {
+				intent.Answer = []byte(string(model.Auth.answer))
+			}
+			returnMode := model.Auth.ReturnMode
+			if returnMode == "" || returnMode == ModeAuth {
+				returnMode = ModeNormal
+			}
+			model.Auth = AuthState{}
+			model.Mode = returnMode
+			return model, []Intent{intent}
+		default:
+			return model, nil
+		}
+	}
 	if key == KeyTab {
 		if model.Active == Left {
 			model.Active = Right

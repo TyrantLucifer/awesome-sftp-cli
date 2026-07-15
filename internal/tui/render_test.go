@@ -63,6 +63,24 @@ func TestRendererUsesLocalFallbackForActivePaneWithoutDisplayName(t *testing.T) 
 	}
 }
 
+func TestRendererMasksAuthenticationAnswer(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, AuthChallengeReceived{ChallengeID: "challenge-1", Endpoint: "work-host", Prompt: "Password:", Kind: "secret"})
+	model, _ = Reduce(model, TextInput{Text: "stage1-secret-canary"})
+	surface := newMemorySurface(64, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"Authentication — work-host", "Password:", "••••"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("auth modal missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "stage1-secret-canary") {
+		t.Fatalf("auth modal rendered plaintext secret:\n%s", got)
+	}
+}
+
 func TestSanitizeTerminalTextRemovesControlsAndInvalidUTF8(t *testing.T) {
 	got := SanitizeTerminalText("safe\x1b[31m\n\x00\xff")
 	if !utf8.ValidString(got) {

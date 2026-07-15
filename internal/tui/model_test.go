@@ -39,14 +39,14 @@ func TestReducerEmitsOnlyReadOnlyNavigationIntents(t *testing.T) {
 	model := testModel(t)
 
 	model, intents := Reduce(model, KeyPress{Key: KeyParent})
-	assertSingleIntent(t, intents, IntentList, Left, "/")
+	assertSingleIntent(t, intents, IntentList, "/")
 
 	model, intents = Reduce(model, KeyPress{Key: KeyOpen})
-	assertSingleIntent(t, intents, IntentList, Left, "/left/dir")
+	assertSingleIntent(t, intents, IntentList, "/left/dir")
 
 	model, _ = Reduce(model, KeyPress{Key: KeyDown})
 	_, intents = Reduce(model, KeyPress{Key: KeyOpen})
-	intent := assertSingleIntent(t, intents, IntentPreview, Left, "/left/file.txt")
+	intent := assertSingleIntent(t, intents, IntentPreview, "/left/file.txt")
 	if intent.Limit != PreviewByteLimit {
 		t.Fatalf("preview limit = %d, want %d", intent.Limit, PreviewByteLimit)
 	}
@@ -127,6 +127,46 @@ func TestFilterAppliesToLoadedAndIncomingEntriesAndClearsLosslessly(t *testing.T
 	}
 }
 
+func TestReducerHandlesAuthenticationModalAndEmitsOneResolution(t *testing.T) {
+	model := testModel(t)
+	model, intents := Reduce(model, AuthChallengeReceived{
+		ChallengeID: "challenge-1",
+		Endpoint:    "work-host",
+		Prompt:      "Password:",
+		Kind:        "secret",
+	})
+	if len(intents) != 0 || model.Mode != ModeAuth || !model.Auth.Active {
+		t.Fatalf("challenge state = mode %q auth %#v intents %#v", model.Mode, model.Auth, intents)
+	}
+	model, _ = Reduce(model, TextInput{Text: "s3cr界t"})
+	model, _ = Reduce(model, KeyPress{Key: KeyBackspace})
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	if model.Auth.Active || model.Mode != ModeNormal {
+		t.Fatalf("resolved state = mode %q auth %#v", model.Mode, model.Auth)
+	}
+	if len(intents) != 1 || intents[0].Kind != IntentAuthResolve || intents[0].ChallengeID != "challenge-1" || intents[0].Cancel || string(intents[0].Answer) != "s3cr界" {
+		t.Fatalf("resolution intents = %#v", intents)
+	}
+
+	model, _ = Reduce(model, AuthChallengeReceived{ChallengeID: "challenge-2", Endpoint: "work-host", Prompt: "Continue?", Kind: "confirm"})
+	model, intents = Reduce(model, KeyPress{Key: KeyEscape})
+	if len(intents) != 1 || !intents[0].Cancel || intents[0].ChallengeID != "challenge-2" || len(intents[0].Answer) != 0 {
+		t.Fatalf("cancel intents = %#v", intents)
+	}
+}
+
+func TestReducerConnectsPaneBeforeListingRemoteLocation(t *testing.T) {
+	model := testModel(t)
+	endpoint := domain.Endpoint{ID: rightEndpointID, Kind: domain.EndpointSSH, DisplayName: "work-host", SSHHostAlias: "work-host"}
+	location := mustLocation(t, rightEndpointID, "/srv/data")
+
+	model, intents := Reduce(model, PaneConnected{Pane: Left, Endpoint: endpoint, Location: location})
+	if model.Panes[Left].Endpoint != endpoint || model.Panes[Left].Location != location {
+		t.Fatalf("connected pane = %#v", model.Panes[Left])
+	}
+	assertSingleIntent(t, intents, IntentList, "/srv/data")
+}
+
 func testModel(t *testing.T) Model {
 	t.Helper()
 	leftLocation := mustLocation(t, leftEndpointID, "/left")
@@ -177,7 +217,6 @@ func assertSingleIntent(
 	t *testing.T,
 	intents []Intent,
 	kind IntentKind,
-	pane PaneID,
 	path string,
 ) Intent {
 	t.Helper()
@@ -185,8 +224,8 @@ func assertSingleIntent(
 		t.Fatalf("intents = %#v, want one", intents)
 	}
 	intent := intents[0]
-	if intent.Kind != kind || intent.Pane != pane || string(intent.Location.Path) != path {
-		t.Fatalf("intent = %#v, want kind=%q pane=%v path=%q", intent, kind, pane, path)
+	if intent.Kind != kind || intent.Pane != Left || string(intent.Location.Path) != path {
+		t.Fatalf("intent = %#v, want kind=%q pane=%v path=%q", intent, kind, Left, path)
 	}
 	return intent
 }
