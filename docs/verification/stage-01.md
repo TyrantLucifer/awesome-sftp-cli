@@ -6,7 +6,7 @@
 - **Branch**: `codex/stage1-read-only-explorer`
 - **Stage 0 baseline commit/tree**: `d637474ac52ef2c5b9f78c9be663e52c6a9f441c` / `83a515607f44f7edb85f8103962b6d9d1173c02d`
 - **Current milestone**: M1.4 — Workspace and recovery
-- **Current candidate**: M1.3 complete at `7f0ea00981cecd5799b3c17ee56eff204cfd5a90`
+- **Current candidate**: M1.4 implementation at `4803d2789504d00566d51282b82c5d6fa5bf561a`; recovery reached the three-attempt stop and source-streaming decision remains open
 
 Stage 1 delivers the read-only explorer only. It does not deliver Stage 2 transfer or mutation operations, Stage 3 external editing/cache, Stage 4 helper/search, Stage 5 direct transfer/scale hardening, or Stage 6 release readiness.
 
@@ -103,6 +103,7 @@ Current candidate evidence:
 | ID | Result | Evidence |
 |---|---|---|
 | AUTH-001 | PASS | Validated absolute system OpenSSH, exact ADR-0001 argv, real sshd and real MIT Kerberos use one stdio transport; no second SSH/Kerberos stack or application `kinit` exists. |
+| AUTH-002 | PASS | Real Include/Match, Identity/auth/host-key/GSSAPI/proxy/agent configuration, conflicting fixed options, and ControlMaster new/reuse passed through system OpenSSH. |
 | AUTH-003 | PASS | GSSAPI-only valid, missing, expired and externally renewed ticket cases passed in Hosted job 87330882913. |
 | AUTH-004 | PASS | Real key, login-agent, password and key-passphrase plus password MFA passed through system OpenSSH in Hosted job 87330882913. |
 | AUTH-005 | PASS | Real ProxyCommand and ProxyJump SFTP cases passed without application-side ssh_config parsing in Hosted job 87330882913. |
@@ -115,9 +116,79 @@ Current candidate evidence:
 - **Status**: In Progress
 - **Goal**: CLI Locations, Host picker, workspace save/restore, disconnect/daemon/capability/location recovery, and macOS/Linux PTY evidence.
 
+Current candidate evidence:
+
+- CLI parsing accepts zero, one or two local/`host:path` Locations and the exclusive `--workspace <name>` form. Stable Endpoint references preserve local roots and OpenSSH Host aliases across save/reopen. Parser and startup tests reject ambiguous or excess operands without opening a mutation route.
+- OpenSSH Host discovery expands `Include`, respects positive/negated `Host` patterns and offers only concrete selectable aliases. The startup picker combines those aliases with deterministic recent/corrupt workspace summaries, fuzzy filtering and explicit manual alias entry. Endpoint switching is pane-local and commits endpoint, Location and capability revision only after the first successful page; failed or stale async work leaves the previously committed pane intact.
+- The versioned workspace document contains two pane Endpoint references, canonical paths, sorting/filter/layout state and an ephemeral cache policy, but no credential material. The owner-private store writes regular `0600` files atomically, preserves the prior document on interrupted replacement, surfaces corrupt files, and refuses to overwrite corruption silently.
+- Listing/refresh transactions carry connection epochs and request generations. Stale pages are ignored, partial state is retained, refresh remaps cursor/marks by canonical Location, invalid directories recover toward the nearest valid parent without changing Endpoint, and capability replacement cannot leak state between panes. Preview requests are cancellable, preserve sanitized line structure and remain capped at 64 KiB.
+- The TUI implements bounded numeric counts only for safe navigation and bounded repeat for the last repeatable navigation action. Normal/Visual selection, independent sort/hidden/refresh controls, direct path navigation, endpoint/workspace modals and read-only intent tests keep all file mutation operations unreachable in the Stage 1 UI/RPC/CLI surface.
+- Client-visible daemon failures append only a safe correlation summary (`request_id`, canonical error code, Endpoint and retry/effect); owner-private bounded JSON logs retain the diagnostic cause without passwords, askpass answers, ticket material or raw file content.
+- The Hosted authentication fixture now additionally proves `Include`/`Match`, ControlMaster creation/reuse, bounded cancellation that returns control to the TUI, and changed-host-key refusal with the supplied known_hosts file byte-identical. The recovery fixture uses two real sshd endpoints and reaches all three Endpoint combinations, workspace reopen and a real one-endpoint disconnect/reconnect. Its nearest-parent postcondition still fails after reconnect, so later daemon-replacement/socket/log/resize assertions in that fixture have not executed and are not claimed.
+
+Local validation before the Hosted-only recovery failure:
+
+| Command/check | Result |
+|---|---|
+| `make docs-check` | PASS |
+| `make ci` | PASS: contract/fmt/vet/unit/race, lint (0 issues), docs, module verification, four one-second fuzz smokes, supply-chain scan, actionlint and four CGO-disabled builds |
+| `GOTOOLCHAIN=go1.25.12 make check` | PASS on the exact oldstable toolchain |
+| `go tool -modfile=tools/go.mod govulncheck ./...` within `make ci` | PASS for reachable code: 0 reachable vulnerabilities; imported but uncalled module findings remain documented dependency risk |
+| `bash -n internal/integration/hosted-stage1-auth.sh internal/integration/hosted-stage1-recovery.sh` | PASS after strict-shell fixture correction |
+
+Hosted candidate [run 29416890911](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416890911) is bound to commit `4803d2789504d00566d51282b82c5d6fa5bf561a`. Quality, native Ubuntu 22.04/24.04, native macOS 15 ARM/Intel, all oldstable legs, four builds and reproducibility/compare passed. Auth job [87357175516](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416890911/job/87357175516) passed Include/Match, ControlMaster new/reuse, key, agent, ProxyCommand, ProxyJump, password, wrong-password, cancel, MFA, confirmation and changed-host-key cases before the recovery scenario failed. The job and run are FAILED, MIT Kerberos did not run in this exact candidate because it follows that step, and final compare was skipped.
+
+Source-streaming blocker:
+
+- Exact `github.com/pkg/sftp v1.13.10` exposes `Client.ReadDir` and `Client.ReadDirContext`; the implementation loops over every `SSH_FXP_READDIR` response and accumulates the complete directory into `[]os.FileInfo` before returning. Its public `Walk` path uses `github.com/kr/fs` and delegates back to that complete-slice `ReadDir` behavior.
+- Inspection of v1.13.11 found the same public directory API and behavior. A simple patch-version bump therefore does not satisfy the exit criterion.
+- Daemon RPC pages, reducer generations, cancellation and visible-window rendering are bounded and responsive after the provider returns, but they cannot make remote entries appear before the dependency completes source enumeration. Claiming PANE-004 or the Stage 1 incremental-directory exit item as verified would be false.
+- ADR-0006 freezes exact v1.13.10 and rejects a second in-product SFTP implementation. The remaining compliant choices require explicit approval: a narrowly maintained immutable fork/`replace` exposing a directory cursor, or an ADR-backed dependency/API change. M1.4 and Stage 1 remain In Progress pending that decision, implementation and exact-candidate Hosted evidence.
+
+Platform final-evidence candidate:
+
+- Darwin-native tests now create real kernel ACLs and prove deny-only ACLs do not expand authority, owner-private direct allow-read is rejected, an integrity ancestor granting mutation is rejected, and a kernel-inherited allow ACE is both observed in `filesec` data and rejected.
+- Linux-native tests set real `system.posix_acl_access` and `system.posix_acl_default` xattrs and prove named effective access and inherited defaults fail closed.
+- A subprocess fixture proves the instance lock is exclusive across processes and available only after release.
+- A root-gated adversarial fixture creates a real client under another UID, deliberately widens the test directory/socket DAC modes, and proves the listener's peer-credential check independently rejects it. Native CI compiles one platform test binary, runs kernel ACL/lock tests unprivileged, then runs this peer test through `sudo` on Ubuntu 22.04/24.04 and macOS 15 ARM/Intel.
+- Fresh local `go test -race -count=1 ./internal/platform`, exact `GOTOOLCHAIN=go1.25.12 go test -count=1 ./internal/platform`, `make docs-check`, actionlint and `git diff --check` pass. The real hostile-UID case requires root and therefore remains `Implemented`, not `Verified`, until an exact Hosted run executes the new step.
+
+## Stage 1 explorer feature evidence
+
+These rows record independently satisfied Stage 1 features. Rows whose acceptance also includes later-stage behavior remain `In Progress` in the Feature Matrix and are intentionally absent here.
+
+| ID | Result | Evidence |
+|---|---|---|
+| CONN-001 | PASS | LocalFS shared contract, local/local PTY and all four native platform legs pass. |
+| CONN-002 | PASS | Exact OpenSSH stdio transport and structured SFTP contract pass with two real sshd endpoints and poisoned PATH 0-hit. |
+| CONN-004 | PASS | Include/pattern Host discovery and deterministic fuzzy/manual picker tests and snapshots pass. |
+| CONN-005 | PASS | Two isolated real sshd sessions browse independently; terminating one product-owned session leaves the other usable. |
+| CONN-008 | PASS | Domain, IPC, CLI and workspace tests preserve Endpoint identity, canonical absolute paths and raw bytes. |
+| PANE-001 | PASS | Equal independent pane reducers/render snapshots and native PTY evidence pass. |
+| PANE-005 | PASS | Visible-window/overscan tests and the 50,000-entry structural benchmark remain bounded. |
+| PANE-006 | PASS | LocalFS/SFTP contract and renderer fixtures preserve available type, size, mtime, permission and link metadata. |
+| PANE-007 | PASS | Per-pane sort/hidden/refresh and canonical cursor/mark remapping tests pass. |
+| PANE-008 | PASS | Direct parent/child/root navigation and failed-location transaction tests pass without premature pane changes. |
+| PANE-010 | PASS | Partial pages survive cancellation/error, stale completions are rejected and refresh recovery is rendered explicitly. |
+| WORK-003 | PASS | Recent/corrupt workspace ordering, Host merge, fuzzy/manual selection and minimum-size picker snapshots pass. |
+| WORK-004 | PASS | Strict schema and secret scans prove workspaces contain Endpoint aliases/UI policy but no credential material. |
+| VIM-001 | PASS | Normal-mode startup, mode visibility and layered modal exit tests/snapshots pass. |
+| VIM-002 | PASS | `h/j/k/l`, bounded safe navigation counts and safe repeat reducer/translation tests pass. |
+| VIM-003 | PASS | `Tab` preserves both PaneState values and updates only focus in reducer/render tests. |
+| VIM-004 | PASS | Visual selection growth/cancel and canonical refresh remapping tests pass. |
+| VIM-005 | PASS | Discrete mark toggle/identity/remapping tests pass without mutation intents. |
+| VIM-012 | PASS | Filter/path/endpoint/workspace/selection/preview Esc tests and real auth cancellation return control predictably. |
+| DAEM-001 | PASS | Ten-process convergence, stale socket, repeated reconnect, cancellation and four-platform PTY exit/re-entry pass. |
+| PREV-001 | PASS | Bounded LocalFS/SFTP reads, 64 KiB cap, binary/split-UTF-8/multiline/stale/cancel tests pass. |
+| SRCH-001 | PASS | Loaded and incoming page filtering, clear/cursor behavior and zero remote-command routes pass. |
+| SEC-002 | PASS | Broker lifetime plus Hosted secret/workspace/log/Kerberos artifact scans pass. |
+| SEC-003 | PASS | Resolver, exact argv, poisoned PATH, real proxy/auth/GSSAPI and changed-key refusal evidence pass. |
+| SEC-009 | PASS | Malicious filenames, stderr, picker problems, preview lines and invalid UTF-8 are terminal-sanitized. |
+| PLAT-008 | PASS | Minimum layout plus Ubuntu/macOS Intel/ARM PTY resize, quit/re-entry and SIGTERM smokes pass. |
+
 ## Stage 1 exit evidence
 
-The checklist in [Stage 1 specification](../stages/01-read-only-explorer.md#6-可验证退出标准) remains open until the final cross-milestone audit. Feature Matrix rows remain `In Progress` or `Planned` and may become `Verified` only when code, focused tests, required real-environment evidence, this ledger and `PROJECT_STATE.md` agree.
+The checklist in [Stage 1 specification](../stages/01-read-only-explorer.md#6-可验证退出标准) remains open until source-incremental remote enumeration and the final exact-candidate audit are complete. Feature Matrix rows may become `Verified` only where code, focused tests, required real-environment evidence, this ledger and `PROJECT_STATE.md` agree; cross-stage rows remain `In Progress` when later-stage acceptance is intentionally not delivered here.
 
 Mandatory final commands include:
 
@@ -137,3 +208,11 @@ They must be supplemented by Stage 1 integration, PTY, sshd, Kerberos, Provider 
 The first PTY smoke found that daemon context cancellation did not interrupt an idle framed read. `TestServeConnContextCancellationClosesIdleConnection` now reproduces that case, `ServeConn` closes the connection on cancellation, focused race tests pass, and the repeated PTY smoke exits both client and daemon cleanly. M1.2's first strengthened sshd run [29401311147](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401311147) exposed an unbounded fixture wait on forked sshd children; the second [29401550909](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401550909) proved listener termination was not a deterministic established-session disconnect. The final fixture closes the product-owned OpenSSH session, verifies typed interruption and second-endpoint isolation, and passed on [29401801663](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401801663).
 
 M1.3's first three Kerberos Hosted attempts established separate failure boundaries: run `29407836699` found an IPv6-only keyscan mismatch, run `29408137670` found a non-default-port known_hosts alias mismatch, and run `29408333811` proved successful TGT/service-ticket issuance before sshd rejected the locked local account. After the required stop/reassessment, the isolated account was unlocked with an unused random local password while sshd kept password, keyboard-interactive and public-key authentication disabled. Run `29408646901` then passed the full GSSAPI matrix. The final host-key negative extension and unchanged Kerberos regression both passed on [29408865534](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29408865534). Required Hosted environment evidence cannot be replaced by mocks, skips or weakened assertions.
+
+M1.4 recovery used its three allowed evidence-driven attempts and is stopped pending direction:
+
+1. [Run 29416101770](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416101770), commit `a67ea98a10727f8cd2514d7bece8dc9303faf7a6`, fixed strict-shell local initialization and reached the PTY fixture, then timed out before the first local/remote markers. The fixture lacked failure-tail diagnostics.
+2. [Run 29416557838](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416557838), commit `c3afef05a239f50de0bdf994fe06bb49a7d1d6f9`, unlocked test-only target accounts while keeping password authentication disabled and added PTY tail diagnostics. It passed startup/workspace scenarios, but stopping only the listener process group left an accepted sshd child alive; deleting the path therefore produced `not_found` without a transport reconnect.
+3. [Run 29416890911](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29416890911), commit `4803d2789504d00566d51282b82c5d6fa5bf561a`, terminated the complete `/proc` sshd descendant tree. The transcript proves `connection lost; reconnecting`, a new ready capability session, and then `not_found` for the removed directory. The application did not issue the next parent listing, so `hosted-stage1-recovery.py:322` timed out waiting for `reconnected at nearest accessible parent` and `a-recovered-marker.txt`.
+
+Exact failed command: `sudo env AMSFTP_AUTH_BINARY=... AMSFTP_AUTH_ROOT=... bash ./internal/integration/hosted-auth.sh`, in auth job 87357175516. Suspected root cause is the orchestration boundary between `PaneConnected(PreserveCommitted)`, the first post-reconnect `ListingFailed{Code:not_found}`, and the `validatingRecovery`/generation transaction in `runClient`; the pure `recoveryParent` helper itself passes. No fourth variant, weaker assertion, skip or hidden fallback has been attempted. Alternatives requiring direction are: (a) refactor recovery into an explicit tested pane recovery state machine and retain the real fixture; (b) first add an in-process event-loop harness that reproduces the reconnect→not-found sequence, then make the smallest state fix; or (c) revise the required automatic nearest-parent behavior by ADR, which is not recommended because it weakens the Stage 1 contract.

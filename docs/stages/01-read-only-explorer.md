@@ -162,15 +162,15 @@
 ## 6. 可验证退出标准
 
 - [ ] 本地/本地、本地/远端、远端/远端三种组合可在任一栏独立切换和导航。
-- [ ] UI、RPC 和 CLI 均没有文件写入入口；权限受限夹具证明只读边界。
+- [x] UI、RPC 和 CLI 均没有文件写入入口；权限受限夹具证明只读边界。
 - [ ] config/state/cache/log/runtime 根、完整 ancestor chain、Darwin `/var -> /private/var` 与 `/tmp -> /private/tmp` 别名/deny-vs-allow ACL、Linux XDG/access+default ACL、sticky `/tmp` 回退、Unix Socket 权限和单实例行为在 macOS/Linux 均验证；不安全持久/override 路径 fail closed 且不产生隐蔽回退状态。
-- [ ] 系统 OpenSSH 的 Host 别名、ProxyCommand/ProxyJump 与至少一种非密码认证通过。
-- [ ] MIT Kerberos/GSSAPI 受控验证成功，且 ticket/秘密未出现在日志、工作区或数据库。
-- [ ] 认证等待在无客户端、超时和取消场景可恢复。
+- [x] 系统 OpenSSH 的 Host 别名、ProxyCommand/ProxyJump 与至少一种非密码认证通过。
+- [x] MIT Kerberos/GSSAPI 受控验证成功，且 ticket/秘密未出现在日志、工作区或数据库。
+- [x] 认证等待在无客户端、超时和取消场景可恢复。
 - [ ] 目录结果增量出现；慢 Provider 不冻结输入，导航可取消旧请求。
-- [ ] 大文件预览读取量有明确上限，二进制不会误当完整文本载入。
+- [x] 大文件预览读取量有明确上限，二进制不会误当完整文本载入。
 - [ ] SSH 断开、守护进程重启和当前目录失效均有可预测恢复。
-- [ ] 两个平台的键位、窄终端、调整尺寸和退出重入冒烟通过。
+- [x] 两个平台的键位、窄终端、调整尺寸和退出重入冒烟通过。
 
 ## 7. 测试矩阵
 
