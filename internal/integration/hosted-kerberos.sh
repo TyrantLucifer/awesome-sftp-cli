@@ -184,13 +184,13 @@ until /usr/bin/nc -z 127.0.0.1 "${sshd_port}"; do
 done
 
 install -d -o "${client_user}" -g "${client_user}" -m 0700 "${client_home}/.ssh"
-/usr/bin/ssh-keyscan -p "${sshd_port}" 127.0.0.1 >"${client_home}/.ssh/known_hosts" 2>/dev/null
+/usr/bin/ssh-keyscan -p "${sshd_port}" 127.0.0.1 2>/dev/null | \
+  sed "s/^\[127\\.0\\.0\\.1\]:${sshd_port}/[localhost]:${sshd_port}/" >"${client_home}/.ssh/known_hosts"
 chown "${client_user}:${client_user}" "${client_home}/.ssh/known_hosts"
 chmod 0600 "${client_home}/.ssh/known_hosts"
 cat >"${client_home}/.ssh/config" <<EOF
 Host auth-gssapi
   HostName localhost
-  HostKeyAlias 127.0.0.1
   Port ${sshd_port}
   User ${client_user}
   ConnectTimeout 5
