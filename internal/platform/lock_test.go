@@ -13,13 +13,13 @@ func TestAcquireInstanceLockIsExclusiveAndReleases(t *testing.T) {
 	directory := privateTemporaryDirectory(t)
 	path := filepath.Join(directory, lockFileName)
 
-	first, err := AcquireInstanceLock(path, ValidateRuntime)
+	first, err := AcquireInstanceLock(path, ValidateRuntimeFallback)
 	if err != nil {
 		t.Fatalf("AcquireInstanceLock(first): %v", err)
 	}
 	defer first.Close()
 
-	if _, err := AcquireInstanceLock(path, ValidateRuntime); !errors.Is(err, ErrInstanceLocked) {
+	if _, err := AcquireInstanceLock(path, ValidateRuntimeFallback); !errors.Is(err, ErrInstanceLocked) {
 		t.Fatalf("AcquireInstanceLock(second) error = %v, want ErrInstanceLocked", err)
 	}
 	info, err := os.Lstat(path)
@@ -36,7 +36,7 @@ func TestAcquireInstanceLockIsExclusiveAndReleases(t *testing.T) {
 	if err := first.Close(); err != nil {
 		t.Fatalf("Close(first again): %v", err)
 	}
-	second, err := AcquireInstanceLock(path, ValidateRuntime)
+	second, err := AcquireInstanceLock(path, ValidateRuntimeFallback)
 	if err != nil {
 		t.Fatalf("AcquireInstanceLock(after release): %v", err)
 	}
@@ -53,7 +53,7 @@ func TestAcquireInstanceLockDoesNotTakeOverUnsafeExistingFile(t *testing.T) {
 		t.Fatalf("write unsafe lock: %v", err)
 	}
 
-	if _, err := AcquireInstanceLock(path, ValidateRuntime); err == nil {
+	if _, err := AcquireInstanceLock(path, ValidateRuntimeFallback); err == nil {
 		t.Fatal("AcquireInstanceLock() error = nil")
 	}
 	info, err := os.Lstat(path)
