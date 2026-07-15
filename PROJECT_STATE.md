@@ -8,7 +8,7 @@
 
 ## Current outcome
 
-The approved Stage 0 baseline remains `d637474ac52ef2c5b9f78c9be663e52c6a9f441c`. M1.1 now has a locally green candidate: exact tcell v3.4.0 intake, private platform paths/ACL/lock/socket/peer-UID boundaries, a cancellable framed daemon client/server, LocalFS read-only RPC routes, and a windowed two-pane tcell UI with Vim navigation, filtering, selection and a 64 KiB preview. The real binary auto-start path and signal lifecycle are wired; repeated reconnect, single-instance convergence, cancellation, full local checks, both Go versions, four target builds, the 50k benchmark and a darwin/arm64 PTY smoke pass. The milestone is not Complete until the candidate is committed and Hosted native/oldstable gates are green.
+The approved Stage 0 baseline remains `d637474ac52ef2c5b9f78c9be663e52c6a9f441c`. M1.1 is complete at `8e649f534b500e494ec2984a763e4491711df5fe`: exact tcell v3.4.0 intake, private platform paths/ACL/lock/socket/peer-UID boundaries, a cancellable framed daemon client/server, LocalFS read-only RPC routes, and a windowed two-pane tcell UI with Vim navigation, filtering, selection and a 64 KiB preview. Hosted run [29399674061](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29399674061) passed every native, oldstable, quality, build, reproducibility, compare and provenance job. M1.2 is now active; no remote capability is claimed before its real sshd gate.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -36,7 +36,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Commit and push the locally green M1.1 candidate, run the Hosted matrix, and close any native platform failures. Only after M1.1 Hosted evidence is green may M1.2 begin with the exact `pkg/sftp v1.13.10` dependency intake and ADR-0001 system-OpenSSH transport.
+Complete the exact `github.com/pkg/sftp v1.13.10` dependency intake, then implement ADR-0001's validated absolute system-OpenSSH stdio transport and SFTP Provider test-first. Require a real temporary sshd with Host alias and non-default port before closing M1.2.
 
 ## Required reading for the next session
 

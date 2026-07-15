@@ -5,8 +5,8 @@
 - **Repository root**: `/Users/bytedance/Downloads/projects/awesome-mac-sftp`
 - **Branch**: `codex/stage1-read-only-explorer`
 - **Stage 0 baseline commit/tree**: `d637474ac52ef2c5b9f78c9be663e52c6a9f441c` / `83a515607f44f7edb85f8103962b6d9d1173c02d`
-- **Current milestone**: M1.1 — Local read-only end to end
-- **Current candidate**: M1.1 local candidate; commit and Hosted evidence pending
+- **Current milestone**: M1.2 — Real SFTP endpoints
+- **Current candidate**: M1.1 complete at `8e649f534b500e494ec2984a763e4491711df5fe`
 
 Stage 1 delivers the read-only explorer only. It does not deliver Stage 2 transfer or mutation operations, Stage 3 external editing/cache, Stage 4 helper/search, Stage 5 direct transfer/scale hardening, or Stage 6 release readiness.
 
@@ -50,11 +50,11 @@ The local dependency intake sub-gate is closed. Hosted native and oldstable jobs
 
 ### M1.1 — Local read-only end to end
 
-- **Status**: In Progress
+- **Status**: Complete
 - **Goal**: exact tcell intake; ADR-0007 Paths/ACL/lock/peer UID; daemon/IPC lifecycle; LocalFS; local/local Vim-first windowed TUI and bounded preview.
-- **Candidate tree**: pending first M1.1 commit
-- **Last green command**: `GOTOOLCHAIN=go1.26.5 make check`, `make lint`, and `make supply-chain`; exact Go 1.25.12 package suite; four cross-target builds; focused race suites; offline PTY smoke
-- **Next action**: commit and push the locally green M1.1 candidate, then require all Hosted native/oldstable/quality/reproducibility gates before starting M1.2.
+- **Candidate commit**: `8e649f534b500e494ec2984a763e4491711df5fe`
+- **Hosted run**: [29399674061](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29399674061) — PASS for native, oldstable, quality, four builds, eight reproducibility producers, compare and provenance aggregation
+- **Next action**: exact `github.com/pkg/sftp v1.13.10` intake, then ADR-0001 validated `/usr/bin/ssh` stdio transport and SFTP Provider.
 
 Required evidence:
 
@@ -67,11 +67,11 @@ Required evidence:
 - [x] Local/local two-pane model, visible-window renderer, Vim navigation/filter/selection, terminal sanitization and 64 KiB preview pass locally.
 - [x] 50,000-entry structural renderer benchmark and offline PTY browse/quit/SIGTERM smoke pass on darwin/arm64.
 
-Platform boundary evidence remains partially open until Hosted Linux native ACL/SO_PEERCRED/flock/socket execution and both macOS runner variants are green. Real Darwin allow/deny ACL kernel fixtures and hostile other-UID peers are also not claimed by the local run.
+Hosted Linux native ACL/SO_PEERCRED/flock/socket execution and both macOS runner variants are green. Real Darwin allow/deny ACL kernel fixtures and hostile other-UID peers remain final Stage 1 hardening evidence and are not inferred from parser fixtures.
 
 ### M1.2 — Real SFTP endpoints
 
-- **Status**: Not Started
+- **Status**: In Progress
 - **Goal**: exact pkg/sftp intake, ADR-0001 system OpenSSH transport, SFTP Provider, local/remote and remote/remote browsing.
 
 ### M1.3 — Authentication and complex SSH configuration
