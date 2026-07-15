@@ -402,7 +402,7 @@ def main():
         new_daemon = wait_until(lambda: single_daemon(old_daemon), "replacement daemon", timeout=30)
         if new_daemon == old_daemon:
             raise RuntimeError("daemon PID did not change")
-        app.wait_for("a-daemon-marker.txt", "b-daemon-marker.txt", timeout=30)
+        app.wait_for_screen("a-daemon-marker.txt", "b-daemon-marker.txt", timeout=30)
         assert_private_runtime()
         app.close()
 
