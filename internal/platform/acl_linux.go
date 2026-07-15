@@ -61,9 +61,9 @@ func (linuxACLSystem) filesystemType(path string) (int64, error) {
 func normalizeLinuxACLError(err error) error {
 	switch {
 	case errors.Is(err, syscall.ENODATA):
-		return fmt.Errorf("%w: %v", errACLNoData, err)
+		return fmt.Errorf("%w: %w", errACLNoData, err)
 	case errors.Is(err, syscall.ENOTSUP), errors.Is(err, syscall.EOPNOTSUPP):
-		return fmt.Errorf("%w: %v", errACLUnsupported, err)
+		return fmt.Errorf("%w: %w", errACLUnsupported, err)
 	default:
 		return err
 	}
