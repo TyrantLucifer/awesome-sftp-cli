@@ -122,7 +122,8 @@ while test "${port_b}" = "${port_a}"; do
 done
 
 configure_sshd() {
-  local name="$1" port="$2" user_name="$3" directory="${root}/sshd-${name}"
+  local name="$1" port="$2" user_name="$3" directory
+  directory="${root}/sshd-${name}"
   install -d -o root -g root -m 0700 "${directory}"
   /usr/bin/ssh-keygen -q -t ed25519 -N '' -f "${directory}/host_key"
   cat >"${directory}/sshd_config" <<EOF
@@ -145,7 +146,8 @@ EOF
 }
 
 start_sshd() {
-  local name="$1" port="$2" directory="${root}/sshd-${name}" pid deadline
+  local name="$1" port="$2" directory pid deadline
+  directory="${root}/sshd-${name}"
   setsid /usr/sbin/sshd -D -e -f "${directory}/sshd_config" >>"${directory}/sshd.log" 2>&1 &
   pid=$!
   deadline=$((SECONDS + 10))
