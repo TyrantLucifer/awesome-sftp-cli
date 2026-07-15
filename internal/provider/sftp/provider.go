@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"path"
 	"sync"
@@ -317,20 +318,30 @@ func (p *Provider) invalid(operation string, location *domain.Location, message 
 func (p *Provider) mapError(operation string, location *domain.Location, err error) error {
 	code := domain.CodeInternal
 	retry := errRetryNever
+	statusCode, hasStatus := sftpStatusCode(err)
 	switch {
 	case errors.Is(err, context.Canceled):
 		code = domain.CodeCanceled
 	case errors.Is(err, context.DeadlineExceeded):
 		code = domain.CodeTimeout
-	case errors.Is(err, os.ErrNotExist):
+	case errors.Is(err, os.ErrNotExist), errors.Is(err, pkgsftp.ErrSSHFxNoSuchFile), hasStatus && statusCode == uint32(pkgsftp.ErrSSHFxNoSuchFile):
 		code = domain.CodeNotFound
-	case errors.Is(err, os.ErrPermission):
+	case errors.Is(err, os.ErrPermission), errors.Is(err, pkgsftp.ErrSSHFxPermissionDenied), hasStatus && statusCode == uint32(pkgsftp.ErrSSHFxPermissionDenied):
 		code = domain.CodePermissionDenied
-	case errors.Is(err, io.EOF):
+	case errors.Is(err, pkgsftp.ErrSSHFxOpUnsupported), hasStatus && statusCode == uint32(pkgsftp.ErrSSHFxOpUnsupported):
+		code = domain.CodeUnsupported
+	case errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, net.ErrClosed), errors.Is(err, pkgsftp.ErrSSHFxNoConnection), errors.Is(err, pkgsftp.ErrSSHFxConnectionLost), hasStatus && (statusCode == uint32(pkgsftp.ErrSSHFxNoConnection) || statusCode == uint32(pkgsftp.ErrSSHFxConnectionLost)):
 		code = domain.CodeTransportInterrupted
 		retry = domain.RetryAdvice{Kind: domain.RetryAfterReconnect}
 	}
 	return p.opError(code, operation, location, "SFTP operation failed", retry, err)
+}
+func sftpStatusCode(err error) (uint32, bool) {
+	var status *pkgsftp.StatusError
+	if !errors.As(err, &status) {
+		return 0, false
+	}
+	return status.Code, true
 }
 func (p *Provider) opError(code domain.Code, operation string, location *domain.Location, message string, retry domain.RetryAdvice, cause error) error {
 	return &domain.OpError{Code: code, Operation: operation, EndpointID: p.endpoint.ID, Location: location, Message: message, Retry: retry, Effect: domain.EffectNone, Cause: cause}

@@ -2,6 +2,8 @@ package sftp
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -72,3 +74,31 @@ func (contractFactory) New(t *testing.T) contracttest.Fixture {
 }
 
 func TestProviderContract(t *testing.T) { contracttest.Run(t, contractFactory{}) }
+
+func TestMapErrorClassifiesRemoteStatusAndConnectionLoss(t *testing.T) {
+	implementation := &Provider{endpoint: domain.Endpoint{ID: testEndpointID}}
+	tests := []struct {
+		name      string
+		err       error
+		code      domain.Code
+		retryKind domain.RetryKind
+	}{
+		{name: "not found status", err: &pkgsftp.StatusError{Code: uint32(pkgsftp.ErrSSHFxNoSuchFile)}, code: domain.CodeNotFound, retryKind: domain.RetryNever},
+		{name: "permission status", err: &pkgsftp.StatusError{Code: uint32(pkgsftp.ErrSSHFxPermissionDenied)}, code: domain.CodePermissionDenied, retryKind: domain.RetryNever},
+		{name: "unsupported status", err: &pkgsftp.StatusError{Code: uint32(pkgsftp.ErrSSHFxOpUnsupported)}, code: domain.CodeUnsupported, retryKind: domain.RetryNever},
+		{name: "connection lost", err: pkgsftp.ErrSSHFxConnectionLost, code: domain.CodeTransportInterrupted, retryKind: domain.RetryAfterReconnect},
+		{name: "unexpected EOF", err: io.ErrUnexpectedEOF, code: domain.CodeTransportInterrupted, retryKind: domain.RetryAfterReconnect},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mapped := implementation.mapError("list", nil, test.err)
+			var operationError *domain.OpError
+			if !errors.As(mapped, &operationError) {
+				t.Fatalf("mapError() = %v, want OpError", mapped)
+			}
+			if operationError.Code != test.code || operationError.Retry.Kind != test.retryKind {
+				t.Fatalf("mapError() code/retry = %s/%s, want %s/%s", operationError.Code, operationError.Retry.Kind, test.code, test.retryKind)
+			}
+		})
+	}
+}
