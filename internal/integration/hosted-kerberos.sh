@@ -251,8 +251,13 @@ for {set attempt 0} {$attempt < 30} {incr attempt} {
     set daemon_log [read $handle]
     close $handle
   }] && [string first {"event":"rpc_request_failed"} $daemon_log] >= 0 && [string first {"error_code":"auth_required"} $daemon_log] >= 0} {
-    send -- "q"
     set timeout 5
+    expect {
+      -exact "failed" {}
+      eof { exit 90 }
+      timeout { exit 97 }
+    }
+    send -- "q"
     expect {
       eof { exit 0 }
       timeout { exit 96 }
