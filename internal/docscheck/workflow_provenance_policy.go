@@ -308,7 +308,7 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 
 	switch profile.jobID {
 	case "auth-integration":
-		return len(job.steps) == 7 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
+		return len(job.steps) == 8 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
 	case "build":
 		return len(job.steps) == 8 && canonicalBuildProducerPrefix(job.steps[:recordIndex])
 	case "fuzz":
@@ -325,14 +325,20 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 }
 
 func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
-	if len(steps) != 5 {
+	if len(steps) != 6 {
 		return false
 	}
 	return stepIsExactCheckout(steps[0]) && stepIsExactCurrentSetupGo(steps[1]) &&
 		canonicalRunStep(steps[2], "Install isolated authentication fixtures", []string{
 			`set -euo pipefail`,
 			`sudo apt-get update`,
-			`sudo apt-get install -y expect netcat-openbsd openssh-server`,
+			`sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \`,
+			`  expect \`,
+			`  krb5-admin-server \`,
+			`  krb5-kdc \`,
+			`  krb5-user \`,
+			`  netcat-openbsd \`,
+			`  openssh-server`,
 		}) &&
 		canonicalRunStep(steps[3], "Build installed same-binary fixture", []string{
 			`set -euo pipefail`,
@@ -345,6 +351,13 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \`,
 			`  AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-auth.sh`,
+		}) &&
+		canonicalRunStep(steps[5], "Run real MIT Kerberos/GSSAPI matrix", []string{
+			`set -euo pipefail`,
+			`sudo env \`,
+			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \`,
+			`  AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
+			`  bash ./internal/integration/hosted-kerberos.sh`,
 		})
 }
 

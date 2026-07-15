@@ -151,6 +151,18 @@ func TestWorkflowProvenancePolicyRejectsAuthenticationWorkloadDrift(t *testing.T
 	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
 }
 
+func TestWorkflowProvenancePolicyRejectsKerberosWorkloadDrift(t *testing.T) {
+	content := replaceInWorkflowStep(
+		t,
+		readCanonicalWorkflow(t, ".github/workflows/ci.yml"),
+		"auth-integration",
+		"Run real MIT Kerberos/GSSAPI matrix",
+		`bash ./internal/integration/hosted-kerberos.sh`,
+		`":"`,
+	)
+	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
+}
+
 func TestWorkflowProvenancePolicyRejectsCanonicalShellWhitespaceDrift(t *testing.T) {
 	tests := []struct {
 		name string

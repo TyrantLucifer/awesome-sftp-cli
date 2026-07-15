@@ -105,7 +105,13 @@ jobs:
         run: |
           set -euo pipefail
           sudo apt-get update
-          sudo apt-get install -y expect netcat-openbsd openssh-server
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            expect \
+            krb5-admin-server \
+            krb5-kdc \
+            krb5-user \
+            netcat-openbsd \
+            openssh-server
       - name: Build installed same-binary fixture
         run: |
           set -euo pipefail
@@ -118,6 +124,13 @@ jobs:
             AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \
             AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             bash ./internal/integration/hosted-auth.sh
+      - name: Run real MIT Kerberos/GSSAPI matrix
+        run: |
+          set -euo pipefail
+          sudo env \
+            AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \
+            AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            bash ./internal/integration/hosted-kerberos.sh
       - name: Record provenance
         run: |
           set -euo pipefail
