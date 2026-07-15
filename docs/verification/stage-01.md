@@ -6,7 +6,7 @@
 - **Branch**: `codex/stage1-read-only-explorer`
 - **Stage 0 baseline commit/tree**: `d637474ac52ef2c5b9f78c9be663e52c6a9f441c` / `83a515607f44f7edb85f8103962b6d9d1173c02d`
 - **Current milestone**: M1.4 — Workspace and recovery
-- **Current candidate**: M1.4 implementation at `4803d2789504d00566d51282b82c5d6fa5bf561a`; recovery reached the three-attempt stop and source-streaming decision remains open
+- **Current candidate**: M1.4 implementation and platform evidence at `56e5f4f6c4579cbafa6e38a237720efc1686b098`; recovery reached the three-attempt stop and source-streaming decision remains open
 
 Stage 1 delivers the read-only explorer only. It does not deliver Stage 2 transfer or mutation operations, Stage 3 external editing/cache, Stage 4 helper/search, Stage 5 direct transfer/scale hardening, or Stage 6 release readiness.
 
@@ -151,7 +151,7 @@ Platform final-evidence candidate:
 - Linux-native tests set real `system.posix_acl_access` and `system.posix_acl_default` xattrs and prove named effective access and inherited defaults fail closed.
 - A subprocess fixture proves the instance lock is exclusive across processes and available only after release.
 - A root-gated adversarial fixture creates a real client under another UID, deliberately widens the test directory/socket DAC modes, and proves the listener's peer-credential check independently rejects it. Native CI compiles one platform test binary, runs kernel ACL/lock tests unprivileged, then runs this peer test through `sudo` on Ubuntu 22.04/24.04 and macOS 15 ARM/Intel.
-- Fresh local `go test -race -count=1 ./internal/platform`, exact `GOTOOLCHAIN=go1.25.12 go test -count=1 ./internal/platform`, `make docs-check`, actionlint and `git diff --check` pass. The real hostile-UID case requires root and therefore remains `Implemented`, not `Verified`, until an exact Hosted run executes the new step.
+- Fresh local `go test -race -count=1 ./internal/platform`, exact `GOTOOLCHAIN=go1.25.12 go test -count=1 ./internal/platform`, `make docs-check`, actionlint and `git diff --check` pass. Exact-head Hosted run [29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068) then passed the kernel ACL, cross-process lock and root hostile-UID step on [Ubuntu 22.04](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131342), [Ubuntu 24.04](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131321), [macOS 15 ARM](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131251), and [macOS 15 Intel](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131365). DAEM-002 and SEC-001 are therefore Verified independently of the still-failing recovery job.
 
 ## Stage 1 explorer feature evidence
 
@@ -179,8 +179,10 @@ These rows record independently satisfied Stage 1 features. Rows whose acceptanc
 | VIM-005 | PASS | Discrete mark toggle/identity/remapping tests pass without mutation intents. |
 | VIM-012 | PASS | Filter/path/endpoint/workspace/selection/preview Esc tests and real auth cancellation return control predictably. |
 | DAEM-001 | PASS | Ten-process convergence, stale socket, repeated reconnect, cancellation and four-platform PTY exit/re-entry pass. |
+| DAEM-002 | PASS | Real Darwin/Linux kernel ACLs, cross-process locking and hostile-other-UID peer rejection passed on all four native Hosted legs in run 29417470068. |
 | PREV-001 | PASS | Bounded LocalFS/SFTP reads, 64 KiB cap, binary/split-UTF-8/multiline/stale/cancel tests pass. |
 | SRCH-001 | PASS | Loaded and incoming page filtering, clear/cursor behavior and zero remote-command routes pass. |
+| SEC-001 | PASS | The private Unix socket has no TCP route and rejects a real other-UID peer even when the adversarial fixture removes DAC protection. |
 | SEC-002 | PASS | Broker lifetime plus Hosted secret/workspace/log/Kerberos artifact scans pass. |
 | SEC-003 | PASS | Resolver, exact argv, poisoned PATH, real proxy/auth/GSSAPI and changed-key refusal evidence pass. |
 | SEC-009 | PASS | Malicious filenames, stderr, picker problems, preview lines and invalid UTF-8 are terminal-sanitized. |
