@@ -110,6 +110,31 @@ func TestValidatePOSIXAccessACLRejectsMalformedInput(t *testing.T) {
 	}
 }
 
+func TestParsePOSIXACLRejectsInvalidEntryIDs(t *testing.T) {
+	tests := map[string]struct {
+		entry       posixACLTestEntry
+		wantMessage string
+	}{
+		"object entry with concrete ID": {
+			entry:       posixACLTestEntry{tag: posixACLUserObject, permissions: 0o7, id: 42},
+			wantMessage: "object entry has a defined ID",
+		},
+		"named entry with undefined ID": {
+			entry:       posixACLTestEntry{tag: posixACLNamedUser, permissions: 0o4, id: ^uint32(0)},
+			wantMessage: "named entry has an undefined ID",
+		},
+	}
+
+	for name, test := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := parsePOSIXACL(posixACLBytes(test.entry))
+			if err == nil || !strings.Contains(err.Error(), test.wantMessage) {
+				t.Fatalf("parsePOSIXACL() error = %v, want message %q", err, test.wantMessage)
+			}
+		})
+	}
+}
+
 func TestPOSIXACLValidatorAllowsDACFallbackOnlyOnApprovedFilesystems(t *testing.T) {
 	tests := map[string]struct {
 		filesystemType int64
@@ -228,15 +253,15 @@ func posixACLBytes(entries ...posixACLTestEntry) []byte {
 	data := make([]byte, 4)
 	binary.LittleEndian.PutUint32(data, posixACLVersion)
 	for _, entry := range entries {
-		encoded := make([]byte, 4)
+		encoded := make([]byte, 8)
 		binary.LittleEndian.PutUint16(encoded[0:2], entry.tag)
 		binary.LittleEndian.PutUint16(encoded[2:4], entry.permissions)
-		data = append(data, encoded...)
-		if entry.tag == posixACLNamedUser || entry.tag == posixACLNamedGroup {
-			id := make([]byte, 4)
-			binary.LittleEndian.PutUint32(id, entry.id)
-			data = append(data, id...)
+		id := entry.id
+		if entry.tag != posixACLNamedUser && entry.tag != posixACLNamedGroup && id == 0 {
+			id = ^uint32(0)
 		}
+		binary.LittleEndian.PutUint32(encoded[4:8], id)
+		data = append(data, encoded...)
 	}
 	return data
 }

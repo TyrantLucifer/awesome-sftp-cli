@@ -15,6 +15,7 @@ const (
 	posixACLNamedGroup   uint16 = 0x0008
 	posixACLMask         uint16 = 0x0010
 	posixACLOther        uint16 = 0x0020
+	posixACLUndefinedID  uint32 = ^uint32(0)
 	posixACLAccessXattr         = "system.posix_acl_access"
 	posixACLDefaultXattr        = "system.posix_acl_default"
 
@@ -188,26 +189,28 @@ func parsePOSIXACL(data []byte) ([]posixACLEntry, error) {
 
 	var entries []posixACLEntry
 	for offset := 4; offset < len(data); {
-		if len(data)-offset < 4 {
+		if len(data)-offset < 8 {
 			return nil, fmt.Errorf("POSIX ACL entry is truncated")
 		}
 		entry := posixACLEntry{
 			tag:         binary.LittleEndian.Uint16(data[offset : offset+2]),
 			permissions: binary.LittleEndian.Uint16(data[offset+2 : offset+4]),
+			id:          binary.LittleEndian.Uint32(data[offset+4 : offset+8]),
 		}
-		offset += 4
+		offset += 8
 		if entry.permissions&^uint16(0o7) != 0 {
 			return nil, fmt.Errorf("POSIX ACL entry has invalid permissions")
 		}
 
 		switch entry.tag {
 		case posixACLNamedUser, posixACLNamedGroup:
-			if len(data)-offset < 4 {
-				return nil, fmt.Errorf("POSIX ACL named entry is truncated")
+			if entry.id == posixACLUndefinedID {
+				return nil, fmt.Errorf("POSIX ACL named entry has an undefined ID")
 			}
-			entry.id = binary.LittleEndian.Uint32(data[offset : offset+4])
-			offset += 4
 		case posixACLUserObject, posixACLGroupObject, posixACLMask, posixACLOther:
+			if entry.id != posixACLUndefinedID {
+				return nil, fmt.Errorf("POSIX ACL object entry has a defined ID")
+			}
 		default:
 			return nil, fmt.Errorf("unknown POSIX ACL tag %#x", entry.tag)
 		}
