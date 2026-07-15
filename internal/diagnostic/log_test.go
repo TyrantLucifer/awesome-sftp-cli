@@ -15,6 +15,7 @@ import (
 	"testing/slogtest"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 const (
@@ -95,7 +96,7 @@ func TestDaemonLogLevelCanChangeAtRuntime(t *testing.T) {
 }
 
 func TestOpenDaemonLogRotatesWithinBoundAndUsesPrivateModes(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "daemon.jsonl")
+	path := filepath.Join(testkit.PersistentTempDir(t), "private", "daemon.jsonl")
 	log, err := OpenDaemon(path, Config{MaxBytes: 300, Backups: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +125,7 @@ func TestOpenDaemonLogRotatesWithinBoundAndUsesPrivateModes(t *testing.T) {
 }
 
 func TestDaemonLogConcurrentWritesRemainBoundedJSON(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "private", "daemon.jsonl")
+	path := filepath.Join(testkit.PersistentTempDir(t), "private", "daemon.jsonl")
 	log, err := OpenDaemon(path, Config{MaxBytes: 1024, Backups: 2})
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +165,7 @@ func TestDaemonLogConcurrentWritesRemainBoundedJSON(t *testing.T) {
 }
 
 func TestOpenDaemonLogRejectsSymlinkDestination(t *testing.T) {
-	root := t.TempDir()
+	root := testkit.PersistentTempDir(t)
 	target := filepath.Join(root, "target")
 	if err := os.WriteFile(target, []byte("keep"), 0o600); err != nil {
 		t.Fatal(err)
