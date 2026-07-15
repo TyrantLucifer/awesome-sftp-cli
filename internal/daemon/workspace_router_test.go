@@ -10,11 +10,12 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
 )
 
 func TestProviderSessionsShareWorkspaceStoreAcrossClients(t *testing.T) {
-	store, err := workspace.NewStore(filepath.Join(t.TempDir(), "workspaces"))
+	store, err := workspace.NewStore(filepath.Join(testkit.PersistentTempDir(t), "workspaces"))
 	if err != nil {
 		t.Fatal(err)
 	}

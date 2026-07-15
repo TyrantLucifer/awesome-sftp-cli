@@ -338,6 +338,17 @@ run_case() {
     else
       printf 'runtime root absent: %s\n' "${runtime_root}" >&2
     fi
+    daemon_diagnostic="${case_root}/daemon.diagnostic"
+    set +e
+    runuser -u "${client_user}" -- env -i \
+      HOME="${client_home}" \
+      PATH=/usr/local/bin:/usr/bin:/bin \
+      /usr/bin/timeout --signal=TERM 2 "${installed}" daemon \
+      </dev/null >"${daemon_diagnostic}" 2>&1
+    daemon_exit=$?
+    set -e
+    printf 'foreground daemon diagnostic exit: %s\n' "${daemon_exit}" >&2
+    /usr/bin/strings "${daemon_diagnostic}" 2>/dev/null | sed -n '1,120p' >&2 || true
     sed -n '1,160p' "${sshd_root}/sshd.log" | sed \
       -e "s/${password}/[redacted]/g" \
       -e "s/${mfa_password}/[redacted]/g" \

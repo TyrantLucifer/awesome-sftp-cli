@@ -13,6 +13,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
 )
@@ -90,7 +91,7 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	if err := os.Chmod(base, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	paths := platform.Paths{StateDir: filepath.Join(t.TempDir(), "state"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
+	paths := platform.Paths{StateDir: filepath.Join(testkit.PersistentTempDir(t), "state"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
 	purpose := platform.ValidateRuntimeFallback
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestDocumentRoundTripIsStrictAndSecretFree(t *testing.T) {
@@ -107,7 +108,7 @@ func TestDocumentValidationRejectsUnsafePaneState(t *testing.T) {
 }
 
 func TestStoreSaveIsPrivateAtomicAndCorruptionIsVisible(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "workspaces")
+	root := filepath.Join(testkit.PersistentTempDir(t), "workspaces")
 	store, err := NewStore(root)
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +153,7 @@ func TestStoreSaveIsPrivateAtomicAndCorruptionIsVisible(t *testing.T) {
 }
 
 func TestStoreListsRecentWorkspacesDeterministically(t *testing.T) {
-	store, err := NewStore(filepath.Join(t.TempDir(), "workspaces"))
+	store, err := NewStore(filepath.Join(testkit.PersistentTempDir(t), "workspaces"))
 	if err != nil {
 		t.Fatal(err)
 	}
