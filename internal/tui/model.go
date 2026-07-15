@@ -24,7 +24,23 @@ const (
 	ModeVisualLine Mode = "visual_line"
 	ModeAuth       Mode = "auth"
 	ModeWorkspace  Mode = "workspace_save"
+	ModePath       Mode = "path"
+	ModeEndpoint   Mode = "endpoint"
 )
+
+type SortKey string
+
+const (
+	SortName     SortKey = "name"
+	SortSize     SortKey = "size"
+	SortModified SortKey = "modified"
+	SortKind     SortKey = "kind"
+)
+
+type SortState struct {
+	Key        SortKey
+	Descending bool
+}
 
 const authAnswerByteLimit = 4096
 
@@ -42,12 +58,16 @@ type ListingState struct {
 }
 
 type PaneState struct {
-	Endpoint domain.Endpoint
-	Location domain.Location
-	Entries  []domain.Entry
-	Cursor   int
-	Filter   string
-	Listing  ListingState
+	Endpoint             domain.Endpoint
+	Location             domain.Location
+	Entries              []domain.Entry
+	Cursor               int
+	Filter               string
+	Sort                 SortState
+	ShowHidden           bool
+	Listing              ListingState
+	Connection           domain.ConnectionState
+	CapabilityGeneration uint64
 
 	visible          []int
 	marks            map[domain.Location]struct{}
@@ -58,9 +78,11 @@ type PaneState struct {
 
 func NewPaneState(endpoint domain.Endpoint, location domain.Location) PaneState {
 	return PaneState{
-		Endpoint: endpoint,
-		Location: location,
-		marks:    make(map[domain.Location]struct{}),
+		Endpoint:   endpoint,
+		Location:   location,
+		Sort:       SortState{Key: SortName},
+		Connection: domain.StateReady,
+		marks:      make(map[domain.Location]struct{}),
 	}
 }
 
@@ -140,24 +162,86 @@ func (p *PaneState) rebuildVisible() {
 	query := strings.ToLower(p.Filter)
 	p.visible = p.visible[:0]
 	for index := range p.Entries {
-		if query == "" || strings.Contains(strings.ToLower(p.Entries[index].Name), query) {
-			p.visible = append(p.visible, index)
+		if (!p.ShowHidden && strings.HasPrefix(p.Entries[index].Name, ".")) || query != "" && !strings.Contains(strings.ToLower(p.Entries[index].Name), query) {
+			continue
 		}
+		p.visible = append(p.visible, index)
 	}
+	sort.SliceStable(p.visible, func(left, right int) bool {
+		return p.entryLess(p.Entries[p.visible[left]], p.Entries[p.visible[right]])
+	})
 	p.clampCursor()
 	p.rebindVisualAnchor()
 }
 
 func (p *PaneState) appendEntries(entries []domain.Entry) {
-	start := len(p.Entries)
 	p.Entries = append(p.Entries, entries...)
-	query := strings.ToLower(p.Filter)
-	for offset := range entries {
-		if query == "" || strings.Contains(strings.ToLower(entries[offset].Name), query) {
-			p.visible = append(p.visible, start+offset)
-		}
+	p.rebuildVisible()
+}
+
+func (p PaneState) entryLess(left, right domain.Entry) bool {
+	if (left.Kind == domain.EntryDirectory) != (right.Kind == domain.EntryDirectory) {
+		return left.Kind == domain.EntryDirectory
 	}
-	p.clampCursor()
+	comparison, missingOrder := compareEntries(left, right, p.Sort.Key)
+	if missingOrder {
+		return comparison < 0
+	}
+	if comparison == 0 {
+		comparison = strings.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name))
+	}
+	if comparison == 0 {
+		comparison = strings.Compare(left.Name, right.Name)
+	}
+	if p.Sort.Descending {
+		return comparison > 0
+	}
+	return comparison < 0
+}
+
+func compareEntries(left, right domain.Entry, key SortKey) (int, bool) {
+	switch key {
+	case SortSize:
+		return compareOptionalUint64(left.Metadata.Size, right.Metadata.Size)
+	case SortModified:
+		if left.Metadata.ModifiedAt == nil || right.Metadata.ModifiedAt == nil {
+			if left.Metadata.ModifiedAt == nil && right.Metadata.ModifiedAt == nil {
+				return 0, false
+			}
+			return compareKnown(left.Metadata.ModifiedAt != nil, right.Metadata.ModifiedAt != nil), true
+		}
+		return left.Metadata.ModifiedAt.Compare(*right.Metadata.ModifiedAt), false
+	case SortKind:
+		return strings.Compare(string(left.Kind), string(right.Kind)), false
+	default:
+		return strings.Compare(strings.ToLower(left.Name), strings.ToLower(right.Name)), false
+	}
+}
+
+func compareOptionalUint64(left, right *uint64) (int, bool) {
+	if left == nil || right == nil {
+		if left == nil && right == nil {
+			return 0, false
+		}
+		return compareKnown(left != nil, right != nil), true
+	}
+	if *left < *right {
+		return -1, false
+	}
+	if *left > *right {
+		return 1, false
+	}
+	return 0, false
+}
+
+func compareKnown(left, right bool) int {
+	if left == right {
+		return 0
+	}
+	if left {
+		return -1
+	}
+	return 1
 }
 
 func (p *PaneState) clampCursor() {
@@ -264,6 +348,8 @@ type Model struct {
 	Notice  string
 
 	workspaceName []rune
+	pathInput     []rune
+	endpointInput []rune
 	Width         int
 	Height        int
 }
@@ -285,10 +371,11 @@ func NewModel(left, right PaneState) Model {
 type IntentKind string
 
 const (
-	IntentList          IntentKind = "list"
-	IntentPreview       IntentKind = "preview"
-	IntentAuthResolve   IntentKind = "auth_resolve"
-	IntentWorkspaceSave IntentKind = "workspace_save"
+	IntentList            IntentKind = "list"
+	IntentPreview         IntentKind = "preview"
+	IntentAuthResolve     IntentKind = "auth_resolve"
+	IntentWorkspaceSave   IntentKind = "workspace_save"
+	IntentConnectEndpoint IntentKind = "connect_endpoint"
 )
 
 const PreviewByteLimit = 64 * 1024
@@ -307,19 +394,24 @@ type Intent struct {
 type Key string
 
 const (
-	KeyTab        Key = "tab"
-	KeyParent     Key = "parent"
-	KeyDown       Key = "down"
-	KeyUp         Key = "up"
-	KeyOpen       Key = "open"
-	KeyVisual     Key = "visual"
-	KeyVisualLine Key = "visual_line"
-	KeyMark       Key = "mark"
-	KeyFilter     Key = "filter"
-	KeyBackspace  Key = "backspace"
-	KeyEscape     Key = "escape"
-	KeySubmit     Key = "submit"
-	KeySave       Key = "save"
+	KeyTab          Key = "tab"
+	KeyParent       Key = "parent"
+	KeyDown         Key = "down"
+	KeyUp           Key = "up"
+	KeyOpen         Key = "open"
+	KeyVisual       Key = "visual"
+	KeyVisualLine   Key = "visual_line"
+	KeyMark         Key = "mark"
+	KeyFilter       Key = "filter"
+	KeyBackspace    Key = "backspace"
+	KeyEscape       Key = "escape"
+	KeySubmit       Key = "submit"
+	KeySave         Key = "save"
+	KeySort         Key = "sort"
+	KeyToggleHidden Key = "toggle_hidden"
+	KeyRefresh      Key = "refresh"
+	KeyPath         Key = "path"
+	KeyEndpoint     Key = "endpoint"
 )
 
 type Action interface{ isAction() }
@@ -343,6 +435,10 @@ type ListingFailed struct {
 	Pane       PaneID
 	Generation uint64
 	Message    string
+	Code       domain.Code
+	Retry      domain.RetryKind
+	DaemonLost bool
+	Location   domain.Location
 }
 type SetFilter struct {
 	Pane  PaneID
@@ -366,9 +462,17 @@ type AuthChallengeReceived struct {
 	Kind        string
 }
 type PaneConnected struct {
-	Pane     PaneID
-	Endpoint domain.Endpoint
-	Location domain.Location
+	Pane                 PaneID
+	Endpoint             domain.Endpoint
+	Location             domain.Location
+	State                domain.ConnectionState
+	CapabilityGeneration uint64
+	PreserveCommitted    bool
+}
+type PaneConnectionChanged struct {
+	Pane    PaneID
+	State   domain.ConnectionState
+	Message string
 }
 type WorkspaceSaveResult struct {
 	Name    string
@@ -386,6 +490,7 @@ func (BeginPreview) isAction()          {}
 func (PreviewChunk) isAction()          {}
 func (AuthChallengeReceived) isAction() {}
 func (PaneConnected) isAction()         {}
+func (PaneConnectionChanged) isAction() {}
 func (WorkspaceSaveResult) isAction()   {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {

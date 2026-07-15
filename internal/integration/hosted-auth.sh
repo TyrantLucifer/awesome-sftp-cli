@@ -199,18 +199,15 @@ switch -- $env(AMSFTP_CASE_MODE) {
   wrong {
     expect_prompt {(?i)password:}
     send -- "definitely-wrong\r"
-    expect_process_exit
-    exit 0
+    expect_prompt {(?i)(authentication failed|connect .* failed)}
   }
   cancel {
     expect_prompt {(?i)password:}
     send -- "\033"
-    expect_process_exit
-    exit 0
+    expect_prompt {(?i)(connect .* failed|authentication failed)}
   }
   failure {
-    expect_process_exit
-    exit 0
+    expect_prompt {(?i)(host-key verification failed|connect .* failed)}
   }
   default {
     exit 90
@@ -351,9 +348,9 @@ run_case() {
   fi
   case "${mode}" in
     wrong | cancel | failure)
-      if ! grep -Fq 'establish OpenSSH SFTP session' "${client_stderr}"; then
-        printf 'authentication case %s did not report a bounded transport failure\n' "${name}" >&2
-        /usr/bin/strings "${client_stderr}" 2>/dev/null | sed -n '1,120p' >&2 || true
+      if ! /usr/bin/strings "${output}" | grep -Eq '(authentication failed|host-key verification failed|connect .* failed)'; then
+        printf 'authentication case %s did not report a bounded pane-local failure\n' "${name}" >&2
+        /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,120p' >&2 || true
         exit 1
       fi
       ;;
@@ -363,6 +360,44 @@ run_case() {
 }
 
 common="$(common_config)"
+
+include_directory="${client_home}/.ssh/conf.d"
+install -d -o "${client_user}" -g "${client_user}" -m 0700 "${include_directory}"
+cat >"${include_directory}/included.conf" <<EOF
+Host auth-include-match
+${common}
+  User ${target_user}
+EOF
+chown "${client_user}:${client_user}" "${include_directory}/included.conf"
+chmod 0600 "${include_directory}/included.conf"
+write_config "Include ${include_directory}/*.conf
+Match host auth-include-match
+  IdentityFile ${client_home}/.ssh/client_key
+  IdentitiesOnly yes
+  PreferredAuthentications publickey"
+preflight_sftp_transport auth-include-match
+run_case include-match none auth-include-match "${target_home}" endpoint-auth.txt
+
+control_path="${client_home}/.ssh/control-%C"
+write_config "Host auth-control-master
+${common}
+  User ${target_user}
+  IdentityFile ${client_home}/.ssh/client_key
+  IdentitiesOnly yes
+  PreferredAuthentications publickey
+  ControlMaster auto
+  ControlPath ${control_path}
+  ControlPersist 30"
+accepted_before="$(grep -c "Accepted publickey for ${target_user}" "${sshd_root}/sshd.log" || true)"
+run_case control-master-new none auth-control-master "${target_home}" endpoint-auth.txt
+runuser -u "${client_user}" -- env HOME="${client_home}" /usr/bin/ssh -O check auth-control-master >/dev/null 2>&1
+accepted_after_new="$(grep -c "Accepted publickey for ${target_user}" "${sshd_root}/sshd.log" || true)"
+test "${accepted_after_new}" -gt "${accepted_before}"
+run_case control-master-reuse none auth-control-master "${target_home}" endpoint-auth.txt
+runuser -u "${client_user}" -- env HOME="${client_home}" /usr/bin/ssh -O check auth-control-master >/dev/null 2>&1
+accepted_after_reuse="$(grep -c "Accepted publickey for ${target_user}" "${sshd_root}/sshd.log" || true)"
+test "${accepted_after_reuse}" = "${accepted_after_new}"
+runuser -u "${client_user}" -- env HOME="${client_home}" /usr/bin/ssh -O exit auth-control-master >/dev/null 2>&1
 
 write_config "Host auth-key
 ${common}

@@ -138,7 +138,8 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		}
 		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: hostAlias, Environment: environment, Redact: []string{string(attempt.Token())}})
 		if err != nil {
-			return nil, sshConnectStageError("establish OpenSSH SFTP session", domain.CodeTransportInterrupted, domain.RetryAfterReconnect, err)
+			code, retry := classifySSHConnectError(err)
+			return nil, sshConnectStageError(sshConnectMessage(code), code, retry, err)
 		}
 		remoteEndpointID, err := domain.NewEndpointID(generator)
 		if err != nil {
@@ -168,6 +169,21 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	return daemon.Serve(ctx, listener, server)
+}
+
+func sshConnectMessage(code domain.Code) string {
+	switch code {
+	case domain.CodeAuthRequired:
+		return "OpenSSH authentication failed; check credentials or retry explicitly"
+	case domain.CodePermissionDenied:
+		return "OpenSSH host-key verification failed; inspect known_hosts"
+	case domain.CodeUnsupported:
+		return "remote SFTP subsystem is unavailable"
+	case domain.CodeTransportInterrupted, domain.CodeTimeout:
+		return "OpenSSH transport is unavailable; reconnect is safe"
+	default:
+		return "establish OpenSSH SFTP session"
+	}
 }
 
 func sshConnectStageError(message string, code domain.Code, retry domain.RetryKind, cause error) error {
@@ -233,7 +249,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
-	defer client.Close()
+	defer func() { _ = client.Close() }()
 	var endpoints ipc.ProviderEndpointsResponse
 	if err := client.Call(ctx, daemon.ProviderEndpoints, struct{}{}, &endpoints); err != nil {
 		return err
@@ -296,6 +312,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
+	if restored != nil {
+		applyWorkspacePanePreferences(&left, restored.Panes[0])
+		applyWorkspacePanePreferences(&right, restored.Panes[1])
+	}
 	model := tui.NewModel(left, right)
 	if restored != nil {
 		model.Active = tui.PaneID(restored.Layout.ActivePane)
@@ -309,17 +329,30 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		stop()
 		return err
 	}
-	defer func() {
-		stop()
-		_ = authClient.Close()
-	}()
 	actions := make(chan tui.Action, 32)
 	authResolutions := make(chan tui.Intent, 1)
 	authErrors := make(chan error, 1)
-	go func() {
-		if err := runAuthClaimLoop(runCtx, authClient, actions, authResolutions); err != nil && runCtx.Err() == nil {
-			authErrors <- err
+	connectRequests := make(chan tui.Intent, 2)
+	var authCancel context.CancelFunc
+	startAuthLoop := func(activeClient *daemon.Client) {
+		claimCtx, cancel := context.WithCancel(runCtx)
+		authCancel = cancel
+		go func() {
+			if err := runAuthClaimLoop(claimCtx, activeClient, actions, authResolutions); err != nil && claimCtx.Err() == nil {
+				select {
+				case authErrors <- err:
+				case <-runCtx.Done():
+				}
+			}
+		}()
+	}
+	startAuthLoop(authClient)
+	defer func() {
+		if authCancel != nil {
+			authCancel()
 		}
+		stop()
+		_ = authClient.Close()
 	}()
 	var generations [2]uint64
 	var cancels [2]context.CancelFunc
@@ -327,15 +360,22 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	var previewCancel context.CancelFunc
 	startIntent := func(intent tui.Intent) {
 		switch intent.Kind {
+		case tui.IntentConnectEndpoint:
+			select {
+			case connectRequests <- intent:
+			case <-runCtx.Done():
+			}
+			return
 		case tui.IntentWorkspaceSave:
 			document, documentErr := workspaceDocument(model, time.Now().UTC())
 			if documentErr != nil {
 				actions <- tui.WorkspaceSaveResult{Name: intent.Name, Message: "workspace save failed: " + documentErr.Error()}
 				return
 			}
+			activeClient := client
 			go func() {
 				var response workspace.SaveResponse
-				saveErr := client.Call(runCtx, daemon.WorkspaceSave, workspace.SaveRequest{Name: intent.Name, Document: document}, &response)
+				saveErr := activeClient.Call(runCtx, daemon.WorkspaceSave, workspace.SaveRequest{Name: intent.Name, Document: document}, &response)
 				result := tui.WorkspaceSaveResult{Name: intent.Name}
 				if saveErr != nil {
 					result.Message = "workspace save failed: " + saveErr.Error()
@@ -360,8 +400,12 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			previewCancel = cancel
 			previewGeneration++
 			generation := previewGeneration
+			activeClient := client
 			actions <- tui.BeginPreview{Generation: generation, Location: intent.Location}
-			go func() { defer cancel(); previewLocation(requestCtx, client, generation, intent.Location, actions) }()
+			go func() {
+				defer cancel()
+				previewLocation(requestCtx, activeClient, generation, intent.Location, actions)
+			}()
 			return
 		case tui.IntentList:
 		default:
@@ -375,30 +419,104 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		cancels[pane] = cancel
 		generations[pane]++
 		generation := generations[pane]
+		activeClient := client
 		actions <- tui.BeginListing{Pane: pane, Generation: generation, Location: intent.Location}
-		go func() { defer cancel(); listLocation(requestCtx, client, pane, generation, intent.Location, actions) }()
+		go func() {
+			defer cancel()
+			listLocation(requestCtx, activeClient, pane, generation, intent.Location, actions)
+		}()
 	}
 	type connectionResult struct {
-		pane     tui.PaneID
-		endpoint domain.Endpoint
-		location domain.Location
-		host     string
-		err      error
+		pane                 tui.PaneID
+		endpoint             domain.Endpoint
+		location             domain.Location
+		host                 string
+		state                domain.ConnectionState
+		capabilityGeneration uint64
+		recovery             bool
+		err                  error
 	}
-	connections := make(chan connectionResult, 2)
+	connections := make(chan connectionResult, 4)
+	var recovering [2]bool
+	var validatingRecovery [2]bool
+	var recoveryFallback [2]bool
+	startConnection := func(pane tui.PaneID, start startLocation, recovery bool, activeClient *daemon.Client) {
+		if recovery {
+			recovering[pane] = true
+			model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateConnecting, Message: "reconnecting"})
+		}
+		activeLocal := localEndpoint
+		go func() {
+			result := connectionResult{pane: pane, host: start.host, recovery: recovery}
+			result.err = runReconnect(runCtx, defaultReconnectPolicy(), func() error {
+				var connectErr error
+				result.endpoint, result.location, result.state, result.capabilityGeneration, connectErr = resolveStartLocation(runCtx, activeClient, activeLocal, start)
+				return connectErr
+			})
+			select {
+			case connections <- result:
+			case <-runCtx.Done():
+			}
+		}()
+	}
+	type daemonRecoveryResult struct {
+		client     *daemon.Client
+		authClient *daemon.Client
+		local      domain.Endpoint
+		err        error
+	}
+	daemonRecoveries := make(chan daemonRecoveryResult, 1)
+	var daemonRecoveryStarts [2]startLocation
+	recoveringDaemon := false
+	startDaemonRecovery := func() {
+		if recoveringDaemon {
+			return
+		}
+		recoveringDaemon = true
+		for index, paneState := range model.Panes {
+			start := startLocation{path: string(paneState.Location.Path)}
+			if paneState.Endpoint.Kind == domain.EndpointSSH {
+				start.host = paneState.Endpoint.SSHHostAlias
+			}
+			daemonRecoveryStarts[index] = start
+			model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: tui.PaneID(index), State: domain.StateConnecting, Message: "restarting daemon session"})
+			if cancels[index] != nil {
+				cancels[index]()
+			}
+		}
+		if previewCancel != nil {
+			previewCancel()
+		}
+		go func() {
+			result := daemonRecoveryResult{}
+			result.client, result.err = connectDaemon(runCtx, paths, purpose)
+			if result.err == nil {
+				result.local, result.err = daemonLocalEndpoint(runCtx, result.client)
+			}
+			if result.err == nil {
+				result.authClient, result.err = connectDaemon(runCtx, paths, purpose)
+			}
+			if result.err != nil {
+				if result.client != nil {
+					_ = result.client.Close()
+				}
+				if result.authClient != nil {
+					_ = result.authClient.Close()
+				}
+			}
+			select {
+			case daemonRecoveries <- result:
+			case <-runCtx.Done():
+			}
+		}()
+	}
 	for index, start := range locations {
 		pane := tui.PaneID(index)
 		if start.host == "" {
 			startIntent(tui.Intent{Kind: tui.IntentList, Pane: pane, Location: model.Panes[pane].Location})
 			continue
 		}
-		go func() {
-			endpoint, location, connectErr := resolveStartLocation(runCtx, client, localEndpoint, start)
-			select {
-			case connections <- connectionResult{pane: pane, endpoint: endpoint, location: location, host: start.host, err: connectErr}:
-			case <-runCtx.Done():
-			}
-		}()
+		startConnection(pane, start, false, client)
 	}
 	for {
 		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
@@ -407,19 +525,117 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		case <-runCtx.Done():
 			return nil
 		case err := <-authErrors:
+			if daemonConnectionLost(err) {
+				startDaemonRecovery()
+				continue
+			}
 			return err
-		case result := <-connections:
+		case request := <-connectRequests:
+			paneState := model.Panes[request.Pane]
+			start := startLocation{path: string(paneState.Location.Path)}
+			if request.Name == "local" {
+				location, locationErr := domain.NewLocation(localEndpoint.ID, domain.CanonicalPath(start.path))
+				if locationErr != nil {
+					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: request.Pane, State: domain.StateFailed, Message: locationErr.Error()})
+					continue
+				}
+				var intents []tui.Intent
+				model, intents = tui.Reduce(model, tui.PaneConnected{Pane: request.Pane, Endpoint: localEndpoint, Location: location, State: domain.StateReady, PreserveCommitted: true})
+				validatingRecovery[request.Pane] = true
+				for _, intent := range intents {
+					startIntent(intent)
+				}
+				continue
+			}
+			if _, validateErr := openssh.Arguments(request.Name); validateErr != nil {
+				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: request.Pane, State: paneState.Connection, Message: "invalid SSH host alias: " + validateErr.Error()})
+				continue
+			}
+			start.host = request.Name
+			startConnection(request.Pane, start, true, client)
+		case result := <-daemonRecoveries:
+			recoveringDaemon = false
 			if result.err != nil {
-				return fmt.Errorf("connect SSH host %q: %w", result.host, result.err)
+				for pane := tui.Left; pane <= tui.Right; pane++ {
+					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateFailed, Message: "daemon recovery failed: " + result.err.Error()})
+				}
+				continue
+			}
+			oldClient := client
+			client = result.client
+			localEndpoint = result.local
+			_ = oldClient.Close()
+			if authCancel != nil {
+				authCancel()
+			}
+			_ = authClient.Close()
+			authClient = result.authClient
+			startAuthLoop(authClient)
+			for index, start := range daemonRecoveryStarts {
+				pane := tui.PaneID(index)
+				if start.host == "" {
+					location, locationErr := domain.NewLocation(localEndpoint.ID, domain.CanonicalPath(start.path))
+					if locationErr != nil {
+						model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateFailed, Message: locationErr.Error()})
+						continue
+					}
+					var intents []tui.Intent
+					model, intents = tui.Reduce(model, tui.PaneConnected{Pane: pane, Endpoint: localEndpoint, Location: location, State: domain.StateReady, PreserveCommitted: true})
+					validatingRecovery[pane] = true
+					for _, intent := range intents {
+						startIntent(intent)
+					}
+					continue
+				}
+				startConnection(pane, start, true, client)
+			}
+		case result := <-connections:
+			recovering[result.pane] = false
+			if result.err != nil {
+				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: result.pane, State: domain.StateFailed, Message: "connect " + result.host + " failed: " + result.err.Error()})
+				continue
 			}
 			var intents []tui.Intent
-			model, intents = tui.Reduce(model, tui.PaneConnected{Pane: result.pane, Endpoint: result.endpoint, Location: result.location})
+			model, intents = tui.Reduce(model, tui.PaneConnected{Pane: result.pane, Endpoint: result.endpoint, Location: result.location, State: result.state, CapabilityGeneration: result.capabilityGeneration, PreserveCommitted: result.recovery})
+			validatingRecovery[result.pane] = result.recovery
+			recoveryFallback[result.pane] = false
 			for _, intent := range intents {
 				startIntent(intent)
 			}
 		case action := <-actions:
 			var intents []tui.Intent
 			model, intents = tui.Reduce(model, action)
+			if challenge, ok := action.(tui.AuthChallengeReceived); ok {
+				for pane, paneState := range model.Panes {
+					if paneState.Endpoint.SSHHostAlias == challenge.Endpoint || paneState.Endpoint.DisplayName == "connecting "+challenge.Endpoint {
+						model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: tui.PaneID(pane), State: domain.StateAuthRequired, Message: "waiting for authentication"})
+					}
+				}
+			}
+			if page, ok := action.(tui.ListingPage); ok && page.Done && validatingRecovery[page.Pane] {
+				validatingRecovery[page.Pane] = false
+				if recoveryFallback[page.Pane] {
+					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: page.Pane, State: domain.StateReady, Message: "reconnected at nearest accessible parent"})
+				}
+				recoveryFallback[page.Pane] = false
+			}
+			if failure, ok := action.(tui.ListingFailed); ok && validatingRecovery[failure.Pane] && (failure.Code == domain.CodeNotFound || failure.Code == domain.CodePermissionDenied) {
+				if parent, ok := recoveryParent(failure.Location); ok {
+					recoveryFallback[failure.Pane] = true
+					startIntent(tui.Intent{Kind: tui.IntentList, Pane: failure.Pane, Location: parent})
+					continue
+				}
+				validatingRecovery[failure.Pane] = false
+			}
+			if failure, ok := action.(tui.ListingFailed); ok && !failure.DaemonLost && failure.Retry == domain.RetryAfterReconnect && !recovering[failure.Pane] {
+				pane := model.Panes[failure.Pane]
+				if pane.Endpoint.Kind == domain.EndpointSSH && pane.Endpoint.SSHHostAlias != "" {
+					startConnection(failure.Pane, startLocation{host: pane.Endpoint.SSHHostAlias, path: string(pane.Location.Path)}, true, client)
+				}
+			}
+			if failure, ok := action.(tui.ListingFailed); ok && failure.DaemonLost {
+				startDaemonRecovery()
+			}
 			for _, intent := range intents {
 				startIntent(intent)
 			}
@@ -429,6 +645,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			if key, ok := event.(*tcell.EventKey); ok && (key.Key() == tcell.KeyCtrlC || model.Mode == tui.ModeNormal && key.Str() == "q") {
 				return nil
+			}
+			if _, ok := event.(*tcell.EventResize); ok {
+				screen.Sync()
 			}
 			action, ok := tui.TranslateTCellEvent(event, model.Mode)
 			if !ok {
@@ -460,16 +679,29 @@ func workspaceDocument(model tui.Model, updatedAt time.Time) (workspace.Document
 			Path:     string(paneState.Location.Path),
 			Filter:   paneState.Filter,
 			Sort: workspace.SortState{
-				Key:              workspace.SortName,
-				Direction:        workspace.SortAscending,
+				Key:              workspace.SortKey(paneState.Sort.Key),
+				Direction:        workspaceSortDirection(paneState.Sort.Descending),
 				DirectoriesFirst: true,
 			},
+			ShowHidden: paneState.ShowHidden,
 		}
 	}
 	if err := document.Validate(); err != nil {
 		return workspace.Document{}, err
 	}
 	return document, nil
+}
+
+func applyWorkspacePanePreferences(target *tui.PaneState, saved workspace.Pane) {
+	target.Sort = tui.SortState{Key: tui.SortKey(saved.Sort.Key), Descending: saved.Sort.Direction == workspace.SortDescending}
+	target.ShowHidden = saved.ShowHidden
+}
+
+func workspaceSortDirection(descending bool) workspace.SortDirection {
+	if descending {
+		return workspace.SortDescending
+	}
+	return workspace.SortAscending
 }
 
 var errPickerCanceled = errors.New("startup picker canceled")
@@ -599,6 +831,7 @@ func initialPaneState(local domain.Endpoint, start startLocation) (tui.PaneState
 	pane := tui.NewPaneState(endpoint, location)
 	if start.host != "" {
 		pane.Listing = tui.ListingState{Loading: true, Message: "connecting"}
+		pane.Connection = domain.StateConnecting
 	}
 	return pane, nil
 }
@@ -663,21 +896,29 @@ func remoteLocationParts(raw string) (string, string, bool) {
 	return host, remote, true
 }
 
-func resolveStartLocation(ctx context.Context, client *daemon.Client, local domain.Endpoint, start startLocation) (domain.Endpoint, domain.Location, error) {
+func resolveStartLocation(ctx context.Context, client *daemon.Client, local domain.Endpoint, start startLocation) (domain.Endpoint, domain.Location, domain.ConnectionState, uint64, error) {
 	endpoint := local
+	state := domain.StateReady
+	var capabilityGeneration uint64
 	if start.host != "" {
 		var response ipc.ProviderConnectSSHResponse
 		if err := client.Call(ctx, daemon.ProviderConnectSSH, ipc.ProviderConnectSSHRequest{HostAlias: start.host}, &response); err != nil {
-			return domain.Endpoint{}, domain.Location{}, err
+			return domain.Endpoint{}, domain.Location{}, "", 0, err
 		}
 		id, err := domain.ParseEndpointID(response.Endpoint.ID)
 		if err != nil {
-			return domain.Endpoint{}, domain.Location{}, err
+			return domain.Endpoint{}, domain.Location{}, "", 0, err
 		}
 		endpoint = domain.Endpoint{ID: id, Kind: response.Endpoint.Kind, DisplayName: response.Endpoint.DisplayName, SSHHostAlias: response.Endpoint.SSHHostAlias}
+		var snapshot ipc.ProviderSnapshotResponse
+		if err := client.Call(ctx, daemon.ProviderSnapshot, ipc.ProviderSnapshotRequest{EndpointID: response.Endpoint.ID}, &snapshot); err != nil {
+			return domain.Endpoint{}, domain.Location{}, "", 0, err
+		}
+		state = snapshot.State
+		capabilityGeneration = snapshot.Generation
 	}
 	location, err := domain.NewLocation(endpoint.ID, domain.CanonicalPath(start.path))
-	return endpoint, location, err
+	return endpoint, location, state, capabilityGeneration, err
 }
 
 func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, generation uint64, location domain.Location, actions chan<- tui.Action) {
@@ -687,7 +928,8 @@ func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, g
 		err := client.Call(ctx, daemon.ProviderList, ipc.ProviderListRequest{Location: ipc.EncodeLocation(location), Cursor: cursor, Limit: 256}, &response)
 		if err != nil {
 			if ctx.Err() == nil {
-				actions <- tui.ListingFailed{Pane: pane, Generation: generation, Message: err.Error()}
+				code, retry, daemonLost := providerCallFailure(err)
+				actions <- tui.ListingFailed{Pane: pane, Generation: generation, Message: err.Error(), Code: code, Retry: retry, DaemonLost: daemonLost, Location: location}
 			}
 			return
 		}
@@ -706,6 +948,45 @@ func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, g
 		}
 		cursor = response.NextCursor
 	}
+}
+
+func providerCallFailure(err error) (domain.Code, domain.RetryKind, bool) {
+	var remote *daemon.RemoteError
+	if errors.As(err, &remote) {
+		return remote.RPC.Code, remote.RPC.Retry.Kind, false
+	}
+	return domain.CodeTransportInterrupted, domain.RetryAfterReconnect, true
+}
+
+func daemonConnectionLost(err error) bool {
+	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return false
+	}
+	var remote *daemon.RemoteError
+	return !errors.As(err, &remote)
+}
+
+func daemonLocalEndpoint(ctx context.Context, client *daemon.Client) (domain.Endpoint, error) {
+	var endpoints ipc.ProviderEndpointsResponse
+	if err := client.Call(ctx, daemon.ProviderEndpoints, struct{}{}, &endpoints); err != nil {
+		return domain.Endpoint{}, err
+	}
+	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Kind != domain.EndpointLocal {
+		return domain.Endpoint{}, fmt.Errorf("expected one local endpoint, got %d", len(endpoints.Endpoints))
+	}
+	id, err := domain.ParseEndpointID(endpoints.Endpoints[0].ID)
+	if err != nil {
+		return domain.Endpoint{}, err
+	}
+	return domain.Endpoint{ID: id, Kind: domain.EndpointLocal, DisplayName: endpoints.Endpoints[0].DisplayName}, nil
+}
+
+func recoveryParent(location domain.Location) (domain.Location, bool) {
+	parent := path.Dir(string(location.Path))
+	if parent == "." || parent == string(location.Path) {
+		return domain.Location{}, false
+	}
+	return domain.Location{EndpointID: location.EndpointID, Path: domain.CanonicalPath(parent)}, true
 }
 
 func previewLocation(ctx context.Context, client *daemon.Client, generation uint64, location domain.Location, actions chan<- tui.Action) {

@@ -34,6 +34,15 @@ func TestTranslateTCellEvents(t *testing.T) {
 		{name: "workspace save", event: tcell.NewEventKey(tcell.KeyRune, "S", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeySave}},
 		{name: "workspace text", event: tcell.NewEventKey(tcell.KeyRune, "r", tcell.ModNone), mode: ModeWorkspace, want: TextInput{Text: "r"}},
 		{name: "workspace submit", event: tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone), mode: ModeWorkspace, want: KeyPress{Key: KeySubmit}},
+		{name: "sort", event: tcell.NewEventKey(tcell.KeyRune, "s", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeySort}},
+		{name: "hidden", event: tcell.NewEventKey(tcell.KeyRune, "H", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyToggleHidden}},
+		{name: "refresh", event: tcell.NewEventKey(tcell.KeyRune, "R", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyRefresh}},
+		{name: "path", event: tcell.NewEventKey(tcell.KeyRune, "g", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyPath}},
+		{name: "path text", event: tcell.NewEventKey(tcell.KeyRune, "/", tcell.ModNone), mode: ModePath, want: TextInput{Text: "/"}},
+		{name: "path submit", event: tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone), mode: ModePath, want: KeyPress{Key: KeySubmit}},
+		{name: "endpoint", event: tcell.NewEventKey(tcell.KeyRune, "c", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyEndpoint}},
+		{name: "endpoint text", event: tcell.NewEventKey(tcell.KeyRune, "w", tcell.ModNone), mode: ModeEndpoint, want: TextInput{Text: "w"}},
+		{name: "endpoint submit", event: tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone), mode: ModeEndpoint, want: KeyPress{Key: KeySubmit}},
 		{name: "resize", event: tcell.NewEventResize(91, 27), mode: ModeFilter, want: Resize{Width: 91, Height: 27}},
 	}
 	for _, test := range tests {

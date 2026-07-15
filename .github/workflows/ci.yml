@@ -211,6 +211,8 @@ jobs:
       - run: go build -trimpath -o "${{ runner.temp }}/native/bin/amsftp" ./cmd/amsftp
       - run: '"${{ runner.temp }}/native/bin/amsftp" --help'
       - run: '"${{ runner.temp }}/native/bin/amsftp" --version'
+      - name: Run native PTY resize and recovery smoke
+        run: python3 ./internal/integration/hosted-pty.py "${{ runner.temp }}/native/bin/amsftp"
       - name: Record provenance
         run: |
           set -euo pipefail

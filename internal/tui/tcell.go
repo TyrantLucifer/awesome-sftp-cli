@@ -51,7 +51,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 	case *tcell.EventKey:
 		switch event.Key() {
 		case tcell.KeyEnter:
-			if mode == ModeAuth || mode == ModeWorkspace {
+			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint {
 				return KeyPress{Key: KeySubmit}, true
 			}
 		case tcell.KeyTab:
@@ -61,7 +61,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 		case tcell.KeyBackspace:
 			return KeyPress{Key: KeyBackspace}, true
 		case tcell.KeyRune:
-			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace {
+			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint {
 				return TextInput{Text: event.Str()}, true
 			}
 			switch event.Str() {
@@ -83,6 +83,16 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 				return KeyPress{Key: KeyFilter}, true
 			case "S":
 				return KeyPress{Key: KeySave}, true
+			case "s":
+				return KeyPress{Key: KeySort}, true
+			case "H":
+				return KeyPress{Key: KeyToggleHidden}, true
+			case "R":
+				return KeyPress{Key: KeyRefresh}, true
+			case "g":
+				return KeyPress{Key: KeyPath}, true
+			case "c":
+				return KeyPress{Key: KeyEndpoint}, true
 			default:
 				return TextInput{Text: event.Str()}, true
 			}

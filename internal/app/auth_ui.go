@@ -23,7 +23,7 @@ func runAuthClaimLoop(ctx context.Context, client authClaimRPC, actions chan<- t
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			return errors.New("claim authentication challenge failed")
+			return &authRPCError{operation: "claim authentication challenge", cause: err}
 		}
 		if claim.ChallengeID == "" || claim.Endpoint == "" || claim.Prompt == "" {
 			return errors.New("authentication broker returned an invalid challenge")
@@ -47,6 +47,14 @@ func runAuthClaimLoop(ctx context.Context, client authClaimRPC, actions chan<- t
 	}
 }
 
+type authRPCError struct {
+	operation string
+	cause     error
+}
+
+func (e *authRPCError) Error() string { return e.operation + " failed" }
+func (e *authRPCError) Unwrap() error { return e.cause }
+
 func resolveAuthChallenge(ctx context.Context, client authClaimRPC, challengeID string, resolution tui.Intent) error {
 	answer := resolution.Answer
 	defer clear(answer)
@@ -63,7 +71,7 @@ func resolveAuthChallenge(ctx context.Context, client authClaimRPC, challengeID 
 	}
 	var response ipc.AuthResolveResponse
 	if err := client.Call(ctx, daemon.AuthResolve, request, &response); err != nil {
-		return errors.New("resolve authentication challenge failed")
+		return &authRPCError{operation: "resolve authentication challenge", cause: err}
 	}
 	return nil
 }

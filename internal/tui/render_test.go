@@ -122,6 +122,64 @@ func TestRendererShowsWorkspaceSaveModal(t *testing.T) {
 	}
 }
 
+func TestRendererShowsMetadataPaneStateAndDirectPathModal(t *testing.T) {
+	model := testModel(t)
+	left := model.Panes[Left]
+	size := uint64(42)
+	mode := uint32(0o644)
+	left.Entries[1].Metadata.Size = &size
+	left.Entries[1].Metadata.Mode = &mode
+	left.rebuildVisible()
+	model.Panes[Left] = left
+	model, _ = Reduce(model, KeyPress{Key: KeyToggleHidden})
+	model, _ = Reduce(model, KeyPress{Key: KeyPath})
+	model, _ = Reduce(model, TextInput{Text: "/srv"})
+	surface := newMemorySurface(80, 12)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"42 B", "0644", "sort:name", "hidden:on", "Go to absolute path", "Path: /srv"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("pane/path render missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRendererShowsPaneConnectionAndFailureState(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, PaneConnectionChanged{Pane: Left, State: domain.StateDisconnected, Message: "connection lost"})
+	surface := newMemorySurface(64, 10)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"disconnected", "connection lost"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("connection render missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRendererShowsMinimumSizeGuidanceInsteadOfBlankScreen(t *testing.T) {
+	model := testModel(t)
+	surface := newMemorySurface(2, 2)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	if got := surface.String(); strings.TrimSpace(got) == "" {
+		t.Fatal("minimum-size render is blank")
+	}
+}
+
+func TestRendererShowsEndpointModal(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyEndpoint})
+	model, _ = Reduce(model, TextInput{Text: "work"})
+	surface := newMemorySurface(64, 10)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"Change active endpoint", "Host alias: work", "type local for LocalFS"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("endpoint modal missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestSanitizeTerminalTextRemovesControlsAndInvalidUTF8(t *testing.T) {
 	got := SanitizeTerminalText("safe\x1b[31m\n\x00\xff")
 	if !utf8.ValidString(got) {

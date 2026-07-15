@@ -55,6 +55,10 @@ func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
 	)
 	model.Active = tui.Right
 	model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.Left, Query: "report"})
+	rightPane := model.Panes[tui.Right]
+	rightPane.Sort = tui.SortState{Key: tui.SortModified, Descending: true}
+	rightPane.ShowHidden = true
+	model.Panes[tui.Right] = rightPane
 	now := time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC)
 	document, err := workspaceDocument(model, now)
 	if err != nil {
@@ -65,6 +69,14 @@ func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
 	}
 	if document.Panes[1].Endpoint.Kind != domain.EndpointSSH || document.Panes[1].Endpoint.SSHHostAlias != "prod" || document.Panes[1].Path != "/srv/release" {
 		t.Fatalf("remote pane = %#v", document.Panes[1])
+	}
+	if document.Panes[1].Sort.Key != workspace.SortModified || document.Panes[1].Sort.Direction != workspace.SortDescending || !document.Panes[1].ShowHidden {
+		t.Fatalf("remote pane preferences = %#v", document.Panes[1])
+	}
+	restored := tui.NewPaneState(domain.Endpoint{ID: rightID, Kind: domain.EndpointSSH, SSHHostAlias: "prod"}, rightLocation)
+	applyWorkspacePanePreferences(&restored, document.Panes[1])
+	if restored.Sort != rightPane.Sort || !restored.ShowHidden {
+		t.Fatalf("restored preferences = %#v", restored)
 	}
 }
 

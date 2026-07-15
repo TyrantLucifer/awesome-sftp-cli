@@ -3,6 +3,8 @@ package tui
 import (
 	"fmt"
 	"strings"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 )
 
 type CellStyle uint8
@@ -112,7 +114,10 @@ func ComputeWindow(total, cursor, rows, overscan int) Window {
 func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	width, height := surface.Size()
 	surface.Clear()
-	if width < 3 || height < 3 {
+	if width < 20 || height < 5 {
+		if width > 0 && height > 0 {
+			surface.PutClipped(0, 0, width, "resize terminal", StyleStatus)
+		}
 		return RenderStats{}
 	}
 
@@ -146,6 +151,19 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if active.Filter != "" {
 		status += " | /" + SanitizeTerminalText(active.Filter)
 	}
+	if active.Listing.Message != "" {
+		status += " | " + SanitizeTerminalText(active.Listing.Message)
+	}
+	direction := "↑"
+	if active.Sort.Descending {
+		direction = "↓"
+	}
+	status += " | sort:" + string(active.Sort.Key) + direction
+	if active.ShowHidden {
+		status += " | hidden:on"
+	} else {
+		status += " | hidden:off"
+	}
 	status += " | " + string(model.Mode)
 	if model.Notice != "" {
 		status += " | " + SanitizeTerminalText(model.Notice)
@@ -171,6 +189,12 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeWorkspace {
 		renderWorkspaceModal(surface, string(model.workspaceName), width, height)
 	}
+	if model.Mode == ModePath {
+		renderPathModal(surface, string(model.pathInput), width, height)
+	}
+	if model.Mode == ModeEndpoint {
+		renderEndpointModal(surface, string(model.endpointInput), width, height)
+	}
 	return stats
 }
 
@@ -188,6 +212,39 @@ func renderWorkspaceModal(surface Surface, name string, width, height int) {
 	surface.PutClipped(x+1, y, modalWidth-2, "Save workspace", StyleStatus)
 	surface.PutClipped(x+1, y+2, modalWidth-2, "Name: "+SanitizeTerminalText(name), StyleStatus)
 	surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] save  [Esc] cancel", StyleStatus)
+}
+
+func renderPathModal(surface Surface, value string, width, height int) {
+	modalWidth := min(width-4, 64)
+	if modalWidth < 20 || height < 7 {
+		return
+	}
+	const modalHeight = 5
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, "Go to absolute path", StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "Path: "+SanitizeTerminalText(value), StyleStatus)
+	surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] open  [Esc] cancel", StyleStatus)
+}
+
+func renderEndpointModal(surface Surface, value string, width, height int) {
+	modalWidth := min(width-4, 64)
+	if modalWidth < 20 || height < 7 {
+		return
+	}
+	const modalHeight = 6
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, "Change active endpoint", StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "Host alias: "+SanitizeTerminalText(value), StyleStatus)
+	surface.PutClipped(x+1, y+3, modalWidth-2, "type local for LocalFS", StyleStatus)
+	surface.PutClipped(x+1, y+4, modalWidth-2, "[Enter] connect  [Esc] cancel", StyleStatus)
 }
 
 func renderAuthModal(surface Surface, state AuthState, width, height int) {
@@ -217,13 +274,24 @@ func putPaneHeader(surface Surface, pane PaneState, paneID, active PaneID, x, wi
 	if name == "" {
 		name = "local"
 	}
-	header := fmt.Sprintf(" %s  %s", SanitizeTerminalText(name), SanitizeTerminalText(string(pane.Location.Path)))
+	connection := connectionLabel(pane.Connection)
+	header := fmt.Sprintf(" %s  %s (%s)", SanitizeTerminalText(name), SanitizeTerminalText(string(pane.Location.Path)), connection)
 	style := StyleHeader
 	if paneID == active {
 		style = StyleActiveHeader
-		header = fmt.Sprintf("[%s] %s", SanitizeTerminalText(name), SanitizeTerminalText(string(pane.Location.Path)))
+		header = fmt.Sprintf("[%s] %s (%s)", SanitizeTerminalText(name), SanitizeTerminalText(string(pane.Location.Path)), connection)
 	}
 	surface.PutClipped(x, 0, width, header, style)
+}
+
+func connectionLabel(state domain.ConnectionState) string {
+	if state == domain.StateAuthRequired {
+		return "waiting_auth"
+	}
+	if state == "" {
+		return "unknown"
+	}
+	return string(state)
 }
 
 func renderPaneRows(
@@ -248,8 +316,43 @@ func renderPaneRows(
 			marker = "> "
 			style = StyleCursor
 		}
-		text := marker + SanitizeTerminalText(entry.Name)
+		text := marker + SanitizeTerminalText(entry.Name) + formatEntryMetadata(entry)
 		surface.PutClipped(x, y+index-window.VisibleStart, width, text, style)
 	}
 	return visited
+}
+
+func formatEntryMetadata(entry domain.Entry) string {
+	size := "—"
+	if entry.Metadata.Size != nil {
+		size = formatBytes(*entry.Metadata.Size)
+	}
+	mode := "—"
+	if entry.Metadata.Mode != nil {
+		mode = fmt.Sprintf("%04o", *entry.Metadata.Mode&0o7777)
+	}
+	modified := "—"
+	if entry.Metadata.ModifiedAt != nil {
+		modified = entry.Metadata.ModifiedAt.UTC().Format("2006-01-02 15:04")
+	}
+	result := fmt.Sprintf("  [%s] %s %s %s", entry.Kind, size, modified, mode)
+	if entry.Symlink != nil {
+		result += " -> " + SanitizeTerminalText(entry.Symlink.RawTarget)
+	}
+	return result
+}
+
+func formatBytes(value uint64) string {
+	const unit = uint64(1024)
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	units := []string{"KiB", "MiB", "GiB", "TiB"}
+	amount := float64(value)
+	index := -1
+	for amount >= float64(unit) && index+1 < len(units) {
+		amount /= float64(unit)
+		index++
+	}
+	return fmt.Sprintf("%.1f %s", amount, units[index])
 }

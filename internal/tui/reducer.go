@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"path"
 	"strings"
 	"unicode/utf8"
 
@@ -29,6 +30,20 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 				return model, nil
 			}
 			model.workspaceName = append(append([]rune(nil), model.workspaceName...), []rune(action.Text)...)
+			return model, nil
+		}
+		if model.Mode == ModePath {
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.pathInput))+len(action.Text) > 4096 {
+				return model, nil
+			}
+			model.pathInput = append(append([]rune(nil), model.pathInput...), []rune(action.Text)...)
+			return model, nil
+		}
+		if model.Mode == ModeEndpoint {
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.endpointInput))+len(action.Text) > 255 {
+				return model, nil
+			}
+			model.endpointInput = append(append([]rune(nil), model.endpointInput...), []rune(action.Text)...)
 			return model, nil
 		}
 		if model.Mode != ModeFilter || action.Text == "" {
@@ -89,6 +104,9 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		if action.Done {
 			pane.Listing.Loading = false
 			pane.Listing.Complete = !pane.Listing.Partial
+			if pane.Listing.Complete {
+				pane.Connection = domain.StateReady
+			}
 			pane.Listing.pendingLocation = domain.Location{}
 			pane.pruneMarks()
 			pane.rebindVisualAnchor()
@@ -106,6 +124,9 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		pane.Listing.Partial = pane.Listing.hasPage && len(pane.Entries) != 0
 		pane.Listing.Message = action.Message
 		pane.Listing.pendingLocation = domain.Location{}
+		if pane.Listing.Partial {
+			pane.Connection = domain.StateDegraded
+		}
 		model.Panes[action.Pane] = pane
 		return model, nil
 	case SetFilter:
@@ -176,8 +197,30 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		pane := NewPaneState(action.Endpoint, action.Location)
+		if action.PreserveCommitted {
+			pane = model.Panes[action.Pane].clone()
+			pane.Endpoint = action.Endpoint
+			pane.Listing.Message = ""
+		}
+		pane.Connection = action.State
+		if pane.Connection == "" {
+			pane.Connection = domain.StateReady
+		}
+		pane.CapabilityGeneration = action.CapabilityGeneration
 		model.Panes[action.Pane] = pane
 		return model, []Intent{{Kind: IntentList, Pane: action.Pane, Location: action.Location}}
+	case PaneConnectionChanged:
+		if !validPane(action.Pane) || action.State == "" {
+			return model, nil
+		}
+		pane := model.Panes[action.Pane].clone()
+		pane.Connection = action.State
+		pane.Listing.Message = action.Message
+		if action.State != domain.StateReady {
+			pane.Listing.Loading = false
+		}
+		model.Panes[action.Pane] = pane
+		return model, nil
 	case WorkspaceSaveResult:
 		if action.Message != "" {
 			model.Notice = action.Message
@@ -239,6 +282,55 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			return model, nil
 		}
 	}
+	if model.Mode == ModePath {
+		switch key {
+		case KeyBackspace:
+			if len(model.pathInput) != 0 {
+				model.pathInput = append([]rune(nil), model.pathInput[:len(model.pathInput)-1]...)
+			}
+			return model, nil
+		case KeyEscape:
+			model.pathInput = nil
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			value := string(model.pathInput)
+			if !path.IsAbs(value) || path.Clean(value) != value {
+				model.Notice = "path must be canonical and absolute"
+				return model, nil
+			}
+			location := domain.Location{EndpointID: model.Panes[model.Active].Endpoint.ID, Path: domain.CanonicalPath(value)}
+			model.pathInput = nil
+			model.Mode = ModeNormal
+			return model, []Intent{{Kind: IntentList, Pane: model.Active, Location: location}}
+		default:
+			return model, nil
+		}
+	}
+	if model.Mode == ModeEndpoint {
+		switch key {
+		case KeyBackspace:
+			if len(model.endpointInput) != 0 {
+				model.endpointInput = append([]rune(nil), model.endpointInput[:len(model.endpointInput)-1]...)
+			}
+			return model, nil
+		case KeyEscape:
+			model.endpointInput = nil
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			name := string(model.endpointInput)
+			if name == "" {
+				model.Notice = "endpoint name is required"
+				return model, nil
+			}
+			model.endpointInput = nil
+			model.Mode = ModeNormal
+			return model, []Intent{{Kind: IntentConnectEndpoint, Pane: model.Active, Name: name}}
+		default:
+			return model, nil
+		}
+	}
 	if key == KeyTab {
 		if model.Active == Left {
 			model.Active = Right
@@ -273,6 +365,30 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	case KeySave:
 		model.Mode = ModeWorkspace
 		model.workspaceName = nil
+	case KeySort:
+		switch pane.Sort.Key {
+		case SortName:
+			pane.Sort.Key = SortSize
+		case SortSize:
+			pane.Sort.Key = SortModified
+		case SortModified:
+			pane.Sort.Key = SortKind
+		default:
+			pane.Sort.Key = SortName
+			pane.Sort.Descending = !pane.Sort.Descending
+		}
+		pane.rebuildVisible()
+	case KeyToggleHidden:
+		pane.ShowHidden = !pane.ShowHidden
+		pane.rebuildVisible()
+	case KeyRefresh:
+		return model, []Intent{{Kind: IntentList, Pane: model.Active, Location: pane.Location}}
+	case KeyPath:
+		model.Mode = ModePath
+		model.pathInput = nil
+	case KeyEndpoint:
+		model.Mode = ModeEndpoint
+		model.endpointInput = nil
 	case KeyDown:
 		if pane.Cursor+1 < len(pane.visible) {
 			pane.Cursor++

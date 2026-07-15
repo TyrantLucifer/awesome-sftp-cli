@@ -107,6 +107,124 @@ func TestWorkspaceSaveModalRequiresNameAndCanCancel(t *testing.T) {
 	}
 }
 
+func TestPaneSortHiddenAndRefreshControlsRemainIndependent(t *testing.T) {
+	model := testModel(t)
+	hidden := testEntry(leftEndpointID, "/left/.hidden", domain.EntryFile)
+	large := testEntry(leftEndpointID, "/left/large", domain.EntryFile)
+	large.Metadata.Size = uint64Pointer(200)
+	small := testEntry(leftEndpointID, "/left/small", domain.EntryFile)
+	small.Metadata.Size = uint64Pointer(10)
+	left := model.Panes[Left]
+	left.Entries = append(left.Entries, hidden, large, small)
+	left.rebuildVisible()
+	model.Panes[Left] = left
+
+	if names := model.Panes[Left].VisibleNames(); containsString(names, ".hidden") {
+		t.Fatalf("hidden entry visible by default: %#v", names)
+	}
+	model, _ = Reduce(model, KeyPress{Key: KeyToggleHidden})
+	if names := model.Panes[Left].VisibleNames(); !containsString(names, ".hidden") {
+		t.Fatalf("hidden entry missing after toggle: %#v", names)
+	}
+	model, _ = Reduce(model, KeyPress{Key: KeySort})
+	if model.Panes[Left].Sort.Key != SortSize {
+		t.Fatalf("sort = %#v, want size", model.Panes[Left].Sort)
+	}
+	names := model.Panes[Left].VisibleNames()
+	if indexOf(names, "small") > indexOf(names, "large") {
+		t.Fatalf("size sort names = %#v", names)
+	}
+	unknown := testEntry(leftEndpointID, "/left/unknown-size", domain.EntryFile)
+	left = model.Panes[Left]
+	left.Entries = append(left.Entries, unknown)
+	left.Sort.Descending = true
+	left.rebuildVisible()
+	if names := left.VisibleNames(); indexOf(names, "large") > indexOf(names, "unknown-size") || indexOf(names, "small") > indexOf(names, "unknown-size") {
+		t.Fatalf("descending size sort did not keep unknown metadata after known values: %#v", names)
+	}
+	model.Panes[Left] = left
+	beforeRight := model.Panes[Right]
+	_, intents := Reduce(model, KeyPress{Key: KeyRefresh})
+	assertSingleIntent(t, intents, IntentList, "/left")
+	if !reflect.DeepEqual(model.Panes[Right], beforeRight) {
+		t.Fatal("left controls changed right pane")
+	}
+}
+
+func TestDirectPathModeRequiresCanonicalAbsolutePath(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyPath})
+	if model.Mode != ModePath {
+		t.Fatalf("mode = %q, want path", model.Mode)
+	}
+	model, _ = Reduce(model, TextInput{Text: "relative"})
+	model, intents := Reduce(model, KeyPress{Key: KeySubmit})
+	if len(intents) != 0 || model.Mode != ModePath || model.Notice == "" {
+		t.Fatalf("relative submit model=%#v intents=%#v", model, intents)
+	}
+	model, _ = Reduce(model, KeyPress{Key: KeyEscape})
+	model, _ = Reduce(model, KeyPress{Key: KeyPath})
+	model, _ = Reduce(model, TextInput{Text: "/srv/data"})
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	assertSingleIntent(t, intents, IntentList, "/srv/data")
+	if model.Mode != ModeNormal {
+		t.Fatalf("mode after path submit = %q", model.Mode)
+	}
+}
+
+func TestConnectionRecoveryStateIsPaneLocalAndReplacesCapabilities(t *testing.T) {
+	model := testModel(t)
+	originalEntries := append([]domain.Entry(nil), model.Panes[Left].Entries...)
+	model, _ = Reduce(model, PaneConnectionChanged{Pane: Left, State: domain.StateConnecting, Message: "reconnecting 1/4"})
+	if model.Panes[Left].Connection != domain.StateConnecting || model.Panes[Right].Connection != domain.StateReady {
+		t.Fatalf("pane connection states = left %q right %q", model.Panes[Left].Connection, model.Panes[Right].Connection)
+	}
+	model, _ = Reduce(model, PaneConnectionChanged{Pane: Left, State: domain.StateDisconnected, Message: "reconnect exhausted"})
+	if !reflect.DeepEqual(model.Panes[Left].Entries, originalEntries) || model.Panes[Left].Listing.Message != "reconnect exhausted" {
+		t.Fatalf("failed reconnect discarded committed pane: %#v", model.Panes[Left])
+	}
+	newEndpoint := domain.Endpoint{ID: domain.EndpointID("ep_cccccccccccccccccccccccccc"), Kind: domain.EndpointSSH, DisplayName: "work", SSHHostAlias: "work"}
+	newLocation, err := domain.NewLocation(newEndpoint.ID, "/left")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, intents := Reduce(model, PaneConnected{Pane: Left, Endpoint: newEndpoint, Location: newLocation, State: domain.StateReady, CapabilityGeneration: 7})
+	assertSingleIntent(t, intents, IntentList, "/left")
+	if model.Panes[Left].Connection != domain.StateReady || model.Panes[Left].CapabilityGeneration != 7 {
+		t.Fatalf("reconnected pane = %#v", model.Panes[Left])
+	}
+}
+
+func TestEndpointModeEmitsActivePaneConnectionWithoutChangingOtherPane(t *testing.T) {
+	model := testModel(t)
+	originalRight := model.Panes[Right]
+	model, _ = Reduce(model, KeyPress{Key: KeyEndpoint})
+	if model.Mode != ModeEndpoint {
+		t.Fatalf("mode = %q, want endpoint", model.Mode)
+	}
+	model, _ = Reduce(model, TextInput{Text: "work-host"})
+	model, intents := Reduce(model, KeyPress{Key: KeySubmit})
+	if len(intents) != 1 || intents[0].Kind != IntentConnectEndpoint || intents[0].Pane != Left || intents[0].Name != "work-host" {
+		t.Fatalf("endpoint intents = %#v", intents)
+	}
+	if !reflect.DeepEqual(model.Panes[Right], originalRight) || model.Mode != ModeNormal {
+		t.Fatalf("endpoint mode changed unrelated state: %#v", model)
+	}
+}
+
+func uint64Pointer(value uint64) *uint64 { return &value }
+
+func containsString(values []string, wanted string) bool { return indexOf(values, wanted) >= 0 }
+
+func indexOf(values []string, wanted string) int {
+	for index, value := range values {
+		if value == wanted {
+			return index
+		}
+	}
+	return -1
+}
+
 func TestListingPagesIgnoreStaleGenerationsAndRetainPartialState(t *testing.T) {
 	model := testModel(t)
 	location := model.Panes[Left].Location
@@ -129,7 +247,7 @@ func TestListingPagesIgnoreStaleGenerationsAndRetainPartialState(t *testing.T) {
 	})
 	model, _ = Reduce(model, ListingFailed{Pane: Left, Generation: 2, Message: "interrupted"})
 	pane := model.Panes[Left]
-	if pane.VisibleCount() != 1 || pane.Listing.Loading || !pane.Listing.Partial {
+	if pane.VisibleCount() != 1 || pane.Listing.Loading || !pane.Listing.Partial || pane.Connection != domain.StateDegraded {
 		t.Fatalf("listing state = %#v visible=%d, want one partial terminal page", pane.Listing, pane.VisibleCount())
 	}
 }
@@ -205,7 +323,7 @@ func TestFilterAppliesToLoadedAndIncomingEntriesAndClearsLosslessly(t *testing.T
 			testEntry(leftEndpointID, "/left/hidden", domain.EntryFile),
 		},
 	})
-	if got := model.Panes[Left].VisibleNames(); fmt.Sprint(got) != "[file.txt another-file]" {
+	if got := model.Panes[Left].VisibleNames(); fmt.Sprint(got) != "[another-file file.txt]" {
 		t.Fatalf("filtered names after page = %v", got)
 	}
 
