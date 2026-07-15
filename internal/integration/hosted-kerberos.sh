@@ -226,6 +226,7 @@ match_max 200000
 log_user 0
 log_file -noappend $env(AMSFTP_OUTPUT)
 spawn -noecho /bin/sh -c {exec "$AMSFTP_INSTALLED" "$AMSFTP_LOCATION" /tmp 2>"$AMSFTP_STDERR"}
+stty rows 30 columns 200
 if {$env(AMSFTP_EXPECT_SUCCESS) == "yes"} {
   expect {
     -exact $env(AMSFTP_MARKER) {}

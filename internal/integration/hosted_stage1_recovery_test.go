@@ -58,6 +58,7 @@ func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
 		`"event":"rpc_request_failed"`,
 		`"error_code":"auth_required"`,
 		`(failed)`,
+		`stty rows 30 columns 200`,
 		`vt-observer`,
 	} {
 		if !strings.Contains(string(script), required) {
