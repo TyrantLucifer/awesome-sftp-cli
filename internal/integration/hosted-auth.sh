@@ -191,7 +191,7 @@ switch -- $env(AMSFTP_CASE_MODE) {
   }
   confirm {
     expect_prompt {(?i)(authenticity|continue connecting|yes/no)}
-    send -- "\r"
+    send -- "yes\r"
     expect_prompt {(?i)password:}
     send -- "$env(AMSFTP_PASSWORD)\r"
     expect_marker
