@@ -215,7 +215,7 @@ switch -- $env(AMSFTP_CASE_MODE) {
   cancel {
     expect_prompt {(?i)password:}
     send -- "\033"
-    expect_prompt {(?i)(connect .* failed|authentication failed)}
+    expect_prompt {(?i)(connect .* failed|authentication failed|failed)}
     record_observation bounded_failure
   }
   failure {
