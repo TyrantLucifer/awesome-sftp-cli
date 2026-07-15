@@ -119,29 +119,55 @@ set timeout 35
 match_max 200000
 log_user 0
 log_file -noappend $env(AMSFTP_OUTPUT)
-spawn -noecho $env(AMSFTP_INSTALLED) $env(AMSFTP_LOCATION) /tmp
+
+proc record_failure {stage} {
+  global env
+  set diagnostic [open $env(AMSFTP_DIAGNOSTIC) a]
+  if {[catch {wait} wait_result]} {
+    puts $diagnostic "$stage wait_error"
+  } else {
+    puts $diagnostic "$stage wait=$wait_result"
+  }
+  close $diagnostic
+}
+
+proc record_timeout {stage} {
+  global env
+  set diagnostic [open $env(AMSFTP_DIAGNOSTIC) a]
+  puts $diagnostic "$stage timeout"
+  close $diagnostic
+}
+
+if {[catch {
+  spawn -noecho /bin/sh -c {exec "$AMSFTP_INSTALLED" "$AMSFTP_LOCATION" /tmp 2>"$AMSFTP_STDERR"}
+}]} {
+  set diagnostic [open $env(AMSFTP_DIAGNOSTIC) a]
+  puts $diagnostic "spawn error"
+  close $diagnostic
+  exit 89
+}
 
 proc expect_marker {} {
   global env
   expect {
     -exact $env(AMSFTP_MARKER) { return }
-    eof { exit 91 }
-    timeout { exit 92 }
+    eof { record_failure marker_eof; exit 91 }
+    timeout { record_timeout marker; exit 92 }
   }
 }
 
 proc expect_prompt {pattern} {
   expect {
     -re $pattern { return }
-    eof { exit 93 }
-    timeout { exit 94 }
+    eof { record_failure prompt_eof; exit 93 }
+    timeout { record_timeout prompt; exit 94 }
   }
 }
 
 proc expect_process_exit {} {
   expect {
     eof { return }
-    timeout { exit 95 }
+    timeout { record_timeout process_exit; exit 95 }
   }
 }
 
@@ -238,12 +264,17 @@ run_case() {
   case_root="${client_home}/cases/${name}"
   install -d -o "${client_user}" -g "${client_user}" -m 0700 "${case_root}"
   output="${case_root}/terminal.log"
-  if ! runuser -u "${client_user}" -- env -i \
+  diagnostic="${case_root}/expect.diagnostic"
+  client_stderr="${case_root}/client.stderr"
+  set +e
+  runuser -u "${client_user}" -- env -i \
     HOME="${client_home}" \
     PATH=/usr/local/bin:/usr/bin:/bin \
     TERM=xterm-256color \
+    AMSFTP_DIAGNOSTIC="${diagnostic}" \
     AMSFTP_INSTALLED="${installed}" \
     AMSFTP_OUTPUT="${output}" \
+    AMSFTP_STDERR="${client_stderr}" \
     AMSFTP_LOCATION="${alias_name}:${remote_user}" \
     AMSFTP_MARKER="${marker}" \
     AMSFTP_CASE_MODE="${mode}" \
@@ -251,7 +282,16 @@ run_case() {
     AMSFTP_MFA_PASSWORD="${mfa_password}" \
     AMSFTP_KEY_PASSPHRASE="${key_passphrase}" \
     SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-}" \
-    /usr/bin/expect -f "${expect_script}"; then
+    /usr/bin/expect -f "${expect_script}"
+  expect_exit=$?
+  set -e
+  if test "${expect_exit}" -ne 0; then
+    printf 'expect exit: %s\n' "${expect_exit}" >&2
+    sed -n '1,40p' "${diagnostic}" 2>/dev/null >&2 || true
+    /usr/bin/strings "${client_stderr}" 2>/dev/null | sed -n '1,120p' | sed \
+      -e "s/${password}/[redacted]/g" \
+      -e "s/${mfa_password}/[redacted]/g" \
+      -e "s/${key_passphrase}/[redacted]/g" >&2 || true
     /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,200p' | sed \
       -e "s/${password}/[redacted]/g" \
       -e "s/${mfa_password}/[redacted]/g" \
@@ -261,6 +301,14 @@ run_case() {
       output_bytes="$(wc -c <"${output}")"
     fi
     printf 'terminal output bytes: %s\n' "${output_bytes}" >&2
+    runtime_root="/tmp/amsftp-$(id -u "${client_user}")"
+    if test -e "${runtime_root}"; then
+      stat -c 'runtime=%n type=%F uid=%u gid=%g mode=%a' "${runtime_root}" >&2 || true
+      find "${runtime_root}" -maxdepth 1 -printf 'runtime-entry=%f type=%y uid=%U gid=%G mode=%m\n' >&2 || true
+    else
+      printf 'runtime root absent: %s\n' "${runtime_root}" >&2
+    fi
+    ps -o pid=,ppid=,stat=,args= -u "${client_user}" | sed -n '1,80p' >&2 || true
     printf 'authentication case %s failed\n' "${name}" >&2
     exit 1
   fi
