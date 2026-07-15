@@ -29,7 +29,7 @@ func TestWorkflowProvenanceProfilesPinLegAndFileCounts(t *testing.T) {
 		legCount  int
 		fileCount int
 	}{
-		{path: ".github/workflows/ci.yml", legCount: 22, fileCount: 44},
+		{path: ".github/workflows/ci.yml", legCount: 23, fileCount: 46},
 		{path: ".github/workflows/nightly.yml", legCount: 19, fileCount: 38},
 	}
 	for _, test := range tests {
@@ -64,6 +64,7 @@ func TestWorkflowProvenancePolicyRejectsMissingWholeSteps(t *testing.T) {
 	}{
 		{name: "ci record", path: ".github/workflows/ci.yml", job: "quality", stepName: "Record provenance", rule: provenanceRecordRule},
 		{name: "ci upload", path: ".github/workflows/ci.yml", job: "quality", stepName: "Upload provenance", rule: provenanceRecordRule},
+		{name: "ci auth record", path: ".github/workflows/ci.yml", job: "auth-integration", stepName: "Record provenance", rule: provenanceRecordRule},
 		{name: "ci verify", path: ".github/workflows/ci.yml", job: "compare", stepName: "Verify prerequisite provenance", rule: provenanceVerificationRule},
 		{name: "ci download", path: ".github/workflows/ci.yml", job: "compare", stepName: "Download provenance", rule: provenanceVerificationRule},
 		{name: "ci accepted download", path: ".github/workflows/ci.yml", job: "compare", stepName: "Download reproducibility comparison", rule: provenanceVerificationRule},
@@ -136,6 +137,18 @@ func TestWorkflowProvenancePolicyRejectsNightlyWorkloadDrift(t *testing.T) {
 			assertWorkflowRule(t, ".github/workflows/nightly.yml", content, provenanceRecordRule)
 		})
 	}
+}
+
+func TestWorkflowProvenancePolicyRejectsAuthenticationWorkloadDrift(t *testing.T) {
+	content := replaceInWorkflowStep(
+		t,
+		readCanonicalWorkflow(t, ".github/workflows/ci.yml"),
+		"auth-integration",
+		"Run real OpenSSH authentication matrix",
+		`bash ./internal/integration/hosted-auth.sh`,
+		`":"`,
+	)
+	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
 }
 
 func TestWorkflowProvenancePolicyRejectsCanonicalShellWhitespaceDrift(t *testing.T) {
@@ -464,8 +477,8 @@ func TestWorkflowProvenancePolicyRejectsLegMatrixManifestAndCountDrift(t *testin
 			name: "ci leg count drift",
 			path: ".github/workflows/ci.yml",
 			job:  "compare",
-			old:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 22\n",
-			new:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 21\n",
+			old:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 23\n",
+			new:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 22\n",
 			rule: provenanceVerificationRule,
 		},
 		{
