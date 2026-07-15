@@ -222,8 +222,11 @@ switch -- $env(AMSFTP_CASE_MODE) {
     exit 0
   }
   failure {
-    expect_prompt {(?i)(host-key verification failed|connect .* failed)}
+    after 1000
+    send -- "q"
+    expect_process_exit
     record_observation bounded_failure
+    exit 0
   }
   default {
     exit 90
@@ -526,6 +529,8 @@ printf '[127.0.0.1]:%s %s\n' "${port}" "$(cut -d' ' -f1,2 "${changed_key}.pub")"
 chown "${client_user}:${client_user}" "${changed_known_hosts}"
 chmod 0600 "${changed_known_hosts}"
 changed_known_hosts_digest="$(sha256sum "${changed_known_hosts}" | cut -d' ' -f1)"
+daemon_log="${state_home}/amsftp/log/daemon.jsonl"
+host_key_failures_before="$(grep -c '"event":"rpc_request_failed".*"error_code":"permission_denied"' "${daemon_log}" 2>/dev/null || true)"
 write_config "Host auth-host-key-changed
   HostName 127.0.0.1
   Port ${port}
@@ -540,6 +545,8 @@ write_config "Host auth-host-key-changed
   PreferredAuthentications publickey"
 run_case host-key-changed failure auth-host-key-changed "${target_home}" endpoint-auth.txt
 test "$(sha256sum "${changed_known_hosts}" | cut -d' ' -f1)" = "${changed_known_hosts_digest}"
+host_key_failures_after="$(grep -c '"event":"rpc_request_failed".*"error_code":"permission_denied"' "${daemon_log}" 2>/dev/null || true)"
+test "${host_key_failures_after}" -gt "${host_key_failures_before}"
 
 for secret in "${password}" "${mfa_password}" "${key_passphrase}"; do
   if find "${root}" "${client_home}" "${state_home}" -type f -readable -exec grep -IlF -- "${secret}" {} + | grep -q .; then
