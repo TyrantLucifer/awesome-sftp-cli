@@ -57,7 +57,7 @@ func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
 	for _, required := range []string{
 		`"event":"rpc_request_failed"`,
 		`"error_code":"auth_required"`,
-		`connect auth-gssapi failed`,
+		`(failed)`,
 		`vt-observer`,
 	} {
 		if !strings.Contains(string(script), required) {

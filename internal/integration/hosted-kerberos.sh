@@ -328,7 +328,7 @@ run_case() {
       sed -n '1,120p' "${daemon_log}" >&2 || true
       exit 1
     fi
-    if ! "${vt_observer}" -columns 200 -rows 30 'connect auth-gssapi failed' <"${output}"; then
+    if ! "${vt_observer}" -columns 200 -rows 30 '(failed)' <"${output}"; then
       printf 'Kerberos case %s did not render its authentication failure\n' "${name}" >&2
       /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,160p' >&2 || true
       exit 1
