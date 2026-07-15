@@ -1026,6 +1026,7 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
 `
 	root := prepareFixture(t, "valid")
 	path := filepath.Join(root, ".github", "workflows", "ci.yml")
+	// #nosec G304 -- path is rooted in the test-owned fixture returned by prepareFixture.
 	content, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

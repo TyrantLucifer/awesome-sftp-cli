@@ -2,6 +2,7 @@ package tui
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -49,5 +50,16 @@ func TestPreviewAcceptsUTF8CodePointSplitAcrossChunks(t *testing.T) {
 	}
 	if got := model.Preview.DisplayText(); got != "界" {
 		t.Fatalf("DisplayText() = %q, want 界", got)
+	}
+}
+
+func TestPreviewPreservesLineStructureWhileSanitizingEachLine(t *testing.T) {
+	preview := PreviewState{Data: []byte("first\x1b[2J\r\nsecond\nthird")}
+	got := preview.DisplayText()
+	if got != "first�[2J\nsecond\nthird" {
+		t.Fatalf("DisplayText() = %q", got)
+	}
+	if strings.Contains(got, "\x1b") || strings.Contains(got, "\r") {
+		t.Fatalf("DisplayText() retained terminal control bytes: %q", got)
 	}
 }

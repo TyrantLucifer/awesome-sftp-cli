@@ -195,6 +195,73 @@ func TestConnectionRecoveryStateIsPaneLocalAndReplacesCapabilities(t *testing.T)
 	}
 }
 
+func TestEndpointSwitchCommitsEndpointAndLocationOnFirstSuccessfulPage(t *testing.T) {
+	model := testModel(t)
+	before := model.Panes[Left]
+	newEndpoint := domain.Endpoint{ID: domain.EndpointID("ep_cccccccccccccccccccccccccc"), Kind: domain.EndpointSSH, DisplayName: "work", SSHHostAlias: "work"}
+	newLocation := mustLocation(t, newEndpoint.ID, "/srv/data")
+
+	model, intents := Reduce(model, PaneConnected{
+		Pane:                 Left,
+		Endpoint:             newEndpoint,
+		Location:             newLocation,
+		State:                domain.StateReady,
+		CapabilityGeneration: 7,
+		PreserveCommitted:    true,
+	})
+	intent := assertSingleIntent(t, intents, IntentList, "/srv/data")
+	if model.Panes[Left].Endpoint != before.Endpoint || model.Panes[Left].Location != before.Location {
+		t.Fatalf("connected switch committed before validation: %#v", model.Panes[Left])
+	}
+	if model.Panes[Left].Endpoint.ID != model.Panes[Left].Location.EndpointID {
+		t.Fatalf("endpoint/location invariant broken before listing: %#v", model.Panes[Left])
+	}
+
+	model, _ = Reduce(model, BeginListing{
+		Pane:                 Left,
+		Generation:           20,
+		Location:             intent.Location,
+		Endpoint:             intent.Endpoint,
+		Connection:           intent.Connection,
+		CapabilityGeneration: intent.CapabilityGeneration,
+		CommitEndpoint:       intent.CommitEndpoint,
+	})
+	if model.Panes[Left].Endpoint != before.Endpoint || model.Panes[Left].Location != before.Location {
+		t.Fatalf("begin switch committed before validation: %#v", model.Panes[Left])
+	}
+	model, _ = Reduce(model, ListingFailed{Pane: Left, Generation: 20, Message: "permission denied"})
+	if model.Panes[Left].Endpoint != before.Endpoint || model.Panes[Left].Location != before.Location || model.Panes[Left].Connection != before.Connection {
+		t.Fatalf("failed switch changed committed pane: before=%#v after=%#v", before, model.Panes[Left])
+	}
+
+	model, intents = Reduce(model, PaneConnected{
+		Pane:                 Left,
+		Endpoint:             newEndpoint,
+		Location:             newLocation,
+		State:                domain.StateReady,
+		CapabilityGeneration: 7,
+		PreserveCommitted:    true,
+	})
+	intent = assertSingleIntent(t, intents, IntentList, "/srv/data")
+	model, _ = Reduce(model, BeginListing{
+		Pane:                 Left,
+		Generation:           21,
+		Location:             intent.Location,
+		Endpoint:             intent.Endpoint,
+		Connection:           intent.Connection,
+		CapabilityGeneration: intent.CapabilityGeneration,
+		CommitEndpoint:       intent.CommitEndpoint,
+	})
+	model, _ = Reduce(model, ListingPage{Pane: Left, Generation: 21, Done: true})
+	pane := model.Panes[Left]
+	if pane.Endpoint != newEndpoint || pane.Location != newLocation || pane.Connection != domain.StateReady || pane.CapabilityGeneration != 7 {
+		t.Fatalf("successful switch pane = %#v", pane)
+	}
+	if pane.Endpoint.ID != pane.Location.EndpointID {
+		t.Fatalf("endpoint/location invariant broken after listing: %#v", pane)
+	}
+}
+
 func TestEndpointModeEmitsActivePaneConnectionWithoutChangingOtherPane(t *testing.T) {
 	model := testModel(t)
 	originalRight := model.Panes[Right]

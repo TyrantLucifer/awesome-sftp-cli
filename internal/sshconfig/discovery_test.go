@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
 )
 
@@ -84,5 +85,8 @@ func writeFixture(t *testing.T, path, content string) {
 }
 
 func twoDigits(value int) string {
-	return string([]byte{'0' + byte(value/10), '0' + byte(value%10)})
+	if value < 10 {
+		return "0" + strconv.Itoa(value)
+	}
+	return strconv.Itoa(value)
 }

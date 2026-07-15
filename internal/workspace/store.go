@@ -99,6 +99,7 @@ func (s *Store) Load(name string) (Document, error) {
 	if err := platform.ValidatePrivateFile(workspacePath, platform.ValidatePersistent); err != nil {
 		return Document{}, fmt.Errorf("load workspace %q: %w", name, err)
 	}
+	// #nosec G304 -- ValidateName confines workspacePath to the private store root, validated above.
 	file, err := os.Open(workspacePath)
 	if err != nil {
 		return Document{}, fmt.Errorf("load workspace %q: %w", name, err)
@@ -174,6 +175,7 @@ func isASCIIAlphaNumeric(value rune) bool {
 }
 
 func syncDirectory(path string) error {
+	// #nosec G304 -- callers pass only the store-owned root directory.
 	directory, err := os.Open(path)
 	if err != nil {
 		return err

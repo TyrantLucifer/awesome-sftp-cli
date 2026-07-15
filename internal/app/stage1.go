@@ -197,6 +197,64 @@ func sshConnectStageError(message string, code domain.Code, retry domain.RetryKi
 	}
 }
 
+type paneConnectionAttempts struct {
+	epochs  [2]uint64
+	cancels [2]context.CancelFunc
+}
+
+func (attempts *paneConnectionAttempts) Begin(parent context.Context, pane tui.PaneID) (context.Context, uint64) {
+	if pane > tui.Right {
+		canceled, cancel := context.WithCancel(parent)
+		cancel()
+		return canceled, 0
+	}
+	if attempts.cancels[pane] != nil {
+		attempts.cancels[pane]()
+	}
+	attempts.epochs[pane]++
+	if attempts.epochs[pane] == 0 {
+		attempts.epochs[pane] = 1
+	}
+	// #nosec G118 -- cancel is retained per pane and called on supersession, acceptance, or invalidation.
+	requestCtx, cancel := context.WithCancel(parent)
+	attempts.cancels[pane] = cancel
+	return requestCtx, attempts.epochs[pane]
+}
+
+func (attempts *paneConnectionAttempts) Accept(pane tui.PaneID, epoch uint64) bool {
+	if pane > tui.Right || epoch == 0 || attempts.epochs[pane] != epoch || attempts.cancels[pane] == nil {
+		return false
+	}
+	attempts.cancels[pane]()
+	attempts.cancels[pane] = nil
+	return true
+}
+
+func (attempts *paneConnectionAttempts) Invalidate(pane tui.PaneID) {
+	if pane > tui.Right {
+		return
+	}
+	if attempts.cancels[pane] != nil {
+		attempts.cancels[pane]()
+		attempts.cancels[pane] = nil
+	}
+	attempts.epochs[pane]++
+	if attempts.epochs[pane] == 0 {
+		attempts.epochs[pane] = 1
+	}
+}
+
+func listingResultCurrent(model tui.Model, pane tui.PaneID, generation uint64) bool {
+	return pane <= tui.Right && generation != 0 && model.Panes[pane].Listing.Generation == generation
+}
+
+func connectionFailureState(model tui.Model, pane tui.PaneID, switching bool) domain.ConnectionState {
+	if switching && pane <= tui.Right {
+		return model.Panes[pane].Connection
+	}
+	return domain.StateFailed
+}
+
 func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
 	connect := func() (*daemon.Client, error) {
 		connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
@@ -318,7 +376,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	}
 	model := tui.NewModel(left, right)
 	if restored != nil {
-		model.Active = tui.PaneID(restored.Layout.ActivePane)
+		if restored.Layout.ActivePane == int(tui.Right) {
+			model.Active = tui.Right
+		}
 		for index, paneState := range restored.Panes {
 			model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.PaneID(index), Query: paneState.Filter})
 		}
@@ -335,6 +395,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	connectRequests := make(chan tui.Intent, 2)
 	var authCancel context.CancelFunc
 	startAuthLoop := func(activeClient *daemon.Client) {
+		// #nosec G118 -- cancel is retained in authCancel and called on replacement and shutdown.
 		claimCtx, cancel := context.WithCancel(runCtx)
 		authCancel = cancel
 		go func() {
@@ -420,7 +481,15 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		generations[pane]++
 		generation := generations[pane]
 		activeClient := client
-		actions <- tui.BeginListing{Pane: pane, Generation: generation, Location: intent.Location}
+		actions <- tui.BeginListing{
+			Pane:                 pane,
+			Generation:           generation,
+			Location:             intent.Location,
+			Endpoint:             intent.Endpoint,
+			Connection:           intent.Connection,
+			CapabilityGeneration: intent.CapabilityGeneration,
+			CommitEndpoint:       intent.CommitEndpoint,
+		}
 		go func() {
 			defer cancel()
 			listLocation(requestCtx, activeClient, pane, generation, intent.Location, actions)
@@ -428,29 +497,35 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	}
 	type connectionResult struct {
 		pane                 tui.PaneID
+		epoch                uint64
 		endpoint             domain.Endpoint
 		location             domain.Location
 		host                 string
 		state                domain.ConnectionState
 		capabilityGeneration uint64
 		recovery             bool
+		switching            bool
 		err                  error
 	}
 	connections := make(chan connectionResult, 4)
 	var recovering [2]bool
 	var validatingRecovery [2]bool
 	var recoveryFallback [2]bool
-	startConnection := func(pane tui.PaneID, start startLocation, recovery bool, activeClient *daemon.Client) {
+	var connectionAttempts paneConnectionAttempts
+	startConnection := func(pane tui.PaneID, start startLocation, recovery, switching bool, activeClient *daemon.Client) {
 		if recovery {
 			recovering[pane] = true
-			model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateConnecting, Message: "reconnecting"})
+			if !switching {
+				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateConnecting, Message: "reconnecting"})
+			}
 		}
 		activeLocal := localEndpoint
+		connectionCtx, epoch := connectionAttempts.Begin(runCtx, pane)
 		go func() {
-			result := connectionResult{pane: pane, host: start.host, recovery: recovery}
-			result.err = runReconnect(runCtx, defaultReconnectPolicy(), func() error {
+			result := connectionResult{pane: pane, epoch: epoch, host: start.host, recovery: recovery, switching: switching}
+			result.err = runReconnect(connectionCtx, defaultReconnectPolicy(), func() error {
 				var connectErr error
-				result.endpoint, result.location, result.state, result.capabilityGeneration, connectErr = resolveStartLocation(runCtx, activeClient, activeLocal, start)
+				result.endpoint, result.location, result.state, result.capabilityGeneration, connectErr = resolveStartLocation(connectionCtx, activeClient, activeLocal, start)
 				return connectErr
 			})
 			select {
@@ -483,6 +558,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			if cancels[index] != nil {
 				cancels[index]()
 			}
+			connectionAttempts.Invalidate(tui.PaneID(index))
 		}
 		if previewCancel != nil {
 			previewCancel()
@@ -516,7 +592,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			startIntent(tui.Intent{Kind: tui.IntentList, Pane: pane, Location: model.Panes[pane].Location})
 			continue
 		}
-		startConnection(pane, start, false, client)
+		startConnection(pane, start, false, false, client)
 	}
 	for {
 		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
@@ -552,7 +628,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				continue
 			}
 			start.host = request.Name
-			startConnection(request.Pane, start, true, client)
+			startConnection(request.Pane, start, true, true, client)
 		case result := <-daemonRecoveries:
 			recoveringDaemon = false
 			if result.err != nil {
@@ -587,12 +663,16 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 					}
 					continue
 				}
-				startConnection(pane, start, true, client)
+				startConnection(pane, start, true, false, client)
 			}
 		case result := <-connections:
+			if !connectionAttempts.Accept(result.pane, result.epoch) {
+				continue
+			}
 			recovering[result.pane] = false
 			if result.err != nil {
-				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: result.pane, State: domain.StateFailed, Message: "connect " + result.host + " failed: " + result.err.Error()})
+				state := connectionFailureState(model, result.pane, result.switching)
+				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: result.pane, State: state, Message: "connect " + result.host + " failed: " + result.err.Error()})
 				continue
 			}
 			var intents []tui.Intent
@@ -603,6 +683,13 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				startIntent(intent)
 			}
 		case action := <-actions:
+			listingCurrent := true
+			switch result := action.(type) {
+			case tui.ListingPage:
+				listingCurrent = listingResultCurrent(model, result.Pane, result.Generation)
+			case tui.ListingFailed:
+				listingCurrent = listingResultCurrent(model, result.Pane, result.Generation)
+			}
 			var intents []tui.Intent
 			model, intents = tui.Reduce(model, action)
 			if challenge, ok := action.(tui.AuthChallengeReceived); ok {
@@ -612,14 +699,14 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 					}
 				}
 			}
-			if page, ok := action.(tui.ListingPage); ok && page.Done && validatingRecovery[page.Pane] {
+			if page, ok := action.(tui.ListingPage); ok && listingCurrent && page.Done && validatingRecovery[page.Pane] {
 				validatingRecovery[page.Pane] = false
 				if recoveryFallback[page.Pane] {
 					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: page.Pane, State: domain.StateReady, Message: "reconnected at nearest accessible parent"})
 				}
 				recoveryFallback[page.Pane] = false
 			}
-			if failure, ok := action.(tui.ListingFailed); ok && validatingRecovery[failure.Pane] && (failure.Code == domain.CodeNotFound || failure.Code == domain.CodePermissionDenied) {
+			if failure, ok := action.(tui.ListingFailed); ok && listingCurrent && validatingRecovery[failure.Pane] && (failure.Code == domain.CodeNotFound || failure.Code == domain.CodePermissionDenied) {
 				if parent, ok := recoveryParent(failure.Location); ok {
 					recoveryFallback[failure.Pane] = true
 					startIntent(tui.Intent{Kind: tui.IntentList, Pane: failure.Pane, Location: parent})
@@ -627,13 +714,13 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				}
 				validatingRecovery[failure.Pane] = false
 			}
-			if failure, ok := action.(tui.ListingFailed); ok && !failure.DaemonLost && failure.Retry == domain.RetryAfterReconnect && !recovering[failure.Pane] {
+			if failure, ok := action.(tui.ListingFailed); ok && listingCurrent && !failure.DaemonLost && failure.Retry == domain.RetryAfterReconnect && !recovering[failure.Pane] {
 				pane := model.Panes[failure.Pane]
 				if pane.Endpoint.Kind == domain.EndpointSSH && pane.Endpoint.SSHHostAlias != "" {
-					startConnection(failure.Pane, startLocation{host: pane.Endpoint.SSHHostAlias, path: string(pane.Location.Path)}, true, client)
+					startConnection(failure.Pane, startLocation{host: pane.Endpoint.SSHHostAlias, path: string(pane.Location.Path)}, true, false, client)
 				}
 			}
-			if failure, ok := action.(tui.ListingFailed); ok && failure.DaemonLost {
+			if failure, ok := action.(tui.ListingFailed); ok && listingCurrent && failure.DaemonLost {
 				startDaemonRecovery()
 			}
 			for _, intent := range intents {

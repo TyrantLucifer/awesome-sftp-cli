@@ -62,14 +62,24 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		if !validPane(action.Pane) || action.Generation == 0 {
 			return model, nil
 		}
+		if action.CommitEndpoint && (action.Endpoint.ID == "" || action.Location.EndpointID != action.Endpoint.ID) {
+			return model, nil
+		}
 		pane := model.Panes[action.Pane].clone()
+		if !action.CommitEndpoint && action.Location.EndpointID != pane.Endpoint.ID {
+			return model, nil
+		}
 		anchor, hasAnchor := pane.currentLocation()
 		pane.Listing = ListingState{
-			Generation:      action.Generation,
-			Loading:         true,
-			pendingLocation: action.Location,
-			cursorAnchor:    anchor,
-			hasCursorAnchor: hasAnchor,
+			Generation:                  action.Generation,
+			Loading:                     true,
+			pendingLocation:             action.Location,
+			pendingEndpoint:             action.Endpoint,
+			pendingConnection:           action.Connection,
+			pendingCapabilityGeneration: action.CapabilityGeneration,
+			commitEndpoint:              action.CommitEndpoint,
+			cursorAnchor:                anchor,
+			hasCursorAnchor:             hasAnchor,
 		}
 		model.Panes[action.Pane] = pane
 		return model, nil
@@ -83,6 +93,14 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			if target.EndpointID == "" {
 				return model, nil
 			}
+			if pane.Listing.commitEndpoint {
+				pane.Endpoint = pane.Listing.pendingEndpoint
+				pane.Connection = pane.Listing.pendingConnection
+				if pane.Connection == "" {
+					pane.Connection = domain.StateReady
+				}
+				pane.CapabilityGeneration = pane.Listing.pendingCapabilityGeneration
+			}
 			if target != pane.Location {
 				pane.Filter = ""
 				pane.marks = make(map[domain.Location]struct{})
@@ -94,6 +112,10 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			pane.visible = nil
 			pane.Cursor = 0
 			pane.Listing.hasPage = true
+			pane.Listing.pendingEndpoint = domain.Endpoint{}
+			pane.Listing.pendingConnection = ""
+			pane.Listing.pendingCapabilityGeneration = 0
+			pane.Listing.commitEndpoint = false
 		} else {
 			pane.Entries = append([]domain.Entry(nil), pane.Entries...)
 			pane.visible = append([]int(nil), pane.visible...)
@@ -124,6 +146,10 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		pane.Listing.Partial = pane.Listing.hasPage && len(pane.Entries) != 0
 		pane.Listing.Message = action.Message
 		pane.Listing.pendingLocation = domain.Location{}
+		pane.Listing.pendingEndpoint = domain.Endpoint{}
+		pane.Listing.pendingConnection = ""
+		pane.Listing.pendingCapabilityGeneration = 0
+		pane.Listing.commitEndpoint = false
 		if pane.Listing.Partial {
 			pane.Connection = domain.StateDegraded
 		}
@@ -199,8 +225,17 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		pane := NewPaneState(action.Endpoint, action.Location)
 		if action.PreserveCommitted {
 			pane = model.Panes[action.Pane].clone()
-			pane.Endpoint = action.Endpoint
 			pane.Listing.Message = ""
+			model.Panes[action.Pane] = pane
+			return model, []Intent{{
+				Kind:                 IntentList,
+				Pane:                 action.Pane,
+				Location:             action.Location,
+				Endpoint:             action.Endpoint,
+				Connection:           action.State,
+				CapabilityGeneration: action.CapabilityGeneration,
+				CommitEndpoint:       true,
+			}}
 		}
 		pane.Connection = action.State
 		if pane.Connection == "" {

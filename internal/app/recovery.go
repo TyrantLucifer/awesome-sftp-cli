@@ -35,6 +35,7 @@ func defaultReconnectPolicy() reconnectPolicy {
 			if spread <= 0 {
 				return delay
 			}
+			// #nosec G404 -- retry timing jitter is not a security-sensitive random value.
 			return delay - spread + time.Duration(rand.Int64N(int64(2*spread)+1))
 		},
 	}

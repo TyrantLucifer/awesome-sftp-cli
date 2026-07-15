@@ -51,10 +51,14 @@ type ListingState struct {
 	Partial    bool
 	Message    string
 
-	pendingLocation domain.Location
-	hasPage         bool
-	cursorAnchor    domain.Location
-	hasCursorAnchor bool
+	pendingLocation             domain.Location
+	pendingEndpoint             domain.Endpoint
+	pendingConnection           domain.ConnectionState
+	pendingCapabilityGeneration uint64
+	commitEndpoint              bool
+	hasPage                     bool
+	cursorAnchor                domain.Location
+	hasCursorAnchor             bool
 }
 
 type PaneState struct {
@@ -336,7 +340,14 @@ func (p PreviewState) DisplayText() string {
 	if p.Message != "" {
 		return SanitizeTerminalText(p.Message)
 	}
-	return SanitizeTerminalText(string(p.Data))
+	lines := strings.Split(string(p.Data), "\n")
+	for index, line := range lines {
+		if index < len(lines)-1 {
+			line = strings.TrimSuffix(line, "\r")
+		}
+		lines[index] = SanitizeTerminalText(line)
+	}
+	return strings.Join(lines, "\n")
 }
 
 type Model struct {
@@ -381,14 +392,18 @@ const (
 const PreviewByteLimit = 64 * 1024
 
 type Intent struct {
-	Kind        IntentKind
-	Pane        PaneID
-	Location    domain.Location
-	Limit       int
-	ChallengeID string
-	Answer      []byte
-	Cancel      bool
-	Name        string
+	Kind                 IntentKind
+	Pane                 PaneID
+	Location             domain.Location
+	Limit                int
+	ChallengeID          string
+	Answer               []byte
+	Cancel               bool
+	Name                 string
+	Endpoint             domain.Endpoint
+	Connection           domain.ConnectionState
+	CapabilityGeneration uint64
+	CommitEndpoint       bool
 }
 
 type Key string
@@ -420,9 +435,13 @@ type KeyPress struct{ Key Key }
 type TextInput struct{ Text string }
 type Resize struct{ Width, Height int }
 type BeginListing struct {
-	Pane       PaneID
-	Generation uint64
-	Location   domain.Location
+	Pane                 PaneID
+	Generation           uint64
+	Location             domain.Location
+	Endpoint             domain.Endpoint
+	Connection           domain.ConnectionState
+	CapabilityGeneration uint64
+	CommitEndpoint       bool
 }
 type ListingPage struct {
 	Pane       PaneID

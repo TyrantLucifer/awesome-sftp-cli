@@ -39,6 +39,68 @@ func TestSSHConnectStageErrorPreservesSafeStageAndClassification(t *testing.T) {
 	}
 }
 
+func TestPaneConnectionAttemptsCancelAndRejectOlderResult(t *testing.T) {
+	var attempts paneConnectionAttempts
+	ctx := context.Background()
+	firstCtx, firstEpoch := attempts.Begin(ctx, tui.Left)
+	secondCtx, secondEpoch := attempts.Begin(ctx, tui.Left)
+
+	select {
+	case <-firstCtx.Done():
+	default:
+		t.Fatal("new connection attempt did not cancel the older attempt")
+	}
+	if secondCtx.Err() != nil {
+		t.Fatalf("new connection context is already canceled: %v", secondCtx.Err())
+	}
+	if attempts.Accept(tui.Left, firstEpoch) {
+		t.Fatal("older connection result was accepted")
+	}
+	if !attempts.Accept(tui.Left, secondEpoch) {
+		t.Fatal("current connection result was rejected")
+	}
+	if attempts.Accept(tui.Left, secondEpoch) {
+		t.Fatal("completed connection result was accepted twice")
+	}
+}
+
+func TestListingResultCurrentRejectsStaleGeneration(t *testing.T) {
+	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	location, err := domain.NewLocation(endpointID, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := tui.NewModel(
+		tui.NewPaneState(domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, location),
+		tui.NewPaneState(domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, location),
+	)
+	model, _ = tui.Reduce(model, tui.BeginListing{Pane: tui.Left, Generation: 8, Location: location})
+	if listingResultCurrent(model, tui.Left, 7) {
+		t.Fatal("stale listing result was accepted")
+	}
+	if !listingResultCurrent(model, tui.Left, 8) {
+		t.Fatal("current listing result was rejected")
+	}
+}
+
+func TestEndpointSwitchFailurePreservesCommittedConnectionState(t *testing.T) {
+	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	location, err := domain.NewLocation(endpointID, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := tui.NewModel(
+		tui.NewPaneState(domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, location),
+		tui.NewPaneState(domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, location),
+	)
+	if got := connectionFailureState(model, tui.Left, true); got != domain.StateReady {
+		t.Fatalf("switch failure state = %q, want committed ready", got)
+	}
+	if got := connectionFailureState(model, tui.Left, false); got != domain.StateFailed {
+		t.Fatalf("recovery failure state = %q, want failed", got)
+	}
+}
+
 func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
 	leftID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
 	rightID := domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")

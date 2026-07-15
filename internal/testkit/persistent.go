@@ -35,6 +35,7 @@ func PersistentTempDir(t testing.TB) string {
 		t.Fatalf("create persistent test directory: %v", err)
 	}
 	t.Cleanup(func() {
+		// #nosec G703 -- path is returned by os.MkdirTemp beneath the validated test root above.
 		if err := os.RemoveAll(path); err != nil {
 			t.Errorf("remove persistent test directory: %v", err)
 		}

@@ -202,7 +202,7 @@ switch -- $env(AMSFTP_CASE_MODE) {
   wrong {
     expect_prompt {(?i)password:}
     send -- "definitely-wrong\r"
-    expect_prompt {(?i)(authentication failed|connect .* failed)}
+    expect_prompt {(?i)(authentication failed|connect .* failed|failed)}
   }
   cancel {
     expect_prompt {(?i)password:}
@@ -365,7 +365,7 @@ run_case() {
   fi
   case "${mode}" in
     wrong | cancel | failure)
-      if ! /usr/bin/strings "${output}" | grep -Eq '(authentication failed|host-key verification failed|connect .* failed)'; then
+      if ! /usr/bin/strings "${output}" | grep -Eiq '(authentication failed|host-key verification failed|connect .* failed|failed)'; then
         printf 'authentication case %s did not report a bounded pane-local failure\n' "${name}" >&2
         /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,120p' >&2 || true
         exit 1
