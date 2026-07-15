@@ -54,6 +54,7 @@ printf '%s:%s\n%s:%s\n' "${target_user}" "${password}" "${mfa_user}" "${mfa_pass
 install -d -o "${client_user}" -g "${client_user}" -m 0700 "${client_home}/.ssh"
 runuser -u "${client_user}" -- /usr/bin/ssh-keygen -q -t ed25519 -N '' -f "${client_home}/.ssh/client_key"
 runuser -u "${client_user}" -- /usr/bin/ssh-keygen -q -t ed25519 -N "${key_passphrase}" -f "${client_home}/.ssh/mfa_key"
+chmod 0600 "${client_home}/.ssh/client_key" "${client_home}/.ssh/mfa_key"
 
 for destination in "${target_home}" "${mfa_home}"; do
   destination_user="$(basename "${destination}")"
