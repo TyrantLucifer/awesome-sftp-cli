@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 	pkgsftp "github.com/pkg/sftp"
 )
 
@@ -66,6 +67,53 @@ func TestBoundedBufferRedactsSensitiveValues(t *testing.T) {
 	}
 }
 
+func TestDialLifecycleCancelsOnlyBeforeEstablishment(t *testing.T) {
+	t.Run("before establishment", func(t *testing.T) {
+		parent := context.Background()
+		commandContext, lifecycle := newDialLifecycle(parent)
+		defer lifecycle.stop()
+
+		lifecycle.cancelBeforeEstablished()
+		select {
+		case <-commandContext.Done():
+		default:
+			t.Fatal("command context was not canceled")
+		}
+	})
+
+	t.Run("after establishment", func(t *testing.T) {
+		parent := context.Background()
+		commandContext, lifecycle := newDialLifecycle(parent)
+		defer lifecycle.stop()
+		if err := lifecycle.establish(parent); err != nil {
+			t.Fatal(err)
+		}
+
+		lifecycle.cancelBeforeEstablished()
+		select {
+		case <-commandContext.Done():
+			t.Fatal("established command context was canceled")
+		default:
+		}
+	})
+}
+
+func TestDialLifecycleRejectsEstablishmentAfterParentCancellation(t *testing.T) {
+	parent, cancelParent := context.WithCancel(context.Background())
+	commandContext, lifecycle := newDialLifecycle(parent)
+	defer lifecycle.stop()
+	cancelParent()
+
+	if err := lifecycle.establish(parent); !errors.Is(err, context.Canceled) {
+		t.Fatalf("establish() error = %v, want context.Canceled", err)
+	}
+	select {
+	case <-commandContext.Done():
+	case <-time.After(time.Second):
+		t.Fatal("command context was not canceled")
+	}
+}
+
 func TestDialParentCancellationAfterNegotiationKeepsSessionAlive(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {
@@ -88,6 +136,9 @@ func TestDialParentCancellationAfterNegotiationKeepsSessionAlive(t *testing.T) {
 	// #nosec G306 -- executable fixture intentionally requires owner execute permission.
 	if err := os.WriteFile(binary, []byte("#!/bin/sh\nexec \"$AMSFTP_TEST_BINARY\" -test.run=^TestSFTPServerHelperProcess$ --\n"), 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if err := platform.ValidateExecutable(binary); err != nil {
+		t.Skipf("trusted executable fixture is unavailable; lifecycle state is covered without a subprocess: %v", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	session, err := Dial(ctx, Config{Binary: binary, HostAlias: "test-host", Environment: append(os.Environ(), "AMSFTP_TEST_SFTP_SERVER=1", "AMSFTP_TEST_BINARY="+executable)})

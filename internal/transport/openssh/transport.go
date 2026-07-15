@@ -68,6 +68,43 @@ type Session struct {
 	waitErr  error
 }
 
+type dialLifecycle struct {
+	mu               sync.Mutex
+	established      bool
+	cancel           context.CancelFunc
+	stopParentCancel func() bool
+}
+
+func newDialLifecycle(parent context.Context) (context.Context, *dialLifecycle) {
+	commandContext, cancel := context.WithCancel(context.Background())
+	lifecycle := &dialLifecycle{cancel: cancel}
+	lifecycle.stopParentCancel = context.AfterFunc(parent, lifecycle.cancelBeforeEstablished)
+	return commandContext, lifecycle
+}
+
+func (l *dialLifecycle) cancelBeforeEstablished() {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if !l.established {
+		l.cancel()
+	}
+}
+
+func (l *dialLifecycle) establish(parent context.Context) error {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if err := parent.Err(); err != nil {
+		l.cancel()
+		return err
+	}
+	l.established = true
+	return nil
+}
+
+func (l *dialLifecycle) stop() {
+	l.stopParentCancel()
+}
+
 func Dial(ctx context.Context, config Config) (*Session, error) {
 	binary := config.Binary
 	if binary == "" {
@@ -81,17 +118,9 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
-	commandCtx, cancel := context.WithCancel(context.Background())
-	var lifecycleMu sync.Mutex
-	established := false
-	stopParentCancel := context.AfterFunc(ctx, func() {
-		lifecycleMu.Lock()
-		defer lifecycleMu.Unlock()
-		if !established {
-			cancel()
-		}
-	})
-	defer stopParentCancel()
+	commandCtx, lifecycle := newDialLifecycle(ctx)
+	cancel := lifecycle.cancel
+	defer lifecycle.stop()
 	// #nosec G204 -- binary has a validated absolute trust chain and arguments are fixed plus a validated host alias.
 	command := exec.CommandContext(commandCtx, binary, arguments...)
 	configureProcessGroup(command)
@@ -134,16 +163,12 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 		_ = command.Wait()
 		return nil, fmt.Errorf("negotiate SFTP subsystem: %w: %s", err, collector.String())
 	}
-	lifecycleMu.Lock()
-	if err := ctx.Err(); err != nil {
-		lifecycleMu.Unlock()
+	if err := lifecycle.establish(ctx); err != nil {
 		_ = client.Close()
 		cancel()
 		_ = command.Wait()
 		return nil, fmt.Errorf("negotiate SFTP subsystem: %w", err)
 	}
-	established = true
-	lifecycleMu.Unlock()
 	return &Session{client: client, command: command, cancel: cancel, stderr: collector}, nil
 }
 
