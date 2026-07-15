@@ -8,7 +8,7 @@
 
 ### 当前实现边界
 
-本文主体描述 1.0 目标架构，不代表这些运行时组件已经存在。Stage 0 has completed and verified foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Stage 1 is not started. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates. 已完成证据见 [Stage 0 verification](../verification/stage-00.md)。
+本文主体描述 1.0 目标架构，不代表所有运行时组件已经存在。Stage 0 foundation 已完成；Stage 1 M1.1 已交付私有 Unix socket daemon、framed IPC、LocalFS 与本地双栏 TUI，M1.2 正在接入 validated system OpenSSH stdio 与结构化 SFTP Provider。SQLite、传输引擎、Auth Broker、workspace 恢复和 remote helper 仍未交付，项目也未达到 production readiness。当前证据见 [Stage 1 verification](../verification/stage-01.md)；生产/发行就绪只由 Stage 6 门禁判定。
 
 ### 已冻结兼容与发行基线
 

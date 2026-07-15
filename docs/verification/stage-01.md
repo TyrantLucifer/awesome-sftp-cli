@@ -74,6 +74,16 @@ Hosted Linux native ACL/SO_PEERCRED/flock/socket execution and both macOS runner
 - **Status**: In Progress
 - **Goal**: exact pkg/sftp intake, ADR-0001 system OpenSSH transport, SFTP Provider, local/remote and remote/remote browsing.
 
+Current candidate evidence:
+
+- Root module directly pins `github.com/pkg/sftp v1.13.10` (tag commit `939b20346433320aab08dfb0f175db0742304cf5`, `go 1.23.0`, BSD-3-Clause, not retracted). Runtime additions are `github.com/kr/fs v0.1.0` and `golang.org/x/crypto v0.41.0`, both BSD-3-Clause and not retracted.
+- `govulncheck ./...` reports zero reachable vulnerabilities. It reports vulnerable symbols in required modules that the candidate does not call; the exact scan output is retained as a dependency-risk note rather than mislabeled as a clean module graph.
+- `internal/transport/openssh` validates `/usr/bin/ssh` or a clean absolute override from root through final inode, rejects symlink/writable/special-bit/non-executable paths, compares the final inode immediately before start, uses the exact ADR-0001 argv, rejects option/control-byte host aliases, and bounds sanitized stderr to 64 KiB.
+- `internal/provider/sftp` runs structured SFTP over the OpenSSH stdio pipes and passes the shared read-only Provider contract against a real in-process SFTP protocol server. Client RPC can add per-connection SSH endpoints, so local/remote and remote/remote pane combinations use the same daemon routes.
+- The quality job now provisions a temporary real `sshd` and runs `TestRealOpenSSHSFTPHostAliasAndNonDefaultPort` with the current account's ephemeral `ssh_config`. Local runs intentionally skip that guarded test because modifying a developer's real SSH config is outside the safe local fixture boundary; Hosted success is required before M1.2 completion.
+
+Still open: Hosted real-sshd evidence, poisoned-PATH/override replacement negatives beyond inode comparison, conflicting ssh_config matrix, stderr/error classification, disconnect recovery, and two isolated remote endpoints.
+
 ### M1.3 — Authentication and complex SSH configuration
 
 - **Status**: Not Started

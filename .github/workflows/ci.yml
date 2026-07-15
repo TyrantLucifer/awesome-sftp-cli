@@ -33,6 +33,17 @@ jobs:
       - run: make lint
       - run: make fuzz-smoke
       - run: make supply-chain
+      - name: Run real OpenSSH SFTP integration
+        env:
+          AMSFTP_REAL_SSHD: "1"
+        run: |
+          set -euo pipefail
+          if ! command -v sshd >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y openssh-server
+          fi
+          sudo mkdir -p /run/sshd
+          go test -count=1 -run '^TestRealOpenSSHSFTPHostAliasAndNonDefaultPort$' ./internal/integration
       - name: Record provenance
         run: |
           set -euo pipefail

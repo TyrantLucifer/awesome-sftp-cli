@@ -15,18 +15,24 @@ import (
 )
 
 const (
-	ProviderEndpoints = "provider.endpoints"
-	ProviderSnapshot  = "provider.snapshot"
-	ProviderNormalize = "provider.normalize"
-	ProviderList      = "provider.list"
-	ProviderStat      = "provider.stat"
-	ProviderRead      = "provider.read"
+	ProviderEndpoints  = "provider.endpoints"
+	ProviderSnapshot   = "provider.snapshot"
+	ProviderNormalize  = "provider.normalize"
+	ProviderList       = "provider.list"
+	ProviderStat       = "provider.stat"
+	ProviderRead       = "provider.read"
+	ProviderConnectSSH = "provider.connect_ssh"
 )
+
+type SSHConnector func(context.Context, string) (providerapi.Provider, error)
 
 type ProviderSessions struct {
 	providers    map[domain.EndpointID]providerapi.Provider
 	maxReadBytes uint32
+	connectSSH   SSHConnector
 }
+
+func (s *ProviderSessions) SetSSHConnector(connector SSHConnector) { s.connectSSH = connector }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	if len(providers) == 0 {
@@ -53,9 +59,15 @@ func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) 
 }
 
 func (s *ProviderSessions) NewSession() Session {
+	providers := make(map[domain.EndpointID]providerapi.Provider, len(s.providers))
+	for id, implementation := range s.providers {
+		providers[id] = implementation
+	}
 	return &providerSession{
-		providers:    s.providers,
+		providers:    providers,
 		maxReadBytes: s.maxReadBytes,
+		connectSSH:   s.connectSSH,
+		owned:        make([]providerapi.Provider, 0),
 		cursors:      make(map[cursorKey]providerapi.Provider),
 	}
 }
@@ -76,6 +88,8 @@ type providerSession struct {
 	maxReadBytes uint32
 	cursors      map[cursorKey]providerapi.Provider
 	closed       bool
+	connectSSH   SSHConnector
+	owned        []providerapi.Provider
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -86,6 +100,8 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return nil, internalError("provider session is closed", nil)
 	}
 	switch name {
+	case ProviderConnectSSH:
+		return s.connect(ctx, payload)
 	case ProviderEndpoints:
 		return s.endpoints(), nil
 	case ProviderSnapshot:
@@ -117,6 +133,8 @@ func (s *providerSession) Close() error {
 	s.closed = true
 	cursors := s.cursors
 	s.cursors = make(map[cursorKey]providerapi.Provider)
+	owned := s.owned
+	s.owned = nil
 	s.mu.Unlock()
 	var result error
 	for key, implementation := range cursors {
@@ -124,10 +142,51 @@ func (s *providerSession) Close() error {
 			result = errors.Join(result, discarder.DiscardCursor(key.cursor))
 		}
 	}
+	for _, implementation := range owned {
+		if closer, ok := implementation.(interface{ Close() error }); ok {
+			result = errors.Join(result, closer.Close())
+		}
+	}
 	return result
 }
 
+func (s *providerSession) connect(ctx context.Context, payload json.RawMessage) (any, error) {
+	if s.connectSSH == nil {
+		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "SSH connector is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	var request ipc.ProviderConnectSSHRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode SSH connect request", err)
+	}
+	implementation, err := s.connectSSH(ctx, request.HostAlias)
+	if err != nil {
+		return nil, err
+	}
+	descriptor := implementation.Descriptor()
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		if closer, ok := implementation.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		return nil, &domain.OpError{Code: domain.CodeCanceled, Message: "SSH connection completed after client session closed", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	if _, exists := s.providers[descriptor.ID]; exists {
+		s.mu.Unlock()
+		if closer, ok := implementation.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		return nil, invalidArgument("duplicate SSH endpoint", nil)
+	}
+	s.providers[descriptor.ID] = implementation
+	s.owned = append(s.owned, implementation)
+	s.mu.Unlock()
+	return ipc.ProviderConnectSSHResponse{Endpoint: ipc.EncodeEndpoint(descriptor)}, nil
+}
+
 func (s *providerSession) endpoints() ipc.ProviderEndpointsResponse {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	endpoints := make([]ipc.WireEndpoint, 0, len(s.providers))
 	for _, implementation := range s.providers {
 		endpoints = append(endpoints, ipc.EncodeEndpoint(implementation.Descriptor()))
@@ -328,6 +387,8 @@ func (s *providerSession) providerByString(value string) (providerapi.Provider, 
 }
 
 func (s *providerSession) provider(endpointID domain.EndpointID) (providerapi.Provider, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	implementation := s.providers[endpointID]
 	if implementation == nil {
 		return nil, &domain.OpError{

@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -141,6 +142,60 @@ func TestConnectionCloseDiscardsProviderCursor(t *testing.T) {
 	if !domain.IsCode(err, domain.CodeInvalidArgument) {
 		t.Fatalf("discarded cursor error = %v, want invalid_argument", err)
 	}
+}
+
+func TestProviderSessionClosesSSHProviderThatConnectsAfterSessionClose(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	remote := &closingProvider{Provider: local, descriptor: domain.Endpoint{ID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Kind: domain.EndpointSSH, DisplayName: "work", SSHHostAlias: "work"}, closed: make(chan struct{})}
+	factory.SetSSHConnector(func(context.Context, string) (providerapi.Provider, error) {
+		close(started)
+		<-release
+		return remote, nil
+	})
+	session := factory.NewSession()
+	done := make(chan error, 1)
+	go func() {
+		payload, marshalErr := json.Marshal(ipc.ProviderConnectSSHRequest{HostAlias: "work"})
+		if marshalErr != nil {
+			done <- marshalErr
+			return
+		}
+		_, handleErr := session.Handle(context.Background(), ProviderConnectSSH, payload)
+		done <- handleErr
+	}()
+	<-started
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	close(release)
+	if err := <-done; !domain.IsCode(err, domain.CodeCanceled) {
+		t.Fatalf("late connect error = %v, want canceled", err)
+	}
+	select {
+	case <-remote.closed:
+	case <-time.After(time.Second):
+		t.Fatal("late SSH provider was not closed")
+	}
+}
+
+type closingProvider struct {
+	providerapi.Provider
+	descriptor domain.Endpoint
+	once       sync.Once
+	closed     chan struct{}
+}
+
+func (p *closingProvider) Descriptor() domain.Endpoint { return p.descriptor }
+
+func (p *closingProvider) Close() error {
+	p.once.Do(func() { close(p.closed) })
+	return nil
 }
 
 func handlePayload[T any](t *testing.T, session Session, name string, request any) T {

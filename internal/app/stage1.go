@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -19,6 +20,8 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
+	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 	"github.com/gdamore/tcell/v3"
 )
@@ -102,6 +105,28 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	if err != nil {
 		return err
 	}
+	sessions.SetSSHConnector(func(connectCtx context.Context, hostAlias string) (provider.Provider, error) {
+		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: hostAlias})
+		if err != nil {
+			return nil, err
+		}
+		remoteEndpointID, err := domain.NewEndpointID(generator)
+		if err != nil {
+			_ = transport.Close()
+			return nil, err
+		}
+		remoteSessionID, err := domain.NewSessionID(generator)
+		if err != nil {
+			_ = transport.Close()
+			return nil, err
+		}
+		implementation, err := sftpprovider.New(sftpprovider.Config{Endpoint: domain.Endpoint{ID: remoteEndpointID, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias}, SessionID: remoteSessionID, Client: transport.Client(), Close: transport.Close})
+		if err != nil {
+			_ = transport.Close()
+			return nil, err
+		}
+		return implementation, nil
+	})
 	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {
@@ -175,14 +200,20 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
-	locations, err := localStartLocations(args)
+	locations, err := startLocations(args)
 	if err != nil {
 		return err
 	}
-	endpoint := domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal, DisplayName: "local"}
-	left, _ := domain.NewLocation(endpointID, domain.CanonicalPath(locations[0]))
-	right, _ := domain.NewLocation(endpointID, domain.CanonicalPath(locations[1]))
-	model := tui.NewModel(tui.NewPaneState(endpoint, left), tui.NewPaneState(endpoint, right))
+	localEndpoint := domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal, DisplayName: "local"}
+	leftEndpoint, left, err := resolveStartLocation(ctx, client, localEndpoint, locations[0])
+	if err != nil {
+		return err
+	}
+	rightEndpoint, right, err := resolveStartLocation(ctx, client, localEndpoint, locations[1])
+	if err != nil {
+		return err
+	}
+	model := tui.NewModel(tui.NewPaneState(leftEndpoint, left), tui.NewPaneState(rightEndpoint, right))
 	screen, err := tcell.NewScreen()
 	if err != nil {
 		return err
@@ -255,27 +286,56 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	}
 }
 
-func localStartLocations(args []string) ([2]string, error) {
-	var result [2]string
+type startLocation struct{ host, path string }
+
+func startLocations(args []string) ([2]startLocation, error) {
+	var result [2]startLocation
 	cwd, err := os.Getwd()
 	if err != nil {
 		return result, err
 	}
-	result = [2]string{cwd, cwd}
+	result = [2]startLocation{{path: cwd}, {path: cwd}}
 	if len(args) > 2 {
 		return result, errors.New("client accepts at most two locations")
 	}
 	for index, raw := range args {
-		if strings.Contains(raw, ":") {
-			return result, errors.New("remote locations are not available in local mode")
+		if host, remote, ok := strings.Cut(raw, ":"); ok {
+			if _, err := openssh.Arguments(host); err != nil {
+				return result, err
+			}
+			if remote == "" {
+				remote = "/"
+			}
+			if !strings.HasPrefix(remote, "/") {
+				return result, errors.New("remote path must be absolute")
+			}
+			result[index] = startLocation{host: host, path: path.Clean(remote)}
+			continue
 		}
 		absolute, err := filepath.Abs(raw)
 		if err != nil {
 			return result, err
 		}
-		result[index] = filepath.Clean(absolute)
+		result[index] = startLocation{path: filepath.Clean(absolute)}
 	}
 	return result, nil
+}
+
+func resolveStartLocation(ctx context.Context, client *daemon.Client, local domain.Endpoint, start startLocation) (domain.Endpoint, domain.Location, error) {
+	endpoint := local
+	if start.host != "" {
+		var response ipc.ProviderConnectSSHResponse
+		if err := client.Call(ctx, daemon.ProviderConnectSSH, ipc.ProviderConnectSSHRequest{HostAlias: start.host}, &response); err != nil {
+			return domain.Endpoint{}, domain.Location{}, err
+		}
+		id, err := domain.ParseEndpointID(response.Endpoint.ID)
+		if err != nil {
+			return domain.Endpoint{}, domain.Location{}, err
+		}
+		endpoint = domain.Endpoint{ID: id, Kind: response.Endpoint.Kind, DisplayName: response.Endpoint.DisplayName, SSHHostAlias: response.Endpoint.SSHHostAlias}
+	}
+	location, err := domain.NewLocation(endpoint.ID, domain.CanonicalPath(start.path))
+	return endpoint, location, err
 }
 
 func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, generation uint64, location domain.Location, actions chan<- tui.Action) {

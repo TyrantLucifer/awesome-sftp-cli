@@ -90,3 +90,21 @@ func connectExisting(ctx context.Context, paths platform.Paths, purpose platform
 	}
 	return daemon.NewClient(ctx, connection, "test", "test-client")
 }
+
+func TestStartLocationsParsesLocalAndRemote(t *testing.T) {
+	locations, err := startLocations([]string{".", "work-alias:/srv/data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locations[0].host != "" || !filepath.IsAbs(locations[0].path) {
+		t.Fatalf("local = %#v", locations[0])
+	}
+	if locations[1] != (startLocation{host: "work-alias", path: "/srv/data"}) {
+		t.Fatalf("remote = %#v", locations[1])
+	}
+	for _, value := range []string{"-bad:/", "host:relative", "host\nname:/"} {
+		if _, err := startLocations([]string{value}); err == nil {
+			t.Fatalf("startLocations(%q) error = nil", value)
+		}
+	}
+}
