@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -13,6 +14,27 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 )
+
+func TestSSHConnectStageErrorPreservesSafeStageAndClassification(t *testing.T) {
+	cause := errors.New("private transport detail")
+	err := sshConnectStageError("establish OpenSSH SFTP session", domain.CodeTransportInterrupted, domain.RetryAfterReconnect, cause)
+	var operationError *domain.OpError
+	if !errors.As(err, &operationError) {
+		t.Fatalf("error = %T, want *domain.OpError", err)
+	}
+	if operationError.Operation != "connect_ssh" || operationError.Message != "establish OpenSSH SFTP session" {
+		t.Fatalf("public error = %#v", operationError)
+	}
+	if operationError.Code != domain.CodeTransportInterrupted || operationError.Retry.Kind != domain.RetryAfterReconnect || operationError.Effect != domain.EffectNone {
+		t.Fatalf("classification = %#v", operationError)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("private cause was not retained for daemon-local diagnostics")
+	}
+	if operationError.Error() == cause.Error() {
+		t.Fatal("public error exposed the private cause")
+	}
+}
 
 func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	base := filepath.Join("/tmp", "amsftp-test-"+strconv.Itoa(os.Getpid()))

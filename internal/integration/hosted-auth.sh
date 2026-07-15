@@ -255,6 +255,26 @@ stop_client_daemon() {
   done
 }
 
+preflight_sftp_transport() {
+  local alias_name="$1"
+  local preflight_stderr="${client_home}/preflight-${alias_name}.stderr"
+  if ! runuser -u "${client_user}" -- env -i \
+    HOME="${client_home}" \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+    /usr/bin/timeout 10 /usr/bin/ssh \
+      -T -oEscapeChar=none -oForwardAgent=no -oForwardX11=no \
+      -oPermitLocalCommand=no -oClearAllForwardings=yes -oRemoteCommand=none \
+      -oStdinNull=no -oForkAfterAuthentication=no -oTunnel=no \
+      -oGSSAPIDelegateCredentials=no -s "${alias_name}" sftp \
+      </dev/null >/dev/null 2>"${preflight_stderr}"; then
+    printf 'exact OpenSSH SFTP preflight failed for %s\n' "${alias_name}" >&2
+    sed -n '1,120p' "${preflight_stderr}" >&2 || true
+    sed -n '1,160p' "${sshd_root}/sshd.log" >&2 || true
+    return 1
+  fi
+  rm -f "${preflight_stderr}"
+}
+
 run_case() {
   name="$1"
   mode="$2"
@@ -308,6 +328,10 @@ run_case() {
     else
       printf 'runtime root absent: %s\n' "${runtime_root}" >&2
     fi
+    sed -n '1,160p' "${sshd_root}/sshd.log" | sed \
+      -e "s/${password}/[redacted]/g" \
+      -e "s/${mfa_password}/[redacted]/g" \
+      -e "s/${key_passphrase}/[redacted]/g" >&2 || true
     ps -o pid=,ppid=,stat=,args= -u "${client_user}" | sed -n '1,80p' >&2 || true
     printf 'authentication case %s failed\n' "${name}" >&2
     exit 1
@@ -324,6 +348,7 @@ ${common}
   IdentityFile ${client_home}/.ssh/client_key
   IdentitiesOnly yes
   PreferredAuthentications publickey"
+preflight_sftp_transport auth-key
 run_case key none auth-key "${target_home}" endpoint-auth.txt
 
 agent_socket="${client_home}/.ssh/agent.sock"

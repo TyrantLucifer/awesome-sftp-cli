@@ -115,38 +115,38 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	sessions.SetSSHConnector(func(connectCtx context.Context, hostAlias string) (provider.Provider, error) {
 		attempt, err := authBroker.BeginAttempt(connectCtx, hostAlias, authenticationTimeout)
 		if err != nil {
-			return nil, err
+			return nil, sshConnectStageError("start authentication attempt", domain.CodeInternal, domain.RetryNever, err)
 		}
 		defer attempt.Close()
 		executable, err := os.Executable()
 		if err != nil {
-			return nil, fmt.Errorf("find askpass executable: %w", err)
+			return nil, sshConnectStageError("find authentication helper", domain.CodeInternal, domain.RetryNever, err)
 		}
 		if err := platform.ValidateExecutable(executable); err != nil {
-			return nil, fmt.Errorf("validate askpass executable: %w", err)
+			return nil, sshConnectStageError("validate authentication helper", domain.CodeIntegrityFailed, domain.RetryNever, err)
 		}
 		environment, err := auth.OpenSSHEnvironment(os.Environ(), executable, attempt.Token())
 		if err != nil {
-			return nil, err
+			return nil, sshConnectStageError("prepare OpenSSH authentication", domain.CodeInternal, domain.RetryNever, err)
 		}
 		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: hostAlias, Environment: environment, Redact: []string{string(attempt.Token())}})
 		if err != nil {
-			return nil, err
+			return nil, sshConnectStageError("establish OpenSSH SFTP session", domain.CodeTransportInterrupted, domain.RetryAfterReconnect, err)
 		}
 		remoteEndpointID, err := domain.NewEndpointID(generator)
 		if err != nil {
 			_ = transport.Close()
-			return nil, err
+			return nil, sshConnectStageError("create SSH endpoint", domain.CodeInternal, domain.RetryNever, err)
 		}
 		remoteSessionID, err := domain.NewSessionID(generator)
 		if err != nil {
 			_ = transport.Close()
-			return nil, err
+			return nil, sshConnectStageError("create SSH provider session", domain.CodeInternal, domain.RetryNever, err)
 		}
 		implementation, err := sftpprovider.New(sftpprovider.Config{Endpoint: domain.Endpoint{ID: remoteEndpointID, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias}, SessionID: remoteSessionID, Client: transport.Client(), Close: transport.Close})
 		if err != nil {
 			_ = transport.Close()
-			return nil, err
+			return nil, sshConnectStageError("initialize SSH provider", domain.CodeInternal, domain.RetryNever, err)
 		}
 		return implementation, nil
 	})
@@ -161,6 +161,17 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	return daemon.Serve(ctx, listener, server)
+}
+
+func sshConnectStageError(message string, code domain.Code, retry domain.RetryKind, cause error) error {
+	return &domain.OpError{
+		Code:      code,
+		Message:   message,
+		Operation: "connect_ssh",
+		Retry:     domain.RetryAdvice{Kind: retry},
+		Effect:    domain.EffectNone,
+		Cause:     cause,
+	}
 }
 
 func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
