@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1–M1.2 已通过，当前只推进 Stage 1 的 M1.3，后续里程碑不得绕过前置门禁。
+Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1–M1.3 已通过，当前只推进 Stage 1 的 M1.4，后续阶段不得绕过 Stage 1 退出门禁。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -58,7 +58,9 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Tests**: Broker 状态机/race/秘密扫描；代理与双提示 MFA；agent/key/password；MIT Kerberos 临时 realm 的 GSSAPI-only 成功、ticket 缺失/过期/外部续期恢复；host-key 语义不降级。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
+
+**Current checkpoint**: 提交 `7f0ea00981cecd5799b3c17ee56eff204cfd5a90` 的 daemon-global 单次消费 Auth Broker、owner/attach/detach/timeout/cancel/多提示边界、同二进制 askpass、TUI 提示与安全失败阶段均通过聚焦 race/vet；Hosted run [29408865534](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29408865534) 的 auth job [87330882913](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29408865534/job/87330882913) 真实通过 key、agent、ProxyCommand、ProxyJump、password、错误密码、取消、双提示 MFA、首次 host-key 确认、变化 host-key fail-closed，以及 MIT Kerberos/GSSAPI 有效、缺失、过期和外部续票恢复矩阵与秘密扫描。
 
 ### M1.4: 工作区与恢复
 
@@ -68,7 +70,7 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Tests**: Location/Host parser 与 Include/通配 fixture；workspace round-trip/中断/损坏/秘密扫描；断网、sshd/daemon 重启、能力变化和失效目录；macOS/Linux PTY、SIGWINCH、窄终端、退出重入及完整 Stage 1 gate。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
 
 ## Stage 2: Durable Transfers
 
