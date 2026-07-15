@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
@@ -181,6 +182,70 @@ func TestProviderSessionClosesSSHProviderThatConnectsAfterSessionClose(t *testin
 	case <-remote.closed:
 	case <-time.After(time.Second):
 		t.Fatal("late SSH provider was not closed")
+	}
+}
+
+func TestProviderSessionsRouteAuthPromptToClaimingSession(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	broker, err := auth.NewBroker(auth.Config{MaxPrompts: 4})
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory.SetAuthBroker(broker)
+	askpass := factory.NewSession()
+	ui := factory.NewSession()
+	other := factory.NewSession()
+	defer askpass.Close()
+	defer ui.Close()
+	defer other.Close()
+	attempt, err := broker.BeginAttempt(context.Background(), "work-host", time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attempt.Close()
+	promptPayload, err := json.Marshal(ipc.AuthPromptRequest{AttemptToken: string(attempt.Token()), Prompt: "Password:", Kind: string(auth.PromptSecret)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	type handleResult struct {
+		value any
+		err   error
+	}
+	promptDone := make(chan handleResult, 1)
+	go func() {
+		value, handleErr := askpass.Handle(context.Background(), AuthPrompt, promptPayload)
+		promptDone <- handleResult{value: value, err: handleErr}
+	}()
+	claim := handlePayload[ipc.AuthClaimResponse](t, ui, AuthClaim, ipc.AuthClaimRequest{})
+	secret := "stage1-secret-canary"
+	resolvePayload, err := json.Marshal(ipc.AuthResolveRequest{ChallengeID: claim.ChallengeID, Action: ipc.AuthActionAnswer, Answer: secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := other.Handle(context.Background(), AuthResolve, resolvePayload); !domain.IsCode(err, domain.CodePermissionDenied) {
+		t.Fatalf("other session resolve error = %v, want permission_denied", err)
+	}
+	if _, err := ui.Handle(context.Background(), AuthResolve, resolvePayload); err != nil {
+		t.Fatal(err)
+	}
+	result := <-promptDone
+	if result.err != nil {
+		t.Fatal(result.err)
+	}
+	encoded, err := json.Marshal(result.value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response ipc.AuthPromptResponse
+	if err := json.Unmarshal(encoded, &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Answer != secret {
+		t.Fatalf("prompt answer = %q", response.Answer)
 	}
 }
 

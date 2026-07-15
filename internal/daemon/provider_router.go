@@ -8,7 +8,9 @@ import (
 	"io"
 	"sort"
 	"sync"
+	"sync/atomic"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
@@ -22,6 +24,9 @@ const (
 	ProviderStat       = "provider.stat"
 	ProviderRead       = "provider.read"
 	ProviderConnectSSH = "provider.connect_ssh"
+	AuthPrompt         = "auth.prompt"
+	AuthClaim          = "auth.claim"
+	AuthResolve        = "auth.resolve"
 )
 
 type SSHConnector func(context.Context, string) (providerapi.Provider, error)
@@ -30,9 +35,12 @@ type ProviderSessions struct {
 	providers    map[domain.EndpointID]providerapi.Provider
 	maxReadBytes uint32
 	connectSSH   SSHConnector
+	authBroker   *auth.Broker
+	nextOwner    atomic.Uint64
 }
 
 func (s *ProviderSessions) SetSSHConnector(connector SSHConnector) { s.connectSSH = connector }
+func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)      { s.authBroker = broker }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	if len(providers) == 0 {
@@ -63,13 +71,18 @@ func (s *ProviderSessions) NewSession() Session {
 	for id, implementation := range s.providers {
 		providers[id] = implementation
 	}
-	return &providerSession{
+	session := &providerSession{
 		providers:    providers,
 		maxReadBytes: s.maxReadBytes,
 		connectSSH:   s.connectSSH,
 		owned:        make([]providerapi.Provider, 0),
 		cursors:      make(map[cursorKey]providerapi.Provider),
 	}
+	if s.authBroker != nil {
+		session.authBroker = s.authBroker
+		session.authOwner = auth.OwnerID(s.nextOwner.Add(1))
+	}
+	return session
 }
 
 type cursorKey struct {
@@ -90,6 +103,8 @@ type providerSession struct {
 	closed       bool
 	connectSSH   SSHConnector
 	owned        []providerapi.Provider
+	authBroker   *auth.Broker
+	authOwner    auth.OwnerID
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -100,6 +115,12 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return nil, internalError("provider session is closed", nil)
 	}
 	switch name {
+	case AuthPrompt:
+		return s.authPrompt(ctx, payload)
+	case AuthClaim:
+		return s.authClaim(ctx, payload)
+	case AuthResolve:
+		return s.authResolve(payload)
 	case ProviderConnectSSH:
 		return s.connect(ctx, payload)
 	case ProviderEndpoints:
@@ -136,6 +157,9 @@ func (s *providerSession) Close() error {
 	owned := s.owned
 	s.owned = nil
 	s.mu.Unlock()
+	if s.authBroker != nil {
+		s.authBroker.Detach(s.authOwner)
+	}
 	var result error
 	for key, implementation := range cursors {
 		if discarder, ok := implementation.(cursorDiscarder); ok {
@@ -148,6 +172,82 @@ func (s *providerSession) Close() error {
 		}
 	}
 	return result
+}
+
+func (s *providerSession) authPrompt(ctx context.Context, payload json.RawMessage) (any, error) {
+	if s.authBroker == nil {
+		return nil, unsupportedAuth()
+	}
+	var request ipc.AuthPromptRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode authentication prompt", err)
+	}
+	if err := ipc.ValidateAuthPromptRequest(request); err != nil {
+		return nil, invalidArgument("validate authentication prompt", err)
+	}
+	answer, err := s.authBroker.Prompt(ctx, auth.Token(request.AttemptToken), request.Prompt, auth.PromptKind(request.Kind))
+	if err != nil {
+		return nil, mapAuthError(err)
+	}
+	defer clear(answer)
+	return ipc.AuthPromptResponse{Answer: string(answer)}, nil
+}
+
+func (s *providerSession) authClaim(ctx context.Context, payload json.RawMessage) (any, error) {
+	if s.authBroker == nil {
+		return nil, unsupportedAuth()
+	}
+	var request ipc.AuthClaimRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode authentication claim", err)
+	}
+	challenge, err := s.authBroker.Claim(ctx, s.authOwner)
+	if err != nil {
+		return nil, mapAuthError(err)
+	}
+	return ipc.AuthClaimResponse{ChallengeID: string(challenge.ID), Endpoint: challenge.Endpoint, Prompt: challenge.Prompt, Kind: string(challenge.Kind), ExpiresAt: challenge.ExpiresAt}, nil
+}
+
+func (s *providerSession) authResolve(payload json.RawMessage) (any, error) {
+	if s.authBroker == nil {
+		return nil, unsupportedAuth()
+	}
+	var request ipc.AuthResolveRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode authentication response", err)
+	}
+	if err := ipc.ValidateAuthResolveRequest(request); err != nil {
+		return nil, invalidArgument("validate authentication response", err)
+	}
+	answer := []byte(request.Answer)
+	defer clear(answer)
+	err := s.authBroker.Resolve(s.authOwner, auth.ChallengeID(request.ChallengeID), auth.Resolution{Answer: answer, Cancel: request.Action == ipc.AuthActionCancel})
+	if err != nil {
+		return nil, mapAuthError(err)
+	}
+	return ipc.AuthResolveResponse{}, nil
+}
+
+func mapAuthError(err error) error {
+	code := domain.CodeInternal
+	retry := domain.RetryAdvice{Kind: domain.RetryNever}
+	switch {
+	case errors.Is(err, context.Canceled):
+		code = domain.CodeCanceled
+	case errors.Is(err, context.DeadlineExceeded):
+		code = domain.CodeTimeout
+	case errors.Is(err, auth.ErrNotOwner), errors.Is(err, auth.ErrAttemptNotFound):
+		code = domain.CodePermissionDenied
+	case errors.Is(err, auth.ErrChallengeNotFound):
+		code = domain.CodeInvalidArgument
+	case errors.Is(err, auth.ErrPromptLimit):
+		code = domain.CodeResourceExhausted
+	}
+	return &domain.OpError{Code: code, Message: "authentication request failed", Retry: retry, Effect: domain.EffectNone, Cause: err}
+}
+
+func unsupportedAuth() error {
+	return &domain.OpError{Code: domain.CodeUnsupported, Message: "authentication broker is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 }
 
 func (s *providerSession) connect(ctx context.Context, payload json.RawMessage) (any, error) {
