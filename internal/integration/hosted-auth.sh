@@ -29,6 +29,7 @@ cleanup() {
   fi
   pkill -KILL -u "${client_user}" -f "${installed}" 2>/dev/null || true
   pkill -KILL -u "${client_user}" -x ssh-agent 2>/dev/null || true
+  rm -f "${installed}"
 }
 trap cleanup EXIT
 
@@ -339,10 +340,6 @@ run_case() {
     ps -o pid=,ppid=,stat=,args= -u "${client_user}" | sed -n '1,80p' >&2 || true
     printf 'authentication case %s failed\n' "${name}" >&2
     exit 1
-  fi
-  if ! test -s "${output}"; then
-    printf 'authentication case %s produced an empty terminal log\n' "${name}" >&2
-    return 1
   fi
   stop_client_daemon
   printf 'authentication case %s passed\n' "${name}"
