@@ -1,6 +1,6 @@
 # Stage 1 — Read-only Explorer
 
-- **状态**：In Progress
+- **状态**：Complete
 - **阶段类型**：第一个端到端用户切片
 - **前置条件**：[Stage 0 — Foundation & Knowledge](00-foundation.md) 已通过退出门禁
 - **完成后进入**：[Stage 2 — Durable Transfers](02-durable-transfers.md)
@@ -40,7 +40,7 @@
 - IPC 信封、Provider 契约、能力模型和 Fake Provider。
 - macOS/Linux 构建测试入口。
 - 文档真相链和阶段验证模板。
-- [ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md) 冻结的 tcell v3.4.0、pkg/sftp v1.13.10 与 `log/slog` 边界。
+- [ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md) 冻结的 tcell v3.4.0、经 [ADR-0011](../architecture/adr/0011-pkg-sftp-streaming-directory-cursor.md) 修订的 pkg/sftp cursor 边界与 `log/slog` 边界。
 - [ADR-0007](../architecture/adr/0007-platform-paths-runtime-socket-and-ipc.md) 冻结的平台路径、peer UID、单实例和 `control-v1.sock` 规则。
 - [ADR-0009](../architecture/adr/0009-supported-platform-ci-and-packaging-baseline.md) 冻结的 macOS 15/Ubuntu 22.04、架构与 OpenSSH 测试基线。
 
@@ -137,7 +137,7 @@
 
 ### M1.2 — 真实 SFTP Endpoint
 
-1. 按 ADR-0006 精确引入 pkg/sftp v1.13.10 并完成依赖 intake，再按 ADR-0001 精确 argv 通过系统 OpenSSH 启动 SFTP 子系统。
+1. 按 ADR-0006 完成最初的 pkg/sftp v1.13.10 依赖 intake，再按 ADR-0011 切换为 upstream v1.13.11 加精确 immutable cursor fork；按 ADR-0001 精确 argv 通过系统 OpenSSH 启动 SFTP 子系统。
 2. 接入 SFTP Provider 和错误映射。
 3. 完成本地/远端与远端/远端独立浏览。
 
@@ -161,15 +161,15 @@
 
 ## 6. 可验证退出标准
 
-- [ ] 本地/本地、本地/远端、远端/远端三种组合可在任一栏独立切换和导航。
+- [x] 本地/本地、本地/远端、远端/远端三种组合可在任一栏独立切换和导航。
 - [x] UI、RPC 和 CLI 均没有文件写入入口；权限受限夹具证明只读边界。
 - [x] config/state/cache/log/runtime 根、完整 ancestor chain、Darwin `/var -> /private/var` 与 `/tmp -> /private/tmp` 别名/deny-vs-allow ACL、Linux XDG/access+default ACL、sticky `/tmp` 回退、Unix Socket 权限和单实例行为在 macOS/Linux 均验证；不安全持久/override 路径 fail closed 且不产生隐蔽回退状态。
 - [x] 系统 OpenSSH 的 Host 别名、ProxyCommand/ProxyJump 与至少一种非密码认证通过。
 - [x] MIT Kerberos/GSSAPI 受控验证成功，且 ticket/秘密未出现在日志、工作区或数据库。
 - [x] 认证等待在无客户端、超时和取消场景可恢复。
-- [ ] 目录结果增量出现；慢 Provider 不冻结输入，导航可取消旧请求。
+- [x] 目录结果增量出现；慢 Provider 不冻结输入，导航可取消旧请求。
 - [x] 大文件预览读取量有明确上限，二进制不会误当完整文本载入。
-- [ ] SSH 断开、守护进程重启和当前目录失效均有可预测恢复。
+- [x] SSH 断开、守护进程重启和当前目录失效均有可预测恢复。
 - [x] 两个平台的键位、窄终端、调整尺寸和退出重入冒烟通过。
 
 ## 7. 测试矩阵

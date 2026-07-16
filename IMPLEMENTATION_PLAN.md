@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1–M1.3 已通过，当前只推进 Stage 1 的 M1.4，后续阶段不得绕过 Stage 1 退出门禁。
+Stage 0–1 已完成；Stage 2–6 保持 Not Started。下一步只允许先执行 Stage 2 的 ADR-0008 精确 SQLite 依赖准入，不得在依赖与平台数据库门禁前创建 schema 或写路径。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -14,7 +14,7 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Status**: Complete
 
-**Current checkpoint**: 本地实现、独立审查、两轮 cold-start audit 与最终本地 closeout 均已完成。首轮 Hosted run `29394164471` 暴露并固定了 GNU Make 4.x 安全 `-I` 路径误判。修复提交 `cf8e6efd2814d835f8c1f5c2739608477b5216ed`、树 `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5` 的替代 Hosted run [`29394698864`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) 随后 23/23 作业通过：四个 native、四个 oldstable、quality、四目标 build、八个独立缓存 reproducibility producer、compare 与最终 provenance aggregation 均为绿色。Stage 0 的 CORE-001–008 已有可追溯完成证据；Stage 1 已解锁但尚未开始。
+**Current checkpoint**: 本地实现、独立审查、两轮 cold-start audit 与最终本地 closeout 均已完成。首轮 Hosted run `29394164471` 暴露并固定了 GNU Make 4.x 安全 `-I` 路径误判。修复提交 `cf8e6efd2814d835f8c1f5c2739608477b5216ed`、树 `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5` 的替代 Hosted run [`29394698864`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) 随后 23/23 作业通过：四个 native、四个 oldstable、quality、四目标 build、八个独立缓存 reproducibility producer、compare 与最终 provenance aggregation 均为绿色。Stage 0 的 CORE-001–008 已有可追溯完成证据；其后续状态见下方阶段条目。
 
 ## Stage 1: Read-only Explorer
 
@@ -24,7 +24,7 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Tests**: 单元与 Provider 契约测试；ADR-0007 路径的 XDG/TMPDIR/override/symlink/owner/mode、Darwin系统别名、integrity-only与owner-private deny/allow-read/write/inherited ACL、Linux access/default ACL、sticky `/tmp` 回退和竞态；ADR-0001 默认`/usr/bin/ssh`/安全absolute override完整链、poisoned PATH、special-bits/ACL/替换与精确argv/冲突配置；临时sshd、ProxyCommand、MIT Kerberos/GSSAPI、重启/断网/认证等待和macOS/Linux TUI冒烟。
 
-**Status**: In Progress
+**Status**: Complete
 
 ### M1.1: 本地只读端到端
 
@@ -40,7 +40,7 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 ### M1.2: 真实 SFTP Endpoint
 
-**Goal**: 完成 `pkg/sftp v1.13.10` intake，并仅通过 ADR-0001 的 validated absolute system OpenSSH stdio 实现 SFTP Provider 与双远端浏览。
+**Goal**: 完成最初的 `pkg/sftp v1.13.10` intake，并仅通过 ADR-0001 的 validated absolute system OpenSSH stdio 实现 SFTP Provider 与双远端浏览；最终依赖边界由 ADR-0011 修订为 upstream v1.13.11 加 immutable cursor fork。
 
 **Success Criteria**: 默认 `/usr/bin/ssh` 且 PATH fake 0-hit；host alias 与精确 argv 无注入面；stderr 脱敏限长，取消/退出回收子进程；本地/远端和远端/远端可独立浏览并传播 partial/degraded 状态。
 
@@ -70,9 +70,9 @@ Stage 0 已完成；Stage 1 正在实施；Stage 2–6 保持 Not Started。M1.1
 
 **Tests**: Location/Host parser 与 Include/通配 fixture；workspace round-trip/中断/损坏/秘密扫描；断网、sshd/daemon 重启、能力变化和失效目录；macOS/Linux PTY、SIGWINCH、窄终端、退出重入及完整 Stage 1 gate。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: CLI/workspace/picker、能力、诊断、Vim 与预览已通过既有本地/Hosted 子门禁；四平台 kernel ACL、cross-process lock 与 hostile other-UID peer fixtures 在 [Hosted run 29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068) 全绿。pane recovery state machine 与 ADR-0011 窄 fork已通过 RED→GREEN、双工具链、race、恶意包、依赖准入和完整本地门禁。提交 `da4aa361c81ba93d14733819e21c3cba092b3590` 与 `44f2f138951ca8277c2b20350b7903f1e7d3203b` 的 Hosted 输出均显示 recovered parent、marker 和成功状态；两次失败分别定位为 raw ANSI retained-cell 误判和同一 synchronized paint frame 的过约束。最终 self-test 将两项精确证据限定在 refresh checkpoint 后并跨完整 tcell frames 累计，正进入第三次也是最后一次 observation 候选；Stage 1/M1.4 在 exact-candidate Hosted evidence 完成前保持 In Progress。
+**Current checkpoint**: 最终实现提交 `90cbfea81bd2d802bd3f7579a0b192c81ba3281b`、树 `53c7b1ac62e809b7046ea366701a21e6dc0bf757` 已通过完整本地 current/oldstable 门禁；[Hosted run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) 24/24 作业全绿。真实 auth job 同时通过三种 Endpoint 组合、workspace 重入、sshd/daemon 重启、失效目录 nearest-parent 恢复、OpenSSH 认证矩阵和 MIT Kerberos/GSSAPI 四用例；ADR-0011 packet-bounded SFTP cursor、四平台 kernel ACL/lock/hostile-UID 与 PTY resize/退出重入证据均闭环。Stage 1/M1.4 完成，Stage 2 保持 Not Started。
 
 ## Stage 2: Durable Transfers
 

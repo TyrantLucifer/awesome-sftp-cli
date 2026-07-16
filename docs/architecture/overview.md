@@ -8,7 +8,7 @@
 
 ### 当前实现边界
 
-本文主体描述 1.0 目标架构，不代表所有运行时组件已经存在。Stage 0 foundation 以及 Stage 1 M1.1–M1.3 已完成；M1.4 已实现 CLI Location/Host picker、secret-free 原子 workspace、双栏恢复、能力快照替换和有界结构化 daemon 日志，正在完成真实恢复/平台门禁。SQLite、传输引擎、内容缓存、外部编辑和 remote helper 仍未交付，项目也未达到 production readiness。当前证据见 [Stage 1 verification](../verification/stage-01.md)；生产/发行就绪只由 Stage 6 门禁判定。
+本文主体描述 1.0 目标架构，不代表所有运行时组件已经存在。Stage 0 foundation 与 Stage 1 Read-only Explorer 已完成：CLI Location/Host picker、secret-free 原子 workspace、双栏恢复、能力快照替换、packet-bounded SFTP cursor 和有界结构化 daemon 日志均有本地与 Hosted 证据。SQLite、传输引擎、内容缓存、外部编辑和 remote helper 仍未交付，项目也未达到 production readiness。完成证据见 [Stage 1 verification](../verification/stage-01.md)；生产/发行就绪只由 Stage 6 门禁判定。
 
 ### 已冻结兼容与发行基线
 
@@ -114,7 +114,7 @@ daemon 启动后在平台 LogFile 打开 owner-only JSON 日志。业务 server 
 
 正式平台默认 absolute path 是 `/usr/bin/ssh`，不查找 `PATH`；自定义 binary 只接受 ADR-0001 逐级验证 owner/mode/ACL/no-symlink/special-bits 后的显式 absolute real path，并在每次启动前重验。守护进程把该子进程的标准输入与标准输出交给 Go SFTP 协议层。调用不经过 shell；host alias 必须通过格式校验。固定参数关闭 TTY、escape、agent/X11/端口转发、LocalCommand/RemoteCommand、后台化、tunnel与新GSS delegation；系统ssh仍负责认证/config/proxy/known_hosts且SFTP可复用ControlMaster，既有master先前的delegation/forward属于用户配置边界。Helper与用户授权remote `!`/`gs`则强制GSS delegation off及ControlMaster/Path/Persist off的fresh transport；完整argv、marker/cwd quoting、TTY与取消契约见[ADR-0001](adr/0001-system-openssh-transport.md)。
 
-SFTP 协议 client 固定为 `github.com/pkg/sftp v1.13.10`，只连接已经由 ADR-0001 精确 system-ssh argv 建立的 stdio；它不接管 SSH 握手、凭据或配置解析。
+SFTP 协议 client 保持 `github.com/pkg/sftp` import path，根 module 按 [ADR-0011](adr/0011-pkg-sftp-streaming-directory-cursor.md) pin upstream v1.13.11，并 replace 到精确 immutable cursor fork `github.com/TyrantLucifer/sftp v1.13.12-0.20260715132526-f947b886400b`；它只连接已经由 ADR-0001 精确 system-ssh argv 建立的 stdio，不接管 SSH 握手、凭据或配置解析。
 
 ### 3.4 可选远端 helper
 

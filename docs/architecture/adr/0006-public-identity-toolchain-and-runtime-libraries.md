@@ -3,6 +3,7 @@
 - 状态：Accepted
 - 日期：2026-07-15
 - 影响范围：公开命令、模块路径、Go 兼容线、Stage 1 TUI/SFTP 依赖、结构化日志
+- 修订：本 ADR 的 `github.com/pkg/sftp v1.13.10` 初始 pin 已由 [ADR-0011](0011-pkg-sftp-streaming-directory-cursor.md) 精确取代；其余决策不变
 
 ## 背景
 

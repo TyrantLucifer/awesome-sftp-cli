@@ -1,12 +1,12 @@
 # Stage 1 Verification Record
 
-- **Status**: In Progress
-- **Updated**: 2026-07-15
+- **Status**: Complete
+- **Updated**: 2026-07-16
 - **Repository root**: `/Users/bytedance/Downloads/projects/awesome-mac-sftp`
 - **Branch**: `codex/stage1-read-only-explorer`
 - **Stage 0 baseline commit/tree**: `d637474ac52ef2c5b9f78c9be663e52c6a9f441c` / `83a515607f44f7edb85f8103962b6d9d1173c02d`
-- **Current milestone**: M1.4 — Workspace and recovery
-- **Current candidate**: M1.4 recovery state machine and ADR-0011 source-streaming cursor at `da4aa361c81ba93d14733819e21c3cba092b3590`; product recovery succeeded in Hosted output, while a terminal-screen assertion repair is being validated before the next exact-head gate
+- **Current milestone**: Stage 1 complete; Stage 2 not started
+- **Current candidate**: final implementation commit `90cbfea81bd2d802bd3f7579a0b192c81ba3281b`, tree `53c7b1ac62e809b7046ea366701a21e6dc0bf757`; [Hosted run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) passed 24/24 jobs
 
 Stage 1 delivers the read-only explorer only. It does not deliver Stage 2 transfer or mutation operations, Stage 3 external editing/cache, Stage 4 helper/search, Stage 5 direct transfer/scale hardening, or Stage 6 release readiness.
 
@@ -54,14 +54,14 @@ The local dependency intake sub-gate is closed. Hosted native and oldstable jobs
 - **Goal**: exact tcell intake; ADR-0007 Paths/ACL/lock/peer UID; daemon/IPC lifecycle; LocalFS; local/local Vim-first windowed TUI and bounded preview.
 - **Candidate commit**: `8e649f534b500e494ec2984a763e4491711df5fe`
 - **Hosted run**: [29399674061](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29399674061) — PASS for native, oldstable, quality, four builds, eight reproducibility producers, compare and provenance aggregation
-- **Next action**: exact `github.com/pkg/sftp v1.13.10` intake, then ADR-0001 validated `/usr/bin/ssh` stdio transport and SFTP Provider.
+- **Historical next action after M1.1**: exact `github.com/pkg/sftp v1.13.10` intake, then ADR-0001 validated `/usr/bin/ssh` stdio transport and SFTP Provider. ADR-0011 later superseded that initial pin as recorded under M1.4.
 
 Required evidence:
 
 - [x] Exact tcell pin, `go.sum`, module graph, license/changelog/retraction/vulnerability review.
 - [x] Go 1.25.12 and 1.26.5 compatibility plus darwin/linux × amd64/arm64 `CGO_ENABLED=0` builds.
-- [ ] ADR-0007 config/state/cache/log/runtime and ancestor trust on macOS/Linux, including ACL profiles and sticky `/tmp` fallback.
-- [ ] Single-instance lock, stale socket, `0600` socket, no TCP listener, and bidirectional peer UID verification.
+- [x] ADR-0007 config/state/cache/log/runtime and ancestor trust on macOS/Linux, including ACL profiles and sticky `/tmp` fallback.
+- [x] Single-instance lock, stale socket, `0600` socket, no TCP listener, and bidirectional peer UID verification.
 - [x] Daemon auto-start path, handshake/reconnect/cancel, bounded in-flight requests, single-instance convergence, five reconnect cycles, idle-connection shutdown and socket cleanup are covered locally.
 - [x] LocalFS shared Provider contract and explicit read-only route boundary pass locally.
 - [x] Local/local two-pane model, visible-window renderer, Vim navigation/filter/selection, terminal sanitization and 64 KiB preview pass locally.
@@ -76,14 +76,14 @@ Hosted Linux native ACL/SO_PEERCRED/flock/socket execution and both macOS runner
 
 Current candidate evidence:
 
-- Root module directly pins `github.com/pkg/sftp v1.13.10` (tag commit `939b20346433320aab08dfb0f175db0742304cf5`, `go 1.23.0`, BSD-3-Clause, not retracted). Runtime additions are `github.com/kr/fs v0.1.0` and `golang.org/x/crypto v0.41.0`, both BSD-3-Clause and not retracted.
+- The M1.2 candidate directly pinned `github.com/pkg/sftp v1.13.10` (tag commit `939b20346433320aab08dfb0f175db0742304cf5`, `go 1.23.0`, BSD-3-Clause, not retracted). ADR-0011 later superseded this historical pin as recorded under M1.4. Runtime additions at M1.2 were `github.com/kr/fs v0.1.0` and `golang.org/x/crypto v0.41.0`, both BSD-3-Clause and not retracted.
 - `govulncheck ./...` reports zero reachable vulnerabilities. It reports vulnerable symbols in required modules that the candidate does not call; the exact scan output is retained as a dependency-risk note rather than mislabeled as a clean module graph.
 - `internal/transport/openssh` validates `/usr/bin/ssh` or a clean absolute override from root through final inode, rejects symlink/writable/special-bit/non-executable paths, compares the final inode immediately before start, uses the exact ADR-0001 argv, rejects option/control-byte host aliases, and bounds sanitized stderr to 64 KiB.
 - `internal/provider/sftp` runs structured SFTP over the OpenSSH stdio pipes and passes the shared read-only Provider contract against a real in-process SFTP protocol server. Client RPC can add per-connection SSH endpoints, so local/remote and remote/remote pane combinations use the same daemon routes.
 - The quality job provisions two temporary real `sshd` instances and runs `TestRealOpenSSHSFTPHostAliasAndNonDefaultPort` with the isolated runner account's ephemeral `ssh_config`. It proves two independently browsable endpoints, Host aliases, non-default ports, poisoned-PATH fake ssh 0-hit, ADR-0001 overrides against conflicting TTY/escape/session/forward/local/remote-command/stdin/background/tunnel settings, and disconnect isolation. Local runs intentionally skip that guarded test because modifying a developer's real SSH config is outside the safe local fixture boundary.
 - Commit `28f8731604201763e48bf43c5a7f7e2a7014ca6c` passed local `make check`, `make lint`, `make docs-check`, `make supply-chain`, full race, exact Go 1.25.12 and four CGO-disabled target builds. Hosted run [29401801663](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401801663) passed quality including the strengthened real-sshd fixture, all native/oldstable/build/reproducibility jobs, compare and provenance aggregation.
 
-Stage-level carry-forward: pkg/sftp v1.13.10 exposes `ReadDirContext` as a complete slice, so daemon/UI pages are bounded but the source listing is not yet truly streamed; the Stage 1 exit gate remains open until that limitation is resolved. Durable reconnect, degraded-state UI and location recovery are M1.4 work. Root/current-euid replacement after final inode validation remains ADR-0001's declared same-user machine trust boundary.
+Stage-level resolution: the original pkg/sftp v1.13.10 complete-slice boundary was closed by ADR-0011's immutable v1.13.11-based cursor fork, whose context-aware `ReadDirCursor` returns one protocol response at a time. Durable reconnect, degraded-state UI and location recovery were completed in M1.4. Root/current-euid replacement after final inode validation remains ADR-0001's declared same-user machine trust boundary.
 
 ### M1.3 — Authentication and complex SSH configuration
 
@@ -113,7 +113,7 @@ Current candidate evidence:
 
 ### M1.4 — Workspace and recovery
 
-- **Status**: In Progress
+- **Status**: Complete
 - **Goal**: CLI Locations, Host picker, workspace save/restore, disconnect/daemon/capability/location recovery, and macOS/Linux PTY evidence.
 
 Current candidate evidence:
@@ -144,7 +144,7 @@ Source-streaming resolution:
 - The fork exposes a context-aware `ReadDirCursor` that returns one `SSH_FXP_NAME` response at a time and safely rejects impossible counts/truncated names. Its real client/server fixture returns a 257-entry directory as `128/128/1/EOF`; current-toolchain, race and Go 1.25.12 suites pass.
 - The Provider now stores only the remote cursor plus the current protocol batch remainder. A deterministic request-server test blocks the second `READDIR` and proves `Limit=1` returns the first page before requesting that batch. EOF, cancellation, error, conflict, discard and Provider close release the handle.
 - Fork `go vet ./...` reports the same two `ReadFrom` signature and two test lock-copy warnings as pristine upstream v1.13.11; the fork adds none. This upstream baseline exception does not weaken the root module's vet/lint gates.
-- PANE-004 is Implemented locally but remains short of Verified until the complete exact-head local and Hosted gates pass.
+- PANE-004 is Verified: the packet-bounded cursor tests and complete exact-head local/Hosted gates pass.
 
 Approved blocker-resolution local validation:
 
@@ -159,7 +159,7 @@ Approved blocker-resolution local validation:
 | `GOTOOLCHAIN=go1.25.12 make check` | PASS on the complete same working-tree candidate |
 | `git diff --check` | PASS |
 
-`govulncheck` reports zero reachable and zero imported-package vulnerabilities, with one uncalled finding somewhere in the required module graph; this remains a dependency-risk note rather than a false claim that every required module is vulnerability-free. Exact-head Hosted/native, real recovery and reproducibility evidence are still pending.
+`govulncheck` reports zero reachable and zero imported-package vulnerabilities, with one uncalled finding somewhere in the required module graph; this remains a dependency-risk note rather than a false claim that every required module is vulnerability-free. Exact-head Hosted/native, real recovery and reproducibility evidence passed in run 29467496969.
 
 Platform final-evidence candidate:
 
@@ -167,7 +167,7 @@ Platform final-evidence candidate:
 - Linux-native tests set real `system.posix_acl_access` and `system.posix_acl_default` xattrs and prove named effective access and inherited defaults fail closed.
 - A subprocess fixture proves the instance lock is exclusive across processes and available only after release.
 - A root-gated adversarial fixture creates a real client under another UID, deliberately widens the test directory/socket DAC modes, and proves the listener's peer-credential check independently rejects it. Native CI compiles one platform test binary, runs kernel ACL/lock tests unprivileged, then runs this peer test through `sudo` on Ubuntu 22.04/24.04 and macOS 15 ARM/Intel.
-- Fresh local `go test -race -count=1 ./internal/platform`, exact `GOTOOLCHAIN=go1.25.12 go test -count=1 ./internal/platform`, `make docs-check`, actionlint and `git diff --check` pass. Exact-head Hosted run [29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068) then passed the kernel ACL, cross-process lock and root hostile-UID step on [Ubuntu 22.04](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131342), [Ubuntu 24.04](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131321), [macOS 15 ARM](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131251), and [macOS 15 Intel](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131365). DAEM-002 and SEC-001 are therefore Verified independently of the still-failing recovery job.
+- Fresh local `go test -race -count=1 ./internal/platform`, exact `GOTOOLCHAIN=go1.25.12 go test -count=1 ./internal/platform`, `make docs-check`, actionlint and `git diff --check` pass. Exact-head Hosted run [29417470068](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068) then passed the kernel ACL, cross-process lock and root hostile-UID step on [Ubuntu 22.04](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131342), [Ubuntu 24.04](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131321), [macOS 15 ARM](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131251), and [macOS 15 Intel](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29417470068/job/87359131365). DAEM-002 and SEC-001 are Verified, and the same platform matrix passed again in the final run.
 
 ## Stage 1 explorer feature evidence
 
@@ -177,15 +177,24 @@ These rows record independently satisfied Stage 1 features. Rows whose acceptanc
 |---|---|---|
 | CONN-001 | PASS | LocalFS shared contract, local/local PTY and all four native platform legs pass. |
 | CONN-002 | PASS | Exact OpenSSH stdio transport and structured SFTP contract pass with two real sshd endpoints and poisoned PATH 0-hit. |
+| CONN-003 | PASS | Zero/one/two CLI Locations and the real local/local, local/remote and remote/remote PTY scenarios pass. |
 | CONN-004 | PASS | Include/pattern Host discovery and deterministic fuzzy/manual picker tests and snapshots pass. |
 | CONN-005 | PASS | Two isolated real sshd sessions browse independently; terminating one product-owned session leaves the other usable. |
+| CONN-006 | PASS | Real sshd and daemon restart, bounded reconnect, stale-result rejection and nearest-parent recovery pass in run 29467496969. |
+| CONN-007 | PASS | Capability generation replacement/withdrawal tests and the real reconnect transaction reject reuse of the old session snapshot. |
 | CONN-008 | PASS | Domain, IPC, CLI and workspace tests preserve Endpoint identity, canonical absolute paths and raw bytes. |
+| CONN-009 | PASS | Host alias, stage, safe request/code/endpoint/retry context and actionable auth/host-key/transport/subsystem messages are tested. |
 | PANE-001 | PASS | Equal independent pane reducers/render snapshots and native PTY evidence pass. |
+| PANE-002 | PASS | All local/remote combinations and two independent real sshd endpoints pass. |
+| PANE-003 | PASS | Pane-local endpoint switching/recovery preserves the other pane and commits only after a successful first page. |
+| PANE-004 | PASS | ADR-0011 returns a first page before a blocked second `READDIR`; slow/cancel/generation tests and complete gates pass. |
 | PANE-005 | PASS | Visible-window/overscan tests and the 50,000-entry structural benchmark remain bounded. |
 | PANE-006 | PASS | LocalFS/SFTP contract and renderer fixtures preserve available type, size, mtime, permission and link metadata. |
 | PANE-007 | PASS | Per-pane sort/hidden/refresh and canonical cursor/mark remapping tests pass. |
 | PANE-008 | PASS | Direct parent/child/root navigation and failed-location transaction tests pass without premature pane changes. |
 | PANE-010 | PASS | Partial pages survive cancellation/error, stale completions are rejected and refresh recovery is rendered explicitly. |
+| WORK-001 | PASS | Atomic owner-private workspace save and real two-remote PTY save/reopen pass. |
+| WORK-002 | PASS | `--workspace` restores both remote panes in a fresh process and preserves missing/corrupt recovery behavior. |
 | WORK-003 | PASS | Recent/corrupt workspace ordering, Host merge, fuzzy/manual selection and minimum-size picker snapshots pass. |
 | WORK-004 | PASS | Strict schema and secret scans prove workspaces contain Endpoint aliases/UI policy but no credential material. |
 | VIM-001 | PASS | Normal-mode startup, mode visibility and layered modal exit tests/snapshots pass. |
@@ -206,7 +215,7 @@ These rows record independently satisfied Stage 1 features. Rows whose acceptanc
 
 ## Stage 1 exit evidence
 
-The checklist in [Stage 1 specification](../stages/01-read-only-explorer.md#6-可验证退出标准) remains open until source-incremental remote enumeration and the final exact-candidate audit are complete. Feature Matrix rows may become `Verified` only where code, focused tests, required real-environment evidence, this ledger and `PROJECT_STATE.md` agree; cross-stage rows remain `In Progress` when later-stage acceptance is intentionally not delivered here.
+Every checklist item in [Stage 1 specification](../stages/01-read-only-explorer.md#6-可验证退出标准) is closed. Feature Matrix rows are `Verified` where Stage 1 owns the full acceptance; cross-stage rows remain `In Progress` when transfer, editor/cache, helper/search or release acceptance intentionally belongs to later stages.
 
 Mandatory final commands include:
 
@@ -220,6 +229,20 @@ go test -race ./...
 ```
 
 They must be supplemented by Stage 1 integration, PTY, sshd, Kerberos, Provider contract and performance tests; exact Go 1.25.12; four-target builds and metadata; macOS/Linux native and oldstable Hosted CI; reproducibility/provenance comparison; complete candidate-tree pollution checks; and an independent cold-start audit.
+
+Final implementation candidate results:
+
+| Command/check | Result |
+|---|---|
+| `GOTOOLCHAIN=go1.26.5 make ci` | PASS: docs/check/lint/supply-chain, full race, four fuzz smokes, actionlint and four CGO-disabled builds |
+| `GOTOOLCHAIN=go1.25.12 make check` | PASS on the exact oldstable toolchain |
+| `GOTOOLCHAIN=go1.26.5 go test -count=1 ./internal/integration` | PASS |
+| `GOTOOLCHAIN=go1.25.12 go test -count=1 ./internal/integration` | PASS |
+| `GOTOOLCHAIN=go1.26.5 go test -race -count=1 -run '^(TestVTObserverAccumulatesPatternsAcrossSynchronizedFrames\|TestHostedStage1RecoveryNormalizesSplitTerminalWrites\|TestHostedKerberosFailureKeepsTUIResponsive)$' ./internal/integration` | PASS |
+| `bash -n internal/integration/hosted-kerberos.sh`; `git diff --check`; `git diff --cached --check` | PASS |
+| `git status --short --untracked-files=all`; `git ls-files --others --exclude-standard`; candidate `git ls-tree -r --name-only HEAD` pollution review | PASS: no staged/non-ignored untracked product pollution; ignored local-only paths are recorded in `PROJECT_STATE.md` |
+| [Hosted run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) | PASS 24/24 at commit `90cbfea81bd2d802bd3f7579a0b192c81ba3281b`, tree `53c7b1ac62e809b7046ea366701a21e6dc0bf757` |
+| [auth job 87523638581](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969/job/87523638581) | PASS: real OpenSSH, recovery and MIT Kerberos/GSSAPI matrices |
 
 ## Failures, fixes and skipped gates
 
@@ -238,3 +261,7 @@ Exact failed command: `sudo env AMSFTP_AUTH_BINARY=... AMSFTP_AUTH_ROOT=... bash
 The first approved-fix Hosted candidate `da4aa361c81ba93d14733819e21c3cba092b3590` ran as push [29420191827](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29420191827) and PR [29420195012](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29420195012). In auth job [87368385121](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29420191827/job/87368385121), the PTY transcript visibly contains the recovered parent, `a-recovered-marker.txt` and the status `reconnected at nearest accessible parent`; all pre-recovery authentication cases passed. The job nevertheless timed out because `wait_for` searched the raw ANSI delta stream for a contiguous status string. tcell wrote `recon`, retained an unchanged `n` cell from the prior `loading` status, then wrote `ected at nearest accessible` and `parent` at explicit cursor positions, so the visible screen was correct while the raw byte substring could not exist. A deterministic harness self-test first disproved simple ANSI stripping, then drove a bounded 200×30 CSI cursor/erase screen replay and `wait_for_screen` assertion. The assertion still requires both the exact recovery status and recovered marker; no product behavior, timeout or fixture postcondition was weakened. This is the first Hosted attempt for the separately identified harness-observation issue.
 
 The second observation candidate `44f2f138951ca8277c2b20350b7903f1e7d3203b` ran in [29421112752](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29421112752): 22 independent jobs passed, and auth job [87371504535](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29421112752/job/87371504535) again visibly showed the exact recovered marker/status before `wait_for_screen` timed out. The remaining harness mismatch was that its replay required both strings in one synchronized frame. The final deterministic self-test now models a split retained-cell status frame followed by a separate marker/cleanup frame, scopes observation to the post-refresh checkpoint, and accumulates each exact pattern only at completed tcell synchronized updates. This preserves the two original postconditions within the same recovery event without requiring an incidental single-frame paint order. Docker-based local reproduction was unavailable because the configured local Docker daemon was not running; no Hosted fixture dependency, timeout or assertion text was removed. This is attempt two of three for the harness-observation issue.
+
+Later exact logs separated the product contract from two Kerberos harness defects. First, `log_user 0` combined with `log_file -noappend` produced a zero-byte terminal capture even though Expect had matched the live `failed` output; a minimum isolated Expect/VT experiment reproduced 0 bytes and proved `log_file -a -noappend` records and replays the same frame. [Run 29467304585](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467304585) then exposed the second defect: post-spawn `stty rows 30 columns 200` changed the controlling terminal rather than the spawned PTY. The application correctly saw 80×25, clipped the left header before `(failed)`, and rendered `connect auth-gssapi failed` in the status line, while the observer incorrectly replayed the stream as 200×30. Expect's documented pre-spawn `stty_init` contract and an isolated `stty size` proof established the fix without weakening the assertion.
+
+Commit `90cbfea81bd2d802bd3f7579a0b192c81ba3281b` sets the spawned PTY to 200×30 before application startup while retaining structured `auth_required`, live failure paint, exact visible `(failed)`, responsive quit and secret-scan assertions. [Run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) passed all 24 jobs, including [auth job 87523638581](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969/job/87523638581). The failure was therefore a CI fixture-observation configuration defect, not a product flow defect; leaving it unresolved would have blocked evidence and PR readiness but would not have broken ordinary browsing.

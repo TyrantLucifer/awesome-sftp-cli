@@ -69,4 +69,4 @@ Persistent daemon logs are JSON, owner-only (`0600`), and bounded to a 4 MiB cur
 - **Workspace cannot load:** leave the invalid file in place for diagnosis and choose another picker entry. Saving under the same name is intentionally refused until the invalid file is moved or repaired.
 - **Terminal is too small:** resize to at least 20 columns by 5 rows. Resize events trigger a full layout sync.
 
-Stage 1 intentionally does not claim full source-streamed remote directory enumeration: the pinned `github.com/pkg/sftp v1.13.10` public `ReadDirContext` API returns a complete slice before AMSFTP can emit bounded pages. The daemon/TUI page and render boundaries remain bounded, but resolving that dependency boundary is still a Stage 1 exit gate.
+Remote directory enumeration is packet-bounded through ADR-0011's immutable `github.com/pkg/sftp` cursor fork: AMSFTP can emit the first daemon page without waiting for all later `READDIR` responses. The maintained fork is an explicit compatibility boundary; upgrades must preserve its malicious-packet, cancellation, handle-release, dual-toolchain and real client/server tests.

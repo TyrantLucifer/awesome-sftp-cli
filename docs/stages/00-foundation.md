@@ -52,7 +52,7 @@
 
 批准设计中原先有意延迟到 Stage 0 的选择现已由以下 Accepted ADR 冻结；它们是兼容约束，不表示 owning stage 的运行时功能已经实现：
 
-- [ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md)：`AMSFTP`/`amsftp`、module/Go 支持线、tcell v3.4.0、pkg/sftp v1.13.10 与 `log/slog`。
+- [ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md)：`AMSFTP`/`amsftp`、module/Go 支持线、tcell v3.4.0、最初的 pkg/sftp v1.13.10 与 `log/slog`；SFTP pin 后由 ADR-0011 修订。
 - [ADR-0007](../architecture/adr/0007-platform-paths-runtime-socket-and-ipc.md)：macOS/XDG config/state/cache/log/runtime 路径、owner-only socket 与 IPC endpoint major。
 - [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md)：modernc SQLite v1.53.0/libc v1.73.4、项目内前向校验 migration runner 与 WAL-safe online backup。
 - [ADR-0009](../architecture/adr/0009-supported-platform-ci-and-packaging-baseline.md)：GitHub Actions、macOS 15/Ubuntu 22.04 最低支持、OpenSSH 8.9p1 测试线、发行/包标识。
