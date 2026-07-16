@@ -16,8 +16,8 @@ type Plan struct {
 	Args       []string
 	Env        []string
 
-	resolvedIdentity os.FileInfo
-	fileIdentity     os.FileInfo
+	resolvedIdentity frozenFileIdentity
+	fileIdentity     frozenFileIdentity
 	materialization  string
 }
 
@@ -71,7 +71,7 @@ func (plan Plan) CommandContext(ctx context.Context) (*exec.Cmd, error) {
 	if err != nil {
 		return nil, fmt.Errorf("build external command: materialization: %w", err)
 	}
-	if !os.SameFile(plan.fileIdentity, info) {
+	if !plan.fileIdentity.matches(info) {
 		return nil, errors.New("build external command: materialization file identity changed")
 	}
 	if err := validateCommand(Command{Executable: plan.Executable, Args: plan.Args}); err != nil {
@@ -83,24 +83,28 @@ func (plan Plan) CommandContext(ctx context.Context) (*exec.Cmd, error) {
 	return cmd, nil
 }
 
-func canonicalRegularFile(path string) (string, os.FileInfo, error) {
+func canonicalRegularFile(path string) (string, frozenFileIdentity, error) {
 	if path == "" {
-		return "", nil, errors.New("path is empty")
+		return "", frozenFileIdentity{}, errors.New("path is empty")
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return "", nil, err
+		return "", frozenFileIdentity{}, err
 	}
 	canonical, err := filepath.EvalSymlinks(absolute)
 	if err != nil {
-		return "", nil, err
+		return "", frozenFileIdentity{}, err
 	}
 	canonical = filepath.Clean(canonical)
 	info, err := validateCanonicalRegularFile(canonical)
 	if err != nil {
-		return "", nil, err
+		return "", frozenFileIdentity{}, err
 	}
-	return canonical, info, nil
+	identity, err := freezeFileIdentity(info)
+	if err != nil {
+		return "", frozenFileIdentity{}, err
+	}
+	return canonical, identity, nil
 }
 
 func validateCanonicalRegularFile(path string) (os.FileInfo, error) {

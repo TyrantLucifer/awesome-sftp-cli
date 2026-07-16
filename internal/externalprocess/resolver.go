@@ -14,7 +14,7 @@ type ResolvedCommand struct {
 	Executable string
 	Args       []string
 
-	identity os.FileInfo
+	identity frozenFileIdentity
 }
 
 func ResolveCommand(command Command, pathEnvironment string) (ResolvedCommand, error) {
@@ -45,14 +45,14 @@ func ResolveCommand(command Command, pathEnvironment string) (ResolvedCommand, e
 }
 
 func (command ResolvedCommand) Revalidate() error {
-	if !filepath.IsAbs(command.Executable) || filepath.Clean(command.Executable) != command.Executable || command.identity == nil {
+	if !filepath.IsAbs(command.Executable) || filepath.Clean(command.Executable) != command.Executable || command.identity.info == nil {
 		return errors.New("revalidate external command: command is not a resolved executable")
 	}
 	info, err := validateCanonicalExecutable(command.Executable)
 	if err != nil {
 		return fmt.Errorf("revalidate external command: %w", err)
 	}
-	if !os.SameFile(command.identity, info) {
+	if !command.identity.matches(info) {
 		return errors.New("revalidate external command: executable file identity changed")
 	}
 	return nil
@@ -146,27 +146,31 @@ func discoverExecutable(name, pathEnvironment string) (string, error) {
 	return "", fmt.Errorf("discover external command: executable %q not found in PATH", name)
 }
 
-func canonicalExecutable(path string) (string, os.FileInfo, error) {
+func canonicalExecutable(path string) (string, frozenFileIdentity, error) {
 	absolute, err := filepath.Abs(path)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve external command: absolute path: %w", err)
+		return "", frozenFileIdentity{}, fmt.Errorf("resolve external command: absolute path: %w", err)
 	}
 	if err := validateCommand(Command{Executable: absolute}); err != nil {
-		return "", nil, fmt.Errorf("resolve external command path: %w", err)
+		return "", frozenFileIdentity{}, fmt.Errorf("resolve external command path: %w", err)
 	}
 	canonical, err := filepath.EvalSymlinks(absolute)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve external command: canonicalize %q: %w", absolute, err)
+		return "", frozenFileIdentity{}, fmt.Errorf("resolve external command: canonicalize %q: %w", absolute, err)
 	}
 	canonical = filepath.Clean(canonical)
 	if err := validateCommand(Command{Executable: canonical}); err != nil {
-		return "", nil, fmt.Errorf("resolve canonical external command path: %w", err)
+		return "", frozenFileIdentity{}, fmt.Errorf("resolve canonical external command path: %w", err)
 	}
 	info, err := validateCanonicalExecutable(canonical)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve external command %q: %w", canonical, err)
+		return "", frozenFileIdentity{}, fmt.Errorf("resolve external command %q: %w", canonical, err)
 	}
-	return canonical, info, nil
+	identity, err := freezeFileIdentity(info)
+	if err != nil {
+		return "", frozenFileIdentity{}, fmt.Errorf("resolve external command %q: %w", canonical, err)
+	}
+	return canonical, identity, nil
 }
 
 func validateCanonicalExecutable(path string) (os.FileInfo, error) {
