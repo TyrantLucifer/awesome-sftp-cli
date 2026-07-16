@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -155,6 +156,36 @@ func TestSpawnFailureUsesRestoreAndPreservesBothErrors(t *testing.T) {
 	assertSingleRestore(t, recorder.snapshot())
 	if got := controller.State(); got != StateActiveTUI {
 		t.Fatalf("State() = %q, want active after failed spawn cleanup", got)
+	}
+}
+
+func TestForegroundFailureTerminatesAndReapsStartedProcessBeforeResume(t *testing.T) {
+	t.Parallel()
+
+	recorder := &callRecorder{}
+	screen := newFakeScreen(recorder, NewSnapshot("ui", Size{Columns: 90, Rows: 30}))
+	platform := newFakePlatform(recorder)
+	foregroundErr := errors.New("foreground transfer failed")
+	platform.fail["give_foreground"] = foregroundErr
+	controller, err := NewController(screen, platform)
+	if err != nil {
+		t.Fatalf("NewController() error = %v", err)
+	}
+	process := &fakeProcess{recorder: recorder, processGroup: 39, result: Result{Kind: ExitSignaled, Signal: "KILL"}}
+
+	_, err = controller.Run(context.Background(), LauncherFunc(func(context.Context) (Process, error) {
+		recorder.add("start")
+		return process, nil
+	}))
+	if !errors.Is(err, foregroundErr) {
+		t.Fatalf("Run() error = %v, want %v", err, foregroundErr)
+	}
+	calls := recorder.snapshot()
+	if !process.terminated || count(calls, "terminate") != 1 || count(calls, "wait") != 1 {
+		t.Fatalf("calls = %q, terminated = %t; started process was not terminated and reaped", calls, process.terminated)
+	}
+	if slices.Index(calls, "terminate") > slices.Index(calls, "wait") || slices.Index(calls, "wait") > slices.Index(calls, "resume") {
+		t.Fatalf("calls = %q, want terminate -> wait -> resume", calls)
 	}
 }
 
@@ -716,9 +747,16 @@ type fakeProcess struct {
 	waitErr      error
 	waitStarted  chan struct{}
 	releaseWait  chan struct{}
+	terminated   bool
 }
 
 func (process *fakeProcess) ProcessGroup() int { return process.processGroup }
+
+func (process *fakeProcess) Terminate() error {
+	process.recorder.add("terminate")
+	process.terminated = true
+	return nil
+}
 
 func (process *fakeProcess) Wait() (Result, error) {
 	process.recorder.add("wait")

@@ -103,6 +103,10 @@ type Result struct {
 
 type Process interface {
 	ProcessGroup() int
+	// Terminate stops the complete external process group and must make Wait
+	// return. It is used when terminal ownership cannot be transferred after a
+	// successful spawn.
+	Terminate() error
 	Wait() (Result, error)
 }
 
@@ -228,11 +232,17 @@ func (controller *Controller) Run(ctx context.Context, launcher Launcher) (resul
 	processGroup := process.ProcessGroup()
 	if processGroup <= 0 {
 		controller.markAbnormal(session)
-		return Result{}, fmt.Errorf("start external process: invalid process group %d", processGroup)
+		return Result{}, errors.Join(
+			fmt.Errorf("start external process: invalid process group %d", processGroup),
+			terminateAndReap(process),
+		)
 	}
 	if foregroundErr := controller.platform.GiveForeground(processGroup); foregroundErr != nil {
 		controller.markAbnormal(session)
-		return Result{}, fmt.Errorf("give external process terminal foreground: %w", foregroundErr)
+		return Result{}, errors.Join(
+			fmt.Errorf("give external process terminal foreground: %w", foregroundErr),
+			terminateAndReap(process),
+		)
 	}
 	controller.setState(session, StateExternalForeground)
 	controller.finishSuspension(session)
@@ -246,6 +256,12 @@ func (controller *Controller) Run(ctx context.Context, launcher Launcher) (resul
 		controller.markAbnormal(session)
 	}
 	return result, nil
+}
+
+func terminateAndReap(process Process) error {
+	terminateErr := process.Terminate()
+	_, waitErr := process.Wait()
+	return errors.Join(terminateErr, waitErr)
 }
 
 func (controller *Controller) Resize(size Size) error {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
 )
 
 type lifecycleProcessClassifier struct{ status cache.ProcessStatus }
@@ -157,6 +158,54 @@ func TestHeartbeatHandoffRefusesRestartAdoptionWithoutExactLiveProcess(t *testin
 				t.Fatalf("lease daemon changed: %#v, %v", stored, err)
 			}
 		})
+	}
+}
+
+func TestStartupLifecycleReclaimsOnlyDeadPreviewHandoffs(t *testing.T) {
+	manager, _ := newManager(t)
+	ctx := context.Background()
+	identity := cache.ProcessIdentity{PID: 71, BirthID: "birth-71"}
+	manager.processes = lifecycleProcessClassifier{status: cache.ProcessMatches}
+	manager.leaseState, _ = cache.NewLeaseManager(manager.clock, manager.processes, cache.DefaultLeaseExpiry, cache.DefaultOpenerGrace)
+
+	previewEntry := publishLifecycleEntry(t, manager, cache.PolicyEphemeral, false, "dead-preview")
+	preview, err := manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: previewEntry.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("d", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("e", 32)), LeaseID: cache.LeaseID(strings.Repeat("f", 32)),
+		OwnerKind: cache.LeaseOwnerPreview, OwnerID: "preview-owner", Process: &identity,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	editorEntry := publishLifecycleEntry(t, manager, cache.PolicyEphemeral, false, "dead-editor")
+	editor, err := manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: editorEntry.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("1", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("2", 32)), LeaseID: cache.LeaseID(strings.Repeat("3", 32)),
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "editor-owner", Process: &identity,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager.clock = fixedClock{now: preview.Lease.GraceUntil.Add(time.Second)}
+	manager.processes = lifecycleProcessClassifier{status: cache.ProcessGone}
+	manager.leaseState, _ = cache.NewLeaseManager(manager.clock, manager.processes, cache.DefaultLeaseExpiry, cache.DefaultOpenerGrace)
+	if _, err := manager.RunStartupLifecycle(ctx, StartupLifecycleRequest{MaxVisited: 100, MaxBatches: 2}); err != nil {
+		t.Fatal(err)
+	}
+	previewLease, err := manager.catalog.GetLease(ctx, preview.Lease.ID)
+	if err != nil || previewLease.State != cache.LeaseReleased {
+		t.Fatalf("preview lease = %#v, %v; want released", previewLease, err)
+	}
+	if _, err := manager.catalog.BeginEviction(ctx, cache.MaterializationEviction(preview.Materialization.ID), manager.now()); err != nil {
+		t.Fatalf("dead preview materialization remained protected: %v", err)
+	}
+	editorLease, err := manager.catalog.GetLease(ctx, editor.Lease.ID)
+	if err != nil || editorLease.State != cache.LeaseActive {
+		t.Fatalf("editor lease = %#v, %v; want retained active", editorLease, err)
+	}
+	if _, err := manager.catalog.BeginEviction(ctx, cache.MaterializationEviction(editor.Materialization.ID), manager.now()); !errors.Is(err, cachestore.ErrEvictionProtected) {
+		t.Fatalf("dead editor materialization eviction error = %v, want protected", err)
 	}
 }
 

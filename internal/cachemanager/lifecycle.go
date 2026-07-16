@@ -22,10 +22,11 @@ type StartupLifecycleRequest struct {
 }
 
 type StartupLifecycleResult struct {
-	Recovered  []cachestore.EvictionClaim
-	Reconcile  ReconcileReport
-	Quota      QuotaExecution
-	CatalogErr string
+	Recovered         []cachestore.EvictionClaim
+	ReclaimedHandoffs int
+	Reconcile         ReconcileReport
+	Quota             QuotaExecution
+	CatalogErr        string
 }
 
 // RunStartupLifecycle completes already-claimed deletions, inventories both
@@ -56,6 +57,10 @@ func (manager *Manager) RunStartupLifecycle(ctx context.Context, request Startup
 	if len(remaining) != 0 {
 		return result, fmt.Errorf("run cache startup lifecycle: pending eviction recovery exceeded %d batches", request.MaxBatches)
 	}
+	result.ReclaimedHandoffs, err = manager.reclaimStalePreviewHandoffs(ctx, manager.limits.MaxCandidates)
+	if err != nil {
+		return result, fmt.Errorf("run cache startup lifecycle reclaim stale preview handoffs: %w", err)
+	}
 	reconcile, err := manager.Reconcile(ctx, request.MaxVisited)
 	result.Reconcile = reconcile
 	if err != nil {
@@ -79,6 +84,68 @@ func (manager *Manager) RunStartupLifecycle(ctx context.Context, request Startup
 		return result, ErrCacheNeedsAttention
 	}
 	return result, nil
+}
+
+func (manager *Manager) reclaimStalePreviewHandoffs(ctx context.Context, limit int) (int, error) {
+	if manager.leaseState == nil || limit <= 0 {
+		return 0, fmt.Errorf("reclaim stale preview handoffs: invalid manager or limit")
+	}
+	leases, err := manager.catalog.ListLeases(ctx)
+	if err != nil {
+		return 0, err
+	}
+	references, err := manager.catalog.ListReferences(ctx)
+	if err != nil {
+		return 0, err
+	}
+	reclaimed := 0
+	for _, lease := range leases {
+		if reclaimed >= limit {
+			break
+		}
+		if lease.State != cache.LeaseActive || lease.OwnerKind != cache.LeaseOwnerPreview ||
+			lease.Target.MaterializationID == "" || manager.leaseState.Classify(lease) != cache.LeaseReclaimable {
+			continue
+		}
+		var exact *cache.Reference
+		ambiguous := false
+		for index := range references {
+			reference := &references[index]
+			if reference.OwnerKind != cache.ReferenceOwnerPreview || reference.OwnerID != lease.OwnerID ||
+				reference.Target != lease.Target {
+				continue
+			}
+			if exact != nil {
+				ambiguous = true
+				break
+			}
+			exact = reference
+		}
+		if exact == nil || ambiguous {
+			continue
+		}
+		current, err := manager.catalog.GetLease(ctx, lease.ID)
+		if err != nil {
+			return reclaimed, err
+		}
+		if current.State != cache.LeaseActive || current.OwnerKind != cache.LeaseOwnerPreview ||
+			current.OwnerID != lease.OwnerID || current.Target != lease.Target ||
+			manager.leaseState.Classify(current) != cache.LeaseReclaimable {
+			continue
+		}
+		if err := manager.catalog.ReleaseHandoff(ctx, cachestore.ReleaseHandoffRequest{
+			MaterializationID: current.Target.MaterializationID,
+			ReferenceID:       exact.ID,
+			LeaseID:           current.ID,
+			OwnerKind:         current.OwnerKind,
+			OwnerID:           current.OwnerID,
+			ReleasedAt:        manager.now(),
+		}); err != nil {
+			return reclaimed, err
+		}
+		reclaimed++
+	}
+	return reclaimed, nil
 }
 
 type ClearScope string

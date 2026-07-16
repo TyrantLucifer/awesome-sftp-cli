@@ -126,10 +126,11 @@ type CacheLifecycleRequest struct {
 }
 
 type CacheLifecycleResponse struct {
-	Recovered  int         `json:"recovered"`
-	Deleted    int         `json:"deleted"`
-	Status     CacheStatus `json:"status"`
-	CatalogErr string      `json:"catalog_error,omitempty"`
+	Recovered         int         `json:"recovered"`
+	ReclaimedHandoffs int         `json:"reclaimed_handoffs"`
+	Deleted           int         `json:"deleted"`
+	Status            CacheStatus `json:"status"`
+	CatalogErr        string      `json:"catalog_error,omitempty"`
 }
 
 func (s *providerSession) cacheHeartbeat(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -183,7 +184,7 @@ func (s *providerSession) cacheLifecycle(ctx context.Context, payload json.RawMe
 	if err != nil {
 		return nil, internalError("run cache lifecycle", err)
 	}
-	return CacheLifecycleResponse{Recovered: len(result.Recovered), Deleted: len(result.Quota.Deleted), Status: cacheStatus(result.Reconcile), CatalogErr: result.CatalogErr}, nil
+	return CacheLifecycleResponse{Recovered: len(result.Recovered), ReclaimedHandoffs: result.ReclaimedHandoffs, Deleted: len(result.Quota.Deleted), Status: cacheStatus(result.Reconcile), CatalogErr: result.CatalogErr}, nil
 }
 
 func cacheStatus(report cachemanager.ReconcileReport) CacheStatus {

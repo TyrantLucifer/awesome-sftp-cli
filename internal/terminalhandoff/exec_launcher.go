@@ -94,6 +94,13 @@ func (process *execProcess) ProcessGroup() int {
 	return process.processGroup
 }
 
+func (process *execProcess) Terminate() error {
+	if err := unix.Kill(-process.processGroup, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
+		return fmt.Errorf("terminate terminal exec process group %d: %w", process.processGroup, err)
+	}
+	return nil
+}
+
 func (process *execProcess) Wait() (Result, error) {
 	process.waitOnce.Do(func() {
 		process.result, process.waitErr = classifyProcessExit(process.command.Wait())
