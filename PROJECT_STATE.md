@@ -1,13 +1,15 @@
 # Project State
 
-- **Updated**: 2026-07-16
-- **Lifecycle**: Stage 4 Not Started
-- **Active stage**: Stage 4 — Search & Optional Helper (Not Started)
-- **Current milestone**: Stage 4 intake; Level 0 search contract not yet implemented
+- **Updated**: 2026-07-17
+- **Lifecycle**: Stage 4 In Progress
+- **Active stage**: Stage 4 — Search & Optional Helper
+- **Current milestone**: M4.1 — Level 0 search native/resource closeout
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
+
+Stage 4 started on fixed branch `codex/stage4-search-helper` from clean exact-main commit `09821bdbcfc9693b309a1a39ee5121113c033254`, tree `c18e4cf8faf8eb70cc9964e242513b30ab0e79cc`. Exact-main Hosted run [29517334761](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29517334761) completed successfully. The required first implementation action was a RED Provider-only filename-search contract. The current M4.1 candidate implements bounded `f` and slower range-bounded literal `g/` end to end across Provider, daemon cursor, raw-byte-safe IPC, app snapshot binding and exact-identity TUI drawers. Cancellation drains through session ownership; permission, generation, symlink, binary, encoding, depth/result/file/read/output/time limits remain explicit terminal reasons. The synthetic million-node fixture returns its first result from one 128-entry List page without materializing the tree. Affected package tests pass; temporary-sshd, standalone resource/race and native PTY closeout remain the only M4.1 blockers before M4.2. Production Helper distribution remains **CLOSED**.
 
 Stage 1 is complete at merge commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) is green. Stage 2 is complete and merged at `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5`, tree `ee1ebdf11b61f1ac05fa0b2a4f23800ab9ba934a`; exact-main [Hosted run 29490490339](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29490490339) is green. Stage 3 began on `codex/stage3-preview-edit-cache` from that verified baseline; baseline `make docs-check` and `make check` pass. M2.1's Version 1 state foundation covers the exact schema/contract, APFS/ext4/XFS gates, atomic bootstrap, migration/backup/retention/WAL budgets, transactional Job/events, deterministic restart recovery, process-death boundaries, and fail-closed Stage 1 browsing. Exact SHA `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` passed [Hosted run 29475833368](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475833368); both Linux native jobs for `f83aa45de9b83f42d6f64944401ddde0e1e92d01` passed ext4/XFS plus real XFS `ENOSPC` rollback in [run 29476167115](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29476167115).
 
@@ -49,7 +51,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Write the RED Stage 4 Level 0 recursive filename-search contract over the existing standard SFTP Provider: streaming bounded pages, cancellation, generation isolation and explicit partial results without invoking or distributing a Helper. Production Helper installation/distribution remains CLOSED until the separate real custody ceremony is completed.
+Close M4.1 with real temporary-sshd `f`/`g/`, focused race and standalone resource evidence, then begin the M4.2 strict Manifest v1 production-reject/test-fixture verifier contract. Production Helper installation/distribution remains CLOSED until the separate real custody ceremony is completed.
 
 ## Current risks
 
@@ -69,6 +71,8 @@ Write the RED Stage 4 Level 0 recursive filename-search contract over the existi
 7. ADRs referenced by Stage 3, beginning with the Stage 2 mutation and postcondition handoff
 
 ## Validation record
+
+Stage 4 baseline checks on 2026-07-17: after `git fetch --prune origin`, clean local `main`, `origin/main` and remote `refs/heads/main` all resolved to `09821bdbcfc9693b309a1a39ee5121113c033254`, tree `c18e4cf8faf8eb70cc9964e242513b30ab0e79cc`; fixed branch `codex/stage4-search-helper` did not exist locally or remotely and was created once from that baseline. Exact-main Hosted run `29517334761` reports `success` for the exact merge SHA, including final `compare`. Baseline `make docs-check && make check` passed. Active evidence is maintained in [Stage 4 verification](docs/verification/stage-04.md).
 
 Stage 3 baseline checks on 2026-07-16: clean `main` exactly matched `origin/main` at `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5` / tree `ee1ebdf11b61f1ac05fa0b2a4f23800ab9ba934a`; `git fetch --prune origin` succeeded; the fixed Stage 3 branch did not exist locally or remotely and was created once from that baseline; exact-main Hosted run `29490490339` reports `success`; baseline `make docs-check` and `make check` pass. Active evidence is maintained in [Stage 3 verification](docs/verification/stage-03.md); completed mutation evidence remains in [Stage 2 verification](docs/verification/stage-02.md).
 

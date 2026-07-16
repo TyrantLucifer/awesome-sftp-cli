@@ -51,7 +51,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 	case *tcell.EventKey:
 		switch event.Key() {
 		case tcell.KeyEnter:
-			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm || mode == ModeCommand || mode == ModeCommandConfirm || mode == ModeEditDecision || mode == ModeEditSaveAs || mode == ModeEditLaunchConfirm || mode == ModeEditRecovery || mode == ModeCacheClearConfirm {
+			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm || mode == ModeCommand || mode == ModeCommandConfirm || mode == ModeEditDecision || mode == ModeEditSaveAs || mode == ModeEditLaunchConfirm || mode == ModeEditRecovery || mode == ModeCacheClearConfirm || mode == ModeFilenameSearch || mode == ModeContentSearch {
 				return KeyPress{Key: KeySubmit}, true
 			}
 		case tcell.KeyTab:
@@ -73,7 +73,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 					return nil, false
 				}
 			}
-			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeCommand || mode == ModeEditSaveAs {
+			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeCommand || mode == ModeEditSaveAs || mode == ModeFilenameSearch || mode == ModeContentSearch {
 				return TextInput{Text: event.Str()}, true
 			}
 			if value := event.Str(); len(value) == 1 && value[0] >= '0' && value[0] <= '9' {
@@ -96,6 +96,8 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 				return KeyPress{Key: KeyMark}, true
 			case "/":
 				return KeyPress{Key: KeyFilter}, true
+			case "f":
+				return KeyPress{Key: KeyFilenameSearch}, true
 			case "S":
 				return KeyPress{Key: KeySave}, true
 			case "s":

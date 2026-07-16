@@ -11,7 +11,7 @@ This repository treats documentation as part of the product contract. A feature 
 5. [Implementation plan](../IMPLEMENTATION_PLAN.md) tracks stage-level execution.
 6. [Stage specifications](stages/) define scope, tests, exit criteria, and handoff requirements for each stage.
 7. [Testing strategy](testing/strategy.md) defines the validation ladder and required fixtures.
-8. [Stage verification](verification/stage-03.md) records the active/latest stage's exact evidence, candidate identity, and handoff gates; the Stage 1/2 ledgers remain immutable historical evidence.
+8. [Stage verification](verification/stage-04.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 1–3 ledgers remain immutable historical evidence.
 9. [Project state](../PROJECT_STATE.md) is the short, current handoff for the next work session.
 
 ## Engineering gates

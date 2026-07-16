@@ -13,6 +13,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
@@ -36,6 +37,13 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		model.Count = model.Count*10 + int(action.Digit)
 		return model, nil
 	case TextInput:
+		if model.Mode == ModeFilenameSearch || model.Mode == ModeContentSearch {
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.searchInput))+len(action.Text) > 4096 {
+				return model, nil
+			}
+			model.searchInput = append(append([]rune(nil), model.searchInput...), []rune(action.Text)...)
+			return model, nil
+		}
 		if model.Mode == ModeEditSaveAs {
 			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.editSaveAs))+len(action.Text) > 4096 {
 				return model, nil
@@ -66,6 +74,12 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		if model.Mode == ModePath {
+			if len(model.pathInput) == 0 && action.Text == "/" {
+				model.Mode = ModeContentSearch
+				model.searchInput = nil
+				model.Notice = "slow SFTP content search; bounded remote reads may be expensive"
+				return model, nil
+			}
 			if len(model.pathInput) == 0 && action.Text == "p" {
 				model.Mode = ModeNormal
 				switch model.CachePolicy {
@@ -267,6 +281,82 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		model.Preview = PreviewState{Generation: action.Generation, Identity: action.Identity, Location: action.Location, Loading: true, View: action.View}
+		return model, nil
+	case BeginSearch:
+		if action.Identity.RequestID == "" || action.Identity.Scope.EndpointID != action.Identity.EndpointID {
+			return model, nil
+		}
+		model.Search = SearchState{Identity: action.Identity, Query: action.Identity.Options.Pattern, Loading: true}
+		model.Drawer.Mode = DrawerSearch
+		model.Drawer.Focus = FocusDrawer
+		return model, nil
+	case SearchEvents:
+		state := model.Search
+		for _, event := range action.Events {
+			if !search.EventCurrent(state.Identity, event) {
+				continue
+			}
+			switch event.Kind {
+			case search.EventResult:
+				if len(state.Results) < SearchResultLimit {
+					state.Results = append(append([]search.Result(nil), state.Results...), event.Result)
+				}
+			case search.EventProblem:
+				if len(state.Problems) < 64 {
+					state.Problems = append(append([]search.Problem(nil), state.Problems...), event.Problem)
+				}
+			case search.EventTerminal:
+				state.Terminal = event.Terminal
+				state.Loading = false
+			}
+		}
+		state.Cursor = min(state.Cursor, max(0, len(state.Results)-1))
+		model.Search = state
+		return model, nil
+	case SearchFailed:
+		if action.Identity != model.Search.Identity {
+			return model, nil
+		}
+		model.Search.Loading = false
+		model.Search.Message = action.Message
+		return model, nil
+	case BeginContentSearch:
+		if action.Identity.RequestID == "" || action.Identity.Scope.EndpointID != action.Identity.EndpointID {
+			return model, nil
+		}
+		model.ContentSearch = ContentSearchState{Identity: action.Identity, Query: action.Identity.Options.Pattern, Loading: true}
+		model.Drawer.Mode = DrawerContentSearch
+		model.Drawer.Focus = FocusDrawer
+		return model, nil
+	case ContentSearchEvents:
+		state := model.ContentSearch
+		for _, event := range action.Events {
+			if !search.ContentEventCurrent(state.Identity, event) {
+				continue
+			}
+			switch event.Kind {
+			case search.ContentEventResult:
+				if len(state.Results) < SearchResultLimit {
+					state.Results = append(append([]search.ContentResult(nil), state.Results...), event.Result)
+				}
+			case search.ContentEventProblem:
+				if len(state.Problems) < 64 {
+					state.Problems = append(append([]search.ContentProblem(nil), state.Problems...), event.Problem)
+				}
+			case search.ContentEventTerminal:
+				state.Terminal = event.Terminal
+				state.Loading = false
+			}
+		}
+		state.Cursor = min(state.Cursor, max(0, len(state.Results)-1))
+		model.ContentSearch = state
+		return model, nil
+	case ContentSearchFailed:
+		if action.Identity != model.ContentSearch.Identity {
+			return model, nil
+		}
+		model.ContentSearch.Loading = false
+		model.ContentSearch.Message = action.Message
 		return model, nil
 	case PreviewChunk:
 		if model.Preview.Generation != action.Generation || !previewIdentityMatches(model.Preview.Identity, action.Identity) {
@@ -533,6 +623,39 @@ func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
+	if model.Mode == ModeFilenameSearch || model.Mode == ModeContentSearch {
+		content := model.Mode == ModeContentSearch
+		switch key {
+		case KeyBackspace:
+			if len(model.searchInput) != 0 {
+				model.searchInput = append([]rune(nil), model.searchInput[:len(model.searchInput)-1]...)
+			}
+			return model, nil
+		case KeyEscape:
+			model.searchInput = nil
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			if len(model.searchInput) == 0 {
+				model.Notice = "filename search pattern is required"
+				return model, nil
+			}
+			pane := model.Panes[model.Active]
+			pattern := string(model.searchInput)
+			model.searchInput = nil
+			model.Mode = ModeNormal
+			if content {
+				model.Drawer = DrawerState{Mode: DrawerContentSearch, Focus: FocusDrawer, Rows: model.Drawer.Rows}
+				model.ContentSearch = ContentSearchState{Query: pattern, Loading: true}
+				return model, []Intent{{Kind: IntentSearchContent, Pane: model.Active, Location: pane.Location, SearchPattern: pattern}}
+			}
+			model.Drawer = DrawerState{Mode: DrawerSearch, Focus: FocusDrawer, Rows: model.Drawer.Rows}
+			model.Search = SearchState{Query: pattern, Loading: true}
+			return model, []Intent{{Kind: IntentSearchFilename, Pane: model.Active, Location: pane.Location, SearchPattern: pattern}}
+		default:
+			return model, nil
+		}
+	}
 	if model.Mode == ModeNormal && model.CommandRunning && key == KeyEscape {
 		model.Notice = "canceling active one-time command"
 		return model, []Intent{{Kind: IntentCommandCancel}}
@@ -934,7 +1057,19 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	if model.Drawer.Focus == FocusDrawer {
 		if key == KeyEscape {
 			model.Drawer.Focus = FocusPane
+			if model.Drawer.Mode == DrawerSearch && model.Search.Loading && model.Search.Identity.RequestID != "" {
+				return model, []Intent{{Kind: IntentSearchCancel, SearchIdentity: model.Search.Identity}}
+			}
+			if model.Drawer.Mode == DrawerContentSearch && model.ContentSearch.Loading && model.ContentSearch.Identity.RequestID != "" {
+				return model, []Intent{{Kind: IntentSearchCancel, ContentSearchIdentity: model.ContentSearch.Identity}}
+			}
 			return model, nil
+		}
+		if model.Drawer.Mode == DrawerSearch {
+			return reduceSearchKey(model, key)
+		}
+		if model.Drawer.Mode == DrawerContentSearch {
+			return reduceContentSearchKey(model, key)
 		}
 		if model.Drawer.Mode == DrawerJobs {
 			return reduceJobsKey(model, key)
@@ -1160,6 +1295,9 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		}
 	case KeyFilter:
 		model.Mode = ModeFilter
+	case KeyFilenameSearch:
+		model.Mode = ModeFilenameSearch
+		model.searchInput = nil
 	case KeyEscape:
 		pane.hasVisualAnchor = false
 		model.Mode = ModeNormal
@@ -1181,6 +1319,80 @@ func recoveryPane(model Model, location domain.Location) PaneID {
 		}
 	}
 	return model.Active
+}
+
+func reduceSearchKey(model Model, key Key) (Model, []Intent) {
+	switch key {
+	case KeyDown:
+		model.Search.Cursor = min(model.Search.Cursor+1, max(0, len(model.Search.Results)-1))
+		return model, nil
+	case KeyUp:
+		model.Search.Cursor = max(model.Search.Cursor-1, 0)
+		return model, nil
+	case KeyFilenameSearch:
+		model.Mode = ModeFilenameSearch
+		model.searchInput = []rune(model.Search.Query)
+		return model, nil
+	}
+	if model.Search.Cursor < 0 || model.Search.Cursor >= len(model.Search.Results) {
+		return model, nil
+	}
+	result := model.Search.Results[model.Search.Cursor]
+	pane := recoveryPane(model, result.Location)
+	switch key {
+	case KeySubmit, KeyOpen:
+		model.Active = pane
+		model.Drawer.Focus = FocusPane
+		if result.Entry.Kind == domain.EntryDirectory {
+			return model, []Intent{{Kind: IntentList, Pane: pane, Location: result.Location}}
+		}
+		model.Drawer.Mode = DrawerPreview
+		model.Drawer.Focus = FocusDrawer
+		return model, []Intent{{
+			Kind: IntentPreview, Pane: pane, Location: result.Location, Limit: PreviewByteLimit,
+			EndpointSession: model.Search.Identity.SessionID, EndpointGeneration: model.Search.Identity.EndpointGeneration,
+			PreviewMode: builtinpreview.ReadHead, PreviewView: builtinpreview.ViewAuto,
+		}}
+	case KeyCopy:
+		return model, []Intent{{Kind: IntentTransferCapture, Pane: pane, Location: result.Location, Locations: []domain.Location{result.Location}, Clipboard: transfer.ClipboardCopy}}
+	default:
+		return model, nil
+	}
+}
+
+func reduceContentSearchKey(model Model, key Key) (Model, []Intent) {
+	switch key {
+	case KeyDown:
+		model.ContentSearch.Cursor = min(model.ContentSearch.Cursor+1, max(0, len(model.ContentSearch.Results)-1))
+		return model, nil
+	case KeyUp:
+		model.ContentSearch.Cursor = max(model.ContentSearch.Cursor-1, 0)
+		return model, nil
+	case KeyFilenameSearch:
+		model.Mode = ModeContentSearch
+		model.searchInput = []rune(model.ContentSearch.Query)
+		return model, nil
+	}
+	if model.ContentSearch.Cursor < 0 || model.ContentSearch.Cursor >= len(model.ContentSearch.Results) {
+		return model, nil
+	}
+	result := model.ContentSearch.Results[model.ContentSearch.Cursor]
+	pane := recoveryPane(model, result.Location)
+	switch key {
+	case KeySubmit, KeyOpen:
+		model.Active = pane
+		model.Drawer.Mode = DrawerPreview
+		model.Drawer.Focus = FocusDrawer
+		return model, []Intent{{
+			Kind: IntentPreview, Pane: pane, Location: result.Location, Limit: PreviewByteLimit,
+			EndpointSession: model.ContentSearch.Identity.SessionID, EndpointGeneration: model.ContentSearch.Identity.EndpointGeneration,
+			PreviewMode: builtinpreview.ReadHead, PreviewView: builtinpreview.ViewAuto,
+		}}
+	case KeyCopy:
+		return model, []Intent{{Kind: IntentTransferCapture, Pane: pane, Location: result.Location, Locations: []domain.Location{result.Location}, Clipboard: transfer.ClipboardCopy}}
+	default:
+		return model, nil
+	}
 }
 
 func finishEditDecision(model Model, decision edit.DecisionKind, saveAs domain.Location, refresh bool) (Model, []Intent) {

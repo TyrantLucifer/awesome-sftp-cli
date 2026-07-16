@@ -1,6 +1,6 @@
 # Stage 4 — Search & Optional Helper
 
-- **状态**：Not Started
+- **状态**：In Progress
 - **阶段类型**：可选远端能力增强
 - **前置条件**：[Stage 3 — Preview, Edit & Cache](03-preview-edit-cache.md) 已通过退出门禁
 - **完成后进入**：[Stage 5 — Direct Transfer & Scale](05-direct-transfer-scale.md)

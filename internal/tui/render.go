@@ -188,6 +188,9 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeWorkspace {
 		renderWorkspaceModal(surface, string(model.workspaceName), width, height)
 	}
+	if model.Mode == ModeFilenameSearch || model.Mode == ModeContentSearch {
+		renderSearchModal(surface, string(model.searchInput), model.Mode == ModeContentSearch, width, height)
+	}
 	if model.Mode == ModePath {
 		renderPathModal(surface, string(model.pathInput), width, height)
 	}
@@ -341,6 +344,10 @@ func renderDrawer(surface Surface, model Model, y, width, rows int) {
 	switch model.Drawer.Mode {
 	case DrawerPreview:
 		renderPreviewDrawer(surface, model.Preview, y+1, width, rows-1)
+	case DrawerSearch:
+		renderSearchDrawer(surface, model.Search, y+1, width, rows-1)
+	case DrawerContentSearch:
+		renderContentSearchDrawer(surface, model.ContentSearch, y+1, width, rows-1)
 	case DrawerJobs:
 		renderJobsDrawer(surface, model.Jobs, model.JobCursor, y+1, width, rows-1)
 	case DrawerLog:
@@ -371,6 +378,12 @@ func renderLogDrawer(surface Surface, records []diagnostic.Record, y, width, row
 }
 
 func drawerTabLabel(active DrawerMode) string {
+	if active == DrawerSearch {
+		return "[Files]  Content  — f/g/ search; Esc pane"
+	}
+	if active == DrawerContentSearch {
+		return "Files  [Content]  — f/g/ search; Esc pane"
+	}
 	labels := []struct {
 		mode DrawerMode
 		name string
@@ -384,6 +397,66 @@ func drawerTabLabel(active DrawerMode) string {
 		}
 	}
 	return strings.Join(parts, "  ") + "  — K/J/L switch; Esc pane"
+}
+
+func renderSearchDrawer(surface Surface, state SearchState, y, width, rows int) {
+	header := fmt.Sprintf("f:%s · %d results", SanitizeTerminalText(state.Query), len(state.Results))
+	if state.Loading {
+		header += " · searching"
+	} else if state.Terminal.Status != "" {
+		header += " · " + string(state.Terminal.Status)
+		if state.Terminal.StopReason != "none" && state.Terminal.StopReason != "" {
+			header += "/" + string(state.Terminal.StopReason)
+		}
+	}
+	if state.Message != "" {
+		header += " · " + SanitizeTerminalText(state.Message)
+	}
+	surface.PutClipped(0, y, width, header, StylePreview)
+	if rows <= 1 {
+		return
+	}
+	visible := rows - 1
+	window := ComputeWindow(len(state.Results), state.Cursor, visible, 0)
+	for index := window.VisibleStart; index < window.VisibleEnd; index++ {
+		result := state.Results[index]
+		marker := "  "
+		style := StylePreview
+		if index == state.Cursor {
+			marker, style = "> ", StyleCursor
+		}
+		line := marker + string(result.Entry.Kind) + "  " + SanitizeTerminalText(result.RelativePath)
+		surface.PutClipped(0, y+1+index-window.VisibleStart, width, line, style)
+	}
+}
+
+func renderContentSearchDrawer(surface Surface, state ContentSearchState, y, width, rows int) {
+	header := fmt.Sprintf("g/:%s · %d matches", SanitizeTerminalText(state.Query), len(state.Results))
+	if state.Loading {
+		header += " · slow SFTP scan"
+	} else if state.Terminal.Status != "" {
+		header += " · " + string(state.Terminal.Status)
+		if state.Terminal.StopReason != "none" && state.Terminal.StopReason != "" {
+			header += "/" + string(state.Terminal.StopReason)
+		}
+	}
+	if state.Message != "" {
+		header += " · " + SanitizeTerminalText(state.Message)
+	}
+	surface.PutClipped(0, y, width, header, StylePreview)
+	if rows <= 1 {
+		return
+	}
+	window := ComputeWindow(len(state.Results), state.Cursor, rows-1, 0)
+	for index := window.VisibleStart; index < window.VisibleEnd; index++ {
+		result := state.Results[index]
+		marker, style := "  ", StylePreview
+		if index == state.Cursor {
+			marker, style = "> ", StyleCursor
+		}
+		line := fmt.Sprintf("%s%s:%d:%d  %s", marker, SanitizeTerminalText(result.RelativePath), result.Line, result.Offset, SanitizeTerminalText(result.Snippet))
+		surface.PutClipped(0, y+1+index-window.VisibleStart, width, line, style)
+	}
 }
 
 func renderPreviewDrawer(surface Surface, preview PreviewState, y, width, rows int) {
@@ -456,6 +529,24 @@ func renderWorkspaceModal(surface Surface, name string, width, height int) {
 	surface.PutClipped(x+1, y, modalWidth-2, "Save workspace", StyleStatus)
 	surface.PutClipped(x+1, y+2, modalWidth-2, "Name: "+SanitizeTerminalText(name), StyleStatus)
 	surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] save  [Esc] cancel", StyleStatus)
+}
+
+func renderSearchModal(surface Surface, value string, content bool, width, height int) {
+	if width < 24 || height < 5 {
+		return
+	}
+	modalWidth := min(width-4, 76)
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, height/2-2)
+	title := " Recursive filename search "
+	footer := "Provider-only · no symlink following · Enter search · Esc cancel"
+	if content {
+		title = " Slow SFTP content search "
+		footer = "Literal text · binary skipped · remote reads are bounded · Enter search"
+	}
+	surface.PutClipped(x, y, modalWidth, title, StyleActiveHeader)
+	surface.PutClipped(x, y+1, modalWidth, "Pattern: "+SanitizeTerminalText(value), StyleStatus)
+	surface.PutClipped(x, y+2, modalWidth, footer, StylePlain)
 }
 
 func renderPathModal(surface Surface, value string, width, height int) {

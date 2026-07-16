@@ -19,27 +19,33 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
 )
 
 const (
-	ProviderEndpoints  = "provider.endpoints"
-	ProviderSnapshot   = "provider.snapshot"
-	ProviderNormalize  = "provider.normalize"
-	ProviderList       = "provider.list"
-	ProviderStat       = "provider.stat"
-	ProviderRead       = "provider.read"
-	ProviderHash       = "provider.hash"
-	ProviderConnectSSH = "provider.connect_ssh"
-	ProviderRelease    = "provider.release"
-	AuthPrompt         = "auth.prompt"
-	AuthClaim          = "auth.claim"
-	AuthResolve        = "auth.resolve"
-	WorkspaceList      = "workspace.list"
-	WorkspaceLoad      = "workspace.load"
-	WorkspaceSave      = "workspace.save"
-	DiagnosticList     = "diagnostic.list"
+	ProviderEndpoints   = "provider.endpoints"
+	ProviderSnapshot    = "provider.snapshot"
+	ProviderNormalize   = "provider.normalize"
+	ProviderList        = "provider.list"
+	ProviderStat        = "provider.stat"
+	ProviderRead        = "provider.read"
+	ProviderHash        = "provider.hash"
+	ProviderConnectSSH  = "provider.connect_ssh"
+	ProviderRelease     = "provider.release"
+	SearchFilenameStart = "search.filename.start"
+	SearchFilenameNext  = "search.filename.next"
+	SearchContentStart  = "search.content.start"
+	SearchContentNext   = "search.content.next"
+	SearchCancel        = "search.cancel"
+	AuthPrompt          = "auth.prompt"
+	AuthClaim           = "auth.claim"
+	AuthResolve         = "auth.resolve"
+	WorkspaceList       = "workspace.list"
+	WorkspaceLoad       = "workspace.load"
+	WorkspaceSave       = "workspace.save"
+	DiagnosticList      = "diagnostic.list"
 )
 
 type SSHConnector func(context.Context, string) (providerapi.Provider, error)
@@ -113,17 +119,19 @@ func (s *ProviderSessions) NewSession() Session {
 		providers[id] = implementation
 	}
 	session := &providerSession{
-		owner:        s,
-		providers:    providers,
-		maxReadBytes: s.maxReadBytes,
-		connectSSH:   s.connectSSH,
-		owned:        make([]providerapi.Provider, 0),
-		cursors:      make(map[cursorKey]providerapi.Provider),
-		workspace:    s.workspace,
-		transfer:     s.transfer,
-		diagnostics:  s.diagnostics,
-		cache:        s.cache,
-		editSessions: s.editSessions,
+		owner:           s,
+		providers:       providers,
+		maxReadBytes:    s.maxReadBytes,
+		connectSSH:      s.connectSSH,
+		owned:           make([]providerapi.Provider, 0),
+		cursors:         make(map[cursorKey]providerapi.Provider),
+		searches:        make(map[domain.RequestID]*filenameSearchCursor),
+		contentSearches: make(map[domain.RequestID]*contentSearchCursor),
+		workspace:       s.workspace,
+		transfer:        s.transfer,
+		diagnostics:     s.diagnostics,
+		cache:           s.cache,
+		editSessions:    s.editSessions,
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -144,20 +152,37 @@ type cursorDiscarder interface {
 type providerSession struct {
 	mu sync.Mutex
 
-	owner        *ProviderSessions
-	providers    map[domain.EndpointID]providerapi.Provider
-	maxReadBytes uint32
-	cursors      map[cursorKey]providerapi.Provider
-	closed       bool
-	connectSSH   SSHConnector
-	owned        []providerapi.Provider
-	authBroker   *auth.Broker
-	authOwner    auth.OwnerID
-	workspace    *workspace.Store
-	transfer     TransferService
-	diagnostics  DiagnosticSource
-	cache        *cachemanager.Manager
-	editSessions EditSessionStore
+	owner           *ProviderSessions
+	providers       map[domain.EndpointID]providerapi.Provider
+	maxReadBytes    uint32
+	cursors         map[cursorKey]providerapi.Provider
+	searches        map[domain.RequestID]*filenameSearchCursor
+	contentSearches map[domain.RequestID]*contentSearchCursor
+	closed          bool
+	connectSSH      SSHConnector
+	owned           []providerapi.Provider
+	authBroker      *auth.Broker
+	authOwner       auth.OwnerID
+	workspace       *workspace.Store
+	transfer        TransferService
+	diagnostics     DiagnosticSource
+	cache           *cachemanager.Manager
+	editSessions    EditSessionStore
+}
+
+const maxActiveFilenameSearches = 4
+const maxFilenameEventsPerPage = 256
+
+type filenameSearchCursor struct {
+	mu     sync.Mutex
+	events <-chan search.Event
+	cancel context.CancelFunc
+}
+
+type contentSearchCursor struct {
+	mu     sync.Mutex
+	events <-chan search.ContentEvent
+	cancel context.CancelFunc
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -216,6 +241,16 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.read(ctx, payload)
 	case ProviderHash:
 		return s.hash(ctx, payload)
+	case SearchFilenameStart:
+		return s.startFilenameSearch(payload)
+	case SearchFilenameNext:
+		return s.nextFilenameSearch(ctx, payload)
+	case SearchContentStart:
+		return s.startContentSearch(payload)
+	case SearchContentNext:
+		return s.nextContentSearch(ctx, payload)
+	case SearchCancel:
+		return s.cancelSearch(payload)
 	default:
 		return nil, &domain.OpError{
 			Code:    domain.CodeUnsupported,
@@ -296,6 +331,10 @@ func (s *providerSession) Close() error {
 	s.closed = true
 	cursors := s.cursors
 	s.cursors = make(map[cursorKey]providerapi.Provider)
+	searches := s.searches
+	s.searches = make(map[domain.RequestID]*filenameSearchCursor)
+	contentSearches := s.contentSearches
+	s.contentSearches = make(map[domain.RequestID]*contentSearchCursor)
 	owned := s.owned
 	s.owned = nil
 	s.mu.Unlock()
@@ -307,6 +346,20 @@ func (s *providerSession) Close() error {
 		if discarder, ok := implementation.(cursorDiscarder); ok {
 			result = errors.Join(result, discarder.DiscardCursor(key.cursor))
 		}
+	}
+	for _, cursor := range searches {
+		cursor.cancel()
+		cursor.mu.Lock()
+		for range cursor.events {
+		}
+		cursor.mu.Unlock()
+	}
+	for _, cursor := range contentSearches {
+		cursor.cancel()
+		cursor.mu.Lock()
+		for range cursor.events {
+		}
+		cursor.mu.Unlock()
 	}
 	for _, implementation := range owned {
 		result = errors.Join(result, s.owner.releaseSession(implementation.Descriptor().ID))

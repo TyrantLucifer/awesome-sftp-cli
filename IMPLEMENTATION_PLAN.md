@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 3 从 merge commit `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5` 交付 Preview/Edit/Cache、外部进程和 command/shell slice；Stage 4–6 保持 Not Started。
+Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 3 已合入 `main`，merge commit 为 `09821bdbcfc9693b309a1a39ee5121113c033254`。Stage 4 已在固定分支 `codex/stage4-search-helper` 从该 exact-main 基线开始；Stage 5–6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -198,7 +198,47 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: Helper lifecycle/protocol；current-policy manifest/Ed25519/revoke/compat/floor/high-water；preliminary取消=0 probe、final取消=0 app-tree create/content、drift重probe/确认；Stage4 testdata fixture-only、production trust拒fixture且installable binary/curated dist无fixture assets（自动source archive除外）；shared/unknown/双节点mapping、fresh ssh GSS-delegation+CM off、root-owned utilities/PATH、uid0/cwd/RealPath/uname；safe-home/path/temp/ancestor、128MiB/expected+1/O_EXCL/首write前Chmod0600、client回读、no-replace；shell-c/唯一command/banner/chroot/byte0/stderr边界。失败Level0且不外推node/object/ACL/same-euid/root/server；百万节点/取消/预算与远端矩阵。
 
-**Status**: Not Started
+**Status**: In Progress
+
+### M4.1: SFTP 搜索基线
+
+**Goal**: 冻结搜索 request/result/event/cancel/generation/budget 契约，并在标准 Provider 上交付无 Helper、无 probe、无 install 的 `f` 有界递归文件名搜索与 `g/` 受限慢速内容搜索。
+
+**Success Criteria**: 搜索绑定 Endpoint/session/generation/request/scope/options/budget；结果分页流式返回并可跳转、预览、选择和生成现有 Operation Intent；取消、权限、symlink、超时以及深度/队列/结果/字节上限都返回诚实的 partial/stop reason；迟到 generation 被丢弃；百万节点 fixture 不全量进入内存。
+
+**Tests**: 先写 RED 契约测试；Provider/Fake/LocalFS/SFTP contract、TUI reducer/render、temporary-sshd `f`/`g/`、权限/symlink/binary/encoding/long-line、generation/cancel/partial、百万节点首结果/取消/peak RSS/goroutine/process/FD/read-list 计数。
+
+**Milestone Status**: In Progress
+
+### M4.2: Helper 安装与握手
+
+**Goal**: 在 production distribution 保持 CLOSED 的前提下，以显式 test-only non-release fixture 实现 Manifest v1、current-policy、双 consent、安全 probe/install/publish、每次执行 freshness 与受限握手。
+
+**Success Criteria**: production verifier 拒绝 fixture key；preliminary 取消为 0 probe、final 取消为 0 app-tree create/content；safe-home/path/attrs、expected+1、exclusive temp、首 byte 前 chmod/stat、client readback、standard no-replace、current-policy/floor/high-water/revoke 与每次 exec 重验均 fail closed；任何失败保留 Level 0。
+
+**Tests**: manifest/signature golden/fuzz/compat；两阶段 consent/drift；OpenSSH 8.9 shell `-c`、fresh argv、poisoned PATH、uid/cwd/uname、safe-home 255/256 与 path 1000/1001、stderr 65536/65537、tamper/replay/upgrade/disable/remove、fixture isolation 与 production artifact pollution scans。
+
+**Milestone Status**: Not Started
+
+### M4.3: Helper 搜索
+
+**Goal**: 实现版本化、有界、可取消的 framed stdio helper protocol，将 fast walk 与安全 content search 接入 M4.1 的统一搜索契约/UI。
+
+**Success Criteria**: handshake/capability/request/result/progress/partial/error/cancel/heartbeat 全部有硬上限；用户 path/pattern 只走 framed stdin；helper 按需运行且无 listener/daemon/提权；崩溃/超时/畸形协议保留已返回结果并允许新 request 降级 Level 0。
+
+**Tests**: protocol golden/fuzz/compat/capability violation、cancel/timeout/invalid frame；million-node streaming/取消/资源证据；long line/binary/encoding/large-file/permission/mid-search change；process/port/service/secret scans 与 Helper failure 后 Stage 1–3 regression。
+
+**Milestone Status**: Not Started
+
+### M4.4: 增强能力与退化闭环
+
+**Goal**: 交付独立协商的 strong hash、disk stats、tail/watch、same-host copy，以及逐能力降级、会话熔断和可观察性。
+
+**Success Criteria**: hash 中途变化失效；disk quota unknown 不推断无限；tail/watch 明示 truncate/rotate/lost/coalesced 并以 stat/list 为真相；same-host copy 仍经 Planner/Job/conflict/verify/commit/restart；反复崩溃不形成启动/安装循环。
+
+**Tests**: capability removal table；hash mutation、quota unknown、tail truncate/rotate、watch lost/coalesced、same-host copy conflict/verify/restart；kill/crash/hang/version mismatch 后 browsing/search/transfer/Preview/Edit/Job 继续绿色；完整平台、资源、安全和 cold-start 门禁。
+
+**Milestone Status**: Not Started
 
 ## Stage 5: Direct Transfer & Scale
 
