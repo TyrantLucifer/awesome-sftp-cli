@@ -7,13 +7,15 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestSchemaContractIsDeterministicAndCoversWholeMainSchema(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	database := openTestDatabase(t, filepath.Join(t.TempDir(), "contract.sqlite3"))
+	database := openTestDatabase(t, filepath.Join(testkit.PersistentTempDir(t), "contract.sqlite3"))
 	connection := reserveConnection(t, ctx, database)
 	if err := (Runner{}).Apply(ctx, connection, Version1(), "2026-07-16T00:00:00Z"); err != nil {
 		t.Fatalf("apply version 1: %v", err)
@@ -61,7 +63,7 @@ func TestSchemaContractRejectsAttachedOrTemporarySchema(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	database := openTestDatabase(t, filepath.Join(t.TempDir(), "contract-reject.sqlite3"))
+	database := openTestDatabase(t, filepath.Join(testkit.PersistentTempDir(t), "contract-reject.sqlite3"))
 	connection := reserveConnection(t, ctx, database)
 	if err := (Runner{}).Apply(ctx, connection, Version1(), "2026-07-16T00:00:00Z"); err != nil {
 		t.Fatalf("apply version 1: %v", err)

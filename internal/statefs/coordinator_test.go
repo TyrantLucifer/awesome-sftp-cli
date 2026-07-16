@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	_ "modernc.org/sqlite"
 )
 
@@ -157,7 +158,7 @@ func coordinatorFixture(t *testing.T, ctx context.Context) ([]migration.Migratio
 	v3 := migration.Migration{Version: 3, Name: "third", Statements: []string{"ALTER TABLE coordinator_second ADD COLUMN note TEXT"}, MaxMigrationWalBytes: 1 << 20}
 	migrations := []migration.Migration{migration.Version1(), v2, v3}
 	contracts := map[uint64][]byte{1: migration.Version1SchemaContract()}
-	root := t.TempDir()
+	root := testkit.PersistentTempDir(t)
 	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // private test fixture root
 		t.Fatalf("set reference root mode: %v", err)
 	}

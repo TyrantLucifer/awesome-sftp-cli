@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	_ "modernc.org/sqlite"
 )
 
@@ -19,7 +20,7 @@ func TestRunnerAppliesExactVersion1Atomically(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	database := openTestDatabase(t, filepath.Join(t.TempDir(), "state.sqlite3"))
+	database := openTestDatabase(t, filepath.Join(testkit.PersistentTempDir(t), "state.sqlite3"))
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		t.Fatalf("reserve database connection: %v", err)
@@ -62,7 +63,7 @@ func TestRunnerRollsBackWholeMigrationOnStatementFailure(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	database := openTestDatabase(t, filepath.Join(t.TempDir(), "failure.sqlite3"))
+	database := openTestDatabase(t, filepath.Join(testkit.PersistentTempDir(t), "failure.sqlite3"))
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		t.Fatalf("reserve database connection: %v", err)
@@ -96,7 +97,7 @@ func TestRunnerRejectsSQLTailBeforeOpeningTransaction(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	database := openTestDatabase(t, filepath.Join(t.TempDir(), "tail.sqlite3"))
+	database := openTestDatabase(t, filepath.Join(testkit.PersistentTempDir(t), "tail.sqlite3"))
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		t.Fatalf("reserve database connection: %v", err)
@@ -191,7 +192,7 @@ func (monitor *faultMigrationWALMonitor) AfterCommit(context.Context) error {
 
 func runningAttemptConnection(t *testing.T, ctx context.Context, attemptID string) (*sql.Conn, AttemptRequest) {
 	t.Helper()
-	root := t.TempDir()
+	root := testkit.PersistentTempDir(t)
 	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // directory requires owner traversal
 		t.Fatalf("set private database root: %v", err)
 	}

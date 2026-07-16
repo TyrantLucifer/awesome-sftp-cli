@@ -11,6 +11,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestAttemptStoreCreatesOneFrozenAttemptAndReusesExactMatch(t *testing.T) {
@@ -289,7 +291,7 @@ func TestRecordVerifiedBackupUsesMonotonicCatalogTimeAndRejectsOverflow(t *testi
 
 func version1Connection(t *testing.T, ctx context.Context) *sql.Conn {
 	t.Helper()
-	database := openTestDatabase(t, filepath.Join(t.TempDir(), "attempt.sqlite3"))
+	database := openTestDatabase(t, filepath.Join(testkit.PersistentTempDir(t), "attempt.sqlite3"))
 	connection := reserveConnection(t, ctx, database)
 	if err := (Runner{}).Apply(ctx, connection, Version1(), "2026-07-16T00:00:00Z"); err != nil {
 		t.Fatalf("apply version 1: %v", err)

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestPreflightIdentityRecognizesOnlyPristineOrExactProject(t *testing.T) {
@@ -155,7 +157,7 @@ func directoryEntries(t *testing.T, directory string) []string {
 
 func privateTempDir(t *testing.T) string {
 	t.Helper()
-	directory := t.TempDir()
+	directory := testkit.PersistentTempDir(t)
 	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // exact owner-private directory mode
 		t.Fatalf("make temp directory private: %v", err)
 	}

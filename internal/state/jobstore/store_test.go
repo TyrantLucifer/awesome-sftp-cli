@@ -14,6 +14,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	_ "modernc.org/sqlite"
 )
 
@@ -169,7 +170,7 @@ func TestRecoverInterruptedJobsPausesEffectsExactlyOnce(t *testing.T) {
 
 func newTestStore(t *testing.T, ctx context.Context) (*Store, *sql.DB) {
 	t.Helper()
-	root := t.TempDir()
+	root := testkit.PersistentTempDir(t)
 	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // directory requires owner traversal
 		t.Fatalf("set private state root: %v", err)
 	}

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	_ "modernc.org/sqlite"
 )
 
@@ -15,7 +16,7 @@ func TestFileGuardObservesNativeStatementAndCommitGrowth(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
-	root := t.TempDir()
+	root := testkit.PersistentTempDir(t)
 	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // directory requires owner traversal
 		t.Fatalf("set private root: %v", err)
 	}
