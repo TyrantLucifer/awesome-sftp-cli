@@ -241,6 +241,7 @@ Final implementation candidate results:
 | `GOTOOLCHAIN=go1.26.5 go test -race -count=1 -run '^(TestVTObserverAccumulatesPatternsAcrossSynchronizedFrames\|TestHostedStage1RecoveryNormalizesSplitTerminalWrites\|TestHostedKerberosFailureKeepsTUIResponsive)$' ./internal/integration` | PASS |
 | `bash -n internal/integration/hosted-kerberos.sh`; `git diff --check`; `git diff --cached --check` | PASS |
 | `git status --short --untracked-files=all`; `git ls-files --others --exclude-standard`; candidate `git ls-tree -r --name-only HEAD` pollution review | PASS: no staged/non-ignored untracked product pollution; ignored local-only paths are recorded in `PROJECT_STATE.md` |
+| Independent cold-start audit of commit `e0a8368fd92ff73dbae3f94ba652a7016acb90a5`, tree `2ba553689169b8feb76908000cbe07793fb89375`, starting only from `docs/README.md` | PASS: lifecycle, exact evidence, commands, delivered/deferred scope, dependency boundary, pollution inventory and the single Stage 2 first action were recovered without prior context; no content/completion blocker found |
 | [Hosted run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) | PASS 24/24 at commit `90cbfea81bd2d802bd3f7579a0b192c81ba3281b`, tree `53c7b1ac62e809b7046ea366701a21e6dc0bf757` |
 | [auth job 87523638581](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969/job/87523638581) | PASS: real OpenSSH, recovery and MIT Kerberos/GSSAPI matrices |
 
