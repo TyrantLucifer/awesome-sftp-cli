@@ -409,8 +409,8 @@ func TestRemoteSSHHelperProcess(t *testing.T) {
 			os.Exit(91)
 		}
 	case "diagnostic":
-		_, _ = io.WriteString(os.Stdout, "WARNING banner before marker\n")
 		_, _ = io.WriteString(os.Stderr, strings.Repeat("diagnostic "+os.Getenv("AMSFTP_REMOTE_SECRET")+"\r\n\u2028", 2048))
+		_, _ = io.WriteString(os.Stdout, "WARNING banner before marker\n")
 		writeCapture()
 	default:
 		os.Exit(90)
