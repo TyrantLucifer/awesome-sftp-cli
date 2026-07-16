@@ -50,7 +50,7 @@ jobs:
             sudo apt-get install -y openssh-server
           fi
           sudo mkdir -p /run/sshd
-          go test -count=1 -run '^(TestRealOpenSSHSFTPHostAliasAndNonDefaultPort|TestStage2TemporarySSHDPTYUploadDownloadMVP)$' ./internal/integration
+          go test -count=1 -run '^(TestRealOpenSSHSFTPHostAliasAndNonDefaultPort|TestStage2TemporarySSHDPTYUploadDownloadMVP|TestStage3TemporarySSHDRemoteShellForegroundPTY)$' ./internal/integration
       - name: Record provenance
         run: |
           set -euo pipefail
