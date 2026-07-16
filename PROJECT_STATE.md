@@ -9,7 +9,7 @@
 
 ## Current outcome
 
-Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; the M2.1 Version 1 foundation now includes the frozen schema/contract, safe APFS/ext4/XFS state boundary, atomic bootstrap/runtime validation, transactional Job/events, conservative pre-bind restart recovery, frozen migration-set attempts, per-head online backup sanitization/restore hold, crash adoption, overflow-safe free-space calculation, deterministic crash-resumable retention of the newest two verified backups, physical migration/runtime WAL enforcement, and an integrated multi-version coordinator that completes immutable target validation before reopening the runtime pool. Sidecar/bootstrap crash fixtures, the required same-binary cross-process capability probe and remaining failure-boundary evidence remain before M2.1 can complete.
+Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; the M2.1 Version 1 foundation now includes the frozen schema/contract, safe APFS/ext4/XFS state boundary, atomic bootstrap/runtime validation, transactional Job/events, conservative pre-bind restart recovery, frozen migration-set attempts, per-head online backup sanitization/restore hold, crash adoption, overflow-safe free-space calculation, deterministic crash-resumable retention of the newest two verified backups, physical migration/runtime WAL enforcement, a bounded same-binary cross-process WAL/locking/full-sync probe, and an integrated multi-version coordinator that completes immutable target validation before reopening the runtime pool. Sidecar/bootstrap crash fixtures, remaining failure-boundary evidence and native ext4/XFS Hosted execution remain before M2.1 can complete.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -37,11 +37,11 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Replace the provisional same-process WAL/locking probe with the ADR-0008 same-binary child protocol, then close sidecar/bootstrap crash and failure-boundary recovery evidence.
+Close sidecar/bootstrap crash and migration/commit failure-boundary recovery evidence, then run the exact native APFS/ext4/XFS M2.1 gate.
 
 ## Current risks
 
-- The exact modernc intake and Version 1 schema/identity/bootstrap/Job/attempt/backup/retention/WAL/coordinator foundation are implemented; M2.1 remains incomplete until native cross-process and crash evidence close.
+- The exact modernc intake and Version 1 schema/identity/bootstrap/Job/attempt/backup/retention/WAL/coordinator/cross-process-probe foundation are implemented; M2.1 remains incomplete until native crash and ext4/XFS evidence close.
 - APFS can be exercised locally, but ext4/XFS database semantics require native Linux Hosted fixtures; cross-builds are not acceptance evidence.
 - Stage 2 touches persistent user state and destructive file operations, so every milestone remains fail-closed to the verified Stage 1 read-only surface until its evidence is complete.
 

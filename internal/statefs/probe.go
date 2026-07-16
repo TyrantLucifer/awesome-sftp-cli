@@ -11,7 +11,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
@@ -67,11 +66,6 @@ func ProbeAfterIdentity(ctx context.Context, root string, config ProbeConfig) (r
 		return err
 	}
 	defer parent.Close()
-	child, err := openProbeDatabase(path)
-	if err != nil {
-		return err
-	}
-	defer child.Close()
 
 	journalMode := ""
 	if err := parent.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil {
@@ -80,10 +74,15 @@ func ProbeAfterIdentity(ctx context.Context, root string, config ProbeConfig) (r
 	if journalMode != "wal" {
 		return fmt.Errorf("state capability probe: journal mode %q, want wal", journalMode)
 	}
-	for _, database := range []*sql.DB{parent, child} {
-		if _, err := database.ExecContext(ctx, "PRAGMA wal_autocheckpoint=0"); err != nil {
-			return fmt.Errorf("state capability probe: disable automatic checkpoint: %w", err)
-		}
+	if _, err := parent.ExecContext(ctx, "PRAGMA wal_autocheckpoint=0"); err != nil {
+		return fmt.Errorf("state capability probe: disable parent automatic checkpoint: %w", err)
+	}
+	var parentAutoCheckpoint int64
+	if err := parent.QueryRowContext(ctx, "PRAGMA wal_autocheckpoint").Scan(&parentAutoCheckpoint); err != nil {
+		return fmt.Errorf("state capability probe: read parent automatic checkpoint: %w", err)
+	}
+	if parentAutoCheckpoint != 0 {
+		return fmt.Errorf("state capability probe: parent automatic checkpoint = %d, want 0", parentAutoCheckpoint)
 	}
 	if _, err := parent.ExecContext(ctx, "CREATE TABLE probe_marker(value TEXT NOT NULL)"); err != nil {
 		return fmt.Errorf("state capability probe: create marker table: %w", err)
@@ -91,6 +90,11 @@ func ProbeAfterIdentity(ctx context.Context, root string, config ProbeConfig) (r
 	if err := requireTruncatedCheckpoint(ctx, parent); err != nil {
 		return err
 	}
+	child, err := launchProbeChild(ctx, path)
+	if err != nil {
+		return err
+	}
+	defer child.abort()
 	if _, err := parent.ExecContext(ctx, "INSERT INTO probe_marker(value) VALUES('parent-marker')"); err != nil {
 		return fmt.Errorf("state capability probe: commit parent marker: %w", err)
 	}
@@ -102,33 +106,26 @@ func ProbeAfterIdentity(ctx context.Context, root string, config ProbeConfig) (r
 	if walMetadata.Size() < minimumWALBytes {
 		return fmt.Errorf("state capability probe: WAL size %d, want at least %d", walMetadata.Size(), minimumWALBytes)
 	}
-	var marker string
-	if err := child.QueryRowContext(ctx, "SELECT value FROM probe_marker").Scan(&marker); err != nil {
+	if err := child.roundTrip(probeCommandReadMarker, probeResponseOK); err != nil {
 		return fmt.Errorf("state capability probe: child read marker from WAL: %w", err)
-	}
-	if marker != "parent-marker" {
-		return fmt.Errorf("state capability probe: child marker %q", marker)
 	}
 
 	if _, err := parent.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("state capability probe: reserve writer: %w", err)
 	}
 	busyStart := time.Now()
-	_, busyErr := child.ExecContext(ctx, "INSERT INTO probe_marker(value) VALUES('blocked-child')")
+	busyErr := child.roundTrip(probeCommandBusyWrite, probeResponseBusy)
 	busyElapsed := time.Since(busyStart)
 	if _, rollbackErr := parent.ExecContext(ctx, "ROLLBACK"); rollbackErr != nil {
 		return fmt.Errorf("state capability probe: release parent writer: %w", rollbackErr)
 	}
-	if busyErr == nil {
-		return fmt.Errorf("state capability probe: child writer unexpectedly acquired the parent lock")
-	}
-	if !strings.Contains(strings.ToLower(busyErr.Error()), "locked") {
+	if busyErr != nil {
 		return fmt.Errorf("state capability probe: child writer did not return bounded busy/locked: %w", busyErr)
 	}
 	if busyElapsed > time.Second {
 		return fmt.Errorf("state capability probe: child busy took %s, want at most 1s", busyElapsed)
 	}
-	if _, err := child.ExecContext(ctx, "INSERT INTO probe_marker(value) VALUES('child-marker')"); err != nil {
+	if err := child.roundTrip(probeCommandWrite, probeResponseOK); err != nil {
 		return fmt.Errorf("state capability probe: child commit after release: %w", err)
 	}
 	var childRows int
@@ -137,6 +134,9 @@ func ProbeAfterIdentity(ctx context.Context, root string, config ProbeConfig) (r
 	}
 	if childRows != 1 {
 		return fmt.Errorf("state capability probe: child marker rows %d, want 1", childRows)
+	}
+	if err := child.finish(); err != nil {
+		return err
 	}
 
 	for _, syncPath := range []string{path, path + "-wal"} {

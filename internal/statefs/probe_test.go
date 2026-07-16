@@ -20,3 +20,14 @@ func TestProbeAfterIdentityProvesWALAndLeavesNoArtifacts(t *testing.T) {
 		t.Fatalf("probe artifacts remain: before=%v after=%v", before, after)
 	}
 }
+
+func TestSameBinaryProbeChildFailureStopsTheProbe(t *testing.T) {
+	t.Parallel()
+
+	ctx, cancel := context.WithTimeout(context.Background(), probeChildLifetime)
+	defer cancel()
+	if child, err := launchProbeChild(ctx, "/invalid/not-an-amsftp-probe.sqlite3"); err == nil {
+		child.abort()
+		t.Fatal("launchProbeChild(invalid path) error = nil")
+	}
+}
