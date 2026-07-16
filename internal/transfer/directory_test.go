@@ -61,6 +61,16 @@ func TestDiscoverDirectoryDoesNotFollowSymlinksAndRejectsDepthOverflow(t *testin
 	}
 }
 
+func TestDirectoryResultManifestHasHardPersistenceBound(t *testing.T) {
+	var result Result
+	for index := 0; index < maximumManifestItems+44; index++ {
+		appendItemResult(&result, ItemResult{RelativePath: strconv.Itoa(index), Status: ItemSucceeded})
+	}
+	if len(result.Manifest) != maximumManifestItems || result.ManifestTruncated != 44 {
+		t.Fatalf("manifest size/truncated = %d/%d", len(result.Manifest), result.ManifestTruncated)
+	}
+}
+
 type syntheticDirectoryProvider struct {
 	root       domain.Location
 	endpoint   domain.Endpoint

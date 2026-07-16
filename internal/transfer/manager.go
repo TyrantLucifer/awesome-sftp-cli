@@ -494,7 +494,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		if release == nil {
 			acquiredRelease, acquireErr := acquirer.Acquire(manager.ctx, plan)
 			if acquireErr != nil {
-				manager.handleExecutionError(snapshot, acquireErr)
+				manager.handleExecutionError(snapshot, acquireErr, Result{})
 				return
 			}
 			release = acquiredRelease
@@ -516,7 +516,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	case errors.Is(executeErr, ErrCanceled):
 		_, _ = manager.transitionTerminal(current, job.StateCanceled, "job_canceled", "canceled with resumable part retained", map[string]any{"offset": result.Bytes})
 	case executeErr != nil:
-		manager.handleExecutionError(current, executeErr)
+		manager.handleExecutionError(current, executeErr, result)
 	case result.Outcome == OutcomeWaitingConflict:
 		manager.openConflict(current, plan, result.Final, "destination_appeared")
 	default:
@@ -531,7 +531,9 @@ func (manager *Manager) execute(jobID domain.JobID) {
 				summary = "destination completed and source retained; delete step not executed"
 			}
 			_, _ = manager.transitionTerminal(verifying, terminalState, eventKind, summary, map[string]any{
-				"bytes": result.Bytes, "items": result.Items, "final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome,
+				"bytes": result.Bytes, "items": result.Items, "succeeded": result.Succeeded, "skipped": result.Skipped,
+				"failed": result.Failed, "manifest": result.Manifest, "manifest_truncated": result.ManifestTruncated,
+				"final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome,
 			})
 		}
 	}
@@ -595,7 +597,17 @@ func (manager *Manager) control(jobID domain.JobID) Control {
 	})
 }
 
-func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, executeErr error) {
+func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, executeErr error, result Result) {
+	var partial *PartialItemsError
+	if errors.As(executeErr, &partial) {
+		retryAt := manager.now().Add(time.Minute)
+		_, _ = manager.transitionRetry(snapshot, retryAt, map[string]any{
+			"error": "directory items require retry", "failed": result.Failed, "succeeded": result.Succeeded,
+			"skipped": result.Skipped, "items": result.Items, "manifest": result.Manifest,
+			"manifest_truncated": result.ManifestTruncated,
+		})
+		return
+	}
 	var operationError *domain.OpError
 	if errors.As(executeErr, &operationError) {
 		switch operationError.Code {

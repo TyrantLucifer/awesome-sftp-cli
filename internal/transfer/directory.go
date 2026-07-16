@@ -25,6 +25,8 @@ type DiscoveryBudget struct {
 
 var DefaultDiscoveryBudget = DiscoveryBudget{QueueItems: 64, PageItems: 256, MaxDepth: 128}
 
+const maximumManifestItems = 256
+
 type DiscoveredItem struct {
 	Entry        domain.Entry `json:"entry"`
 	RelativePath string       `json:"relative_path"`
@@ -247,7 +249,9 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 			}
 			if completed {
 				result.Items++
+				result.Succeeded++
 				result.Bytes += bytes
+				appendItemResult(&result, ItemResult{RelativePath: item.RelativePath, Source: item.Entry.Location, Destination: destinationLocation, Status: ItemSucceeded, Bytes: bytes})
 				checkpoint.Items = result.Items
 				checkpoint.Offset = result.Bytes
 				checkpoint.CurrentPath = item.RelativePath
@@ -268,11 +272,14 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 			}
 		}
 		checkpoint.CurrentPath = item.RelativePath
+		itemResultRecord := ItemResult{RelativePath: item.RelativePath, Source: item.Entry.Location, Destination: destinationLocation}
 		switch item.Entry.Kind {
 		case domain.EntryDirectory:
 			if err := ensureDirectory(ctx, destinationProvider, destination, destinationLocation); err != nil {
 				return Result{}, err
 			}
+			itemResultRecord.Status = ItemSucceeded
+			result.Succeeded++
 		case domain.EntryFile:
 			itemPlan := plan
 			itemPlan.Source = FileRef{
@@ -298,7 +305,13 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 			}
 			itemResult, executeErr := NewWorker(worker.resolver, &volatileJournal{}).Execute(ctx, itemPlan, control)
 			if executeErr != nil {
-				return Result{}, executeErr
+				if code, ok := continuableDirectoryItemError(executeErr); ok {
+					itemResultRecord.Status = ItemFailed
+					itemResultRecord.ErrorCode = code
+					result.Failed++
+					break
+				}
+				return result, executeErr
 			}
 			if itemResult.Outcome == OutcomeWaitingConflict {
 				checkpoint.Phase = PhaseWaitingConflict
@@ -307,7 +320,14 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 				return Result{Outcome: OutcomeWaitingConflict, Final: itemResult.Final, Bytes: result.Bytes, Items: checkpoint.Items, PartRetained: true}, nil
 			}
 			result.Bytes += itemResult.Bytes
+			itemResultRecord.Status = ItemSucceeded
+			itemResultRecord.Bytes = itemResult.Bytes
+			result.Succeeded++
+		default:
+			itemResultRecord.Status = ItemSkipped
+			result.Skipped++
 		}
+		appendItemResult(&result, itemResultRecord)
 		result.Items++
 		checkpoint.Items = result.Items
 		checkpoint.Offset = result.Bytes
@@ -316,15 +336,43 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 		}
 	}
 	if err := <-failures; err != nil {
-		return Result{}, err
+		return result, err
+	}
+	if result.Failed != 0 {
+		result.Outcome = OutcomeCompletedPartial
+		checkpoint.Outcome = result.Outcome
+		checkpoint.CurrentPath = ""
+		if err := worker.journal.Save(ctx, checkpoint); err != nil {
+			return Result{}, err
+		}
+		return result, &PartialItemsError{Failed: result.Failed}
 	}
 	checkpoint.Phase = PhaseCommitted
-	checkpoint.Outcome = OutcomeCompleted
+	checkpoint.Outcome = result.Outcome
 	checkpoint.CurrentPath = ""
 	if err := worker.journal.Save(ctx, checkpoint); err != nil {
 		return Result{}, err
 	}
 	return result, nil
+}
+
+func continuableDirectoryItemError(err error) (domain.Code, bool) {
+	var operationError *domain.OpError
+	if !errors.As(err, &operationError) {
+		return "", false
+	}
+	if operationError.Code != domain.CodePermissionDenied {
+		return "", false
+	}
+	return operationError.Code, true
+}
+
+func appendItemResult(result *Result, item ItemResult) {
+	if len(result.Manifest) < maximumManifestItems {
+		result.Manifest = append(result.Manifest, item)
+		return
+	}
+	result.ManifestTruncated++
 }
 
 func validateOwnedDirectoryItem(

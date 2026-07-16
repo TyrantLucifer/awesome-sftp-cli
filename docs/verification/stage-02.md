@@ -128,9 +128,12 @@ Resource and route evidence:
 | `TestWorkerHundredGiBSyntheticSourceStopsAtBoundedCheckpoint` | PASS: advertised 100 GiB source; first durable cancel checkpoint at 64 KiB; observed transfer buffer exactly 64 KiB. |
 | `TestWorkerCopiesDirectoryTreeWithBoundedRelayAndNoSymlinkTraversal` | PASS: nested tree preserved, symlink visible to discovery but not copied/followed, 3-byte stream buffer and no successful part residue. |
 | `TestManagerRestartResumesDirectoryFromOwnedRoot` | PASS: daemon-owned Job interrupted during a file read, restart recovers paused, root/part postconditions revalidate, resume completes. |
+| `TestManagerRetriesOnlyFailedDirectoryItemsAfterPermissionRepair` | PASS: one denied item produces `retry_wait` with a bounded manifest while its successful sibling stays committed; after permission repair, resume revalidates the sibling and copies only the missing item. |
 | `AMSFTP_REAL_SSHD=1 go test ./internal/integration -run TestRealOpenSSHSFTPHostAliasAndNonDefaultPort -count=10` | PASS: local↔SFTP, same remote directory copy and two-independent-sshd remote A→B directory relay; a 7-byte stream budget applies backpressure and no local content cache is created. |
 
 The expanded real-sshd loop also exposed a close race where Go may report the session's own command cancellation as `context.Canceled`; a focused RED test now classifies only Close-owned cancellation as expected, and the complete real fixture passed ten consecutive runs.
+
+Per-item results retain source, destination, status, bytes and stable error code for the first 256 entries, plus complete succeeded/skipped/failed/item counts and an explicit truncation count. This keeps event/checkpoint payloads bounded for million-entry Jobs while preserving actionable failures. Permission failures are isolated and enter durable `retry_wait`; transport/auth/conflict failures still stop at their dedicated state. Resume revalidates already committed children by content and retries the missing failed items without overwriting proven successes. Exact-candidate Hosted promotion is the remaining M2.3 gate.
 
 ### M2.4 — Move, rename, delete and recovery closeout
 

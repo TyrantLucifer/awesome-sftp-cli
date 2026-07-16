@@ -21,6 +21,12 @@ var (
 	ErrCanceled = errors.New("transfer canceled")
 )
 
+type PartialItemsError struct{ Failed uint64 }
+
+func (err *PartialItemsError) Error() string {
+	return fmt.Sprintf("directory transfer has %d retryable failed items", err.Failed)
+}
+
 type Phase string
 
 const (
@@ -36,9 +42,10 @@ const (
 type Outcome string
 
 const (
-	OutcomeCompleted       Outcome = "completed"
-	OutcomeSkipped         Outcome = "skipped"
-	OutcomeWaitingConflict Outcome = "waiting_conflict"
+	OutcomeCompleted        Outcome = "completed"
+	OutcomeCompletedPartial Outcome = "completed_partial"
+	OutcomeSkipped          Outcome = "skipped"
+	OutcomeWaitingConflict  Outcome = "waiting_conflict"
 )
 
 type Checkpoint struct {
@@ -83,12 +90,34 @@ func (function ControlFunc) Action(checkpoint Checkpoint) ControlAction {
 }
 
 type Result struct {
-	Outcome      Outcome
-	Final        domain.Location
-	Bytes        uint64
-	SHA256       string
-	PartRetained bool
-	Items        uint64
+	Outcome           Outcome
+	Final             domain.Location
+	Bytes             uint64
+	SHA256            string
+	PartRetained      bool
+	Items             uint64
+	Succeeded         uint64
+	Skipped           uint64
+	Failed            uint64
+	Manifest          []ItemResult
+	ManifestTruncated uint64
+}
+
+type ItemStatus string
+
+const (
+	ItemSucceeded ItemStatus = "succeeded"
+	ItemSkipped   ItemStatus = "skipped"
+	ItemFailed    ItemStatus = "failed"
+)
+
+type ItemResult struct {
+	RelativePath string          `json:"relative_path"`
+	Source       domain.Location `json:"source"`
+	Destination  domain.Location `json:"destination"`
+	Status       ItemStatus      `json:"status"`
+	Bytes        uint64          `json:"bytes,omitempty"`
+	ErrorCode    domain.Code     `json:"error_code,omitempty"`
 }
 
 type Worker struct {

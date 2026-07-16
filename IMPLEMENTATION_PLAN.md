@@ -118,7 +118,7 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Milestone Status**: In Progress
 
-**Current checkpoint**: Frozen directory plans, bounded million-entry streaming discovery, 100 GiB synthetic bounded checkpoint, conservative symlink/depth/root boundaries, durable daemon restart, same-remote and real two-sshd remote A→B directory relay pass locally. Default queue/page/depth are 64/256/128; fresh/resume buffer ceilings are 256/512 KiB per directory Job. Next gate is exact-candidate Hosted native and real-sshd evidence.
+**Current checkpoint**: Frozen directory plans, bounded million-entry streaming discovery, 100 GiB synthetic bounded checkpoint, conservative symlink/depth/root boundaries, durable daemon restart, same-remote and real two-sshd remote A→B directory relay pass locally. Default queue/page/depth are 64/256/128; fresh/resume buffer ceilings are 256/512 KiB per directory Job. Bounded per-item manifests and aggregate counts isolate permission failures into durable retry_wait; resume revalidates successes and retries missing items. Next gate is exact-candidate Hosted native and real-sshd evidence.
 
 ### M2.4: Move、rename、删除与恢复闭环
 

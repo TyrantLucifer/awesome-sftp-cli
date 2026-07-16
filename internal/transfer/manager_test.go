@@ -120,6 +120,65 @@ func TestManagerRunsDurableDirectoryJobAndReportsItemProgress(t *testing.T) {
 	}
 }
 
+func TestManagerRetriesOnlyFailedDirectoryItemsAfterPermissionRepair(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{"denied": "denied", "ok": "ok"} {
+		if err := os.WriteFile(filepath.Join(sourceRoot, "tree", name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	resolver := MapResolver{
+		source.Descriptor().ID:      &pathReadFailureProvider{Provider: source, denied: "/tree/denied"},
+		destination.Descriptor().ID: destination,
+	}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(1_800_000_160, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: reference, DestinationDirectory: normalizePlanTest(t, destination, "/"),
+		Name: "copied", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waiting := waitForState(t, manager, created.JobID, job.StateRetryWait)
+	resolver[source.Descriptor().ID] = source
+	if _, err := manager.Resume(context.Background(), waiting.JobID); err != nil {
+		t.Fatalf("Resume(repaired directory): %v", err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("retried directory state = %q", completed.State)
+	}
+	for name, want := range map[string]string{"denied": "denied", "ok": "ok"} {
+		// #nosec G304 -- names are fixed test literals below a private destination root.
+		data, err := os.ReadFile(filepath.Join(destinationRoot, "copied", name))
+		if err != nil || string(data) != want {
+			t.Fatalf("retried output %s = %q, %v", name, data, err)
+		}
+	}
+}
+
 func TestManagerReloadsQueuedFrozenPlanFromDurableStore(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("durable-plan"), ConflictAsk)
 	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)

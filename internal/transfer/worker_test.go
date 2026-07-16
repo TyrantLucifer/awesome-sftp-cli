@@ -163,6 +163,62 @@ func TestWorkerResumesDirectoryAfterAbruptStopWithoutConflictingWithOwnedRoot(t 
 	}
 }
 
+func TestWorkerRecordsBoundedPartialDirectoryManifestAndContinuesAfterPermissionFailure(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "denied"), []byte("denied"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "ok"), []byte("ok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	resolver := MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination}
+	planner := NewPlanner(resolver)
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request.Intent.Name = "copied"
+	plan, _, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolver[source.Descriptor().ID] = &pathReadFailureProvider{Provider: source, denied: "/tree/denied"}
+	journal := newMemoryJournal()
+	result, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil)
+	var partial *PartialItemsError
+	if !errors.As(err, &partial) || partial.Failed != 1 {
+		t.Fatalf("Execute(partial directory) error = %v", err)
+	}
+	if result.Outcome != OutcomeCompletedPartial || result.Items != 2 || result.Succeeded != 1 || result.Failed != 1 || result.Skipped != 0 || len(result.Manifest) != 2 {
+		t.Fatalf("partial directory result = %#v", result)
+	}
+	if _, err := os.Stat(filepath.Join(destinationRoot, "copied", "denied")); !os.IsNotExist(err) {
+		t.Fatalf("denied item exposed a final: %v", err)
+	}
+	// #nosec G304 -- path is fixed below this test's private destination root.
+	data, err := os.ReadFile(filepath.Join(destinationRoot, "copied", "ok"))
+	if err != nil || string(data) != "ok" {
+		t.Fatalf("successful sibling = %q, %v", data, err)
+	}
+	for _, item := range result.Manifest {
+		if item.RelativePath == "denied" && (item.Status != ItemFailed || item.ErrorCode != domain.CodePermissionDenied) {
+			t.Fatalf("denied manifest item = %#v", item)
+		}
+	}
+	resolver[source.Descriptor().ID] = source
+	retried, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil)
+	if err != nil || retried.Outcome != OutcomeCompleted || retried.Items != 2 || retried.Succeeded != 2 || retried.Failed != 0 || retried.Bytes != 8 {
+		t.Fatalf("selective directory retry = (%#v, %v)", retried, err)
+	}
+}
+
 func TestWorkerRefreshesCheckpointAfterPauseClosesWriteHandle(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("close-finalizes-mtime"), ConflictAsk)
 	fixture.plan.BufferBytes = 4
@@ -457,6 +513,23 @@ type shortWriteProvider struct {
 type shortReadProvider struct {
 	providerapi.Provider
 	maxRead int
+}
+
+type pathReadFailureProvider struct {
+	providerapi.Provider
+	denied domain.CanonicalPath
+}
+
+func (provider *pathReadFailureProvider) OpenRead(ctx context.Context, request providerapi.OpenReadRequest) (providerapi.ReadHandle, error) {
+	if request.Location.Path == provider.denied {
+		location := request.Location
+		return nil, &domain.OpError{
+			Code: domain.CodePermissionDenied, Message: "fixture permission denied", Operation: "open_read",
+			EndpointID: request.Location.EndpointID, Location: &location,
+			Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone,
+		}
+	}
+	return provider.Provider.OpenRead(ctx, request)
 }
 
 func (provider *shortReadProvider) OpenRead(ctx context.Context, request providerapi.OpenReadRequest) (providerapi.ReadHandle, error) {
