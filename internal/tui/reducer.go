@@ -446,6 +446,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		model.EditDecision = EditDecisionState{
 			Active: true, SessionID: action.SessionID, Pane: action.Pane,
 			Location: action.Location, State: action.State, Message: action.Message, Decision: action.Decision,
+			ConflictView: action.ConflictView,
 		}
 		model.Mode = ModeEditDecision
 		model.Notice = action.Message
@@ -623,6 +624,27 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		case KeyPreviewDrawer:
 			model.Drawer.Mode = DrawerPreview
 			model.Drawer.Focus = FocusDrawer
+			if model.EditDecision.ConflictView.Text != "" {
+				view := model.EditDecision.ConflictView
+				data := []byte(view.Text)
+				if len(data) > PreviewByteLimit {
+					data = data[:PreviewByteLimit]
+					view.Truncated = true
+				}
+				generation := model.Preview.Generation + 1
+				if generation == 0 {
+					generation = 1
+				}
+				model.Preview = PreviewState{
+					Generation: generation, Location: model.EditDecision.Location, Data: append([]byte(nil), data...),
+					BytesRead: len(data), Truncated: view.Truncated, Kind: "conflict-diff", Summary: view.Summary,
+				}
+				return model, nil
+			}
+			if state == edit.StateConflict {
+				model.Notice = "conflict diff is unavailable; retained edit was not changed"
+				return model, nil
+			}
 			pane := model.Panes[model.EditDecision.Pane]
 			return model, []Intent{{
 				Kind: IntentPreview, Pane: model.EditDecision.Pane, Location: model.EditDecision.Location,

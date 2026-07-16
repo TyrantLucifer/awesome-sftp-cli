@@ -472,7 +472,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
-	terminalImageCapability := probeTerminalImageCapability(environment)
+	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
+	reprobeTerminalImages := func() {
+		terminalImageCapability.Reprobe(append([]string(nil), os.Environ()...))
+	}
 	client, err := connectDaemon(ctx, paths, purpose)
 	if err != nil {
 		return err
@@ -562,7 +565,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		if commandErr != nil {
 			return preparedExternalEdit{}, commandErr
 		}
-		return prepareExternalEdit(launchCtx, materialization, command, environment, screen)
+		return prepareExternalEdit(launchCtx, materialization, command, environment, screen, reprobeTerminalImages)
 	})
 	if err != nil {
 		return err
@@ -866,7 +869,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			go func() {
 				defer cancel()
-				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability, actions)
+				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability.Current(), actions)
 			}()
 			return
 		case tui.IntentPreviewCancel:
@@ -887,7 +890,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}()
 			return
 		case tui.IntentShell:
-			model.Notice = runShellIntent(runCtx, intent, append([]string(nil), os.Environ()...), screen)
+			model.Notice = runShellIntent(runCtx, intent, append([]string(nil), os.Environ()...), screen, reprobeTerminalImages)
 			startIntent(tui.Intent{Kind: tui.IntentList, Pane: intent.Pane, Location: intent.Location})
 			return
 		case tui.IntentList:

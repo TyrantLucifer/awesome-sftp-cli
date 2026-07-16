@@ -17,19 +17,20 @@ func TestObservePostEditorChangeMatrixFailsClosed(t *testing.T) {
 		wantState  State
 		wantAction Action
 	}{
-		{"neither changed", localPresent(testDigest("b")), remotePresent(testRemoteFingerprint("remote-v1")), StateNoChanges, ActionNoUpload},
-		{"local only", localPresent(testDigest("c")), remotePresent(testRemoteFingerprint("remote-v1")), StateAwaitingUploadConfirmation, ActionConfirmUpload},
-		{"remote only replaced", localPresent(testDigest("b")), remotePresent(testRemoteFingerprint("remote-v2")), StateRemoteChanged, ActionRefreshRemote},
+		{"local and remote unchanged", localPresent(testDigest("b")), remotePresent(testRemoteFingerprint("remote-v1")), StateNoChanges, ActionNoUpload},
+		{"local content changed remote unchanged", localPresent(testDigest("c")), remotePresent(testRemoteFingerprint("remote-v1")), StateAwaitingUploadConfirmation, ActionConfirmUpload},
+		{"remote modified", localPresent(testDigest("b")), remotePresent(testRemoteFingerprint("remote-v2")), StateRemoteChanged, ActionRefreshRemote},
 		{"remote replaced by symlink", localPresent(testDigest("b")), RemoteObservation{Status: RemotePresent, Kind: domain.EntrySymlink}, StateRemoteChanged, ActionRefreshRemote},
-		{"remote only deleted", localPresent(testDigest("b")), RemoteObservation{Status: RemoteDeleted}, StateRemoteChanged, ActionRefreshRemote},
+		{"remote deleted", localPresent(testDigest("b")), RemoteObservation{Status: RemoteDeleted}, StateRemoteChanged, ActionRefreshRemote},
 		{"both changed", localPresent(testDigest("c")), remotePresent(testRemoteFingerprint("remote-v2")), StateConflict, ActionResolveConflict},
 		{"local changed remote deleted", localPresent(testDigest("c")), RemoteObservation{Status: RemoteDeleted}, StateConflict, ActionResolveConflict},
 		{"local deleted", LocalObservation{Status: LocalDeleted}, remotePresent(testRemoteFingerprint("remote-v1")), StateRecoveryRequired, ActionRecoverLocal},
 		{"local hash uncertain", LocalObservation{Status: LocalPresent}, remotePresent(testRemoteFingerprint("remote-v1")), StateRecoveryRequired, ActionRecoverLocal},
 		{"local unavailable", LocalObservation{Status: LocalUnavailable}, remotePresent(testRemoteFingerprint("remote-v1")), StateRecoveryRequired, ActionRecoverLocal},
-		{"remote unavailable", localPresent(testDigest("b")), RemoteObservation{Status: RemoteUnavailable}, StateRecoveryRequired, ActionRecoverLocal},
+		{"remote unstat unavailable", localPresent(testDigest("b")), RemoteObservation{Status: RemoteUnavailable}, StateRecoveryRequired, ActionRecoverLocal},
 		{"remote fingerprint uncertain", localPresent(testDigest("b")), RemoteObservation{Status: RemotePresent, Kind: domain.EntryFile}, StateRecoveryRequired, ActionRecoverLocal},
-		{"unknown observations", LocalObservation{Status: LocalUnknown}, RemoteObservation{Status: RemoteUnknown}, StateRecoveryRequired, ActionRecoverLocal},
+		{"remote unknown", localPresent(testDigest("b")), RemoteObservation{Status: RemoteUnknown}, StateRecoveryRequired, ActionRecoverLocal},
+		{"local unknown", LocalObservation{Status: LocalUnknown}, remotePresent(testRemoteFingerprint("remote-v1")), StateRecoveryRequired, ActionRecoverLocal},
 	}
 
 	for _, test := range tests {

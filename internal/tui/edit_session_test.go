@@ -96,9 +96,14 @@ func TestEditConflictOffersOverwriteSaveAsAndSkipWithoutDefault(t *testing.T) {
 	}
 
 	model := editTestModel(t)
-	model, _ = Reduce(model, EditSessionObserved{SessionID: "44444444444444444444444444444444", Pane: Left, Location: model.Panes[Left].Entries[0].Location, State: edit.StateConflict})
+	conflictView := edit.ConflictView{Text: "--- remote\n+++ local\n-remote edit\n+local edit\n", Summary: "remote → local conflict diff"}
+	model, _ = Reduce(model, EditSessionObserved{
+		SessionID: "44444444444444444444444444444444", Pane: Left,
+		Location: model.Panes[Left].Entries[0].Location, State: edit.StateConflict, ConflictView: conflictView,
+	})
 	model, inspect := Reduce(model, KeyPress{Key: KeyPreviewDrawer})
-	if model.Mode != ModeEditDecision || model.Drawer.Mode != DrawerPreview || model.Drawer.Focus != FocusDrawer || len(inspect) != 1 || inspect[0].Kind != IntentPreview || inspect[0].Location.Path != "/file.txt" {
+	if model.Mode != ModeEditDecision || model.Drawer.Mode != DrawerPreview || model.Drawer.Focus != FocusDrawer || len(inspect) != 0 ||
+		model.Preview.Kind != "conflict-diff" || model.Preview.Summary != conflictView.Summary || model.Preview.DisplayText() != conflictView.Text {
 		t.Fatalf("conflict inspect = mode %q intents %#v", model.Mode, inspect)
 	}
 	model, intents := Reduce(model, KeyPress{Key: KeyConflictAutoRename})

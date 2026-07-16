@@ -30,7 +30,9 @@ func (screen *fakeHandoffTCellScreen) Sync() { screen.calls = append(screen.call
 
 func TestTCellHandoffScreenMapsControllerPhasesWithoutDoubleResume(t *testing.T) {
 	native := &fakeHandoffTCellScreen{w: 97, h: 31}
-	screen := newTCellHandoffScreen(native)
+	screen := newTCellHandoffScreen(native, func() {
+		native.calls = append(native.calls, "reprobe")
+	})
 	snapshot, err := screen.Freeze()
 	if err != nil || snapshot.TerminalSize() != (terminalhandoff.Size{Columns: 97, Rows: 31}) {
 		t.Fatalf("snapshot=%#v err=%v", snapshot, err)
@@ -46,8 +48,22 @@ func TestTCellHandoffScreenMapsControllerPhasesWithoutDoubleResume(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	want := []string{"show_cursor", "show", "suspend", "resume", "sync", "sync"}
+	want := []string{"show_cursor", "show", "suspend", "reprobe", "resume", "sync", "sync"}
 	if !reflect.DeepEqual(native.calls, want) {
+		t.Fatalf("calls = %#v, want %#v", native.calls, want)
+	}
+}
+
+func TestTCellHandoffScreenReprobesBeforeTCellInputResumes(t *testing.T) {
+	native := &fakeHandoffTCellScreen{w: 80, h: 24}
+	screen := newTCellHandoffScreen(native, func() {
+		native.calls = append(native.calls, "reprobe")
+	})
+
+	if err := screen.EnterAlternate(); err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"reprobe", "resume"}; !reflect.DeepEqual(native.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", native.calls, want)
 	}
 }

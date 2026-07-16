@@ -4,10 +4,13 @@ package app
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
@@ -128,6 +131,7 @@ func TestEditWorkflowTreatsConcurrentRemoteReplacementAsConflict(t *testing.T) {
 	fixture := newEditRPCFixture(t)
 	replacement := "replacement-version"
 	fixture.remoteFingerprint.VersionID = &replacement
+	fixture.remoteData = []byte("remote edit\n")
 	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyEphemeral, func(_ context.Context, path string, _ edit.Purpose) (preparedExternalEdit, error) {
 		return preparedExternalEdit{command: "/usr/bin/vi " + path, run: func(context.Context) (terminalhandoff.Result, error) {
 			return terminalhandoff.Result{Kind: terminalhandoff.ExitNormal}, os.WriteFile(path, []byte("local edit"), 0o600)
@@ -142,10 +146,178 @@ func TestEditWorkflowTreatsConcurrentRemoteReplacementAsConflict(t *testing.T) {
 	if !ok || observed.State != edit.StateConflict || fixture.jobCreates != 0 {
 		t.Fatalf("conflict observation = %#v, jobs = %d", action, fixture.jobCreates)
 	}
+	if !strings.Contains(observed.ConflictView.Text, "-remote edit") || !strings.Contains(observed.ConflictView.Text, "+local edit") || observed.ConflictView.Summary == "" {
+		t.Fatalf("conflict view = %#v", observed.ConflictView)
+	}
 	action = coordinator.Decide(context.Background(), tui.Intent{Kind: tui.IntentEditDecision, Pane: tui.Left, Location: fixture.target, EditSessionID: observed.SessionID, EditDecision: edit.DecisionOverwrite})
 	if _, ok := action.(tui.JobCreated); !ok || fixture.frozenExpected.Fingerprint.VersionID == nil || *fixture.frozenExpected.Fingerprint.VersionID != replacement {
 		t.Fatalf("overwrite decision = %#v, expected = %#v", action, fixture.frozenExpected)
 	}
+}
+
+func TestEditConflictViewFailsClosedWhenRemoteChangesDuringRead(t *testing.T) {
+	fixture := newEditRPCFixture(t)
+	observedVersion := "observed-version"
+	changedAgainVersion := "changed-again-version"
+	fixture.remoteFingerprint.VersionID = &observedVersion
+	changedAgain := fixture.remoteFingerprint
+	changedAgain.VersionID = &changedAgainVersion
+	fixture.readFingerprint = &changedAgain
+	fixture.remoteData = []byte("untrusted later version")
+	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyEphemeral, func(_ context.Context, path string, _ edit.Purpose) (preparedExternalEdit, error) {
+		return preparedExternalEdit{command: "/usr/bin/vi " + path, run: func(context.Context) (terminalhandoff.Result, error) {
+			return terminalhandoff.Result{Kind: terminalhandoff.ExitNormal}, os.WriteFile(path, []byte("local edit"), 0o600)
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := coordinator.Begin(context.Background(), tui.Intent{Kind: tui.IntentEdit, Pane: tui.Left, Location: fixture.target}).(tui.EditLaunchReady)
+	action := coordinator.Launch(context.Background(), ready.SessionID)
+	observed, ok := action.(tui.EditSessionObserved)
+	if !ok || observed.State != edit.StateConflict || !strings.Contains(observed.ConflictView.Summary, "unavailable") || strings.Contains(observed.ConflictView.Text, "untrusted later version") || fixture.jobCreates != 0 {
+		t.Fatalf("changed-during-read action = %#v, jobs = %d", action, fixture.jobCreates)
+	}
+}
+
+func TestEditWorkflowClassifiesLocalContentRatherThanMtime(t *testing.T) {
+	tests := []struct {
+		name      string
+		edit      func(*testing.T, string)
+		wantState edit.State
+		finished  bool
+	}{
+		{name: "unchanged", edit: func(*testing.T, string) {}, finished: true},
+		{name: "mtime only", edit: func(t *testing.T, path string) {
+			t.Helper()
+			now := time.Now().Add(time.Minute)
+			if err := os.Chtimes(path, now, now); err != nil {
+				t.Fatal(err)
+			}
+		}, finished: true},
+		{name: "content changed", edit: func(t *testing.T, path string) {
+			t.Helper()
+			if err := os.WriteFile(path, []byte("content changed"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, wantState: edit.StateAwaitingUploadConfirmation},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newEditRPCFixture(t)
+			coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyEphemeral, func(_ context.Context, path string, _ edit.Purpose) (preparedExternalEdit, error) {
+				return preparedExternalEdit{command: "/usr/bin/vi " + path, run: func(context.Context) (terminalhandoff.Result, error) {
+					test.edit(t, path)
+					return terminalhandoff.Result{Kind: terminalhandoff.ExitNormal}, nil
+				}}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ready := coordinator.Begin(context.Background(), tui.Intent{Kind: tui.IntentEdit, Pane: tui.Left, Location: fixture.target}).(tui.EditLaunchReady)
+			action := coordinator.Launch(context.Background(), ready.SessionID)
+			if test.finished {
+				if _, ok := action.(tui.EditSessionFinished); !ok || fixture.jobCreates != 0 {
+					t.Fatalf("unchanged action = %#v, jobs = %d", action, fixture.jobCreates)
+				}
+				return
+			}
+			observed, ok := action.(tui.EditSessionObserved)
+			if !ok || observed.State != test.wantState || fixture.jobCreates != 0 {
+				t.Fatalf("changed action = %#v, jobs = %d", action, fixture.jobCreates)
+			}
+		})
+	}
+}
+
+func TestEditWorkflowClassifiesRemoteObservationMatrix(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*editRPCFixture)
+		want      edit.State
+	}{
+		{name: "unchanged", configure: func(*editRPCFixture) {}, want: edit.StateAwaitingUploadConfirmation},
+		{name: "modified", configure: func(fixture *editRPCFixture) {
+			version := "modified-version"
+			fixture.remoteFingerprint.VersionID = &version
+			fixture.remoteData = []byte("modified remotely")
+		}, want: edit.StateConflict},
+		{name: "deleted", configure: func(fixture *editRPCFixture) {
+			fixture.statErr = &domain.OpError{Code: domain.CodeNotFound, Message: "deleted"}
+		}, want: edit.StateConflict},
+		{name: "replaced", configure: func(fixture *editRPCFixture) {
+			fixture.remoteKind = domain.EntrySymlink
+			fixture.remoteFingerprint = domain.Fingerprint{}
+		}, want: edit.StateConflict},
+		{name: "unstat", configure: func(fixture *editRPCFixture) {
+			fixture.statErr = errors.New("stat transport unavailable")
+		}, want: edit.StateRecoveryRequired},
+		{name: "unknown", configure: func(fixture *editRPCFixture) {
+			fixture.statUnknown = true
+		}, want: edit.StateRecoveryRequired},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newEditRPCFixture(t)
+			test.configure(fixture)
+			coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyEphemeral, func(_ context.Context, path string, _ edit.Purpose) (preparedExternalEdit, error) {
+				return preparedExternalEdit{command: "/usr/bin/vi " + path, run: func(context.Context) (terminalhandoff.Result, error) {
+					return terminalhandoff.Result{Kind: terminalhandoff.ExitNormal}, os.WriteFile(path, []byte("local edit"), 0o600)
+				}}, nil
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			ready := coordinator.Begin(context.Background(), tui.Intent{Kind: tui.IntentEdit, Pane: tui.Left, Location: fixture.target}).(tui.EditLaunchReady)
+			action := coordinator.Launch(context.Background(), ready.SessionID)
+			observed, ok := action.(tui.EditSessionObserved)
+			if !ok || observed.State != test.want || fixture.jobCreates != 0 {
+				t.Fatalf("remote observation = %#v, jobs = %d", action, fixture.jobCreates)
+			}
+		})
+	}
+}
+
+func TestEditWorkflowSaveAsAndSkipRemainExplicit(t *testing.T) {
+	t.Run("save as", func(t *testing.T) {
+		fixture, coordinator, observed := localOnlyEditFixture(t)
+		target, err := domain.NewLocation(fixture.target.EndpointID, "/safe-copy.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		action := coordinator.Decide(context.Background(), tui.Intent{Kind: tui.IntentEditDecision, Pane: tui.Left, Location: fixture.target, EditSessionID: observed.SessionID, EditDecision: edit.DecisionSaveAs, SaveAsTarget: target})
+		if _, ok := action.(tui.JobCreated); !ok || fixture.jobCreates != 1 || fixture.frozenTarget != target || fixture.frozenExpected.Presence != edit.ExpectedAbsent {
+			t.Fatalf("save-as action = %#v, target = %#v expected = %#v", action, fixture.frozenTarget, fixture.frozenExpected)
+		}
+	})
+
+	t.Run("skip", func(t *testing.T) {
+		fixture, coordinator, observed := localOnlyEditFixture(t)
+		action := coordinator.Decide(context.Background(), tui.Intent{Kind: tui.IntentEditDecision, Pane: tui.Left, Location: fixture.target, EditSessionID: observed.SessionID, EditDecision: edit.DecisionSkip})
+		if _, ok := action.(tui.EditSessionFinished); !ok || fixture.jobCreates != 0 || fixture.releases != 1 {
+			t.Fatalf("skip action = %#v, jobs = %d releases = %d", action, fixture.jobCreates, fixture.releases)
+		}
+	})
+}
+
+func localOnlyEditFixture(t *testing.T) (*editRPCFixture, *editCoordinator, tui.EditSessionObserved) {
+	t.Helper()
+	fixture := newEditRPCFixture(t)
+	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyEphemeral, func(_ context.Context, path string, _ edit.Purpose) (preparedExternalEdit, error) {
+		return preparedExternalEdit{command: "/usr/bin/vi " + path, run: func(context.Context) (terminalhandoff.Result, error) {
+			return terminalhandoff.Result{Kind: terminalhandoff.ExitNormal}, os.WriteFile(path, []byte("local edit"), 0o600)
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ready := coordinator.Begin(context.Background(), tui.Intent{Kind: tui.IntentEdit, Pane: tui.Left, Location: fixture.target}).(tui.EditLaunchReady)
+	action := coordinator.Launch(context.Background(), ready.SessionID)
+	observed, ok := action.(tui.EditSessionObserved)
+	if !ok || observed.State != edit.StateAwaitingUploadConfirmation {
+		t.Fatalf("local-only observation = %#v", action)
+	}
+	return fixture, coordinator, observed
 }
 
 func TestColdStartRecoveryRebindsExactHandoffAndRequiresExplicitSyncBack(t *testing.T) {
@@ -211,6 +383,61 @@ func TestColdStartRecoveryRebindsExactHandoffAndRequiresExplicitSyncBack(t *test
 	created := coordinator.Decide(context.Background(), tui.Intent{Kind: tui.IntentEditDecision, Pane: tui.Left, Location: fixture.target, EditSessionID: machine.ID(), EditDecision: edit.DecisionUpload})
 	if _, ok := created.(tui.JobCreated); !ok || fixture.jobCreates != 1 {
 		t.Fatalf("Decide() = %#v, jobs = %d", created, fixture.jobCreates)
+	}
+}
+
+func TestColdStartConflictRecoveryRebuildsExactBoundedDiff(t *testing.T) {
+	fixture := newEditRPCFixture(t)
+	baselineSHA, _, err := hashRegularFile(fixture.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := edit.NewSession(edit.NewSessionRequest{ID: "77777777777777777777777777777777", Purpose: edit.PurposeEditor, Baseline: edit.Baseline{
+		SourceEntryID: "1111111111111111111111111111111111111111111111111111111111111111", MaterializationID: "22222222222222222222222222222222",
+		Target: fixture.target, ExpectedRemote: edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: domain.EntryFile, Fingerprint: fixture.baseline}, LocalSHA256: baselineSHA,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, _ = machine.BeginObservation(machine.Version())
+	if err := os.WriteFile(fixture.path, []byte("retained local edit\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	localSHA, _, err := hashRegularFile(fixture.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteVersion := "concurrent-version"
+	fixture.remoteFingerprint.VersionID = &remoteVersion
+	fixture.remoteData = []byte("concurrent remote edit\n")
+	machine, _, err = machine.Observe(machine.Version(), edit.PostEditorObservation{
+		Local:  edit.LocalObservation{Status: edit.LocalPresent, SHA256: localSHA},
+		Remote: edit.RemoteObservation{Status: edit.RemotePresent, Kind: domain.EntryFile, Fingerprint: fixture.remoteFingerprint},
+	})
+	if err != nil || machine.State() != edit.StateConflict {
+		t.Fatalf("conflict machine = %q, err %v", machine.State(), err)
+	}
+	fixture.recoveries = []editstore.RecoveryRecord{{
+		Record: editstore.Record{SessionID: string(machine.ID()), SourceEntryID: machine.Baseline().SourceEntryID, MaterializationID: machine.Baseline().MaterializationID,
+			LocalState: editstore.LocalDirty, RemoteState: editstore.RemoteModified, State: editstore.StateConflict, StateVersion: 3},
+		Details: editstore.Details{ReferenceID: "33333333333333333333333333333333", LeaseID: "44444444444444444444444444444444",
+			Persistent: machine.Persistent(), Target: fixture.target, ExpectedRemote: machine.Baseline().ExpectedRemote},
+	}}
+	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyEphemeral, func(context.Context, string, edit.Purpose) (preparedExternalEdit, error) {
+		return preparedExternalEdit{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator.recoveryMaterializationPath = func(cache.MaterializationID) (string, error) { return fixture.path, nil }
+	loaded := coordinator.Recoverable(context.Background(), 64).(tui.EditRecoveryLoaded)
+	if len(loaded.Sessions) != 1 || !loaded.Sessions[0].Usable {
+		t.Fatalf("Recoverable() = %#v", loaded)
+	}
+	action := coordinator.Resume(context.Background(), machine.ID(), tui.Left)
+	observed, ok := action.(tui.EditSessionObserved)
+	if !ok || observed.State != edit.StateConflict || !strings.Contains(observed.ConflictView.Text, "-concurrent remote edit") || !strings.Contains(observed.ConflictView.Text, "+retained local edit") || fixture.jobCreates != 0 {
+		t.Fatalf("resumed conflict = %#v, jobs = %d", action, fixture.jobCreates)
 	}
 }
 
@@ -304,6 +531,11 @@ type editRPCFixture struct {
 	localEndpoint     domain.EndpointID
 	baseline          domain.Fingerprint
 	remoteFingerprint domain.Fingerprint
+	remoteData        []byte
+	remoteKind        domain.EntryKind
+	readFingerprint   *domain.Fingerprint
+	statErr           error
+	statUnknown       bool
 	routes            []string
 	version           int64
 	releases          int
@@ -312,6 +544,7 @@ type editRPCFixture struct {
 	frozenVersion     edit.Version
 	boundVersion      edit.Version
 	frozenExpected    edit.RemotePrecondition
+	frozenTarget      domain.Location
 	recoveries        []editstore.RecoveryRecord
 }
 
@@ -329,7 +562,7 @@ func newEditRPCFixture(t *testing.T) *editRPCFixture {
 	}
 	version := "baseline-version"
 	fingerprint := domain.Fingerprint{VersionID: &version}
-	return &editRPCFixture{t: t, path: path, target: target, localEndpoint: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", baseline: fingerprint, remoteFingerprint: fingerprint}
+	return &editRPCFixture{t: t, path: path, target: target, localEndpoint: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", baseline: fingerprint, remoteFingerprint: fingerprint, remoteData: []byte("baseline"), remoteKind: domain.EntryFile}
 }
 
 func (fixture *editRPCFixture) Call(_ context.Context, route string, request any, response any) error {
@@ -371,6 +604,7 @@ func (fixture *editRPCFixture) Call(_ context.Context, route string, request any
 		if got.EventKind == "sync_back_frozen" {
 			fixture.frozenVersion = got.Persistent.Version
 			fixture.frozenExpected = got.ExpectedRemote
+			fixture.frozenTarget = got.Target
 			if got.State != editstore.StateAwaitingDecision && got.State != editstore.StateConflict {
 				fixture.t.Fatalf("frozen lifecycle state = %q", got.State)
 			}
@@ -389,8 +623,28 @@ func (fixture *editRPCFixture) Call(_ context.Context, route string, request any
 		response.(*daemon.CacheMarkDirtyResponse).CurrentSHA256 = cache.BlobID(sha)
 		response.(*daemon.CacheMarkDirtyResponse).Size = int64(size)
 	case daemon.ProviderStat:
-		entry := domain.Entry{Location: fixture.target, Name: "file.txt", Kind: domain.EntryFile, Fingerprint: fixture.remoteFingerprint}
+		if fixture.statErr != nil {
+			return fixture.statErr
+		}
+		if fixture.statUnknown {
+			return nil
+		}
+		entry := domain.Entry{Location: fixture.target, Name: "file.txt", Kind: fixture.remoteKind, Fingerprint: fixture.remoteFingerprint}
 		response.(*ipc.ProviderStatResponse).Entry = ipc.EncodeEntry(entry)
+	case daemon.ProviderRead:
+		got := request.(ipc.ProviderReadRequest)
+		if got.ExpectedFingerprint == nil || !reflect.DeepEqual(ipc.DecodeFingerprint(*got.ExpectedFingerprint), fixture.remoteFingerprint) || got.Limit > edit.ConflictViewInputByteLimit {
+			fixture.t.Fatalf("conflict read = %#v", got)
+		}
+		limit := min(len(fixture.remoteData), int(got.Limit))
+		read := response.(*ipc.ProviderReadResponse)
+		readFingerprint := fixture.remoteFingerprint
+		if fixture.readFingerprint != nil {
+			readFingerprint = *fixture.readFingerprint
+		}
+		read.Info.Fingerprint = ipc.EncodeFingerprint(readFingerprint)
+		read.Data = ipc.EncodeWireBytes(fixture.remoteData[:limit])
+		read.EOF = limit == len(fixture.remoteData)
 	case daemon.CacheReleaseHandoff:
 		fixture.releases++
 		response.(*daemon.CacheReleaseHandoffResponse).Released = true

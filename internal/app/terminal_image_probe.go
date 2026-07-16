@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
@@ -13,6 +14,28 @@ import (
 )
 
 const terminalImageProbeTimeout = 200 * time.Millisecond
+
+type terminalImageCapabilityState struct {
+	mu    sync.RWMutex
+	proof builtinpreview.ImageCapabilityProof
+}
+
+func newTerminalImageCapabilityState(proof builtinpreview.ImageCapabilityProof) *terminalImageCapabilityState {
+	return &terminalImageCapabilityState{proof: proof}
+}
+
+func (state *terminalImageCapabilityState) Current() builtinpreview.ImageCapabilityProof {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+	return state.proof
+}
+
+func (state *terminalImageCapabilityState) Reprobe(environment []string) {
+	proof := probeTerminalImageCapability(environment)
+	state.mu.Lock()
+	state.proof = proof
+	state.mu.Unlock()
+}
 
 func probeTerminalImageCapability(environment []string) builtinpreview.ImageCapabilityProof {
 	protocol := imageProbeCandidate(environmentValues(environment))
@@ -28,6 +51,10 @@ func probeTerminalImageCapability(environment []string) builtinpreview.ImageCapa
 		return builtinpreview.ImageCapabilityProof{}
 	}
 	defer unix.Close(descriptor)
+	foregroundProcessGroup, err := unix.IoctlGetInt(descriptor, unix.TIOCGPGRP)
+	if err != nil || foregroundProcessGroup != unix.Getpgrp() {
+		return builtinpreview.ImageCapabilityProof{}
+	}
 	original, err := getProbeTermios(descriptor)
 	if err != nil {
 		return builtinpreview.ImageCapabilityProof{}

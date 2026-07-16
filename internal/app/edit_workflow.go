@@ -228,12 +228,12 @@ func recoverableLifecycleMatches(lifecycle editstore.State, state edit.State) bo
 	}
 }
 
-func (coordinator *editCoordinator) Resume(_ context.Context, sessionID edit.SessionID, pane tui.PaneID) tui.Action {
+func (coordinator *editCoordinator) Resume(ctx context.Context, sessionID edit.SessionID, pane tui.PaneID) tui.Action {
 	if pane != tui.Left && pane != tui.Right {
 		return tui.EditSessionFailed{Message: "resume edit session: invalid pane; recovery metadata retained"}
 	}
 	if live := coordinator.sessions[sessionID]; live != nil {
-		return recoveredSessionAction(live, "edit session is already rebound in this client")
+		return coordinator.recoveredSessionAction(ctx, live, "edit session is already rebound in this client")
 	}
 	recovery, ok := coordinator.recoverable[sessionID]
 	if !ok || !recovery.usable {
@@ -259,16 +259,19 @@ func (coordinator *editCoordinator) Resume(_ context.Context, sessionID edit.Ses
 		ownerKind: ownerKind, ownerID: string(sessionID), pane: pane, target: baseline.Target, recovery: recovery.record,
 	}
 	coordinator.sessions[sessionID] = live
-	return recoveredSessionAction(live, "cold-start edit session rebound to its exact retained materialization; no upload was started")
+	return coordinator.recoveredSessionAction(ctx, live, "cold-start edit session rebound to its exact retained materialization; no upload was started")
 }
 
-func recoveredSessionAction(live *liveEditSession, message string) tui.Action {
+func (coordinator *editCoordinator) recoveredSessionAction(ctx context.Context, live *liveEditSession, message string) tui.Action {
 	state := live.machine.State()
 	if state == edit.StateObserving {
 		state = edit.StateReady
 		message += "; Enter completes the interrupted observation"
 	}
-	return tui.EditSessionObserved{SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: state, Message: message, Decision: live.recovery.DecisionKind}
+	return tui.EditSessionObserved{
+		SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: state,
+		Message: message, Decision: live.recovery.DecisionKind, ConflictView: coordinator.conflictView(ctx, live),
+	}
 }
 
 func boundedRecoveryDiagnostic(message string) string {
@@ -466,7 +469,93 @@ func (coordinator *editCoordinator) observe(ctx context.Context, live *liveEditS
 		}
 		return tui.EditSessionFinished{Pane: live.pane, Location: live.target, Message: message + "; no changes detected and no upload started"}
 	}
-	return tui.EditSessionObserved{SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: live.machine.State(), Message: message}
+	return tui.EditSessionObserved{
+		SessionID: live.machine.ID(), Pane: live.pane, Location: live.target,
+		State: live.machine.State(), Message: message, ConflictView: coordinator.conflictView(ctx, live),
+	}
+}
+
+func (coordinator *editCoordinator) conflictView(ctx context.Context, live *liveEditSession) edit.ConflictView {
+	if live == nil || live.machine.Evaluation().Action != edit.ActionResolveConflict {
+		return edit.ConflictView{}
+	}
+	local, localTruncated, err := readConflictLocal(live.materialized.Path, live.machine.CurrentLocalSHA256())
+	if err != nil {
+		return unavailableConflictView("retained local edit could not be revalidated: " + err.Error())
+	}
+	observation := live.machine.LastRemoteObservation()
+	request := edit.ConflictViewRequest{Local: local, LocalTruncated: localTruncated, RemoteObservation: observation}
+	if observation.Status != edit.RemotePresent || observation.Kind != domain.EntryFile {
+		return edit.BuildConflictView(request)
+	}
+	expected := ipc.EncodeFingerprint(observation.Fingerprint)
+	var response ipc.ProviderReadResponse
+	if err := coordinator.client.Call(ctx, daemon.ProviderRead, ipc.ProviderReadRequest{
+		Location: ipc.EncodeLocation(live.target), Limit: edit.ConflictViewInputByteLimit, ExpectedFingerprint: &expected,
+	}, &response); err != nil {
+		return unavailableConflictView("exact remote version could not be read: " + clientErrorMessage(err))
+	}
+	if !reflect.DeepEqual(ipc.DecodeFingerprint(response.Info.Fingerprint), observation.Fingerprint) {
+		return unavailableConflictView("remote identity changed while building the conflict diff")
+	}
+	remote, err := response.Data.Decode()
+	if err != nil || len(remote) > edit.ConflictViewInputByteLimit {
+		return unavailableConflictView("remote conflict bytes violated the bounded read contract")
+	}
+	request.Remote = remote
+	request.RemoteTruncated = !response.EOF
+	return edit.BuildConflictView(request)
+}
+
+func unavailableConflictView(message string) edit.ConflictView {
+	diagnostic := boundedRecoveryDiagnostic(message)
+	return edit.ConflictView{
+		Text:    "--- remote (diff unavailable)\n+++ local (retained; no upload started)\n " + diagnostic + "\n",
+		Summary: "remote → local conflict diff unavailable",
+	}
+}
+
+func readConflictLocal(path string, expected edit.SHA256) ([]byte, bool, error) {
+	if _, err := edit.ParseSHA256(string(expected)); err != nil {
+		return nil, false, errors.New("current local identity is uncertain")
+	}
+	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return nil, false, err
+	}
+	file := os.NewFile(uintptr(descriptor), path)
+	if file == nil {
+		_ = unix.Close(descriptor)
+		return nil, false, errors.New("invalid materialization descriptor")
+	}
+	defer file.Close()
+	before, err := file.Stat()
+	if err != nil || !before.Mode().IsRegular() || before.Mode().Perm()&0o077 != 0 {
+		return nil, false, errors.New("materialization is not a private regular file")
+	}
+	bounded, err := io.ReadAll(io.LimitReader(file, edit.ConflictViewInputByteLimit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	truncated := len(bounded) > edit.ConflictViewInputByteLimit
+	if truncated {
+		bounded = bounded[:edit.ConflictViewInputByteLimit]
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, false, err
+	}
+	hash := sha256.New()
+	if _, err := io.Copy(hash, file); err != nil {
+		return nil, false, err
+	}
+	after, err := file.Stat()
+	if err != nil || !os.SameFile(before, after) || before.Size() != after.Size() || !before.ModTime().Equal(after.ModTime()) {
+		return nil, false, errors.New("materialization changed while building the conflict diff")
+	}
+	if edit.SHA256(hex.EncodeToString(hash.Sum(nil))) != expected {
+		return nil, false, errors.New("materialization no longer matches the durable edit session")
+	}
+	return bounded, truncated, nil
 }
 
 func (coordinator *editCoordinator) Decide(ctx context.Context, intent tui.Intent) tui.Action {
@@ -476,7 +565,11 @@ func (coordinator *editCoordinator) Decide(ctx context.Context, intent tui.Inten
 	}
 	if live.machine.State() == edit.StateSyncBackFrozen {
 		if intent.EditDecision == "" || intent.EditDecision != live.recovery.DecisionKind {
-			return tui.EditSessionObserved{SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: live.machine.State(), Decision: live.recovery.DecisionKind, Message: "prepared sync-back requires explicit confirmation of the retained decision"}
+			return tui.EditSessionObserved{
+				SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: live.machine.State(),
+				Decision: live.recovery.DecisionKind, Message: "prepared sync-back requires explicit confirmation of the retained decision",
+				ConflictView: coordinator.conflictView(ctx, live),
+			}
 		}
 		return coordinator.enqueueFrozenSyncBack(ctx, live)
 	}
@@ -496,7 +589,10 @@ func (coordinator *editCoordinator) Decide(ctx context.Context, intent tui.Inten
 	}
 	next, syncBack, err := live.machine.Decide(live.machine.Version(), decision)
 	if err != nil {
-		return tui.EditSessionObserved{SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: live.machine.State(), Message: "edit decision rejected: " + err.Error()}
+		return tui.EditSessionObserved{
+			SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: live.machine.State(),
+			Message: "edit decision rejected: " + err.Error(), ConflictView: coordinator.conflictView(ctx, live),
+		}
 	}
 	localState, remoteState, lifecycle := durableObservationState(live.machine.State(), live.machine.Evaluation(), edit.LocalObservation{Status: edit.LocalPresent, SHA256: live.machine.CurrentLocalSHA256()}, live.machine.LastRemoteObservation())
 	if lifecycle != editstore.StateConflict {
@@ -736,7 +832,7 @@ func externalExitMessage(result terminalhandoff.Result, err error) string {
 	}
 }
 
-func prepareExternalEdit(ctx context.Context, materialization string, resolved externalprocess.ResolvedCommand, environment []string, screen handoffTCellScreen) (preparedExternalEdit, error) {
+func prepareExternalEdit(ctx context.Context, materialization string, resolved externalprocess.ResolvedCommand, environment []string, screen handoffTCellScreen, beforeInputResume func()) (preparedExternalEdit, error) {
 	plan, err := externalprocess.NewPlan(resolved, materialization, environment)
 	if err != nil {
 		return preparedExternalEdit{}, err
@@ -765,7 +861,7 @@ func prepareExternalEdit(ctx context.Context, materialization string, resolved e
 		if err != nil {
 			return terminalhandoff.Result{}, err
 		}
-		controller, err := terminalhandoff.NewController(newTCellHandoffScreen(screen), platform)
+		controller, err := terminalhandoff.NewController(newTCellHandoffScreen(screen, beforeInputResume), platform)
 		if err != nil {
 			return terminalhandoff.Result{}, err
 		}

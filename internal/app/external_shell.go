@@ -24,11 +24,12 @@ type handoffTCellScreen interface {
 }
 
 type tcellHandoffScreen struct {
-	screen handoffTCellScreen
+	screen            handoffTCellScreen
+	beforeInputResume func()
 }
 
-func newTCellHandoffScreen(screen handoffTCellScreen) *tcellHandoffScreen {
-	return &tcellHandoffScreen{screen: screen}
+func newTCellHandoffScreen(screen handoffTCellScreen, beforeInputResume func()) *tcellHandoffScreen {
+	return &tcellHandoffScreen{screen: screen, beforeInputResume: beforeInputResume}
 }
 
 func (screen *tcellHandoffScreen) Freeze() (terminalhandoff.Snapshot, error) {
@@ -44,8 +45,13 @@ func (screen *tcellHandoffScreen) ShowCursor() error {
 }
 func (screen *tcellHandoffScreen) LeaveAlternate() error { return screen.screen.Suspend() }
 func (screen *tcellHandoffScreen) LeaveRaw() error       { return nil }
-func (screen *tcellHandoffScreen) EnterAlternate() error { return screen.screen.Resume() }
-func (screen *tcellHandoffScreen) EnterRaw() error       { return nil }
+func (screen *tcellHandoffScreen) EnterAlternate() error {
+	if screen.beforeInputResume != nil {
+		screen.beforeInputResume()
+	}
+	return screen.screen.Resume()
+}
+func (screen *tcellHandoffScreen) EnterRaw() error { return nil }
 func (screen *tcellHandoffScreen) RestoreCursor(terminalhandoff.Snapshot) error {
 	return nil
 }
@@ -58,7 +64,7 @@ func (screen *tcellHandoffScreen) Resume(terminalhandoff.Snapshot) error {
 	return nil
 }
 
-func runShellIntent(ctx context.Context, intent tui.Intent, environment []string, screen handoffTCellScreen) string {
+func runShellIntent(ctx context.Context, intent tui.Intent, environment []string, screen handoffTCellScreen, beforeInputResume func()) string {
 	if ctx == nil || intent.Kind != tui.IntentShell || screen == nil {
 		return "shell failed: invalid shell request"
 	}
@@ -103,7 +109,7 @@ func runShellIntent(ctx context.Context, intent tui.Intent, environment []string
 	if err != nil {
 		return "shell failed: " + err.Error()
 	}
-	controller, err := terminalhandoff.NewController(newTCellHandoffScreen(screen), platform)
+	controller, err := terminalhandoff.NewController(newTCellHandoffScreen(screen, beforeInputResume), platform)
 	if err != nil {
 		return "shell failed: " + err.Error()
 	}

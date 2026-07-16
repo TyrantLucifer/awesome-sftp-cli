@@ -391,13 +391,14 @@ type AuthState struct {
 }
 
 type EditDecisionState struct {
-	Active    bool
-	SessionID edit.SessionID
-	Pane      PaneID
-	Location  domain.Location
-	State     edit.State
-	Message   string
-	Decision  edit.DecisionKind
+	Active       bool
+	SessionID    edit.SessionID
+	Pane         PaneID
+	Location     domain.Location
+	State        edit.State
+	Message      string
+	Decision     edit.DecisionKind
+	ConflictView edit.ConflictView
 }
 
 type EditLaunchState struct {
@@ -762,12 +763,13 @@ type CommandCompleted struct {
 }
 
 type EditSessionObserved struct {
-	SessionID edit.SessionID
-	Pane      PaneID
-	Location  domain.Location
-	State     edit.State
-	Message   string
-	Decision  edit.DecisionKind
+	SessionID    edit.SessionID
+	Pane         PaneID
+	Location     domain.Location
+	State        edit.State
+	Message      string
+	Decision     edit.DecisionKind
+	ConflictView edit.ConflictView
 }
 
 type EditLaunchReady struct {
