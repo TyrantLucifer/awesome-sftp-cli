@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–1 已完成；Stage 2 的 M2.1–M2.3 已由 exact-SHA Hosted evidence 完成，M2.4 implementation 已进入最终门禁；Stage 3–6 保持 Not Started。
+Stage 0–2 已完成；Stage 2 的 M2.1–M2.4 均由 exact-SHA Hosted evidence、完整本地门禁和独立冷启动审计闭环；Stage 3–6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -82,7 +82,7 @@ Stage 0–1 已完成；Stage 2 的 M2.1–M2.3 已由 exact-SHA Hosted evidence
 
 **Tests**: 作业状态机与幂等性；SQLite filesystem/probe、final-absent intent bootstrap、wrong DB零目录写与sidecar recovery、checksum+SQL lexer、per-head whole-schema/exact runner tables、无/单/多pending original..target attempt、backup sanitize/restore hold/非ready显式resume、catalog retention/space、Darwin source/hidden-destination fullsync顺序、no-replace及清attempt→retention→checkpoint→immutable，2秒reader与4/8/264MiB online WAL预算；四类传输、kill/断网/短写/权限/磁盘满、内存与恢复安全。
 
-**Status**: In Progress
+**Status**: Complete
 
 ### M2.1: 持久化状态机骨架
 
@@ -128,9 +128,9 @@ Stage 0–1 已完成；Stage 2 的 M2.1–M2.3 已由 exact-SHA Hosted evidence
 
 **Tests**: rename/delete 后置条件、source-changed、commit/delete response lost、partial directory move、trash/no-trash、危险路径、repeat/count、无客户端等待、crash/fault matrix 与真实 macOS/Linux PTY。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: implementation commits `cf10e2031ff4929b5b8bc6882aad473445841f7d` and `29592921b24039a568677e4974541d9656c8f952`, followed by Hosted test synchronization through `0b779a15ec48590bbc6f426426d3f15c18a9e335`, deliver frozen source-delete capability, atomic-rename gating/postconditions, copy-delete source retention, bounded directory source deletion, explicit/trash delete, symlink no-follow, unknown-response proof, commit→delete restart recovery, multi/directory clipboard, count/repeat reconfirmation, `D` two-stage confirmation, `r`, IPC routes and local PTY copy/move/rename/delete/reattach. Complete local gates pass; exact final Hosted and closeout gates remain before status can become Complete.
+**Current checkpoint**: implementation commits `cf10e2031ff4929b5b8bc6882aad473445841f7d` and `29592921b24039a568677e4974541d9656c8f952`, followed by deterministic Hosted fixture repairs through exact SHA `54b0285d7278d58e67c35a280fa8b996a99a321d`, deliver frozen source-delete capability, atomic-rename gating/postconditions, copy-delete source retention, bounded directory source deletion, explicit/trash delete, symlink no-follow, unknown-response proof, commit→delete restart recovery, multi/directory clipboard, count/repeat reconfirmation, `D` two-stage confirmation, `r`, IPC routes and local PTY copy/move/rename/delete/reattach. Complete local current/oldstable gates pass, and exact implementation SHA `54b0285d7278d58e67c35a280fa8b996a99a321d` passed complete Hosted push run `29488697276` (attempt 2) and PR run `29488700235`. M2.4 and Stage 2 are complete.
 
 ## Stage 3: Preview, Edit & Cache
 
