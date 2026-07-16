@@ -44,6 +44,15 @@ type ReadPlan struct {
 	Complete     bool
 }
 
+// ReadWindow owns the bounded bytes retained for one Preview after a read.
+// Data never exceeds MaxRetainedBytes and is never aliased with provider or
+// caller buffers.
+type ReadWindow struct {
+	Offset   uint64
+	Data     []byte
+	Complete bool
+}
+
 func PlanHead(fileSize uint64) ReadPlan {
 	return initialReadPlan(ReadHead, fileSize, 0, min(fileSize, ReadChunkBytes))
 }
@@ -96,6 +105,58 @@ func PlanContinue(fileSize uint64, retained RetainedWindow) (ReadPlan, error) {
 		DiscardBytes: discardBytes,
 		Complete:     retainOffset == 0 && combinedBytes == fileSize,
 	}, nil
+}
+
+// ApplyReadPlan validates an exact provider response and produces the next
+// retained window. A short response is rejected because the file size used to
+// make the plan is part of the frozen Preview identity; accepting it would
+// silently render bytes from a changed or incompletely read source.
+func ApplyReadPlan(prior ReadWindow, plan ReadPlan, response []byte) (ReadWindow, error) {
+	if plan.Limit > ReadChunkBytes {
+		return ReadWindow{}, fmt.Errorf("apply preview read: limit %d exceeds chunk cap %d", plan.Limit, ReadChunkBytes)
+	}
+	if plan.RetainBytes > MaxRetainedBytes {
+		return ReadWindow{}, fmt.Errorf("apply preview read: retained bytes %d exceed cap %d", plan.RetainBytes, MaxRetainedBytes)
+	}
+	if uint64(len(response)) != plan.Limit { //nolint:gosec // slice length is non-negative
+		return ReadWindow{}, fmt.Errorf("apply preview read: response bytes %d do not match planned limit %d", len(response), plan.Limit)
+	}
+
+	switch plan.Mode {
+	case ReadHead, ReadTail, ReadRange:
+		if len(prior.Data) != 0 || prior.Offset != 0 || prior.Complete {
+			return ReadWindow{}, fmt.Errorf("apply preview read: initial read has a prior window")
+		}
+		if plan.DiscardBytes != 0 || plan.RetainOffset != plan.Offset || plan.RetainBytes != plan.Limit {
+			return ReadWindow{}, fmt.Errorf("apply preview read: inconsistent initial retention")
+		}
+		return ReadWindow{Offset: plan.RetainOffset, Data: append([]byte(nil), response...), Complete: plan.Complete}, nil
+	case ReadContinue:
+		return applyContinueRead(prior, plan, response)
+	default:
+		return ReadWindow{}, fmt.Errorf("apply preview read: unsupported mode %q", plan.Mode)
+	}
+}
+
+func applyContinueRead(prior ReadWindow, plan ReadPlan, response []byte) (ReadWindow, error) {
+	priorBytes := uint64(len(prior.Data)) //nolint:gosec // slice length is non-negative
+	if priorBytes == 0 || priorBytes > MaxRetainedBytes {
+		return ReadWindow{}, fmt.Errorf("apply preview read: prior retained bytes must be in [1,%d]", MaxRetainedBytes)
+	}
+	if prior.Offset > ^uint64(0)-priorBytes || plan.Offset != prior.Offset+priorBytes {
+		return ReadWindow{}, fmt.Errorf("apply preview read: continue offset does not follow prior window")
+	}
+	if plan.DiscardBytes > priorBytes || prior.Offset > ^uint64(0)-plan.DiscardBytes || plan.RetainOffset != prior.Offset+plan.DiscardBytes {
+		return ReadWindow{}, fmt.Errorf("apply preview read: invalid discarded prefix")
+	}
+	retainedPrior := priorBytes - plan.DiscardBytes
+	if retainedPrior > MaxRetainedBytes-plan.Limit || plan.RetainBytes != retainedPrior+plan.Limit {
+		return ReadWindow{}, fmt.Errorf("apply preview read: inconsistent continue retention")
+	}
+	data := make([]byte, 0, int(plan.RetainBytes))
+	data = append(data, prior.Data[int(plan.DiscardBytes):]...)
+	data = append(data, response...)
+	return ReadWindow{Offset: plan.RetainOffset, Data: data, Complete: plan.Complete}, nil
 }
 
 func initialReadPlan(mode ReadMode, fileSize, offset, limit uint64) ReadPlan {

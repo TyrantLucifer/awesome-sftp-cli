@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"hash/crc32"
+	"image"
 	"image/png"
 	"strconv"
 	"strings"
@@ -44,24 +45,23 @@ type ImageOutputLimits struct {
 	MaxPayloadBytes int
 	MaxOutputBytes  int
 	ChunkBytes      int
+	MaxPixels       uint64
 }
 
 func DefaultImageOutputLimits() ImageOutputLimits {
-	return ImageOutputLimits{MaxPayloadBytes: 4 * 1024 * 1024, MaxOutputBytes: 6 * 1024 * 1024, ChunkBytes: 4096}
+	return ImageOutputLimits{MaxPayloadBytes: 4 * 1024 * 1024, MaxOutputBytes: 6 * 1024 * 1024, ChunkBytes: 4096, MaxPixels: 1_000_000}
 }
 
 func EncodeTerminalImage(protocol ImageProtocol, mediaType string, payload []byte, limits ImageOutputLimits) ([]byte, error) {
-	if limits.MaxPayloadBytes <= 0 || limits.MaxOutputBytes <= 0 || limits.ChunkBytes <= 0 {
+	if limits.MaxPayloadBytes <= 0 || limits.MaxOutputBytes <= 0 || limits.ChunkBytes <= 0 || limits.MaxPixels == 0 {
 		return nil, fmt.Errorf("encode terminal image: limits must be positive")
 	}
 	switch protocol {
-	case ImageProtocolKitty, ImageProtocolITerm2:
+	case ImageProtocolKitty, ImageProtocolITerm2, ImageProtocolSixel:
 	case ImageProtocolNone:
 		return nil, fmt.Errorf("encode terminal image: no confirmed terminal image protocol")
-	case ImageProtocolSixel:
-		return nil, fmt.Errorf("encode terminal image: Sixel encoder is unavailable")
 	default:
-		return nil, fmt.Errorf("encode terminal image: unsupported protocol %q", protocol)
+		return nil, fmt.Errorf("encode terminal image: unsupported protocol")
 	}
 	if mediaType != "image/png" {
 		return nil, fmt.Errorf("encode terminal image: only verified PNG payloads are supported")
@@ -69,10 +69,14 @@ func EncodeTerminalImage(protocol ImageProtocol, mediaType string, payload []byt
 	if len(payload) == 0 || len(payload) > limits.MaxPayloadBytes {
 		return nil, fmt.Errorf("encode terminal image: payload length must be in [1,%d]", limits.MaxPayloadBytes)
 	}
-	encodedLength := base64.StdEncoding.EncodedLen(len(payload))
-	projected, err := projectedImageOutputBytes(protocol, len(payload), encodedLength, limits)
-	if err != nil {
-		return nil, err
+	projected := 0
+	if protocol != ImageProtocolSixel {
+		encodedLength := base64.StdEncoding.EncodedLen(len(payload))
+		var err error
+		projected, err = projectedImageOutputBytes(protocol, len(payload), encodedLength, limits)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if err := verifyPNG(payload); err != nil {
 		return nil, fmt.Errorf("encode terminal image: payload is not a valid PNG")
@@ -80,6 +84,21 @@ func EncodeTerminalImage(protocol ImageProtocol, mediaType string, payload []byt
 	configuration, err := png.DecodeConfig(bytes.NewReader(payload))
 	if err != nil || configuration.Width <= 0 || configuration.Height <= 0 {
 		return nil, fmt.Errorf("encode terminal image: payload is not a valid PNG")
+	}
+	pixels := uint64(configuration.Width) * uint64(configuration.Height)
+	if pixels > limits.MaxPixels {
+		return nil, fmt.Errorf("encode terminal image: pixel count %d exceeds %d", pixels, limits.MaxPixels)
+	}
+	if protocol == ImageProtocolSixel {
+		projected, err = projectedSixelOutputBytes(configuration.Width, configuration.Height, limits.MaxOutputBytes)
+		if err != nil {
+			return nil, err
+		}
+		decoded, decodeErr := png.Decode(bytes.NewReader(payload))
+		if decodeErr != nil {
+			return nil, fmt.Errorf("encode terminal image: payload is not a valid PNG")
+		}
+		return encodeSixel(decoded, projected), nil
 	}
 	encoded := base64.StdEncoding.EncodeToString(payload)
 	var output []byte
@@ -107,6 +126,71 @@ func EncodeTerminalImage(protocol ImageProtocol, mediaType string, payload []byt
 		output = append(output, '\a')
 	}
 	return output, nil
+}
+
+const sixelPaletteSize = 16
+
+func projectedSixelOutputBytes(width, height, maximum int) (int, error) {
+	if width <= 0 || height <= 0 || maximum <= 0 {
+		return 0, fmt.Errorf("encode terminal image: invalid Sixel dimensions or output budget")
+	}
+	projected := uint64(len("\x1bPq") + len("\x1b\\"))
+	projected += uint64(len(fmt.Sprintf("\"1;1;%d;%d", width, height)))
+	for palette := 0; palette < sixelPaletteSize; palette++ {
+		projected += uint64(len(sixelPaletteDefinition(palette)))
+	}
+	bands := (uint64(height) + 5) / 6 //nolint:gosec // positive int
+	perBand := uint64(1)
+	for palette := 0; palette < sixelPaletteSize; palette++ {
+		perBand += uint64(len(strconv.Itoa(palette))+1) + uint64(width) + 1 // #n, pixels, carriage return
+	}
+	maximumBytes := uint64(maximum)
+	if projected > maximumBytes || bands > (maximumBytes-projected)/perBand {
+		return 0, fmt.Errorf("encode terminal image: output exceeds %d bytes", maximum)
+	}
+	projected += bands * perBand
+	return int(projected), nil //nolint:gosec // bounded by positive int maximum
+}
+
+func encodeSixel(source image.Image, capacity int) []byte {
+	bounds := source.Bounds()
+	var output bytes.Buffer
+	output.Grow(capacity)
+	output.WriteString("\x1bPq")
+	fmt.Fprintf(&output, "\"1;1;%d;%d", bounds.Dx(), bounds.Dy())
+	for palette := 0; palette < sixelPaletteSize; palette++ {
+		output.WriteString(sixelPaletteDefinition(palette))
+	}
+	for top := bounds.Min.Y; top < bounds.Max.Y; top += 6 {
+		for palette := 0; palette < sixelPaletteSize; palette++ {
+			fmt.Fprintf(&output, "#%d", palette)
+			for x := bounds.Min.X; x < bounds.Max.X; x++ {
+				bits := byte(0)
+				for row := 0; row < 6 && top+row < bounds.Max.Y; row++ {
+					if sixelPaletteIndex(source.At(x, top+row)) == palette {
+						bits |= 1 << row
+					}
+				}
+				output.WriteByte(63 + bits)
+			}
+			output.WriteByte('$')
+		}
+		output.WriteByte('-')
+	}
+	output.WriteString("\x1b\\")
+	return output.Bytes()
+}
+
+func sixelPaletteDefinition(index int) string {
+	red := (index >> 3) & 1
+	green := (index >> 2) & 1
+	blue := index & 3
+	return fmt.Sprintf("#%d;2;%d;%d;%d", index, red*100, green*100, blue*100/3)
+}
+
+func sixelPaletteIndex(value interface{ RGBA() (r, g, b, a uint32) }) int {
+	red, green, blue, _ := value.RGBA()
+	return int((red>>15)<<3 | (green>>15)<<2 | (blue >> 14))
 }
 
 func verifyPNG(payload []byte) error {

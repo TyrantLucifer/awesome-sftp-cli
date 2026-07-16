@@ -1,7 +1,10 @@
 package preview
 
 import (
+	"bytes"
 	"encoding/base64"
+	"fmt"
+	"math"
 	"strings"
 	"testing"
 )
@@ -70,6 +73,14 @@ func TestRenderBinaryUsesBoundedHexMetadata(t *testing.T) {
 	}
 }
 
+func TestRenderRangeHexUsesAbsolute64BitSourceOffsets(t *testing.T) {
+	const offset = (uint64(100) << 30) - 16
+	result := Render(Request{Path: "payload.bin", Data: []byte{0, 1, 2, 3}, Offset: offset, Complete: false}, DefaultLimits())
+	if result.Kind != KindBinary || !strings.Contains(result.Text, fmt.Sprintf("%016x", offset)) {
+		t.Fatalf("range hex = %#v", result)
+	}
+}
+
 func TestRenderImageReturnsMetadataWithoutEmbeddingPayload(t *testing.T) {
 	pngBytes, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
 	if err != nil {
@@ -122,4 +133,112 @@ func TestRenderIntermediateBuffersStayBoundedByOutputBudgets(t *testing.T) {
 	if lineBenchmark.AllocedBytesPerOp() > 256*1024 {
 		t.Fatalf("bounded line render allocated %d bytes/op", lineBenchmark.AllocedBytesPerOp())
 	}
+}
+
+func TestRenderRawJSONAndMetadataViewsArePureAndBounded(t *testing.T) {
+	data := []byte(`{"name":"amsftp","count":2}`)
+	raw := Render(Request{Path: "config.json", Data: data, Complete: true, View: ViewRawJSON}, DefaultLimits())
+	if raw.Kind != KindJSON || raw.View != ViewRawJSON || !strings.Contains(raw.Text, `{"name":"amsftp","count":2}`) || strings.Contains(raw.Text, `"name": "amsftp"`) {
+		t.Fatalf("raw = %#v", raw)
+	}
+	metadata := Render(Request{Path: "config.json", Data: data, Complete: true, View: ViewMetadata, FileSize: uint64(len(data)), HasFileSize: true}, DefaultLimits())
+	if metadata.Kind != KindMetadata || metadata.View != ViewMetadata || metadata.Metadata == nil || metadata.Metadata.MediaType != "application/json" || metadata.Metadata.FileSize != uint64(len(data)) {
+		t.Fatalf("metadata = %#v", metadata)
+	}
+	if strings.Contains(metadata.Text, "amsftp") || len(metadata.Text) > DefaultLimits().MaxOutputBytes {
+		t.Fatalf("metadata leaked content or exceeded output budget: %q", metadata.Text)
+	}
+	if got := ToggleView(ViewAuto, true); got != ViewRawJSON || ToggleView(got, true) != ViewMetadata || ToggleView(ViewMetadata, true) != ViewAuto || ToggleView(ViewAuto, false) != ViewMetadata {
+		t.Fatalf("toggle sequence is not deterministic: first=%q", got)
+	}
+}
+
+func TestRenderImageMetadataViewIncludesDimensionsWithoutPayload(t *testing.T) {
+	payload := testPNG(t)
+	result := Render(Request{Path: "pixel.png", Data: payload, Complete: true, View: ViewMetadata, HasFileSize: true, FileSize: uint64(len(payload))}, DefaultLimits())
+	if result.Kind != KindMetadata || result.Metadata == nil || result.Metadata.Width != 1 || result.Metadata.Height != 1 || result.Metadata.MediaType != "image/png" {
+		t.Fatalf("metadata = %#v", result)
+	}
+	if strings.Contains(result.Text, string(payload)) {
+		t.Fatal("metadata embedded image payload")
+	}
+}
+
+func TestRenderCodeReturnsBoundedANSIIndependentSyntaxSpans(t *testing.T) {
+	limits := DefaultLimits()
+	limits.MaxStyleSpans = 8
+	result := Render(Request{Path: "main.go", Data: []byte("package main\n// hostile \x1b[2J\nconst answer = 42\n"), Complete: true}, limits)
+	if result.Kind != KindCode || len(result.Styles) == 0 || len(result.Styles) > limits.MaxStyleSpans {
+		t.Fatalf("result = %#v", result)
+	}
+	if strings.ContainsRune(result.Text, '\x1b') {
+		t.Fatalf("terminal control survived: %q", result.Text)
+	}
+	for _, span := range result.Styles {
+		if span.Start < 0 || span.End <= span.Start || span.End > len(result.Text) || span.Class == SyntaxPlain {
+			t.Fatalf("invalid style span %#v for %d-byte output", span, len(result.Text))
+		}
+	}
+}
+
+func TestRenderRejectsOverflowingRangeAndUnknownView(t *testing.T) {
+	overflow := Render(Request{Path: "x.txt", Data: []byte("ab"), Offset: math.MaxUint64, Complete: false}, DefaultLimits())
+	if overflow.Warning != "preview source range overflows" || overflow.Text != "" {
+		t.Fatalf("overflow = %#v", overflow)
+	}
+	unknown := Render(Request{Path: "x.txt", Data: []byte("x"), Complete: true, View: ViewMode(string([]byte{0xff, 0x1b}))}, DefaultLimits())
+	if unknown.Warning != "unsupported preview view" || unknown.Text != "" || strings.ContainsRune(unknown.Warning, '\x1b') {
+		t.Fatalf("unknown = %#v", unknown)
+	}
+}
+
+func TestRenderRejectsInconsistentCompleteAndUnavailableRawViews(t *testing.T) {
+	inconsistent := Render(Request{Path: "x.txt", Data: []byte("x"), Offset: 1, Complete: true}, DefaultLimits())
+	if inconsistent.Warning != "complete preview must start at offset zero" || inconsistent.Text != "" {
+		t.Fatalf("inconsistent = %#v", inconsistent)
+	}
+	rawText := Render(Request{Path: "x.txt", Data: []byte("not json"), Complete: true, View: ViewRawJSON}, DefaultLimits())
+	if rawText.Warning != "raw JSON view unavailable; showing text fallback" || rawText.Kind != KindText {
+		t.Fatalf("raw text = %#v", rawText)
+	}
+}
+
+func TestRenderSanitizationAllocationFollowsOutputNotExpansion(t *testing.T) {
+	limits := DefaultLimits()
+	limits.MaxOutputBytes = 32
+	data := bytes.Repeat([]byte{0x1b}, limits.MaxInputBytes)
+	benchmark := testing.Benchmark(func(b *testing.B) {
+		for range b.N {
+			_ = Render(Request{Path: "hostile.txt", Data: data, Complete: true}, limits)
+		}
+	})
+	if benchmark.AllocedBytesPerOp() > 128*1024 {
+		t.Fatalf("sanitization allocated %d bytes/op for %d-byte output budget", benchmark.AllocedBytesPerOp(), limits.MaxOutputBytes)
+	}
+}
+
+func FuzzRenderIsTerminalSafeAndOutputBounded(f *testing.F) {
+	f.Add("hostile.go", []byte("const x = \x1b[2J\xff\n"), uint64(0), true, uint8(0))
+	f.Add("data.json", []byte(`{"x":[1,2]}`), uint64(0), true, uint8(1))
+	f.Fuzz(func(t *testing.T, path string, data []byte, offset uint64, complete bool, viewIndex uint8) {
+		views := [...]ViewMode{ViewAuto, ViewRawJSON, ViewMetadata}
+		limits := DefaultLimits()
+		limits.MaxInputBytes = 4096
+		limits.MaxOutputBytes = 8192
+		result := Render(Request{Path: path, Data: data, Offset: offset, Complete: complete, View: views[int(viewIndex)%len(views)]}, limits)
+		if len(result.Text) > limits.MaxOutputBytes {
+			t.Fatalf("output bytes = %d", len(result.Text))
+		}
+		if strings.ContainsRune(result.Text, '\x1b') {
+			t.Fatalf("terminal escape survived in %q", result.Text)
+		}
+		if len(result.Styles) > limits.MaxStyleSpans {
+			t.Fatalf("style spans = %d", len(result.Styles))
+		}
+		for _, span := range result.Styles {
+			if span.Start < 0 || span.End <= span.Start || span.End > len(result.Text) {
+				t.Fatalf("invalid style span %#v", span)
+			}
+		}
+	})
 }

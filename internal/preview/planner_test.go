@@ -1,6 +1,7 @@
 package preview
 
 import (
+	"bytes"
 	"math"
 	"strings"
 	"testing"
@@ -83,6 +84,57 @@ func TestPlanContinueUsesChunksAndSlidesAtRetainedCap(t *testing.T) {
 	}
 }
 
+func TestApplyReadPlanBuildsBoundedInitialAndContinueWindows(t *testing.T) {
+	const fileSize = uint64(100) << 30
+	head := PlanHead(fileSize)
+	first := bytes.Repeat([]byte("a"), int(head.Limit))
+	window, err := ApplyReadPlan(ReadWindow{}, head, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.Offset != 0 || uint64(len(window.Data)) != ReadChunkBytes || window.Complete {
+		t.Fatalf("head window = %#v", window)
+	}
+
+	for uint64(len(window.Data)) < MaxRetainedBytes {
+		plan, planErr := PlanContinue(fileSize, RetainedWindow{Offset: window.Offset, Bytes: uint64(len(window.Data))})
+		if planErr != nil {
+			t.Fatal(planErr)
+		}
+		window, err = ApplyReadPlan(window, plan, bytes.Repeat([]byte("b"), int(plan.Limit)))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	plan, err := PlanContinue(fileSize, RetainedWindow{Offset: window.Offset, Bytes: uint64(len(window.Data))})
+	if err != nil {
+		t.Fatal(err)
+	}
+	window, err = ApplyReadPlan(window, plan, bytes.Repeat([]byte("c"), int(plan.Limit)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if window.Offset != ReadChunkBytes || uint64(len(window.Data)) != MaxRetainedBytes || window.Data[0] != 'b' || window.Data[len(window.Data)-1] != 'c' {
+		t.Fatalf("sliding window offset=%d bytes=%d first=%q last=%q", window.Offset, len(window.Data), window.Data[0], window.Data[len(window.Data)-1])
+	}
+}
+
+func TestApplyReadPlanRejectsMalformedOrShortResponsesWithoutRetainingThem(t *testing.T) {
+	valid := PlanHead(ReadChunkBytes)
+	for name, plan := range map[string]ReadPlan{
+		"oversize read":       {Mode: ReadHead, Limit: ReadChunkBytes + 1, RetainBytes: ReadChunkBytes + 1},
+		"oversize retention":  {Mode: ReadHead, Limit: 1, RetainBytes: MaxRetainedBytes + 1},
+		"inconsistent offset": {Mode: ReadHead, Offset: 2, Limit: 1, RetainOffset: 1, RetainBytes: 1},
+	} {
+		if window, err := ApplyReadPlan(ReadWindow{}, plan, []byte("x")); err == nil || len(window.Data) != 0 {
+			t.Fatalf("%s window=%#v err=%v", name, window, err)
+		}
+	}
+	if window, err := ApplyReadPlan(ReadWindow{}, valid, []byte("short")); err == nil || len(window.Data) != 0 {
+		t.Fatalf("short response window=%#v err=%v", window, err)
+	}
+}
+
 func TestFreezeSourceOwnsAndCanonicalizesFingerprintIdentity(t *testing.T) {
 	location, err := domain.NewLocation("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", "/srv/file")
 	if err != nil {
@@ -136,4 +188,24 @@ func TestFreezeSourceRejectsMissingOrMalformedIdentity(t *testing.T) {
 
 func pointer[T any](value T) *T {
 	return &value
+}
+
+func FuzzPlanRangeNeverExceedsSourceOrChunk(f *testing.F) {
+	f.Add(uint64(100)<<30, uint64(12345), ReadChunkBytes+1)
+	f.Add(uint64(math.MaxUint64), uint64(math.MaxUint64-1), uint64(math.MaxUint64))
+	f.Fuzz(func(t *testing.T, size, offset, requested uint64) {
+		plan, err := PlanRange(size, offset, requested)
+		if requested == 0 || offset > size {
+			if err == nil {
+				t.Fatalf("invalid range succeeded: size=%d offset=%d requested=%d plan=%#v", size, offset, requested, plan)
+			}
+			return
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		if plan.Offset > size || plan.Limit > size-plan.Offset || plan.Limit > ReadChunkBytes || plan.RetainBytes > MaxRetainedBytes {
+			t.Fatalf("unbounded plan: %#v", plan)
+		}
+	})
 }
