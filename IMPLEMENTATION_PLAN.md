@@ -94,7 +94,7 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Milestone Status**: In Progress
 
-**Current checkpoint**: same-binary cross-process WAL/locking/full-sync probing, bounded WAL enforcement, integrated multi-version upgrade coordination, and process-death recovery at seven bootstrap plus five migration transaction boundaries pass locally, including focused race. Hosted run [29475259444](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475259444) is green on exact SHA `1ec9097448d0ec40d32f0a87aeeb822e5651d381`; the next candidate adds explicit ext4 identity and loop-mounted XFS execution of the complete persistent-state suite before the final M2.1 fail-closed audit.
+**Current checkpoint**: same-binary cross-process WAL/locking/full-sync probing, bounded WAL enforcement, integrated multi-version upgrade coordination, and process-death recovery at seven bootstrap plus five migration transaction boundaries pass locally, including focused race. Hosted run [29475259444](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475259444) is green on exact SHA `1ec9097448d0ec40d32f0a87aeeb822e5651d381`; both Linux native legs of `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` then passed explicit ext4 identity and loop-mounted XFS execution of the complete persistent-state suite. Corrupt/newer/read-only daemon degradation passes locally, and the next candidate adds real XFS ENOSPC rollback before the final M2.1 audit.
 
 ### M2.2: 单文件复制、冲突与提交
 

@@ -251,6 +251,8 @@ jobs:
           test "$(findmnt -n -o FSTYPE -T "${xfs_root}")" = xfs
           AMSFTP_TEST_PERSISTENT_ROOT="${xfs_root}" \
             go test -count=1 ./internal/state/... ./internal/statefs
+          AMSFTP_NATIVE_DISK_FULL_ROOT="${xfs_root}" \
+            go test -count=1 -run '^TestNativeXFSDiskFullRollsBackWithoutFalseCommit$' ./internal/statefs
       - name: Run native platform kernel security fixtures
         run: |
           set -euo pipefail
