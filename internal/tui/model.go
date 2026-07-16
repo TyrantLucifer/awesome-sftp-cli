@@ -23,17 +23,19 @@ const (
 type Mode string
 
 const (
-	ModeNormal        Mode = "normal"
-	ModeFilter        Mode = "filter"
-	ModeVisual        Mode = "visual"
-	ModeVisualLine    Mode = "visual_line"
-	ModeAuth          Mode = "auth"
-	ModeWorkspace     Mode = "workspace_save"
-	ModePath          Mode = "path"
-	ModeEndpoint      Mode = "endpoint"
-	ModeRename        Mode = "rename"
-	ModeMoveConfirm   Mode = "move_confirm"
-	ModeDeleteConfirm Mode = "delete_confirm"
+	ModeNormal         Mode = "normal"
+	ModeFilter         Mode = "filter"
+	ModeVisual         Mode = "visual"
+	ModeVisualLine     Mode = "visual_line"
+	ModeAuth           Mode = "auth"
+	ModeWorkspace      Mode = "workspace_save"
+	ModePath           Mode = "path"
+	ModeEndpoint       Mode = "endpoint"
+	ModeRename         Mode = "rename"
+	ModeMoveConfirm    Mode = "move_confirm"
+	ModeDeleteConfirm  Mode = "delete_confirm"
+	ModeCommand        Mode = "command"
+	ModeCommandConfirm Mode = "command_confirm"
 )
 
 type SortKey string
@@ -416,6 +418,7 @@ type Model struct {
 	pathInput     []rune
 	endpointInput []rune
 	renameInput   []rune
+	commandInput  []rune
 	pendingRename transfer.FileRef
 	pendingDelete []transfer.FileRef
 	pendingMove   []Intent
@@ -475,9 +478,12 @@ const (
 	IntentDiagnosticList     IntentKind = "diagnostic_list"
 	IntentEdit               IntentKind = "edit"
 	IntentOpenExternal       IntentKind = "open_external"
+	IntentRunCommand         IntentKind = "run_command"
+	IntentShell              IntentKind = "shell"
 )
 
 const PreviewByteLimit = 64 * 1024
+const CommandByteLimit = 32 * 1024
 
 type Intent struct {
 	Kind                  IntentKind
@@ -507,6 +513,8 @@ type Intent struct {
 	JobID                 domain.JobID
 	Resolution            transfer.ConflictPolicy
 	ApplyAll              bool
+	CommandText           string
+	ShellHome             bool
 }
 
 type Key string
@@ -538,6 +546,7 @@ const (
 	KeyRepeat                Key = "repeat"
 	KeyEdit                  Key = "edit"
 	KeyOpenExternal          Key = "open_external"
+	KeyCommand               Key = "command"
 	KeyPreviewDrawer         Key = "preview_drawer"
 	KeyJobs                  Key = "jobs"
 	KeyLogDrawer             Key = "log_drawer"
@@ -660,6 +669,18 @@ type DiagnosticsLoaded struct {
 	Message string
 }
 
+type CommandCompleted struct {
+	Pane            PaneID
+	Location        domain.Location
+	ExitCode        int
+	Stdout          []byte
+	Stderr          []byte
+	StdoutDiscarded uint64
+	StderrDiscarded uint64
+	EffectUnknown   bool
+	Message         string
+}
+
 func (KeyPress) isAction()              {}
 func (CountDigit) isAction()            {}
 func (TextInput) isAction()             {}
@@ -681,6 +702,7 @@ func (JobCreated) isAction()            {}
 func (JobsLoaded) isAction()            {}
 func (JobUpdated) isAction()            {}
 func (DiagnosticsLoaded) isAction()     {}
+func (CommandCompleted) isAction()      {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

@@ -567,7 +567,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	var previewGeneration uint64
 	var previewCancel context.CancelFunc
 	previewRequestGenerator := &domain.RandomGenerator{}
-	startIntent := func(intent tui.Intent) {
+	var startIntent func(tui.Intent)
+	startIntent = func(intent tui.Intent) {
 		switch intent.Kind {
 		case tui.IntentConnectEndpoint:
 			select {
@@ -784,6 +785,21 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				previewCancel()
 				previewCancel = nil
 			}
+			return
+		case tui.IntentRunCommand:
+			frozenIntent := intent
+			environment := append([]string(nil), os.Environ()...)
+			go func() {
+				result := runCommandIntent(runCtx, frozenIntent, environment)
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentShell:
+			model.Notice = runShellIntent(runCtx, intent, append([]string(nil), os.Environ()...), screen)
+			startIntent(tui.Intent{Kind: tui.IntentList, Pane: intent.Pane, Location: intent.Location})
 			return
 		case tui.IntentList:
 		default:

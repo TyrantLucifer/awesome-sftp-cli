@@ -4,13 +4,16 @@ package terminalhandoff
 
 import (
 	"bytes"
+	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"reflect"
 	"syscall"
 	"testing"
+	"time"
 
 	"golang.org/x/sys/unix"
 )
@@ -49,6 +52,53 @@ func TestUnixPlatformRejectsInvalidStateAndProcessGroup(t *testing.T) {
 	}
 	if _, err := platform.SaveTerminal(); err == nil {
 		t.Fatal("SaveTerminal() on a pipe succeeded")
+	}
+}
+
+func TestGiveUnixForegroundReplaysContinueAfterHandoff(t *testing.T) {
+	t.Parallel()
+
+	var calls []string
+	err := giveUnixForeground(
+		11,
+		712,
+		func(fd, processGroup int) error {
+			calls = append(calls, fmt.Sprintf("foreground:%d:%d", fd, processGroup))
+			return nil
+		},
+		func(processGroup int, signal syscall.Signal) error {
+			calls = append(calls, fmt.Sprintf("signal:%d:%d", processGroup, signal))
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("giveUnixForeground() error = %v", err)
+	}
+	want := []string{
+		"foreground:11:712",
+		fmt.Sprintf("signal:-712:%d", syscall.SIGCONT),
+	}
+	if !reflect.DeepEqual(calls, want) {
+		t.Fatalf("calls = %q, want %q", calls, want)
+	}
+}
+
+func TestGiveUnixForegroundAcceptsProcessGroupThatExitedBeforeHandoff(t *testing.T) {
+	t.Parallel()
+
+	err := giveUnixForeground(
+		11,
+		713,
+		func(int, int) error { return syscall.ESRCH },
+		func(processGroup int, signal syscall.Signal) error {
+			if processGroup != -713 || signal != 0 {
+				t.Fatalf("probe = kill(%d, %d), want kill(-713, 0)", processGroup, signal)
+			}
+			return syscall.ESRCH
+		},
+	)
+	if err != nil {
+		t.Fatalf("giveUnixForeground() fast-exit error = %v, want nil", err)
 	}
 }
 
@@ -146,5 +196,38 @@ func runUnixPlatformPTYHelper(t *testing.T) {
 	}
 	if foreground != native.foregroundProcessGroup {
 		t.Fatalf("reclaimed foreground group = %d, want %d", foreground, native.foregroundProcessGroup)
+	}
+
+	tostop := native.termios
+	tostop.Lflag |= unix.TOSTOP
+	if err := setTermios(int(tty.Fd()), &tostop); err != nil {
+		t.Fatalf("enable TOSTOP foreground-race fixture: %v", err)
+	}
+	defer func() { _ = setTermios(int(tty.Fd()), &native.termios) }()
+	for iteration := range 20 {
+		recorder := &callRecorder{}
+		screen := newFakeScreen(recorder, NewSnapshot("native", Size{Columns: 80, Rows: 24}))
+		controller, err := NewController(screen, platform)
+		if err != nil {
+			t.Fatalf("NewController() error = %v", err)
+		}
+		launcher, err := NewExecLauncher(
+			os.Args[0],
+			[]string{"-test.run=^TestExecLauncherHelperProcess$"},
+			append(os.Environ(), "AMSFTP_EXEC_LAUNCHER_HELPER=write"),
+			"",
+		)
+		if err != nil {
+			t.Fatalf("NewExecLauncher() error = %v", err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		result, runErr := controller.Run(ctx, launcher)
+		cancel()
+		if runErr != nil {
+			t.Fatalf("native foreground-race iteration %d: Run() error = %v", iteration, runErr)
+		}
+		if result.Kind != ExitNormal {
+			t.Fatalf("native foreground-race iteration %d: result = %#v, want normal", iteration, result)
+		}
 	}
 }

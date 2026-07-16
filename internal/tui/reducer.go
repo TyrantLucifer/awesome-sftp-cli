@@ -51,6 +51,11 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		if model.Mode == ModePath {
+			if len(model.pathInput) == 0 && (action.Text == "s" || action.Text == "S") {
+				pane := model.Panes[model.Active]
+				model.Mode = ModeNormal
+				return model, []Intent{{Kind: IntentShell, Pane: model.Active, Location: pane.Location, Endpoint: pane.Endpoint, ShellHome: action.Text == "S"}}
+			}
 			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.pathInput))+len(action.Text) > 4096 {
 				return model, nil
 			}
@@ -69,6 +74,14 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 				return model, nil
 			}
 			model.renameInput = append(append([]rune(nil), model.renameInput...), []rune(action.Text)...)
+			return model, nil
+		}
+		if model.Mode == ModeCommand {
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.commandInput))+len(action.Text) > CommandByteLimit {
+				model.Notice = "command must be one UTF-8 line of at most 32768 bytes"
+				return model, nil
+			}
+			model.commandInput = append(append([]rune(nil), model.commandInput...), []rune(action.Text)...)
 			return model, nil
 		}
 		if model.Mode != ModeFilter || action.Text == "" {
@@ -379,9 +392,41 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		model.Diagnostics = append([]diagnostic.Record(nil), action.Records...)
 		model.Notice = action.Message
 		return model, nil
+	case CommandCompleted:
+		if !validPane(action.Pane) || action.Location.Path == "" {
+			return model, nil
+		}
+		if action.Message != "" {
+			model.Notice = action.Message
+		} else {
+			model.Notice = fmt.Sprintf("command exit %d", action.ExitCode)
+			output := action.Stdout
+			if len(output) == 0 {
+				output = action.Stderr
+			}
+			if len(output) != 0 {
+				line, _, _ := bytes.Cut(output, []byte{'\n'})
+				model.Notice += ": " + truncateCommandNotice(SanitizeTerminalText(string(line)), 160)
+			}
+		}
+		if action.EffectUnknown {
+			model.Notice += "; remote effect unknown"
+		}
+		if discarded := action.StdoutDiscarded + action.StderrDiscarded; discarded != 0 {
+			model.Notice += fmt.Sprintf("; %d bytes discarded", discarded)
+		}
+		return model, []Intent{{Kind: IntentList, Pane: action.Pane, Location: action.Location}}
 	default:
 		return model, nil
 	}
+}
+
+func truncateCommandNotice(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit {
+		return value
+	}
+	return string(runes[:limit]) + "…"
 }
 
 func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
@@ -392,6 +437,44 @@ func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
+	if model.Mode == ModeCommand {
+		switch key {
+		case KeyBackspace:
+			if len(model.commandInput) != 0 {
+				model.commandInput = append([]rune(nil), model.commandInput[:len(model.commandInput)-1]...)
+			}
+			return model, nil
+		case KeyEscape:
+			model.commandInput = nil
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			if len(model.commandInput) == 0 {
+				model.Notice = "command is required"
+				return model, nil
+			}
+			model.Mode = ModeCommandConfirm
+			return model, nil
+		default:
+			return model, nil
+		}
+	}
+	if model.Mode == ModeCommandConfirm {
+		switch key {
+		case KeyEscape:
+			model.commandInput = nil
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			pane := model.Panes[model.Active]
+			commandText := string(model.commandInput)
+			model.commandInput = nil
+			model.Mode = ModeNormal
+			return model, []Intent{{Kind: IntentRunCommand, Pane: model.Active, Location: pane.Location, Endpoint: pane.Endpoint, CommandText: commandText}}
+		default:
+			return model, nil
+		}
+	}
 	if model.Auth.Active {
 		switch key {
 		case KeyBackspace:
@@ -709,6 +792,10 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			kind = IntentOpenExternal
 		}
 		return model, []Intent{{Kind: kind, Pane: model.Active, Location: entry.Location}}
+	case KeyCommand:
+		model.commandInput = nil
+		model.Mode = ModeCommand
+		model.Notice = "one-time command: enter text, then confirm"
 	case KeyRepeat:
 		if len(model.repeatDelete) != 0 {
 			model.pendingDelete = append([]transfer.FileRef(nil), model.repeatDelete...)

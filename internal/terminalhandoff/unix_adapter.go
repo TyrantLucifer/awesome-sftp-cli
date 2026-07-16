@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"sync"
+	"syscall"
 
 	"golang.org/x/sys/unix"
 )
@@ -70,8 +71,26 @@ func (platform *UnixPlatform) GiveForeground(processGroup int) error {
 	}
 	platform.mu.Lock()
 	defer platform.mu.Unlock()
-	if err := setForegroundProcessGroup(platform.fd, processGroup); err != nil {
+	if err := giveUnixForeground(platform.fd, processGroup, setForegroundProcessGroup, unix.Kill); err != nil {
 		return fmt.Errorf("give Unix terminal foreground to process group %d: %w", processGroup, err)
+	}
+	return nil
+}
+
+func giveUnixForeground(
+	fd int,
+	processGroup int,
+	setForeground func(int, int) error,
+	signalProcessGroup func(int, syscall.Signal) error,
+) error {
+	if err := setForeground(fd, processGroup); err != nil {
+		if errors.Is(err, syscall.ESRCH) && errors.Is(signalProcessGroup(-processGroup, 0), syscall.ESRCH) {
+			return nil
+		}
+		return err
+	}
+	if err := signalProcessGroup(-processGroup, syscall.SIGCONT); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("continue process group after terminal foreground handoff: %w", err)
 	}
 	return nil
 }

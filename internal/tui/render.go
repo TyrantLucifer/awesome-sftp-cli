@@ -199,6 +199,9 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeDeleteConfirm {
 		renderDeleteModal(surface, model.pendingDelete, model.DeleteConfirmation, width, height)
 	}
+	if model.Mode == ModeCommand || model.Mode == ModeCommandConfirm {
+		renderCommandModal(surface, model, width, height)
+	}
 	return stats
 }
 
@@ -437,6 +440,35 @@ func renderMoveModal(surface Surface, intents []Intent, width, height int) {
 		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(line), StyleStatus)
 	}
 	surface.PutClipped(x+1, y+4, modalWidth-2, "Source is deleted only after destination verification. [Enter] queue  [Esc] cancel", StyleStatus)
+}
+
+func renderCommandModal(surface Surface, model Model, width, height int) {
+	modalWidth := min(width-4, 76)
+	if modalWidth < 24 || height < 9 {
+		return
+	}
+	const modalHeight = 7
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	pane := model.Panes[model.Active]
+	title := "One-time command"
+	footer := "[Enter] review  [Esc] cancel"
+	if model.Mode == ModeCommandConfirm {
+		title = "Confirm one-time command"
+		footer = "[Enter] run  [Esc] cancel"
+	}
+	endpoint := pane.Endpoint.DisplayName
+	if endpoint == "" {
+		endpoint = string(pane.Endpoint.Kind)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Endpoint: "+SanitizeTerminalText(endpoint), StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "CWD: "+SanitizeTerminalText(string(pane.Location.Path)), StyleStatus)
+	surface.PutClipped(x+1, y+4, modalWidth-2, "Command: "+SanitizeTerminalText(string(model.commandInput)), StyleStatus)
+	surface.PutClipped(x+1, y+5, modalWidth-2, footer, StyleStatus)
 }
 
 func renderAuthModal(surface Surface, state AuthState, width, height int) {
