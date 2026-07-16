@@ -92,6 +92,20 @@ func TestRunLocalCommandDrainsBothStreamsAndBoundsRetention(t *testing.T) {
 	}
 }
 
+func TestRunLocalCommandDoesNotClosePipesBeforeDelayedWritersFinish(t *testing.T) {
+	plan := testPlan(t, `(sleep 0.05; printf delayed-stdout; printf delayed-stderr >&2) & printf immediate-stdout; printf immediate-stderr >&2`)
+	result, err := RunLocalCommand(context.Background(), plan, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := string(result.Stdout.Data); got != "immediate-stdoutdelayed-stdout" {
+		t.Fatalf("stdout = %q", got)
+	}
+	if got := string(result.Stderr.Data); got != "immediate-stderrdelayed-stderr" {
+		t.Fatalf("stderr = %q", got)
+	}
+}
+
 func TestRunLocalCommandReportsNonzeroAndCancellation(t *testing.T) {
 	nonzero, err := RunLocalCommand(context.Background(), testPlan(t, "exit 7"), DefaultStreamBytes)
 	if err != nil || nonzero.ExitCode != 7 || nonzero.Signaled {

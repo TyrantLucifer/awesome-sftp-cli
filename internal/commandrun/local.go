@@ -5,11 +5,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sync"
 	"syscall"
 	"time"
 	"unicode/utf8"
@@ -20,6 +18,7 @@ import (
 const (
 	MaxCommandBytes    = 32 * 1024
 	DefaultStreamBytes = 1 * 1024 * 1024
+	outputDrainWait    = 2 * time.Second
 )
 
 type LocalPlan struct {
@@ -129,40 +128,29 @@ func RunLocalCommand(ctx context.Context, plan LocalPlan, streamBytes int) (Resu
 		}
 		return err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return Result{}, fmt.Errorf("run local command stdout: %w", err)
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return Result{}, fmt.Errorf("run local command stderr: %w", err)
-	}
+	stdoutRing := newByteRing(streamBytes)
+	stderrRing := newByteRing(streamBytes)
+	cmd.Stdout = stdoutRing
+	cmd.Stderr = stderrRing
+	cmd.WaitDelay = outputDrainWait
 	started := time.Now()
 	if err := cmd.Start(); err != nil {
 		return Result{}, fmt.Errorf("run local command start: %w", err)
 	}
-	stdoutRing := newByteRing(streamBytes)
-	stderrRing := newByteRing(streamBytes)
-	var drains sync.WaitGroup
-	drains.Add(2)
-	var stdoutErr, stderrErr error
-	go func() { defer drains.Done(); _, stdoutErr = io.Copy(stdoutRing, stdout) }()
-	go func() { defer drains.Done(); _, stderrErr = io.Copy(stderrRing, stderr) }()
 	waitErr := cmd.Wait()
-	drains.Wait()
 	result := Result{Stdout: stdoutRing.Snapshot(), Stderr: stderrRing.Snapshot(), ExitCode: cmd.ProcessState.ExitCode(), Duration: time.Since(started)}
 	if status, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && status.Signaled() {
 		result.Signaled = true
 		result.Signal = status.Signal().String()
-	}
-	if stdoutErr != nil || stderrErr != nil {
-		return result, fmt.Errorf("run local command drain: %w", errors.Join(stdoutErr, stderrErr))
 	}
 	if ctx.Err() != nil {
 		return result, ctx.Err()
 	}
 	var exitError *exec.ExitError
 	if waitErr != nil && !errors.As(waitErr, &exitError) {
+		if errors.Is(waitErr, exec.ErrWaitDelay) && cmd.Process != nil {
+			_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
 		return result, fmt.Errorf("run local command wait: %w", waitErr)
 	}
 	return result, nil
