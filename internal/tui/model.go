@@ -21,14 +21,16 @@ const (
 type Mode string
 
 const (
-	ModeNormal     Mode = "normal"
-	ModeFilter     Mode = "filter"
-	ModeVisual     Mode = "visual"
-	ModeVisualLine Mode = "visual_line"
-	ModeAuth       Mode = "auth"
-	ModeWorkspace  Mode = "workspace_save"
-	ModePath       Mode = "path"
-	ModeEndpoint   Mode = "endpoint"
+	ModeNormal        Mode = "normal"
+	ModeFilter        Mode = "filter"
+	ModeVisual        Mode = "visual"
+	ModeVisualLine    Mode = "visual_line"
+	ModeAuth          Mode = "auth"
+	ModeWorkspace     Mode = "workspace_save"
+	ModePath          Mode = "path"
+	ModeEndpoint      Mode = "endpoint"
+	ModeRename        Mode = "rename"
+	ModeDeleteConfirm Mode = "delete_confirm"
 )
 
 type SortKey string
@@ -356,29 +358,36 @@ func (p PreviewState) DisplayText() string {
 }
 
 type Model struct {
-	Panes     [2]PaneState
-	Active    PaneID
-	Mode      Mode
-	Count     int
-	Preview   PreviewState
-	Auth      AuthState
-	Clipboard ClipboardState
-	Jobs      []transfer.JobView
-	ShowJobs  bool
-	JobCursor int
-	Notice    string
+	Panes              [2]PaneState
+	Active             PaneID
+	Mode               Mode
+	Count              int
+	Preview            PreviewState
+	Auth               AuthState
+	Clipboard          ClipboardState
+	Jobs               []transfer.JobView
+	ShowJobs           bool
+	JobCursor          int
+	Notice             string
+	DeleteConfirmation int
 
 	workspaceName []rune
 	pathInput     []rune
 	endpointInput []rune
+	renameInput   []rune
+	pendingRename transfer.FileRef
+	pendingDelete []transfer.FileRef
+	repeatDelete  []transfer.FileRef
+	repeatIntents []Intent
 	Width         int
 	Height        int
 }
 
 type ClipboardState struct {
-	Kind      transfer.ClipboardKind
-	Reference transfer.FileRef
-	Ready     bool
+	Kind       transfer.ClipboardKind
+	Reference  transfer.FileRef
+	References []transfer.FileRef
+	Ready      bool
 }
 
 func NewModel(left, right PaneState) Model {
@@ -406,7 +415,10 @@ const (
 	IntentConnectEndpoint    IntentKind = "connect_endpoint"
 	IntentReleaseEndpoint    IntentKind = "release_endpoint"
 	IntentTransferCapture    IntentKind = "transfer_capture"
+	IntentPrepareDelete      IntentKind = "prepare_delete"
+	IntentPrepareRename      IntentKind = "prepare_rename"
 	IntentCreateCopyJob      IntentKind = "create_copy_job"
+	IntentCreateDeleteJob    IntentKind = "create_delete_job"
 	IntentJobList            IntentKind = "job_list"
 	IntentJobPause           IntentKind = "job_pause"
 	IntentJobResume          IntentKind = "job_resume"
@@ -417,25 +429,30 @@ const (
 const PreviewByteLimit = 64 * 1024
 
 type Intent struct {
-	Kind                 IntentKind
-	Pane                 PaneID
-	Location             domain.Location
-	Limit                int
-	ChallengeID          string
-	Answer               []byte
-	Cancel               bool
-	Name                 string
-	Endpoint             domain.Endpoint
-	EndpointID           domain.EndpointID
-	Connection           domain.ConnectionState
-	CapabilityGeneration uint64
-	Capabilities         domain.CapabilitySnapshot
-	CommitEndpoint       bool
-	Clipboard            transfer.ClipboardKind
-	Source               transfer.FileRef
-	JobID                domain.JobID
-	Resolution           transfer.ConflictPolicy
-	ApplyAll             bool
+	Kind                  IntentKind
+	Pane                  PaneID
+	Location              domain.Location
+	Locations             []domain.Location
+	Limit                 int
+	ChallengeID           string
+	Answer                []byte
+	Cancel                bool
+	Name                  string
+	Endpoint              domain.Endpoint
+	EndpointID            domain.EndpointID
+	Connection            domain.ConnectionState
+	CapabilityGeneration  uint64
+	Capabilities          domain.CapabilitySnapshot
+	CommitEndpoint        bool
+	Clipboard             transfer.ClipboardKind
+	Source                transfer.FileRef
+	Target                transfer.FileRef
+	Recursive             bool
+	Confirmed             bool
+	IrreversibleConfirmed bool
+	JobID                 domain.JobID
+	Resolution            transfer.ConflictPolicy
+	ApplyAll              bool
 }
 
 type Key string
@@ -462,6 +479,9 @@ const (
 	KeyCopy                  Key = "copy"
 	KeyCut                   Key = "cut"
 	KeyPaste                 Key = "paste"
+	KeyDelete                Key = "delete"
+	KeyRename                Key = "rename"
+	KeyRepeat                Key = "repeat"
 	KeyJobs                  Key = "jobs"
 	KeyJobPause              Key = "job_pause"
 	KeyJobResume             Key = "job_resume"
@@ -546,7 +566,16 @@ type WorkspaceSaveResult struct {
 	Message string
 }
 type ClipboardCaptured struct {
-	Clipboard transfer.ClipboardKind
+	Clipboard  transfer.ClipboardKind
+	Reference  transfer.FileRef
+	References []transfer.FileRef
+	Message    string
+}
+type DeletePrepared struct {
+	References []transfer.FileRef
+	Message    string
+}
+type RenamePrepared struct {
 	Reference transfer.FileRef
 	Message   string
 }
@@ -579,6 +608,8 @@ func (PaneConnected) isAction()         {}
 func (PaneConnectionChanged) isAction() {}
 func (WorkspaceSaveResult) isAction()   {}
 func (ClipboardCaptured) isAction()     {}
+func (DeletePrepared) isAction()        {}
+func (RenamePrepared) isAction()        {}
 func (JobCreated) isAction()            {}
 func (JobsLoaded) isAction()            {}
 func (JobUpdated) isAction()            {}

@@ -32,6 +32,10 @@ func TestProviderSessionExposesOnlyHighLevelTransferAndJobRoutes(t *testing.T) {
 	if captured.Reference.Location != location || service.captured != location {
 		t.Fatalf("captured = %#v, service location = %#v", captured, service.captured)
 	}
+	deleteCaptured := handlePayload[JobCaptureResponse](t, session, JobCaptureDelete, JobCaptureRequest{Location: ipc.EncodeLocation(location)})
+	if deleteCaptured.Reference.Location != location || service.captured != location {
+		t.Fatalf("delete captured = %#v, service location = %#v", deleteCaptured, service.captured)
+	}
 	created := handlePayload[JobSnapshotResponse](t, session, JobCreateCopy, JobCreateCopyRequest{Intent: transfer.Intent{
 		Clipboard: transfer.ClipboardCopy, Source: captured.Reference,
 		DestinationDirectory: domain.Location{EndpointID: implementation.Descriptor().ID, Path: "/"},
@@ -39,6 +43,12 @@ func TestProviderSessionExposesOnlyHighLevelTransferAndJobRoutes(t *testing.T) {
 	}})
 	if created.Snapshot.JobID != service.snapshot.JobID || service.created.Name != "copy" {
 		t.Fatalf("created = %#v, intent = %#v", created, service.created)
+	}
+	deleted := handlePayload[JobSnapshotResponse](t, session, JobCreateDelete, JobCreateDeleteRequest{Intent: transfer.DeleteIntent{
+		Target: captured.Reference, Confirmed: true, IrreversibleConfirmed: true,
+	}})
+	if deleted.Snapshot.JobID != service.snapshot.JobID || !service.deleted.IrreversibleConfirmed {
+		t.Fatalf("deleted = %#v, intent = %#v", deleted, service.deleted)
 	}
 	listed := handlePayload[JobListResponse](t, session, JobList, JobListRequest{Limit: 20})
 	if len(listed.Jobs) != 1 || listed.Jobs[0].Snapshot.JobID != service.snapshot.JobID {
@@ -72,6 +82,7 @@ type recordingTransferService struct {
 	snapshot    jobstore.Snapshot
 	captured    domain.Location
 	created     transfer.Intent
+	deleted     transfer.DeleteIntent
 	pauseCalls  int
 	resumeCalls int
 	cancelCalls int
@@ -84,8 +95,18 @@ func (service *recordingTransferService) Capture(_ context.Context, location dom
 	return transfer.FileRef{Location: location, Kind: domain.EntryFile}, nil
 }
 
+func (service *recordingTransferService) CaptureDelete(_ context.Context, location domain.Location) (transfer.FileRef, error) {
+	service.captured = location
+	return transfer.FileRef{Location: location, Kind: domain.EntryFile}, nil
+}
+
 func (service *recordingTransferService) CreateCopy(_ context.Context, intent transfer.Intent) (jobstore.Snapshot, error) {
 	service.created = intent
+	return service.snapshot, nil
+}
+
+func (service *recordingTransferService) CreateDelete(_ context.Context, intent transfer.DeleteIntent) (jobstore.Snapshot, error) {
+	service.deleted = intent
 	return service.snapshot, nil
 }
 

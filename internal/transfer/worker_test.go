@@ -477,6 +477,7 @@ type workerFixture struct {
 	resolver        MapResolver
 	source          providerapi.Provider
 	destination     mutableTestProvider
+	sourceRoot      string
 	destinationRoot string
 }
 
@@ -679,7 +680,7 @@ func newWorkerFixture(t *testing.T, data []byte, policy ConflictPolicy) workerFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	return workerFixture{plan: plan, create: create, resolver: resolver, source: source, destination: destination, destinationRoot: destinationRoot}
+	return workerFixture{plan: plan, create: create, resolver: resolver, source: source, destination: destination, sourceRoot: sourceRoot, destinationRoot: destinationRoot}
 }
 
 type memoryJournal struct {

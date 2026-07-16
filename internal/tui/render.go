@@ -209,6 +209,12 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeEndpoint {
 		renderEndpointModal(surface, string(model.endpointInput), width, height)
 	}
+	if model.Mode == ModeRename {
+		renderRenameModal(surface, model.pendingRename, string(model.renameInput), width, height)
+	}
+	if model.Mode == ModeDeleteConfirm {
+		renderDeleteModal(surface, model.pendingDelete, model.DeleteConfirmation, width, height)
+	}
 	if model.ShowJobs {
 		renderJobsView(surface, model.Jobs, model.JobCursor, width, height)
 	}
@@ -315,6 +321,49 @@ func renderEndpointModal(surface Surface, value string, width, height int) {
 	surface.PutClipped(x+1, y+2, modalWidth-2, "Host alias: "+SanitizeTerminalText(value), StyleStatus)
 	surface.PutClipped(x+1, y+3, modalWidth-2, "type local for LocalFS", StyleStatus)
 	surface.PutClipped(x+1, y+4, modalWidth-2, "[Enter] connect  [Esc] cancel", StyleStatus)
+}
+
+func renderRenameModal(surface Surface, reference transfer.FileRef, value string, width, height int) {
+	modalWidth := min(width-4, 64)
+	if modalWidth < 20 || height < 7 {
+		return
+	}
+	const modalHeight = 6
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, "Rename through durable Job", StyleStatus)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Source: "+SanitizeTerminalText(string(reference.Location.Path)), StyleStatus)
+	surface.PutClipped(x+1, y+3, modalWidth-2, "Name: "+SanitizeTerminalText(value), StyleStatus)
+	surface.PutClipped(x+1, y+4, modalWidth-2, "[Enter] queue  [Esc] cancel", StyleStatus)
+}
+
+func renderDeleteModal(surface Surface, references []transfer.FileRef, confirmation, width, height int) {
+	modalWidth := min(width-4, 72)
+	if modalWidth < 20 || height < 8 {
+		return
+	}
+	const modalHeight = 7
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	title := "Delete frozen selection"
+	message := "This action is irreversible when trash is unavailable."
+	if confirmation >= 2 {
+		title = "Confirm irreversible deletion"
+		message = "Second confirmation: queue deletion of the frozen identities."
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, fmt.Sprintf("Targets: %d", len(references)), StyleStatus)
+	if len(references) != 0 {
+		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(string(references[0].Location.Path)), StyleStatus)
+	}
+	surface.PutClipped(x+1, y+4, modalWidth-2, message, StyleError)
+	surface.PutClipped(x+1, y+5, modalWidth-2, "[Enter] confirm  [Esc] cancel", StyleStatus)
 }
 
 func renderAuthModal(surface Surface, state AuthState, width, height int) {

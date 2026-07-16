@@ -545,14 +545,61 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			case <-runCtx.Done():
 			}
 			return
-		case tui.IntentTransferCapture:
+		case tui.IntentTransferCapture, tui.IntentPrepareDelete, tui.IntentPrepareRename:
 			activeClient := client
 			go func() {
-				var response daemon.JobCaptureResponse
-				captureErr := activeClient.Call(runCtx, daemon.JobCapture, daemon.JobCaptureRequest{Location: ipc.EncodeLocation(intent.Location)}, &response)
-				result := tui.ClipboardCaptured{Clipboard: intent.Clipboard, Reference: response.Reference}
+				locations := intent.Locations
+				if len(locations) == 0 {
+					locations = []domain.Location{intent.Location}
+				}
+				references := make([]transfer.FileRef, 0, len(locations))
+				route := daemon.JobCapture
+				if intent.Kind == tui.IntentPrepareDelete {
+					route = daemon.JobCaptureDelete
+				}
+				var captureErr error
+				for _, location := range locations {
+					var response daemon.JobCaptureResponse
+					captureErr = activeClient.Call(runCtx, route, daemon.JobCaptureRequest{Location: ipc.EncodeLocation(location)}, &response)
+					if captureErr != nil {
+						break
+					}
+					references = append(references, response.Reference)
+				}
+				message := ""
 				if captureErr != nil {
-					result.Message = "capture failed: " + clientErrorMessage(captureErr)
+					message = "capture failed: " + clientErrorMessage(captureErr)
+				}
+				var result tui.Action
+				switch intent.Kind {
+				case tui.IntentPrepareDelete:
+					result = tui.DeletePrepared{References: references, Message: message}
+				case tui.IntentPrepareRename:
+					var reference transfer.FileRef
+					if len(references) != 0 {
+						reference = references[0]
+					}
+					result = tui.RenamePrepared{Reference: reference, Message: message}
+				default:
+					result = tui.ClipboardCaptured{Clipboard: intent.Clipboard, References: references, Message: message}
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentCreateDeleteJob:
+			activeClient := client
+			go func() {
+				var response daemon.JobSnapshotResponse
+				createErr := activeClient.Call(runCtx, daemon.JobCreateDelete, daemon.JobCreateDeleteRequest{Intent: transfer.DeleteIntent{
+					Target: intent.Target, Recursive: intent.Recursive, Confirmed: intent.Confirmed,
+					IrreversibleConfirmed: intent.IrreversibleConfirmed,
+				}}, &response)
+				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
+				if createErr != nil {
+					result.Message = "create delete Job failed: " + clientErrorMessage(createErr)
 				}
 				select {
 				case actions <- result:

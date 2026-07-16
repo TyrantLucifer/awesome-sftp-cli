@@ -193,8 +193,62 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 	return snapshot, nil
 }
 
+func (manager *Manager) CreateDelete(ctx context.Context, intent DeleteIntent) (jobstore.Snapshot, error) {
+	if !manager.isStarted() {
+		return jobstore.Snapshot{}, errors.New("create delete Job: transfer manager is not started")
+	}
+	requestID, err := domain.NewRequestID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	jobID, err := domain.NewJobID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	eventID, err := domain.NewEventID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	planID, err := manager.generator.New("plan_")
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	plan, create, err := manager.planner.FreezeDelete(ctx, DeleteFreezeRequest{
+		Intent: intent, RequestID: requestID, PlanID: planID, JobID: jobID, EventID: eventID, Now: manager.now(),
+	})
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	var release func()
+	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
+		release, err = acquirer.Acquire(ctx, plan)
+		if err != nil {
+			return jobstore.Snapshot{}, err
+		}
+	}
+	snapshot, _, err := manager.store.Create(ctx, create)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return jobstore.Snapshot{}, err
+	}
+	if release != nil {
+		manager.retainLease(snapshot.JobID, release)
+	}
+	if err := manager.enqueue(snapshot.JobID); err != nil {
+		manager.releaseLease(snapshot.JobID)
+		return jobstore.Snapshot{}, err
+	}
+	return snapshot, nil
+}
+
 func (manager *Manager) Capture(ctx context.Context, location domain.Location) (FileRef, error) {
 	return manager.planner.Capture(ctx, location)
+}
+
+func (manager *Manager) CaptureDelete(ctx context.Context, location domain.Location) (FileRef, error) {
+	return manager.planner.CaptureDelete(ctx, location)
 }
 
 func (manager *Manager) Wait(ctx context.Context, jobID domain.JobID) (jobstore.Snapshot, error) {
@@ -501,8 +555,16 @@ func (manager *Manager) execute(jobID domain.JobID) {
 			defer release()
 		}
 	}
-	journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
-	result, executeErr := NewWorker(manager.resolver, journal).Execute(manager.ctx, plan, manager.control(jobID))
+	var result Result
+	var executeErr error
+	if plan.Kind == OperationDelete {
+		result, executeErr = manager.executeDelete(plan)
+	} else if plan.Kind == OperationMove && plan.MoveStrategy == MoveAtomicRename {
+		result, executeErr = manager.executeAtomicMove(plan)
+	} else {
+		journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
+		result, executeErr = NewWorker(manager.resolver, journal).Execute(manager.ctx, plan, manager.control(jobID))
+	}
 	if manager.ctx.Err() != nil {
 		return
 	}
@@ -525,15 +587,27 @@ func (manager *Manager) execute(jobID domain.JobID) {
 			terminalState := job.StateCompleted
 			eventKind := "job_completed"
 			summary := string(result.Outcome)
+			moveReason := ""
 			if plan.Kind == OperationMove {
-				terminalState = job.StateCompletedWithSourceRetained
-				eventKind = "job_completed_source_retained"
-				summary = "destination completed and source retained; delete step not executed"
+				deleted := false
+				reason := "copy was skipped; source retained"
+				if result.Outcome != OutcomeSkipped {
+					deleted, reason = manager.finishMove(plan, result)
+				}
+				moveReason = reason
+				if !deleted {
+					terminalState = job.StateCompletedWithSourceRetained
+					eventKind = "job_completed_source_retained"
+					summary = "destination completed and source retained: " + reason
+				} else {
+					eventKind = "job_move_completed"
+					summary = "destination verified and source deletion proved"
+				}
 			}
 			_, _ = manager.transitionTerminal(verifying, terminalState, eventKind, summary, map[string]any{
 				"bytes": result.Bytes, "items": result.Items, "succeeded": result.Succeeded, "skipped": result.Skipped,
 				"failed": result.Failed, "manifest": result.Manifest, "manifest_truncated": result.ManifestTruncated,
-				"final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome,
+				"final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome, "move_reason": moveReason,
 			})
 		}
 	}

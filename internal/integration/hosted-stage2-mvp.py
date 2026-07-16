@@ -89,6 +89,15 @@ def wait_for_path(path, timeout=15):
     raise RuntimeError("copy did not publish expected final path %r" % path)
 
 
+def wait_for_absence(path, timeout=15):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if not os.path.lexists(path):
+            return
+        time.sleep(0.05)
+    raise RuntimeError("operation did not remove expected path %r" % path)
+
+
 def run_copy(binary, observer, source, destination, environment, filename, expected_path):
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
@@ -120,6 +129,57 @@ def prove_reattach(binary, observer, source, destination, environment):
     output = bytearray()
     try:
         read_until(fd, observer, output, b"READ-ONLY")
+        os.write(fd, b"J")
+        read_until(fd, observer, output, b"completed")
+        os.write(fd, b"q")
+        wait_child(pid, fd)
+    except Exception:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise
+    finally:
+        os.close(fd)
+
+
+def run_rename(binary, observer, source, destination, environment, old_name, new_name):
+    pid, fd = launch(binary, source, destination, environment)
+    output = bytearray()
+    try:
+        read_until(fd, observer, output, old_name.encode("utf-8"))
+        os.write(fd, b"r")
+        read_until(fd, observer, output, b"Rename through durable Job")
+        os.write(fd, new_name.encode("utf-8") + b"\r")
+        read_until(fd, observer, output, b"Job queued:")
+        wait_for_path(os.path.join(source, new_name))
+        wait_for_absence(os.path.join(source, old_name))
+        os.write(fd, b"J")
+        read_until(fd, observer, output, b"completed")
+        os.write(fd, b"q")
+        wait_child(pid, fd)
+    except Exception:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise
+    finally:
+        os.close(fd)
+
+
+def run_delete(binary, observer, source, destination, environment, filename):
+    pid, fd = launch(binary, source, destination, environment)
+    output = bytearray()
+    try:
+        read_until(fd, observer, output, filename.encode("utf-8"))
+        os.write(fd, b"D")
+        read_until(fd, observer, output, b"Delete frozen selection")
+        os.write(fd, b"\r")
+        read_until(fd, observer, output, b"Confirm irreversible deletion")
+        os.write(fd, b"\r")
+        read_until(fd, observer, output, b"Job queued:")
+        wait_for_absence(os.path.join(source, filename))
         os.write(fd, b"J")
         read_until(fd, observer, output, b"completed")
         os.write(fd, b"q")
@@ -189,8 +249,10 @@ def main():
             leftovers = [name for name in os.listdir(destination) if ".part-" in name]
             if leftovers:
                 raise RuntimeError("completed copy retained part files: %r" % leftovers)
+            run_rename(binary, observer, destination, source, environment, "payload.txt", "renamed.txt")
+            run_delete(binary, observer, destination, source, environment, "renamed.txt")
             prove_reattach(binary, observer, source, destination, environment)
-            print("Stage 2 local PTY copy and durable Jobs reattach MVP passed")
+            print("Stage 2 local PTY copy, rename, confirmed delete, and durable Jobs reattach MVP passed")
         else:
             alias = sys.argv[2]
             remote_root = os.path.realpath(sys.argv[3])

@@ -32,8 +32,9 @@ const (
 type OperationKind string
 
 const (
-	OperationCopy OperationKind = "copy"
-	OperationMove OperationKind = "move"
+	OperationCopy   OperationKind = "copy"
+	OperationMove   OperationKind = "move"
+	OperationDelete OperationKind = "delete"
 )
 
 type ConflictPolicy string
@@ -50,6 +51,13 @@ type Route string
 const (
 	RouteLocal     Route = "local"
 	RouteSFTPRelay Route = "sftp_relay"
+)
+
+type MoveStrategy string
+
+const (
+	MoveCopyDelete   MoveStrategy = "copy_delete"
+	MoveAtomicRename MoveStrategy = "atomic_rename"
 )
 
 type Verification string
@@ -72,35 +80,58 @@ type Intent struct {
 	ConflictConfirmed    bool            `json:"conflict_confirmed"`
 }
 
+type DeleteIntent struct {
+	Target                FileRef `json:"target"`
+	Recursive             bool    `json:"recursive"`
+	Confirmed             bool    `json:"confirmed"`
+	IrreversibleConfirmed bool    `json:"irreversible_confirmed"`
+}
+
 type CapabilityBinding struct {
 	Revision   domain.CapabilityRevision `json:"revision"`
 	Capability domain.Capability         `json:"capability"`
 }
 
 type Plan struct {
-	Version               uint16            `json:"version"`
-	PlanID                string            `json:"plan_id"`
-	JobID                 domain.JobID      `json:"job_id"`
-	Kind                  OperationKind     `json:"kind"`
-	SourceEndpoint        domain.Endpoint   `json:"source_endpoint"`
-	DestinationEndpoint   domain.Endpoint   `json:"destination_endpoint"`
-	Source                FileRef           `json:"source"`
-	DestinationDirectory  domain.Location   `json:"destination_directory"`
-	RequestedName         string            `json:"requested_name"`
-	Final                 domain.Location   `json:"final"`
-	Part                  domain.Location   `json:"part"`
-	SourceCapability      CapabilityBinding `json:"source_capability"`
-	DestinationCapability CapabilityBinding `json:"destination_capability"`
-	Route                 Route             `json:"route"`
-	Verification          Verification      `json:"verification"`
-	ConflictPolicy        ConflictPolicy    `json:"conflict_policy"`
-	BufferBytes           uint32            `json:"buffer_bytes"`
-	Discovery             *DiscoveryBudget  `json:"discovery,omitempty"`
-	FrozenAt              time.Time         `json:"frozen_at"`
+	Version                uint16             `json:"version"`
+	PlanID                 string             `json:"plan_id"`
+	JobID                  domain.JobID       `json:"job_id"`
+	Kind                   OperationKind      `json:"kind"`
+	SourceEndpoint         domain.Endpoint    `json:"source_endpoint"`
+	DestinationEndpoint    domain.Endpoint    `json:"destination_endpoint"`
+	Source                 FileRef            `json:"source"`
+	DestinationDirectory   domain.Location    `json:"destination_directory"`
+	RequestedName          string             `json:"requested_name"`
+	Final                  domain.Location    `json:"final"`
+	Part                   domain.Location    `json:"part"`
+	SourceCapability       CapabilityBinding  `json:"source_capability"`
+	DestinationCapability  CapabilityBinding  `json:"destination_capability"`
+	Route                  Route              `json:"route"`
+	Verification           Verification       `json:"verification"`
+	ConflictPolicy         ConflictPolicy     `json:"conflict_policy"`
+	BufferBytes            uint32             `json:"buffer_bytes"`
+	Discovery              *DiscoveryBudget   `json:"discovery,omitempty"`
+	MoveStrategy           MoveStrategy       `json:"move_strategy,omitempty"`
+	MoveCapability         *CapabilityBinding `json:"move_capability,omitempty"`
+	SourceDeleteCapability *CapabilityBinding `json:"source_delete_capability,omitempty"`
+	DeleteRecursive        bool               `json:"delete_recursive,omitempty"`
+	DeleteIrreversible     bool               `json:"delete_irreversible,omitempty"`
+	DeleteTrash            bool               `json:"delete_trash,omitempty"`
+	DeleteCapability       *CapabilityBinding `json:"delete_capability,omitempty"`
+	FrozenAt               time.Time          `json:"frozen_at"`
 }
 
 type FreezeRequest struct {
 	Intent    Intent
+	RequestID domain.RequestID
+	PlanID    string
+	JobID     domain.JobID
+	EventID   domain.EventID
+	Now       time.Time
+}
+
+type DeleteFreezeRequest struct {
+	Intent    DeleteIntent
 	RequestID domain.RequestID
 	PlanID    string
 	JobID     domain.JobID
@@ -138,6 +169,14 @@ type Planner struct{ resolver Resolver }
 func NewPlanner(resolver Resolver) *Planner { return &Planner{resolver: resolver} }
 
 func (planner *Planner) Capture(ctx context.Context, location domain.Location) (FileRef, error) {
+	return planner.capture(ctx, location, false)
+}
+
+func (planner *Planner) CaptureDelete(ctx context.Context, location domain.Location) (FileRef, error) {
+	return planner.capture(ctx, location, true)
+}
+
+func (planner *Planner) capture(ctx context.Context, location domain.Location, allowSymlink bool) (FileRef, error) {
 	implementation, err := planner.resolve(location.EndpointID)
 	if err != nil {
 		return FileRef{}, err
@@ -150,7 +189,7 @@ func (planner *Planner) Capture(ctx context.Context, location domain.Location) (
 	if err != nil {
 		return FileRef{}, err
 	}
-	if entry.Kind != domain.EntryFile && entry.Kind != domain.EntryDirectory {
+	if entry.Kind != domain.EntryFile && entry.Kind != domain.EntryDirectory && (!allowSymlink || entry.Kind != domain.EntrySymlink) {
 		return FileRef{}, planError(domain.CodeInvalidArgument, "capture", location, "copy requires a regular file or directory", domain.RetryNever)
 	}
 	if entry.Fingerprint.Strength() == domain.FingerprintWeak {
@@ -187,6 +226,21 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 	}
 	if _, ok := destinationProvider.(providerapi.MutableProvider); !ok {
 		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeUnsupported, "plan_copy", request.Intent.DestinationDirectory, "destination has no mutation facet", domain.RetryAfterReplan)
+	}
+	var sourceDeleteCapability *CapabilityBinding
+	if request.Intent.Clipboard == ClipboardCut {
+		deleteSnapshot, deleteCapability, capabilityErr := requireCapability(ctx, sourceProvider, "plan_move", request.Intent.Source.Location, "write")
+		if capabilityErr != nil {
+			return Plan{}, jobstore.CreateRequest{}, capabilityErr
+		}
+		if deleteSnapshot.Capabilities.Revision != sourceSnapshot.Capabilities.Revision {
+			return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeConflict, "plan_move", request.Intent.Source.Location, "source capability revision changed while freezing move", domain.RetryAfterReplan)
+		}
+		if _, ok := sourceProvider.(providerapi.MutableProvider); !ok {
+			return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeUnsupported, "plan_move", request.Intent.Source.Location, "source endpoint has no deletion facet", domain.RetryAfterReplan)
+		}
+		binding := CapabilityBinding{Revision: deleteSnapshot.Capabilities.Revision, Capability: deleteCapability}
+		sourceDeleteCapability = &binding
 	}
 
 	currentSource, err := sourceProvider.Stat(ctx, providerapi.StatRequest{Location: request.Intent.Source.Location})
@@ -251,15 +305,25 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 			Revision:   destinationSnapshot.Capabilities.Revision,
 			Capability: destinationCapability,
 		},
-		Route:          chooseRoute(sourceProvider.Descriptor(), destinationProvider.Descriptor()),
-		Verification:   VerifySHA256,
-		ConflictPolicy: request.Intent.ConflictPolicy,
-		BufferBytes:    DefaultBufferBytes,
-		FrozenAt:       request.Now.UTC().Truncate(time.Second),
+		Route:                  chooseRoute(sourceProvider.Descriptor(), destinationProvider.Descriptor()),
+		Verification:           VerifySHA256,
+		ConflictPolicy:         request.Intent.ConflictPolicy,
+		BufferBytes:            DefaultBufferBytes,
+		SourceDeleteCapability: sourceDeleteCapability,
+		FrozenAt:               request.Now.UTC().Truncate(time.Second),
 	}
 	if plan.Source.Kind == domain.EntryDirectory {
 		budget := DefaultDiscoveryBudget
 		plan.Discovery = &budget
+	}
+	if plan.Kind == OperationMove {
+		plan.MoveStrategy = MoveCopyDelete
+		if plan.SourceEndpoint.ID == plan.DestinationEndpoint.ID {
+			if capability, ok := sourceSnapshot.Capabilities.Lookup("atomic_rename"); ok {
+				plan.MoveStrategy = MoveAtomicRename
+				plan.MoveCapability = &CapabilityBinding{Revision: sourceSnapshot.Capabilities.Revision, Capability: capability}
+			}
+		}
 	}
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {
@@ -270,6 +334,106 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		return Plan{}, jobstore.CreateRequest{}, err
 	}
 	return plan, create, nil
+}
+
+func (planner *Planner) FreezeDelete(ctx context.Context, request DeleteFreezeRequest) (Plan, jobstore.CreateRequest, error) {
+	if !request.Intent.Confirmed {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeInvalidArgument, "plan_delete", request.Intent.Target.Location, "delete requires explicit confirmation", domain.RetryNever)
+	}
+	if _, err := domain.ParseRequestID(string(request.RequestID)); err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	if _, err := domain.ParseJobID(string(request.JobID)); err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	if _, err := domain.ParseEventID(string(request.EventID)); err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	if !planIDPattern.MatchString(request.PlanID) || request.Now.Unix() <= 0 {
+		return Plan{}, jobstore.CreateRequest{}, errors.New("freeze delete: invalid plan ID or time")
+	}
+	target := request.Intent.Target
+	if target.Location.EndpointID == "" || target.Location.Path == "" || target.Location.Path == "/" ||
+		(target.Kind != domain.EntryFile && target.Kind != domain.EntryDirectory && target.Kind != domain.EntrySymlink) {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeInvalidArgument, "plan_delete", target.Location, "delete target is empty, root, or unsupported", domain.RetryNever)
+	}
+	implementation, err := planner.resolve(target.Location.EndpointID)
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	snapshot, readCapability, err := requireCapability(ctx, implementation, "plan_delete", target.Location, "read")
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	writeSnapshot, writeCapability, err := requireCapability(ctx, implementation, "plan_delete", target.Location, "write")
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	if writeSnapshot.Capabilities.Revision != snapshot.Capabilities.Revision {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeConflict, "plan_delete", target.Location, "target capability revision changed while freezing delete", domain.RetryAfterReplan)
+	}
+	if _, ok := implementation.(providerapi.MutableProvider); !ok {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeUnsupported, "plan_delete", target.Location, "target endpoint has no mutation facet", domain.RetryAfterReplan)
+	}
+	trashCapability, advertisesTrash := snapshot.Capabilities.Lookup("trash")
+	_, implementsTrash := implementation.(providerapi.TrashProvider)
+	useTrash := advertisesTrash && implementsTrash
+	if !useTrash && !request.Intent.IrreversibleConfirmed {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeInvalidArgument, "plan_delete", target.Location, "irreversible delete requires second confirmation", domain.RetryNever)
+	}
+	current, err := implementation.Stat(ctx, providerapi.StatRequest{Location: target.Location})
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	if current.Kind != target.Kind || !reflect.DeepEqual(current.Fingerprint, target.Fingerprint) || snapshot.Capabilities.Revision != target.CapabilityRevision {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeConflict, "plan_delete", target.Location, "captured delete target changed", domain.RetryAfterConflict)
+	}
+	directory := domain.Location{EndpointID: target.Location.EndpointID, Path: domain.CanonicalPath(path.Dir(string(target.Location.Path)))}
+	plan := Plan{
+		Version: 1, PlanID: request.PlanID, JobID: request.JobID, Kind: OperationDelete,
+		SourceEndpoint: implementation.Descriptor(), DestinationEndpoint: implementation.Descriptor(), Source: cloneFileRef(target),
+		DestinationDirectory: directory, RequestedName: path.Base(string(target.Location.Path)), Final: target.Location,
+		Part:                  childLocation(directory, ".delete-intent-"+string(request.JobID)),
+		SourceCapability:      CapabilityBinding{Revision: snapshot.Capabilities.Revision, Capability: readCapability},
+		DestinationCapability: CapabilityBinding{Revision: snapshot.Capabilities.Revision, Capability: writeCapability},
+		Route:                 chooseRoute(implementation.Descriptor(), implementation.Descriptor()), Verification: VerifySHA256,
+		ConflictPolicy: ConflictAsk, BufferBytes: DefaultBufferBytes, DeleteRecursive: request.Intent.Recursive,
+		DeleteIrreversible: !useTrash, DeleteTrash: useTrash, FrozenAt: request.Now.UTC().Truncate(time.Second),
+	}
+	if useTrash {
+		binding := CapabilityBinding{Revision: snapshot.Capabilities.Revision, Capability: trashCapability}
+		plan.DeleteCapability = &binding
+	}
+	if target.Kind == domain.EntryDirectory {
+		budget := DefaultDiscoveryBudget
+		plan.Discovery = &budget
+	}
+	create, err := createDeleteRequest(plan, request)
+	return plan, create, err
+}
+
+func createDeleteRequest(plan Plan, request DeleteFreezeRequest) (jobstore.CreateRequest, error) {
+	sourceJSON, err := json.Marshal(plan.Source)
+	if err != nil {
+		return jobstore.CreateRequest{}, err
+	}
+	planJSON, err := json.Marshal(plan)
+	if err != nil {
+		return jobstore.CreateRequest{}, err
+	}
+	source := string(sourceJSON)
+	payload := string(planJSON)
+	riskClass := "irreversible_delete"
+	if plan.DeleteTrash {
+		riskClass = "trash_delete"
+	}
+	return jobstore.CreateRequest{
+		PlanID: plan.PlanID, RequestID: request.RequestID, JobID: plan.JobID, Kind: string(plan.Kind),
+		SourceJSON: source, DestinationJSON: &payload, Route: string(plan.Route), Verification: string(plan.Verification),
+		ConflictPolicy: string(plan.ConflictPolicy), RiskClass: riskClass, InitialState: job.StateQueued,
+		EventID: request.EventID, Now: request.Now,
+		Steps: []jobstore.Step{{Kind: "verify_source", SourceJSON: &source}, {Kind: "delete", SourceJSON: &source}, {Kind: "verify_absent", SourceJSON: &source}},
+	}, nil
 }
 
 func (planner *Planner) resolve(endpointID domain.EndpointID) (providerapi.Provider, error) {
@@ -363,6 +527,12 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 			{Kind: "transfer", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 			{Kind: "verify", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 			{Kind: "commit", DestinationJSON: &destinationString},
+		}
+	}
+	if plan.Kind == OperationMove && plan.MoveStrategy == MoveAtomicRename {
+		steps = []jobstore.Step{
+			{Kind: "rename", SourceJSON: &sourceString, DestinationJSON: &destinationString},
+			{Kind: "verify", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 		}
 	}
 	create := jobstore.CreateRequest{

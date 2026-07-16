@@ -208,6 +208,27 @@ func TestFreezeCopyRejectsStaleSourceAndUnsafeDestinationCapability(t *testing.T
 	}
 }
 
+func TestFreezeMoveRequiresFrozenSourceDeleteCapability(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "source"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sourceBase := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	source := readOnlyProvider{Provider: sourceBase}
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	planner := NewPlanner(MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination})
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, source, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request.Intent.Clipboard = ClipboardCut
+	if _, _, err := planner.FreezeCopy(context.Background(), request); !domain.IsCode(err, domain.CodeUnsupported) {
+		t.Fatalf("FreezeCopy(cut) error = %v, want unsupported source delete capability", err)
+	}
+}
+
 func TestFreezeCopyRoutesAndConflictStates(t *testing.T) {
 	tests := []struct {
 		name       string

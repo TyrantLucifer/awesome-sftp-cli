@@ -179,6 +179,51 @@ func TestManagerRetriesOnlyFailedDirectoryItemsAfterPermissionRepair(t *testing.
 	}
 }
 
+func TestManagerDirectoryMoveVerifiesEveryItemBeforeBoundedSourceDelete(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree", "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for relative, data := range map[string]string{"first": "first", "nested/second": "second"} {
+		// #nosec G703 -- relative paths are fixed test literals below a private source root.
+		if err := os.WriteFile(filepath.Join(sourceRoot, "tree", filepath.FromSlash(relative)), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	resolver := MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, resolver, 1_800_000_170)
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCut, Source: reference, DestinationDirectory: normalizePlanTest(t, destination, "/"),
+		Name: "moved", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("directory move state = %q", completed.State)
+	}
+	if _, err := source.Stat(context.Background(), providerapi.StatRequest{Location: reference.Location}); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("directory move source still exists: %v", err)
+	}
+	for relative, want := range map[string]string{"first": "first", "nested/second": "second"} {
+		// #nosec G304 -- relative paths are fixed test literals below a private destination root.
+		data, err := os.ReadFile(filepath.Join(destinationRoot, "moved", filepath.FromSlash(relative)))
+		if err != nil || string(data) != want {
+			t.Fatalf("moved output %s = %q, %v", relative, data, err)
+		}
+	}
+}
+
 func TestManagerReloadsQueuedFrozenPlanFromDurableStore(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("durable-plan"), ConflictAsk)
 	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
@@ -475,7 +520,7 @@ func TestManagerCancelRetainsPartAndReplaysOrderedEvents(t *testing.T) {
 	}
 }
 
-func TestManagerCutCompletesWithSourceRetainedUntilDeleteStepExists(t *testing.T) {
+func TestManagerCutDeletesSourceOnlyAfterVerifiedCommit(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("retain-source"), ConflictAsk)
 	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
 	t.Cleanup(func() { _ = database.Close() })
@@ -498,11 +543,350 @@ func TestManagerCutCompletesWithSourceRetainedUntilDeleteStepExists(t *testing.T
 		t.Fatalf("CreateCopy(): %v", err)
 	}
 	completed := waitForTerminal(t, manager, created.JobID)
-	if completed.State != job.StateCompletedWithSourceRetained {
-		t.Fatalf("cut Job state = %q, want completed_with_source_retained", completed.State)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("cut Job state = %q, want completed", completed.State)
 	}
-	if _, err := fixture.source.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Source.Location}); err != nil {
-		t.Fatalf("cut source was not retained: %v", err)
+	if _, err := fixture.source.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Source.Location}); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("cut source still exists after verified commit: %v", err)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("retain-source"))
+}
+
+func TestManagerMoveRetainsSourceWhenItChangesAfterCommit(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("copied-version"), ConflictAsk)
+	destination := &mutateSourceOnRenameProvider{
+		mutableTestProvider: fixture.destination,
+		sourcePath:          filepath.Join(fixture.sourceRoot, "source"),
+	}
+	resolver := MapResolver{fixture.source.Descriptor().ID: fixture.source, fixture.destination.Descriptor().ID: destination}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, resolver, 1_800_000_510)
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCut, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompletedWithSourceRetained {
+		t.Fatalf("changed-source move state = %q", completed.State)
+	}
+	assertWorkerBytes(t, fixture.source, fixture.plan.Source.Location, []byte("changed-after-commit"))
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("copied-version"))
+}
+
+func TestManagerMoveProvesDeleteAfterResponseLoss(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("delete-response-lost"), ConflictAsk)
+	source := &removeResponseLostProvider{mutableTestProvider: fixture.source.(mutableTestProvider)}
+	resolver := MapResolver{fixture.source.Descriptor().ID: source, fixture.destination.Descriptor().ID: fixture.destination}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, resolver, 1_800_000_520)
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCut, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("delete-response-lost move state = %q", completed.State)
+	}
+	if _, err := fixture.source.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Source.Location}); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("source deletion postcondition = %v", err)
+	}
+}
+
+func TestManagerRestartBetweenCommitAndSourceDeleteRetainsThenFinishes(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("restart-delete-boundary"), ConflictAsk)
+	blockingSource := &blockingRemoveProvider{
+		mutableTestProvider: fixture.source.(mutableTestProvider),
+		started:             make(chan struct{}),
+	}
+	resolver := MapResolver{
+		fixture.source.Descriptor().ID:      blockingSource,
+		fixture.destination.Descriptor().ID: fixture.destination,
+	}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	generator := &testkit.SequenceGenerator{}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_530, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCut, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-blockingSource.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("move did not reach source delete boundary")
+	}
+	manager.Close()
+	if _, err := os.Stat(filepath.Join(fixture.sourceRoot, "source")); err != nil {
+		t.Fatalf("source was not retained at interrupted delete boundary: %v", err)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("restart-delete-boundary"))
+	blockingSource.unblock()
+
+	restarted, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_531, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restarted.Close)
+	if err := restarted.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	current, err := store.Get(context.Background(), created.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.State == job.StatePaused {
+		if _, err := restarted.Resume(context.Background(), created.JobID); err != nil {
+			t.Fatal(err)
+		}
+	}
+	completed := waitForTerminal(t, restarted, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("restarted move state = %q", completed.State)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.sourceRoot, "source")); !os.IsNotExist(err) {
+		t.Fatalf("restarted move did not prove source deletion: %v", err)
+	}
+}
+
+func TestManagerUsesFrozenAtomicRenameFastPathWithoutStreaming(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source"), []byte("rename-only"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointLocal)
+	implementation := &atomicRenameProvider{endpointKindProvider: base, root: root}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, resolver, 1_800_000_530)
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCut, Source: reference, DestinationDirectory: normalizePlanTest(t, implementation, "/destination"),
+		Name: "moved", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("atomic rename Job state = %q", completed.State)
+	}
+	reads, writes := implementation.streamCounts()
+	if reads != 0 || writes != 0 {
+		t.Fatalf("atomic rename used streaming: reads=%d writes=%d", reads, writes)
+	}
+	if _, err := os.Stat(filepath.Join(root, "source")); !os.IsNotExist(err) {
+		t.Fatalf("atomic rename source remains: %v", err)
+	}
+	// #nosec G304 -- path is fixed below this test's private root.
+	data, err := os.ReadFile(filepath.Join(root, "destination", "moved"))
+	if err != nil || string(data) != "rename-only" {
+		t.Fatalf("atomic rename destination = %q, %v", data, err)
+	}
+}
+
+func TestManagerExplicitDeleteRequiresConfirmationAndRejectsRoot(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target"), []byte("delete-me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	implementation := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointLocal)
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, resolver, 1_800_000_540)
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, implementation, "/target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CreateDelete(context.Background(), DeleteIntent{Target: reference}); !domain.IsCode(err, domain.CodeInvalidArgument) {
+		t.Fatalf("unconfirmed delete error = %v", err)
+	}
+	if _, err := implementation.Stat(context.Background(), providerapi.StatRequest{Location: reference.Location}); err != nil {
+		t.Fatalf("unconfirmed delete changed target: %v", err)
+	}
+	rootReference, err := manager.Capture(context.Background(), normalizePlanTest(t, implementation, "/"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.CreateDelete(context.Background(), DeleteIntent{Target: rootReference, Confirmed: true, IrreversibleConfirmed: true}); !domain.IsCode(err, domain.CodeInvalidArgument) {
+		t.Fatalf("root delete error = %v", err)
+	}
+	created, err := manager.CreateDelete(context.Background(), DeleteIntent{Target: reference, Confirmed: true, IrreversibleConfirmed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("delete state = %q", completed.State)
+	}
+	if _, err := implementation.Stat(context.Background(), providerapi.StatRequest{Location: reference.Location}); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("delete target still exists: %v", err)
+	}
+}
+
+func TestManagerPrefersAdvertisedTrashWithoutIrreversibleConfirmation(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target"), []byte("trash-me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointLocal)
+	implementation := &trashTestProvider{endpointKindProvider: base, root: root}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, resolver, 1_800_000_545)
+	reference, err := manager.CaptureDelete(context.Background(), normalizePlanTest(t, implementation, "/target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateDelete(context.Background(), DeleteIntent{Target: reference, Confirmed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted || implementation.trashCalls != 1 {
+		t.Fatalf("trash delete state=%q calls=%d", completed.State, implementation.trashCalls)
+	}
+	if _, err := os.Stat(filepath.Join(root, "target")); !os.IsNotExist(err) {
+		t.Fatalf("trash source remains: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, ".trash-target"))
+	if err != nil || string(data) != "trash-me" {
+		t.Fatalf("trash payload=%q err=%v", data, err)
+	}
+}
+
+func TestManagerExplicitDeleteProvesUnknownResponseByPostcondition(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target"), []byte("delete-me"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointLocal)
+	implementation := &removeResponseLostProvider{mutableTestProvider: base}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, MapResolver{base.Descriptor().ID: implementation}, 1_800_000_547)
+	reference, err := manager.CaptureDelete(context.Background(), normalizePlanTest(t, implementation, "/target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateDelete(context.Background(), DeleteIntent{Target: reference, Confirmed: true, IrreversibleConfirmed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed := waitForTerminal(t, manager, created.JobID); completed.State != job.StateCompleted {
+		t.Fatalf("delete response-lost state = %q", completed.State)
+	}
+	if _, err := os.Stat(filepath.Join(root, "target")); !os.IsNotExist(err) {
+		t.Fatalf("delete target remains: %v", err)
+	}
+}
+
+func TestManagerRecursiveDeleteIsBoundedAndNeverFollowsSymlink(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "target", "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "target", "nested", "file"), []byte("inside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "outside"), []byte("outside"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../outside", filepath.Join(root, "target", "link")); err != nil {
+		t.Fatal(err)
+	}
+	implementation := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointLocal)
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, resolver, 1_800_000_550)
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, implementation, "/target"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateDelete(context.Background(), DeleteIntent{
+		Target: reference, Recursive: true, Confirmed: true, IrreversibleConfirmed: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("recursive delete state = %q", completed.State)
+	}
+	if _, err := os.Stat(filepath.Join(root, "target")); !os.IsNotExist(err) {
+		t.Fatalf("recursive target remains: %v", err)
+	}
+	// #nosec G304 -- path is fixed below this test's private root.
+	data, err := os.ReadFile(filepath.Join(root, "outside"))
+	if err != nil || string(data) != "outside" {
+		t.Fatalf("symlink target changed = %q, %v", data, err)
+	}
+}
+
+func TestManagerDeletesFrozenSymlinkWithoutFollowingTarget(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "target"), []byte("keep"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("target", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	implementation := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointLocal)
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, MapResolver{implementation.Descriptor().ID: implementation}, 1_800_000_555)
+	reference, err := manager.CaptureDelete(context.Background(), normalizePlanTest(t, implementation, "/link"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.Kind != domain.EntrySymlink {
+		t.Fatalf("captured kind = %q", reference.Kind)
+	}
+	created, err := manager.CreateDelete(context.Background(), DeleteIntent{Target: reference, Confirmed: true, IrreversibleConfirmed: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed := waitForTerminal(t, manager, created.JobID); completed.State != job.StateCompleted {
+		t.Fatalf("symlink delete state = %q", completed.State)
+	}
+	if _, err := os.Lstat(filepath.Join(root, "link")); !os.IsNotExist(err) {
+		t.Fatalf("symlink remains: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(root, "target"))
+	if err != nil || string(data) != "keep" {
+		t.Fatalf("symlink target=%q err=%v", data, err)
 	}
 }
 
@@ -891,6 +1275,148 @@ func testDatabasePath(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return filepath.Join(root, "state.sqlite3")
+}
+
+func newStartedTestManager(t *testing.T, store *jobstore.Store, resolver Resolver, unixTime int64) *Manager {
+	t.Helper()
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(unixTime, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	return manager
+}
+
+type mutateSourceOnRenameProvider struct {
+	mutableTestProvider
+	sourcePath string
+}
+
+func (provider *mutateSourceOnRenameProvider) Rename(ctx context.Context, request providerapi.RenameRequest) (providerapi.RenameResult, error) {
+	result, err := provider.mutableTestProvider.Rename(ctx, request)
+	if err != nil {
+		return result, err
+	}
+	// #nosec G306 -- the private source fixture remains owner-only.
+	if err := os.WriteFile(provider.sourcePath, []byte("changed-after-commit"), 0o600); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+type removeResponseLostProvider struct{ mutableTestProvider }
+
+func (provider *removeResponseLostProvider) Remove(ctx context.Context, request providerapi.RemoveRequest) error {
+	if err := provider.mutableTestProvider.Remove(ctx, request); err != nil {
+		return err
+	}
+	location := request.Location
+	return &domain.OpError{
+		Code: domain.CodeTransportInterrupted, Message: "delete response lost", Operation: "remove",
+		EndpointID: request.Location.EndpointID, Location: &location,
+		Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectUnknown,
+	}
+}
+
+type blockingRemoveProvider struct {
+	mutableTestProvider
+	mu      sync.Mutex
+	started chan struct{}
+	once    sync.Once
+	blocked bool
+}
+
+func (provider *blockingRemoveProvider) Remove(ctx context.Context, request providerapi.RemoveRequest) error {
+	provider.mu.Lock()
+	blocked := !provider.blocked
+	provider.mu.Unlock()
+	if blocked {
+		provider.once.Do(func() { close(provider.started) })
+		<-ctx.Done()
+		return domain.FromContext("remove", request.Location.EndpointID, &request.Location, ctx.Err())
+	}
+	return provider.mutableTestProvider.Remove(ctx, request)
+}
+
+func (provider *blockingRemoveProvider) unblock() {
+	provider.mu.Lock()
+	provider.blocked = true
+	provider.mu.Unlock()
+}
+
+type atomicRenameProvider struct {
+	*endpointKindProvider
+	root   string
+	mu     sync.Mutex
+	reads  int
+	writes int
+}
+
+type trashTestProvider struct {
+	*endpointKindProvider
+	root       string
+	trashCalls int
+}
+
+func (provider *trashTestProvider) Snapshot(ctx context.Context) (domain.EndpointSnapshot, error) {
+	snapshot, err := provider.endpointKindProvider.Snapshot(ctx)
+	if err != nil {
+		return domain.EndpointSnapshot{}, err
+	}
+	items := append(snapshot.Capabilities.Items, domain.Capability{Name: "trash", Version: 1})
+	snapshot.Capabilities, err = domain.NewCapabilitySnapshot(snapshot.Capabilities.Revision, true, items)
+	return snapshot, err
+}
+
+func (provider *trashTestProvider) Trash(_ context.Context, request providerapi.TrashRequest) error {
+	provider.trashCalls++
+	source := filepath.Join(provider.root, filepath.FromSlash(strings.TrimPrefix(string(request.Location.Path), "/")))
+	return os.Rename(source, filepath.Join(provider.root, ".trash-"+filepath.Base(source)))
+}
+
+func (provider *atomicRenameProvider) Snapshot(ctx context.Context) (domain.EndpointSnapshot, error) {
+	snapshot, err := provider.endpointKindProvider.Snapshot(ctx)
+	if err != nil {
+		return domain.EndpointSnapshot{}, err
+	}
+	items := append(snapshot.Capabilities.Items, domain.Capability{Name: "atomic_rename", Version: 1})
+	snapshot.Capabilities, err = domain.NewCapabilitySnapshot(snapshot.Capabilities.Revision, true, items)
+	return snapshot, err
+}
+
+func (provider *atomicRenameProvider) OpenRead(ctx context.Context, request providerapi.OpenReadRequest) (providerapi.ReadHandle, error) {
+	provider.mu.Lock()
+	provider.reads++
+	provider.mu.Unlock()
+	return provider.endpointKindProvider.OpenRead(ctx, request)
+}
+
+func (provider *atomicRenameProvider) OpenWrite(ctx context.Context, request providerapi.OpenWriteRequest) (providerapi.WriteHandle, error) {
+	provider.mu.Lock()
+	provider.writes++
+	provider.mu.Unlock()
+	return provider.endpointKindProvider.OpenWrite(ctx, request)
+}
+
+func (provider *atomicRenameProvider) Rename(_ context.Context, request providerapi.RenameRequest) (providerapi.RenameResult, error) {
+	source := filepath.Join(provider.root, filepath.FromSlash(strings.TrimPrefix(string(request.Source.Path), "/")))
+	destination := filepath.Join(provider.root, filepath.FromSlash(strings.TrimPrefix(string(request.Destination.Path), "/")))
+	if err := os.Rename(source, destination); err != nil {
+		return providerapi.RenameResult{}, err
+	}
+	return providerapi.RenameResult{Atomic: true, Replaced: request.Replace}, nil
+}
+
+func (provider *atomicRenameProvider) streamCounts() (int, int) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	return provider.reads, provider.writes
 }
 
 type gatedPlanAcquirer struct {

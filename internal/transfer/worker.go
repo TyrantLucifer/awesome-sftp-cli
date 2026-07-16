@@ -489,7 +489,9 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 }
 
 func validateExecution(plan Plan) error {
-	if plan.Version != 1 || plan.JobID == "" || (plan.Source.Kind != domain.EntryFile && plan.Source.Kind != domain.EntryDirectory) ||
+	validSourceKind := plan.Source.Kind == domain.EntryFile || plan.Source.Kind == domain.EntryDirectory ||
+		(plan.Kind == OperationDelete && plan.Source.Kind == domain.EntrySymlink)
+	if plan.Version != 1 || plan.JobID == "" || !validSourceKind ||
 		plan.SourceEndpoint.ID != plan.Source.Location.EndpointID || plan.DestinationEndpoint.ID != plan.Part.EndpointID ||
 		plan.Part.EndpointID == "" || plan.Final.EndpointID != plan.Part.EndpointID || plan.Part.Path == plan.Final.Path {
 		return errors.New("execute transfer: invalid frozen plan")
@@ -509,6 +511,26 @@ func validateExecution(plan Plan) error {
 			plan.Discovery.MaxDepth < 1 || plan.Discovery.MaxDepth > 256 {
 			return errors.New("execute transfer: directory discovery budget is invalid")
 		}
+	}
+	if plan.Kind == OperationMove {
+		if plan.MoveStrategy != "" && plan.MoveStrategy != MoveCopyDelete && plan.MoveStrategy != MoveAtomicRename {
+			return errors.New("execute transfer: move strategy is invalid")
+		}
+		if plan.MoveStrategy == MoveAtomicRename && (plan.MoveCapability == nil || plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID) {
+			return errors.New("execute transfer: atomic move capability is invalid")
+		}
+		if plan.MoveStrategy == MoveCopyDelete && plan.SourceDeleteCapability == nil {
+			return errors.New("execute transfer: move source deletion capability is missing")
+		}
+	}
+	if plan.Kind == OperationDelete {
+		if plan.DeleteIrreversible == plan.DeleteTrash || plan.DeleteTrash && plan.DeleteCapability == nil ||
+			plan.Source.Location.Path == "/" || plan.Final != plan.Source.Location ||
+			plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID {
+			return errors.New("execute transfer: delete plan is invalid")
+		}
+	} else if plan.Kind != OperationCopy && plan.Kind != OperationMove {
+		return errors.New("execute transfer: operation kind is invalid")
 	}
 	return nil
 }

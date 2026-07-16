@@ -162,7 +162,7 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.loadWorkspace(payload)
 	case WorkspaceSave:
 		return s.saveWorkspace(payload)
-	case JobCapture, JobCreateCopy, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:
+	case JobCapture, JobCaptureDelete, JobCreateCopy, JobCreateDelete, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:
 		return s.handleJob(ctx, name, payload)
 	case ProviderConnectSSH:
 		return s.connect(ctx, payload)

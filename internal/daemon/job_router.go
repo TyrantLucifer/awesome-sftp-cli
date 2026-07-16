@@ -12,7 +12,9 @@ import (
 
 const (
 	JobCapture         = "transfer.capture"
+	JobCaptureDelete   = "transfer.capture_delete"
 	JobCreateCopy      = "job.create_copy"
+	JobCreateDelete    = "job.create_delete"
 	JobList            = "job.list"
 	JobEvents          = "job.events"
 	JobPause           = "job.pause"
@@ -23,7 +25,9 @@ const (
 
 type TransferService interface {
 	Capture(context.Context, domain.Location) (transfer.FileRef, error)
+	CaptureDelete(context.Context, domain.Location) (transfer.FileRef, error)
 	CreateCopy(context.Context, transfer.Intent) (jobstore.Snapshot, error)
+	CreateDelete(context.Context, transfer.DeleteIntent) (jobstore.Snapshot, error)
 	JobViews(context.Context, int) ([]transfer.JobView, error)
 	Events(context.Context, domain.JobID, int64, int) ([]jobstore.EventRecord, error)
 	Pause(context.Context, domain.JobID) (jobstore.Snapshot, error)
@@ -42,6 +46,10 @@ type JobCaptureResponse struct {
 
 type JobCreateCopyRequest struct {
 	Intent transfer.Intent `json:"intent"`
+}
+
+type JobCreateDeleteRequest struct {
+	Intent transfer.DeleteIntent `json:"intent"`
 }
 
 type JobSnapshotResponse struct {
@@ -81,7 +89,7 @@ func (session *providerSession) handleJob(ctx context.Context, name string, payl
 		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "durable transfer service is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 	}
 	switch name {
-	case JobCapture:
+	case JobCapture, JobCaptureDelete:
 		var request JobCaptureRequest
 		if err := decodePayload(payload, &request); err != nil {
 			return nil, invalidArgument("decode transfer capture request", err)
@@ -90,7 +98,12 @@ func (session *providerSession) handleJob(ctx context.Context, name string, payl
 		if err != nil {
 			return nil, invalidArgument("decode transfer capture location", err)
 		}
-		reference, err := session.transfer.Capture(ctx, location)
+		var reference transfer.FileRef
+		if name == JobCaptureDelete {
+			reference, err = session.transfer.CaptureDelete(ctx, location)
+		} else {
+			reference, err = session.transfer.Capture(ctx, location)
+		}
 		return JobCaptureResponse{Reference: reference}, err
 	case JobCreateCopy:
 		var request JobCreateCopyRequest
@@ -98,6 +111,13 @@ func (session *providerSession) handleJob(ctx context.Context, name string, payl
 			return nil, invalidArgument("decode copy Job request", err)
 		}
 		snapshot, err := session.transfer.CreateCopy(ctx, request.Intent)
+		return JobSnapshotResponse{Snapshot: snapshot}, err
+	case JobCreateDelete:
+		var request JobCreateDeleteRequest
+		if err := decodePayload(payload, &request); err != nil {
+			return nil, invalidArgument("decode delete Job request", err)
+		}
+		snapshot, err := session.transfer.CreateDelete(ctx, request.Intent)
 		return JobSnapshotResponse{Snapshot: snapshot}, err
 	case JobList:
 		var request JobListRequest
