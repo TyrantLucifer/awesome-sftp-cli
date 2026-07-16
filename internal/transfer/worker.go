@@ -254,8 +254,14 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if control != nil {
 			switch control.Action(cloneCheckpoint(current)) {
 			case ControlPause:
-				return Result{Outcome: OutcomeWaitingConflict, Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrPaused
+				if err := worker.closeAndRefreshCheckpoint(ctx, destinationProvider, writeHandle, &current); err != nil {
+					return Result{}, err
+				}
+				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrPaused
 			case ControlCancel:
+				if err := worker.closeAndRefreshCheckpoint(ctx, destinationProvider, writeHandle, &current); err != nil {
+					return Result{}, err
+				}
 				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrCanceled
 			}
 		}
@@ -333,6 +339,27 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
 }
 
+func (worker *Worker) closeAndRefreshCheckpoint(ctx context.Context, destination providerapi.Provider, handle providerapi.WriteHandle, checkpoint *Checkpoint) error {
+	if err := handle.Sync(ctx); err != nil {
+		return err
+	}
+	if err := handle.Close(ctx); err != nil {
+		return err
+	}
+	entry, err := destination.Stat(ctx, providerapi.StatRequest{Location: checkpoint.Part})
+	if err != nil {
+		return err
+	}
+	if entry.Metadata.Size == nil || *entry.Metadata.Size != checkpoint.Offset {
+		return planError(domain.CodeConflict, "checkpoint_copy", checkpoint.Part, "part size changed while closing write handle", domain.RetryAfterConflict)
+	}
+	checkpoint.PartFingerprint = cloneFingerprint(entry.Fingerprint)
+	if err := worker.journal.Save(ctx, *checkpoint); err != nil {
+		return fmt.Errorf("execute transfer: refresh closed part checkpoint: %w", err)
+	}
+	return nil
+}
+
 func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider providerapi.Provider, destination providerapi.MutableProvider, checkpoint Checkpoint, buffer []byte) (Result, error) {
 	partEntry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
 	if err != nil {
@@ -368,7 +395,7 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 			}
 			return Result{Outcome: OutcomeSkipped, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex}, nil
 		case ConflictAutoRename:
-			final, err = chooseAutoRename(ctx, destinationProvider, plan.DestinationDirectory, pathBase(final))
+			final, err = chooseAutoRename(ctx, destinationProvider, plan.DestinationDirectory, plan.RequestedName)
 			if err != nil {
 				return Result{}, err
 			}
@@ -534,16 +561,6 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 	checkpoint.PartFingerprint = cloneFingerprint(checkpoint.PartFingerprint)
 	checkpoint.ChecksumState = append([]byte(nil), checkpoint.ChecksumState...)
 	return checkpoint
-}
-
-func pathBase(location domain.Location) string {
-	value := string(location.Path)
-	for index := len(value) - 1; index >= 0; index-- {
-		if value[index] == '/' {
-			return value[index+1:]
-		}
-	}
-	return value
 }
 
 func checkedProviderOffset(offset uint64) (int64, error) {

@@ -84,6 +84,7 @@ type Plan struct {
 	Kind                  OperationKind     `json:"kind"`
 	Source                FileRef           `json:"source"`
 	DestinationDirectory  domain.Location   `json:"destination_directory"`
+	RequestedName         string            `json:"requested_name"`
 	Final                 domain.Location   `json:"final"`
 	Part                  domain.Location   `json:"part"`
 	SourceCapability      CapabilityBinding `json:"source_capability"`
@@ -226,6 +227,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		Kind:                 kind,
 		Source:               cloneFileRef(request.Intent.Source),
 		DestinationDirectory: request.Intent.DestinationDirectory,
+		RequestedName:        request.Intent.Name,
 		Final:                final,
 		Part:                 part,
 		SourceCapability: CapabilityBinding{
@@ -240,7 +242,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		Verification:   VerifySHA256,
 		ConflictPolicy: request.Intent.ConflictPolicy,
 		BufferBytes:    DefaultBufferBytes,
-		FrozenAt:       request.Now.UTC(),
+		FrozenAt:       request.Now.UTC().Truncate(time.Second),
 	}
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {
@@ -327,6 +329,11 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 	}
 	sourceString := string(sourceJSON)
 	destinationString := string(destinationJSON)
+	planJSON, err := json.Marshal(plan)
+	if err != nil {
+		return jobstore.CreateRequest{}, fmt.Errorf("freeze copy: encode frozen plan: %w", err)
+	}
+	planString := string(planJSON)
 	steps := []jobstore.Step{
 		{Kind: "transfer", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 		{Kind: "verify", SourceJSON: &sourceString, DestinationJSON: &destinationString},
@@ -338,7 +345,7 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		JobID:           plan.JobID,
 		Kind:            string(plan.Kind),
 		SourceJSON:      sourceString,
-		DestinationJSON: &destinationString,
+		DestinationJSON: &planString,
 		Route:           string(plan.Route),
 		Verification:    string(plan.Verification),
 		ConflictPolicy:  string(plan.ConflictPolicy),
@@ -348,6 +355,32 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		Now:             request.Now,
 		Steps:           steps,
 	}, nil
+}
+
+// DecodePlan reconstructs a frozen plan from its durable operation row and
+// rejects partial or internally inconsistent records.
+func DecodePlan(record jobstore.PlanRecord, jobID domain.JobID) (Plan, error) {
+	if record.DestinationJSON == nil {
+		return Plan{}, errors.New("decode transfer plan: durable plan payload is absent")
+	}
+	var plan Plan
+	if err := json.Unmarshal([]byte(*record.DestinationJSON), &plan); err != nil {
+		return Plan{}, fmt.Errorf("decode transfer plan: %w", err)
+	}
+	if err := validateExecution(plan); err != nil {
+		return Plan{}, fmt.Errorf("decode transfer plan: %w", err)
+	}
+	sourceJSON, err := json.Marshal(plan.Source)
+	if err != nil {
+		return Plan{}, fmt.Errorf("decode transfer plan source: %w", err)
+	}
+	if plan.JobID != jobID || plan.PlanID != record.PlanID || string(sourceJSON) != record.SourceJSON ||
+		string(plan.Kind) != record.Kind || string(plan.Route) != record.Route ||
+		string(plan.Verification) != record.Verification || string(plan.ConflictPolicy) != record.ConflictPolicy ||
+		!plan.FrozenAt.Equal(record.FrozenAt) {
+		return Plan{}, errors.New("decode transfer plan: indexed columns disagree with frozen payload")
+	}
+	return plan, nil
 }
 
 func chooseRoute(source, destination domain.Endpoint) Route {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -46,6 +47,30 @@ func TestWorkerPublishesOnlyAfterDestinationVerification(t *testing.T) {
 	}
 	if journal.maxBufferBytes > int(fixture.plan.BufferBytes) {
 		t.Fatalf("observed buffer = %d, budget = %d", journal.maxBufferBytes, fixture.plan.BufferBytes)
+	}
+}
+
+func TestWorkerRefreshesCheckpointAfterPauseClosesWriteHandle(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("close-finalizes-mtime"), ConflictAsk)
+	fixture.plan.BufferBytes = 4
+	destination := &closeTimestampProvider{mutableTestProvider: fixture.destination, root: fixture.destinationRoot}
+	fixture.resolver[fixture.destination.Descriptor().ID] = destination
+	journal := newMemoryJournal()
+	control := ControlFunc(func(checkpoint Checkpoint) ControlAction {
+		if checkpoint.Offset >= 4 {
+			return ControlPause
+		}
+		return ControlContinue
+	})
+	if _, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, control); !errors.Is(err, ErrPaused) {
+		t.Fatalf("paused Execute() error = %v, want ErrPaused", err)
+	}
+	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+	if err != nil {
+		t.Fatalf("resumed Execute(): %v", err)
+	}
+	if result.Outcome != OutcomeCompleted {
+		t.Fatalf("resumed result = %#v", result)
 	}
 }
 
@@ -168,16 +193,49 @@ func TestWorkerConflictPoliciesAreRecheckedAtCommit(t *testing.T) {
 }
 
 type workerFixture struct {
-	plan        Plan
-	create      jobstore.CreateRequest
-	resolver    MapResolver
-	source      providerapi.Provider
-	destination mutableTestProvider
+	plan            Plan
+	create          jobstore.CreateRequest
+	resolver        MapResolver
+	source          providerapi.Provider
+	destination     mutableTestProvider
+	destinationRoot string
 }
 
 type mutableTestProvider interface {
 	providerapi.Provider
 	providerapi.MutableProvider
+}
+
+type closeTimestampProvider struct {
+	mutableTestProvider
+	root string
+}
+
+func (provider *closeTimestampProvider) OpenWrite(ctx context.Context, request providerapi.OpenWriteRequest) (providerapi.WriteHandle, error) {
+	handle, err := provider.mutableTestProvider.OpenWrite(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &closeTimestampHandle{
+		WriteHandle: handle,
+		hostPath:    filepath.Join(provider.root, strings.TrimPrefix(string(request.Location.Path), "/")),
+	}, nil
+}
+
+type closeTimestampHandle struct {
+	providerapi.WriteHandle
+	hostPath string
+	once     sync.Once
+	err      error
+}
+
+func (handle *closeTimestampHandle) Close(ctx context.Context) error {
+	closeErr := handle.WriteHandle.Close(ctx)
+	handle.once.Do(func() {
+		changed := time.Unix(1_900_000_000, 123)
+		handle.err = os.Chtimes(handle.hostPath, changed, changed)
+	})
+	return errors.Join(closeErr, handle.err)
 }
 
 func newWorkerFixture(t *testing.T, data []byte, policy ConflictPolicy) workerFixture {
@@ -201,7 +259,7 @@ func newWorkerFixture(t *testing.T, data []byte, policy ConflictPolicy) workerFi
 	if err != nil {
 		t.Fatal(err)
 	}
-	return workerFixture{plan: plan, create: create, resolver: resolver, source: source, destination: destination}
+	return workerFixture{plan: plan, create: create, resolver: resolver, source: source, destination: destination, destinationRoot: destinationRoot}
 }
 
 type memoryJournal struct {

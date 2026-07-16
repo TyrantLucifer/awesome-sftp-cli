@@ -13,6 +13,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 )
 
 const (
@@ -56,7 +57,7 @@ func TestCaptureAndFreezeCopyOwnImmutableFileReferenceAndPolicy(t *testing.T) {
 		PlanID:    planTestPlanID,
 		JobID:     planTestJobID,
 		EventID:   planTestEventID,
-		Now:       time.Unix(1_800_000_000, 0),
+		Now:       time.Unix(1_800_000_000, 123_456_789),
 	})
 	if err != nil {
 		t.Fatalf("FreezeCopy(): %v", err)
@@ -73,6 +74,19 @@ func TestCaptureAndFreezeCopyOwnImmutableFileReferenceAndPolicy(t *testing.T) {
 	if create.InitialState != job.StateQueued || len(create.Steps) != 3 || create.SourceJSON == "" || create.DestinationJSON == nil {
 		t.Fatalf("CreateRequest = %#v", create)
 	}
+	reloaded, err := DecodePlan(jobstore.PlanRecord{
+		PlanID:          create.PlanID,
+		Kind:            create.Kind,
+		SourceJSON:      create.SourceJSON,
+		DestinationJSON: create.DestinationJSON,
+		Route:           create.Route,
+		Verification:    create.Verification,
+		ConflictPolicy:  create.ConflictPolicy,
+		FrozenAt:        time.Unix(create.Now.Unix(), 0),
+	}, create.JobID)
+	if err != nil || !reflect.DeepEqual(reloaded, plan) {
+		t.Fatalf("DecodePlan() = %#v, %v; want %#v", reloaded, err, plan)
+	}
 
 	// Caller-owned pointer fields and later UI navigation cannot rewrite a
 	// frozen plan or its canonical persistence payload.
@@ -84,6 +98,14 @@ func TestCaptureAndFreezeCopyOwnImmutableFileReferenceAndPolicy(t *testing.T) {
 	intent.Name = "different"
 	if !reflect.DeepEqual(plan, before) || create.SourceJSON != beforeSourceJSON {
 		t.Fatalf("frozen plan changed after caller mutation: before=%#v after=%#v", before, plan)
+	}
+}
+
+func TestDecodePlanRejectsIndexedColumnMismatch(t *testing.T) {
+	encoded := `{"version":1,"plan_id":"plan_aaaaaaaaaaaaaaaaaaaaaaaaaa","job_id":"job_aaaaaaaaaaaaaaaaaaaaaaaaaa"}`
+	_, err := DecodePlan(jobstore.PlanRecord{DestinationJSON: &encoded}, planTestJobID)
+	if err == nil {
+		t.Fatal("DecodePlan() error = nil, want invalid durable plan")
 	}
 }
 

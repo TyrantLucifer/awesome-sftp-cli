@@ -235,6 +235,65 @@ func TestCheckpointUpsertIsDurableBoundedAndJobStepScoped(t *testing.T) {
 	}
 }
 
+func TestPlanReloadControlAndEventReplayAreTransactional(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	request := createRequest(t, 5)
+	created, _, err := store.Create(ctx, request)
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	plan, err := store.GetPlan(ctx, created.JobID)
+	if err != nil {
+		t.Fatalf("get plan: %v", err)
+	}
+	if plan.PlanID != request.PlanID || plan.RequestID != request.RequestID || plan.Kind != request.Kind ||
+		plan.SourceJSON != request.SourceJSON || plan.DestinationJSON == nil || *plan.DestinationJSON != *request.DestinationJSON ||
+		plan.Route != request.Route || plan.Verification != request.Verification || plan.ConflictPolicy != request.ConflictPolicy {
+		t.Fatalf("plan = %#v, want request %#v", plan, request)
+	}
+
+	pause := true
+	controlRequest := ControlRequest{
+		JobID:           created.JobID,
+		ExpectedVersion: created.StateVersion,
+		PauseRequested:  &pause,
+		EventID:         testEventID(t, 50),
+		EventKind:       "pause_requested",
+		PayloadJSON:     `{"source":"test"}`,
+		Now:             time.Unix(500, 0),
+	}
+	controlled, duplicate, err := store.UpdateControl(ctx, controlRequest)
+	if err != nil {
+		t.Fatalf("update control: %v", err)
+	}
+	if duplicate || !controlled.PauseRequested || controlled.CancelRequested || controlled.StateVersion != 2 || controlled.NextEventSequence != 3 {
+		t.Fatalf("controlled snapshot = (%#v, %t)", controlled, duplicate)
+	}
+	repeated, duplicate, err := store.UpdateControl(ctx, controlRequest)
+	if err != nil || !duplicate || repeated.StateVersion != controlled.StateVersion {
+		t.Fatalf("repeat control = (%#v, %t, %v)", repeated, duplicate, err)
+	}
+
+	events, err := store.ListEvents(ctx, created.JobID, 0, 10)
+	if err != nil {
+		t.Fatalf("list events: %v", err)
+	}
+	if len(events) != 2 || events[0].Sequence != 1 || events[0].Kind != "job_created" || events[1].Sequence != 2 || events[1].Kind != "pause_requested" {
+		t.Fatalf("events = %#v", events)
+	}
+	replayed, err := store.ListEvents(ctx, created.JobID, 1, 10)
+	if err != nil || len(replayed) != 1 || replayed[0].EventID != controlRequest.EventID {
+		t.Fatalf("replayed events = (%#v, %v)", replayed, err)
+	}
+	jobs, err := store.List(ctx, 10)
+	if err != nil || len(jobs) != 1 || jobs[0].JobID != created.JobID || !jobs[0].PauseRequested {
+		t.Fatalf("jobs = (%#v, %v)", jobs, err)
+	}
+}
+
 func newTestStore(t *testing.T, ctx context.Context) (*Store, *sql.DB) {
 	t.Helper()
 	root := testkit.PersistentTempDir(t)

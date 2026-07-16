@@ -74,6 +74,39 @@ type TransitionRequest struct {
 	Now             time.Time
 }
 
+type ControlRequest struct {
+	JobID           domain.JobID
+	ExpectedVersion int64
+	PauseRequested  *bool
+	CancelRequested *bool
+	EventID         domain.EventID
+	EventKind       string
+	PayloadJSON     string
+	Now             time.Time
+}
+
+type PlanRecord struct {
+	PlanID          string
+	RequestID       domain.RequestID
+	Kind            string
+	SourceJSON      string
+	DestinationJSON *string
+	Route           string
+	Verification    string
+	ConflictPolicy  string
+	RiskClass       string
+	FrozenAt        time.Time
+}
+
+type EventRecord struct {
+	JobID       domain.JobID
+	Sequence    int64
+	EventID     domain.EventID
+	Kind        string
+	PayloadJSON string
+	CreatedAt   time.Time
+}
+
 type CheckpointRequest struct {
 	JobID             domain.JobID
 	StepIndex         int
@@ -271,6 +304,176 @@ func (store *Store) Get(ctx context.Context, jobID domain.JobID) (Snapshot, erro
 	return getSnapshot(readContext, store.database, jobID)
 }
 
+func (store *Store) GetPlan(ctx context.Context, jobID domain.JobID) (PlanRecord, error) {
+	if _, err := domain.ParseJobID(string(jobID)); err != nil {
+		return PlanRecord{}, fmt.Errorf("get Job plan: %w", err)
+	}
+	if store == nil || store.database == nil {
+		return PlanRecord{}, errors.New("get Job plan: nil store")
+	}
+	readContext, cancel := wal.ReaderContext(ctx)
+	defer cancel()
+	var record PlanRecord
+	var destination sql.NullString
+	var frozenAt int64
+	err := store.database.QueryRowContext(readContext, `SELECT
+		p.plan_id, p.request_id, p.kind, p.source_json, p.destination_json,
+		p.route, p.verification, p.conflict_policy, p.risk_class, p.frozen_at_unix
+		FROM operation_plans p JOIN jobs j ON j.plan_id=p.plan_id WHERE j.job_id=?`, jobID).Scan(
+		&record.PlanID,
+		&record.RequestID,
+		&record.Kind,
+		&record.SourceJSON,
+		&destination,
+		&record.Route,
+		&record.Verification,
+		&record.ConflictPolicy,
+		&record.RiskClass,
+		&frozenAt,
+	)
+	if err != nil {
+		return PlanRecord{}, fmt.Errorf("get Job plan: %w", err)
+	}
+	if destination.Valid {
+		value := destination.String
+		record.DestinationJSON = &value
+	}
+	record.FrozenAt = time.Unix(frozenAt, 0)
+	return record, nil
+}
+
+func (store *Store) List(ctx context.Context, limit int) ([]Snapshot, error) {
+	if store == nil || store.database == nil {
+		return nil, errors.New("list Jobs: nil store")
+	}
+	if limit < 1 || limit > 1000 {
+		return nil, errors.New("list Jobs: limit is outside 1..1000")
+	}
+	readContext, cancel := wal.ReaderContext(ctx)
+	defer cancel()
+	rows, err := store.database.QueryContext(readContext, `SELECT
+		job_id, plan_id, state, state_version, next_event_sequence,
+		pause_requested, cancel_requested, retry_at_unix, terminal_summary,
+		created_at_unix, updated_at_unix
+		FROM jobs ORDER BY updated_at_unix DESC, job_id LIMIT ?`, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list Jobs: %w", err)
+	}
+	defer rows.Close()
+	result := make([]Snapshot, 0, limit)
+	for rows.Next() {
+		snapshot, err := scanSnapshot(rows)
+		if err != nil {
+			return nil, fmt.Errorf("list Jobs: %w", err)
+		}
+		result = append(result, snapshot)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list Jobs: %w", err)
+	}
+	return result, nil
+}
+
+func (store *Store) ListEvents(ctx context.Context, jobID domain.JobID, afterSequence int64, limit int) ([]EventRecord, error) {
+	if _, err := domain.ParseJobID(string(jobID)); err != nil {
+		return nil, fmt.Errorf("list Job events: %w", err)
+	}
+	if store == nil || store.database == nil {
+		return nil, errors.New("list Job events: nil store")
+	}
+	if afterSequence < 0 || limit < 1 || limit > 1000 {
+		return nil, errors.New("list Job events: invalid cursor or limit")
+	}
+	readContext, cancel := wal.ReaderContext(ctx)
+	defer cancel()
+	rows, err := store.database.QueryContext(readContext, `SELECT
+		job_id, sequence, event_id, kind, payload_json, created_at_unix
+		FROM job_events WHERE job_id=? AND sequence>? ORDER BY sequence LIMIT ?`, jobID, afterSequence, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list Job events: %w", err)
+	}
+	defer rows.Close()
+	result := make([]EventRecord, 0, limit)
+	for rows.Next() {
+		var event EventRecord
+		var createdAt int64
+		if err := rows.Scan(&event.JobID, &event.Sequence, &event.EventID, &event.Kind, &event.PayloadJSON, &createdAt); err != nil {
+			return nil, fmt.Errorf("list Job events: %w", err)
+		}
+		event.CreatedAt = time.Unix(createdAt, 0)
+		result = append(result, event)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list Job events: %w", err)
+	}
+	return result, nil
+}
+
+func (store *Store) UpdateControl(ctx context.Context, request ControlRequest) (Snapshot, bool, error) {
+	if err := validateControlRequest(request); err != nil {
+		return Snapshot{}, false, err
+	}
+	var snapshot Snapshot
+	duplicate := false
+	err := store.immediate(ctx, []uint64{jobWALBudget, eventWALBudget}, func(connection *sql.Conn, writer *transactionWriter) error {
+		var eventJobID domain.JobID
+		var eventKind, payload string
+		err := connection.QueryRowContext(ctx, "SELECT job_id, kind, payload_json FROM job_events WHERE event_id=?", request.EventID).Scan(&eventJobID, &eventKind, &payload)
+		if err == nil {
+			if eventJobID != request.JobID || eventKind != request.EventKind || payload != request.PayloadJSON {
+				return fmt.Errorf("update Job control: event ID %q has different immutable content", request.EventID)
+			}
+			snapshot, err = getSnapshot(ctx, connection, request.JobID)
+			duplicate = true
+			return err
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("update Job control: inspect event ID: %w", err)
+		}
+		current, err := getSnapshot(ctx, connection, request.JobID)
+		if err != nil {
+			return err
+		}
+		if current.StateVersion != request.ExpectedVersion {
+			return fmt.Errorf("%w: Job %q has version %d, expected %d", ErrVersionConflict, request.JobID, current.StateVersion, request.ExpectedVersion)
+		}
+		if current.State.Terminal() {
+			return errors.New("update Job control: terminal Job cannot be changed")
+		}
+		pauseRequested := current.PauseRequested
+		cancelRequested := current.CancelRequested
+		if request.PauseRequested != nil {
+			pauseRequested = *request.PauseRequested
+		}
+		if request.CancelRequested != nil {
+			cancelRequested = *request.CancelRequested
+		}
+		result, err := writer.ExecContext(ctx, `UPDATE jobs SET
+			pause_requested=?, cancel_requested=?, state_version=state_version+1,
+			next_event_sequence=next_event_sequence+1, updated_at_unix=?
+			WHERE job_id=? AND state_version=?`, boolInt(pauseRequested), boolInt(cancelRequested), request.Now.Unix(), request.JobID, request.ExpectedVersion)
+		if err != nil {
+			return fmt.Errorf("update Job control: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("update Job control row count: %w", err)
+		}
+		if changed != 1 {
+			return fmt.Errorf("%w: Job %q changed concurrently", ErrVersionConflict, request.JobID)
+		}
+		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, ?, ?, ?, ?, ?)", request.JobID, current.NextEventSequence, request.EventID, request.EventKind, request.PayloadJSON, request.Now.Unix()); err != nil {
+			return fmt.Errorf("update Job control event: %w", err)
+		}
+		snapshot, err = getSnapshot(ctx, connection, request.JobID)
+		return err
+	})
+	if err != nil {
+		return Snapshot{}, false, err
+	}
+	return snapshot, duplicate, nil
+}
+
 func (store *Store) SaveCheckpoint(ctx context.Context, request CheckpointRequest) error {
 	if err := validateCheckpoint(request); err != nil {
 		return err
@@ -454,17 +657,26 @@ type rowQueryer interface {
 }
 
 func getSnapshot(ctx context.Context, queryer rowQueryer, jobID domain.JobID) (Snapshot, error) {
+	snapshot, err := scanSnapshot(queryer.QueryRowContext(ctx, "SELECT job_id, plan_id, state, state_version, next_event_sequence, pause_requested, cancel_requested, retry_at_unix, terminal_summary, created_at_unix, updated_at_unix FROM jobs WHERE job_id=?", jobID))
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("get Job %q: %w", jobID, err)
+	}
+	return snapshot, nil
+}
+
+type rowScanner interface{ Scan(...any) error }
+
+func scanSnapshot(row rowScanner) (Snapshot, error) {
 	var snapshot Snapshot
 	var pauseRequested, cancelRequested int64
 	var retryAt sql.NullInt64
 	var terminalSummary sql.NullString
 	var createdAt, updatedAt int64
-	err := queryer.QueryRowContext(ctx, "SELECT job_id, plan_id, state, state_version, next_event_sequence, pause_requested, cancel_requested, retry_at_unix, terminal_summary, created_at_unix, updated_at_unix FROM jobs WHERE job_id=?", jobID).Scan(
+	if err := row.Scan(
 		&snapshot.JobID, &snapshot.PlanID, &snapshot.State, &snapshot.StateVersion, &snapshot.NextEventSequence,
 		&pauseRequested, &cancelRequested, &retryAt, &terminalSummary, &createdAt, &updatedAt,
-	)
-	if err != nil {
-		return Snapshot{}, fmt.Errorf("get Job %q: %w", jobID, err)
+	); err != nil {
+		return Snapshot{}, err
 	}
 	snapshot.PauseRequested = pauseRequested == 1
 	snapshot.CancelRequested = cancelRequested == 1
@@ -640,6 +852,20 @@ func validateTransitionRequest(request TransitionRequest) error {
 	return validateEncodedValues(values...)
 }
 
+func validateControlRequest(request ControlRequest) error {
+	if _, err := domain.ParseJobID(string(request.JobID)); err != nil {
+		return fmt.Errorf("update Job control: %w", err)
+	}
+	if _, err := domain.ParseEventID(string(request.EventID)); err != nil {
+		return fmt.Errorf("update Job control: %w", err)
+	}
+	if request.ExpectedVersion <= 0 || request.PauseRequested == nil && request.CancelRequested == nil ||
+		!eventKindPattern.MatchString(request.EventKind) || !json.Valid([]byte(request.PayloadJSON)) || request.Now.Unix() <= 0 {
+		return errors.New("update Job control: invalid version, flags, event, payload, or time")
+	}
+	return validateEncodedValues(request.EventKind, request.PayloadJSON)
+}
+
 func validateCheckpoint(request CheckpointRequest) error {
 	if _, err := domain.ParseJobID(string(request.JobID)); err != nil {
 		return fmt.Errorf("save Job checkpoint: %w", err)
@@ -707,6 +933,13 @@ func nullableBytes(value []byte) any {
 		return nil
 	}
 	return value
+}
+
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 func marshalJobResponse(jobID domain.JobID) (string, error) {
