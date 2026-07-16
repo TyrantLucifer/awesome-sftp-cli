@@ -4,6 +4,7 @@ package preview
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -216,7 +217,7 @@ func Render(request Request, limits Limits) Result {
 					result.Truncated = result.Truncated || sanitizedTruncated
 					result.Text, result.Lines, result.Truncated = renderNumberedLines(safe, limits, result.Truncated)
 					return result
-				} else if err == errJSONDepthBudget {
+				} else if errors.Is(err, errJSONDepthBudget) {
 					result.Warning = err.Error()
 				} else {
 					result.Warning = "invalid JSON; showing text fallback"
@@ -224,12 +225,12 @@ func Render(request Request, limits Limits) Result {
 				break
 			}
 			rendered, err := renderJSON(data, limits.MaxJSONDepth)
-			switch err {
-			case nil:
+			switch {
+			case err == nil:
 				result.Kind = KindJSON
 				result.Text, result.Lines, result.Truncated = renderNumberedLines(rendered, limits, result.Truncated)
 				return result
-			case errJSONDepthBudget:
+			case errors.Is(err, errJSONDepthBudget):
 				result.Warning = err.Error()
 			default:
 				result.Warning = "invalid JSON; showing text fallback"
@@ -537,8 +538,7 @@ func sanitizeText(data []byte, maximum int) ([]byte, bool) {
 			}
 		case unicode.IsControl(r):
 			if r <= 0xff {
-				value := byte(r)
-				if !appendBytes('\\', 'x', hexDigits[value>>4], hexDigits[value&0xf]) {
+				if !appendBytes('\\', 'x', hexDigits[(r>>4)&0xf], hexDigits[r&0xf]) {
 					return output, true
 				}
 			} else {

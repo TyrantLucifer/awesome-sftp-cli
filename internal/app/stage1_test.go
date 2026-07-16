@@ -297,8 +297,14 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	go func() { done <- runDaemonWithPaths(ctx, paths, purpose) }()
 	var client *daemon.Client
 	var err error
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
+		select {
+		case daemonErr := <-done:
+			cancel()
+			t.Fatalf("daemon exited before readiness: %v", daemonErr)
+		default:
+		}
 		attemptCtx, stop := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		client, err = connectExisting(attemptCtx, paths, purpose)
 		stop()

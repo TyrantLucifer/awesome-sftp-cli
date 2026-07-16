@@ -148,7 +148,7 @@ func TestStage3TemporarySSHDRemoteShellForegroundPTY(t *testing.T) {
 	}
 	keyRoot := t.TempDir()
 	clientKey := filepath.Join(keyRoot, "client_key")
-	run(t, "/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", clientKey)
+	runSSHKeygen(t, "-q", "-t", "ed25519", "-N", "", "-f", clientKey)
 	// #nosec G304 -- clientKey is generated inside this test's private TempDir.
 	publicKey, err := os.ReadFile(clientKey + ".pub")
 	if err != nil {

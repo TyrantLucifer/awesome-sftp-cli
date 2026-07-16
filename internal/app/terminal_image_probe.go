@@ -4,6 +4,7 @@ package app
 
 import (
 	"errors"
+	"math"
 	"os"
 	"strings"
 	"sync"
@@ -116,6 +117,9 @@ func writeProbe(descriptor int, query []byte) error {
 }
 
 func readProbeResponse(descriptor int, timeout time.Duration) ([]byte, error) {
+	if descriptor < 0 || uint64(descriptor) > math.MaxInt32 {
+		return nil, errors.New("terminal image probe descriptor is out of range")
+	}
 	deadline := time.Now().Add(timeout)
 	response := make([]byte, 0, 64)
 	buffer := make([]byte, 257)
@@ -128,7 +132,7 @@ func readProbeResponse(descriptor int, timeout time.Duration) ([]byte, error) {
 		if milliseconds < 1 {
 			milliseconds = 1
 		}
-		events := []unix.PollFd{{Fd: int32(descriptor), Events: unix.POLLIN}}
+		events := []unix.PollFd{{Fd: int32(descriptor), Events: unix.POLLIN}} // #nosec G115 -- descriptor bounds are checked above.
 		ready, err := unix.Poll(events, milliseconds)
 		if errors.Is(err, unix.EINTR) {
 			continue

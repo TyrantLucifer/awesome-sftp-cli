@@ -166,6 +166,7 @@ func TestExecLauncherHelperProcess(t *testing.T) {
 		if err := child.Start(); err != nil {
 			os.Exit(126)
 		}
+		// #nosec G703 -- the path is supplied exclusively by the parent test process.
 		if err := os.WriteFile(os.Getenv("AMSFTP_EXEC_LAUNCHER_READY"), []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
 			_ = child.Process.Kill()
 			os.Exit(126)

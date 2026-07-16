@@ -107,6 +107,22 @@ func TestRunLocalCommandDoesNotClosePipesBeforeDelayedWritersFinish(t *testing.T
 	}
 }
 
+func TestRunLocalCommandRejectsMutatedFrozenPlan(t *testing.T) {
+	tests := map[string]func(*LocalPlan){
+		"executable": func(plan *LocalPlan) { plan.Executable = "/bin/false" },
+		"arguments":  func(plan *LocalPlan) { plan.Args[1] = "exit 0" },
+	}
+	for name, mutate := range tests {
+		t.Run(name, func(t *testing.T) {
+			plan := testPlan(t, "printf hello")
+			mutate(&plan)
+			if _, err := RunLocalCommand(context.Background(), plan, DefaultStreamBytes); err == nil || !strings.Contains(err.Error(), "invalid frozen argv") {
+				t.Fatalf("RunLocalCommand() error = %v", err)
+			}
+		})
+	}
+}
+
 func TestRunLocalCommandReportsNonzeroAndCancellation(t *testing.T) {
 	nonzero, err := RunLocalCommand(context.Background(), testPlan(t, "exit 7"), DefaultStreamBytes)
 	if err != nil || nonzero.ExitCode != 7 || nonzero.Signaled {
@@ -136,6 +152,7 @@ func testPlan(t *testing.T, text string) LocalPlan {
 func writeShell(t *testing.T, directory, name string) string {
 	t.Helper()
 	path := filepath.Join(directory, name)
+	// #nosec G306 -- this owner-only test fixture must be executable.
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexec /bin/sh \"$@\"\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}

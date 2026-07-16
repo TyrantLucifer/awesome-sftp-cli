@@ -194,6 +194,7 @@ func TestRunRemoteCommandSendsUserTextOnlyAfterByteZeroMarker(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// #nosec G304 -- capture is an exact path beneath the test-owned temporary directory.
 	input, err := os.ReadFile(capture)
 	if err != nil {
 		t.Fatal(err)
@@ -222,6 +223,7 @@ func TestRunRemoteCommandRejectsSameInodeExecutableRewrite(t *testing.T) {
 	replacement := append([]byte(nil), original...)
 	replacement[len(replacement)-1] ^= 1
 	time.Sleep(time.Millisecond)
+	// #nosec G703 -- the frozen executable path was created by this test's helper.
 	if err := os.WriteFile(plan.Executable(), replacement, info.Mode().Perm()); err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +244,7 @@ func TestRunRemoteCommandBannerAndMarkerEOFSendsZeroUserBytes(t *testing.T) {
 			if err == nil {
 				t.Fatal("marker failure error = nil")
 			}
+			// #nosec G304 -- capture is an exact path beneath the test-owned temporary directory.
 			input, readErr := os.ReadFile(capture)
 			if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
 				t.Fatal(readErr)
@@ -303,6 +306,7 @@ func TestRunRemoteCommandCancellationKillsTheOpenSSHProcessGroup(t *testing.T) {
 	var pidBytes []byte
 	deadline := time.Now().Add(3 * time.Second)
 	for {
+		// #nosec G304 -- capture is an exact path beneath the test-owned temporary directory.
 		pidBytes, _ = os.ReadFile(capture + ".pid")
 		if len(pidBytes) > 0 {
 			break
@@ -343,6 +347,7 @@ func TestRunRemoteCommandCancellationKillsTheOpenSSHProcessGroup(t *testing.T) {
 }
 
 func TestRunRemoteCommandDiagnosticIsBoundedSingleLineAndRedacted(t *testing.T) {
+	// #nosec G101 -- this fixed value is a redaction sentinel, not a credential.
 	secret := "remote-diagnostic-secret"
 	result, err := RunRemoteCommand(context.Background(), remoteHelperPlan(t, "diagnostic", filepath.Join(t.TempDir(), "stdin"), []string{secret}), DefaultStreamBytes)
 	if err == nil {
@@ -362,10 +367,15 @@ func TestRemoteSSHHelperProcess(t *testing.T) {
 		return
 	}
 	reader := bufio.NewReader(os.Stdin)
-	writeCapture := func() []byte {
-		value, _ := reader.ReadString('\n')
-		_ = os.WriteFile(os.Getenv("AMSFTP_REMOTE_CAPTURE"), []byte(value), 0o600)
-		return []byte(value)
+	writeCapture := func() {
+		value, err := reader.ReadString('\n')
+		if err != nil {
+			os.Exit(93)
+		}
+		// #nosec G703 -- the path is supplied exclusively by the parent test process.
+		if err := os.WriteFile(os.Getenv("AMSFTP_REMOTE_CAPTURE"), []byte(value), 0o600); err != nil {
+			os.Exit(94)
+		}
 	}
 	switch mode {
 	case "success":
@@ -394,7 +404,11 @@ func TestRemoteSSHHelperProcess(t *testing.T) {
 		if err := child.Start(); err != nil {
 			os.Exit(92)
 		}
-		_ = os.WriteFile(os.Getenv("AMSFTP_REMOTE_CAPTURE")+".pid", []byte(strconv.Itoa(child.Process.Pid)), 0o600)
+		// #nosec G703 -- the path is supplied exclusively by the parent test process.
+		if err := os.WriteFile(os.Getenv("AMSFTP_REMOTE_CAPTURE")+".pid", []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+			_ = child.Process.Kill()
+			os.Exit(95)
+		}
 		_, _ = io.WriteString(os.Stdout, remoteMarker)
 		writeCapture()
 		for {
@@ -446,6 +460,7 @@ func writeRemoteSSHHelper(t *testing.T, mode, capture string) (string, []string)
 	directory := testkit.PersistentTempDir(t)
 	binary := filepath.Join(directory, "ssh")
 	script := "#!/bin/sh\nexec \"$AMSFTP_REMOTE_TEST_BINARY\" -test.run=^TestRemoteSSHHelperProcess$ -- \"$@\"\n"
+	// #nosec G306 -- this owner-only test fixture must be executable.
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -482,6 +497,7 @@ func writeRemoteSSH(t *testing.T) string {
 	t.Helper()
 	directory := testkit.PersistentTempDir(t)
 	path := filepath.Join(directory, "ssh")
+	// #nosec G306 -- this owner-only test fixture must be executable.
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}

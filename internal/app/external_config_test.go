@@ -66,7 +66,7 @@ func TestLoadApplicationConfigUsesDefaultsWhenMissingAndValidatesPrivateFiles(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(directory, 0o700); err != nil {
+	if err := os.Chmod(directory, 0o700); err != nil { // #nosec G302 -- owner-only directory mode is the property under test.
 		t.Fatal(err)
 	}
 	missing := filepath.Join(directory, "missing.json")
@@ -83,7 +83,7 @@ func TestLoadApplicationConfigUsesDefaultsWhenMissingAndValidatesPrivateFiles(t 
 	if err != nil || loaded.SchemaVersion != config.SchemaVersion {
 		t.Fatalf("private config = %#v, %v", loaded, err)
 	}
-	if err := os.Chmod(path, 0o644); err != nil {
+	if err := os.Chmod(path, 0o644); err != nil { // #nosec G302 -- deliberately broad mode must be rejected by loadApplicationConfig.
 		t.Fatal(err)
 	}
 	if _, err := loadApplicationConfig(path); err == nil {

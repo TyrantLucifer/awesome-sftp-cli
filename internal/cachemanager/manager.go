@@ -103,7 +103,7 @@ func (manager *Manager) PublishComplete(ctx context.Context, request PublishRequ
 	if request.ExpectedSize != nil && publication.Identity.Size != *request.ExpectedSize {
 		return PublishResult{}, fmt.Errorf("publish complete cache entry: expected size %d, read %d", *request.ExpectedSize, publication.Identity.Size)
 	}
-	if request.SourceFingerprint.Size != nil && publication.Identity.Size != int64(*request.SourceFingerprint.Size) {
+	if request.SourceFingerprint.Size != nil && (publication.Identity.Size < 0 || uint64(publication.Identity.Size) != *request.SourceFingerprint.Size) {
 		return PublishResult{}, fmt.Errorf("publish complete cache entry: source fingerprint size %d, read %d", *request.SourceFingerprint.Size, publication.Identity.Size)
 	}
 	fingerprint, err := canonicalFingerprint(request.SourceFingerprint, publication.Identity)

@@ -2,6 +2,7 @@ package preview
 
 import (
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -152,6 +153,9 @@ func applyContinueRead(prior ReadWindow, plan ReadPlan, response []byte) (ReadWi
 	retainedPrior := priorBytes - plan.DiscardBytes
 	if retainedPrior > MaxRetainedBytes-plan.Limit || plan.RetainBytes != retainedPrior+plan.Limit {
 		return ReadWindow{}, fmt.Errorf("apply preview read: inconsistent continue retention")
+	}
+	if plan.RetainBytes > math.MaxInt || plan.DiscardBytes > math.MaxInt {
+		return ReadWindow{}, fmt.Errorf("apply preview read: retained byte counts exceed platform limits")
 	}
 	data := make([]byte, 0, int(plan.RetainBytes))
 	data = append(data, prior.Data[int(plan.DiscardBytes):]...)

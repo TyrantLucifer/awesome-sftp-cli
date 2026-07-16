@@ -453,7 +453,7 @@ func (coordinator *editCoordinator) observe(ctx context.Context, live *liveEditS
 		if err != nil {
 			return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "begin edit observation: " + err.Error()}
 		}
-		if err := coordinator.transition(ctx, live, next, editstore.LocalUnknown, editstore.RemoteUnknown, editstore.StateObserving, "observation_started", "", edit.Decision{}, nil); err != nil {
+		if err := coordinator.transition(ctx, live, next, editstore.LocalUnknown, editstore.RemoteUnknown, editstore.StateObserving, "observation_started", edit.Decision{}, nil); err != nil {
 			return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "persist edit observation: " + clientErrorMessage(err)}
 		}
 	} else if live.machine.State() != edit.StateObserving {
@@ -473,7 +473,7 @@ func (coordinator *editCoordinator) observe(ctx context.Context, live *liveEditS
 		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "evaluate edit result: " + err.Error()}
 	}
 	localState, remoteState, durableState := durableObservationState(next.State(), evaluation, local, remote)
-	if err := coordinator.transition(ctx, live, next, localState, remoteState, durableState, "observation_completed", "", edit.Decision{}, nil); err != nil {
+	if err := coordinator.transition(ctx, live, next, localState, remoteState, durableState, "observation_completed", edit.Decision{}, nil); err != nil {
 		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "persist edit result: " + clientErrorMessage(err)}
 	}
 	if next.State() == edit.StateNoChanges {
@@ -611,7 +611,7 @@ func (coordinator *editCoordinator) Decide(ctx context.Context, intent tui.Inten
 	if lifecycle != editstore.StateConflict {
 		lifecycle = editstore.StateAwaitingDecision
 	}
-	if err := coordinator.transition(ctx, live, next, localState, remoteState, lifecycle, "sync_back_frozen", "", decision, syncBack); err != nil {
+	if err := coordinator.transition(ctx, live, next, localState, remoteState, lifecycle, "sync_back_frozen", decision, syncBack); err != nil {
 		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "persist frozen sync-back: " + clientErrorMessage(err)}
 	}
 	return coordinator.createSyncBackJob(ctx, live, *syncBack)
@@ -656,7 +656,7 @@ func (coordinator *editCoordinator) finishWithoutUpload(ctx context.Context, liv
 		return err
 	}
 	localState, remoteState, _ := durableObservationState(live.machine.State(), live.machine.Evaluation(), edit.LocalObservation{Status: edit.LocalPresent, SHA256: live.machine.CurrentLocalSHA256()}, live.machine.LastRemoteObservation())
-	if err := coordinator.transition(ctx, live, next, localState, remoteState, editstore.StateAbandoned, "upload_skipped", "", decision, nil); err != nil {
+	if err := coordinator.transition(ctx, live, next, localState, remoteState, editstore.StateAbandoned, "upload_skipped", decision, nil); err != nil {
 		return err
 	}
 	if err := coordinator.release(ctx, live.materialized, live.ownerKind, live.ownerID); err != nil {
@@ -667,14 +667,14 @@ func (coordinator *editCoordinator) finishWithoutUpload(ctx context.Context, liv
 	return nil
 }
 
-func (coordinator *editCoordinator) transition(ctx context.Context, live *liveEditSession, next edit.Session, local editstore.LocalState, remote editstore.RemoteState, state editstore.State, eventKind, errorCode string, decision edit.Decision, frozen *edit.SyncBackRequest) error {
+func (coordinator *editCoordinator) transition(ctx context.Context, live *liveEditSession, next edit.Session, local editstore.LocalState, remote editstore.RemoteState, state editstore.State, eventKind string, decision edit.Decision, frozen *edit.SyncBackRequest) error {
 	eventID, err := randomEditEventID()
 	if err != nil {
 		return err
 	}
 	request := editstore.TransitionRequest{
 		SessionID: string(live.machine.ID()), ExpectedVersion: live.recordVersion, LocalState: local, RemoteState: remote,
-		State: state, EventID: eventID, EventKind: eventKind, ErrorCode: errorCode, Persistent: next.Persistent(), Now: coordinator.now(),
+		State: state, EventID: eventID, EventKind: eventKind, Persistent: next.Persistent(), Now: coordinator.now(),
 	}
 	if decision.Kind != "" {
 		request.DecisionKind, request.AuditReason = decision.Kind, decision.AuditReason
@@ -767,14 +767,18 @@ func hashRegularFile(path string) (edit.SHA256, uint64, error) {
 		return "", 0, errors.New("hash regular file: materialization changed while hashing")
 	}
 	value, err := edit.ParseSHA256(hex.EncodeToString(hash.Sum(nil)))
-	return value, uint64(after.Size()), err
+	if after.Size() < 0 {
+		return "", 0, errors.New("hash regular file: negative materialization size")
+	}
+	return value, uint64(after.Size()), err // #nosec G115 -- negative sizes are rejected immediately above.
 }
 
 func durableObservationState(state edit.State, evaluation edit.Evaluation, local edit.LocalObservation, remote edit.RemoteObservation) (editstore.LocalState, editstore.RemoteState, editstore.State) {
 	localState := editstore.LocalUnknown
-	if local.Status == edit.LocalDeleted {
+	switch local.Status {
+	case edit.LocalDeleted:
 		localState = editstore.LocalDeleted
-	} else if local.Status == edit.LocalPresent {
+	case edit.LocalPresent:
 		localState = editstore.LocalClean
 		if evaluation.LocalChanged {
 			localState = editstore.LocalDirty

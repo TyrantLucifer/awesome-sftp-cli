@@ -145,7 +145,7 @@ func exchangeSFTPAttributes(reader io.Reader, writer io.Writer, rawPath string) 
 	if err != nil {
 		return SFTPAttributes{}, fmt.Errorf("read SFTP STAT response: %w", err)
 	}
-	return parseSFTPAttributes(response, attributeProbeRequestID)
+	return parseSFTPAttributes(response)
 }
 
 func sftpInitPacket() []byte {
@@ -153,9 +153,13 @@ func sftpInitPacket() []byte {
 }
 
 func sftpStatPacket(requestID uint32, rawPath string) []byte {
+	if len(rawPath) > maxAttributeProbePathBytes {
+		panic("SFTP attribute probe path exceeds protocol limit")
+	}
 	packet := make([]byte, 1+4+4+len(rawPath))
 	packet[0] = sftpTypeStat
 	binary.BigEndian.PutUint32(packet[1:5], requestID)
+	// #nosec G115 -- the explicit path limit above is smaller than uint32.
 	binary.BigEndian.PutUint32(packet[5:9], uint32(len(rawPath)))
 	copy(packet[9:], rawPath)
 	return packet
@@ -166,6 +170,7 @@ func writeSFTPPacket(writer io.Writer, payload []byte) error {
 		return errors.New("invalid SFTP packet length")
 	}
 	var header [4]byte
+	// #nosec G115 -- maxSFTPPacketBytes is smaller than uint32.
 	binary.BigEndian.PutUint32(header[:], uint32(len(payload)))
 	if err := writeAll(writer, header[:]); err != nil {
 		return err
@@ -214,30 +219,30 @@ func parseSFTPVersion(payload []byte) error {
 		return errors.New("SFTP attribute probe requires protocol version 3")
 	}
 	for decoder.remaining() > 0 {
-		if _, err := decoder.string(); err != nil {
+		if err := decoder.skipString(); err != nil {
 			return errors.New("SFTP attribute probe received malformed VERSION extensions")
 		}
-		if _, err := decoder.string(); err != nil {
+		if err := decoder.skipString(); err != nil {
 			return errors.New("SFTP attribute probe received malformed VERSION extensions")
 		}
 	}
 	return nil
 }
 
-func parseSFTPAttributes(payload []byte, requestID uint32) (SFTPAttributes, error) {
+func parseSFTPAttributes(payload []byte) (SFTPAttributes, error) {
 	decoder := sftpDecoder{value: payload}
 	typeCode, err := decoder.byte()
 	if err != nil {
 		return SFTPAttributes{}, errors.New("SFTP STAT response is empty")
 	}
 	if typeCode == sftpTypeStatus {
-		return SFTPAttributes{}, parseSFTPStatus(&decoder, requestID)
+		return SFTPAttributes{}, parseSFTPStatus(&decoder, attributeProbeRequestID)
 	}
 	if typeCode != sftpTypeAttrs {
 		return SFTPAttributes{}, fmt.Errorf("unexpected SFTP STAT response type %d", typeCode)
 	}
 	responseID, err := decoder.uint32()
-	if err != nil || responseID != requestID {
+	if err != nil || responseID != attributeProbeRequestID {
 		return SFTPAttributes{}, errors.New("SFTP ATTRS response request id mismatch")
 	}
 	flags, err := decoder.uint32()
@@ -279,14 +284,16 @@ func parseSFTPAttributes(payload []byte, requestID uint32) (SFTPAttributes, erro
 	}
 	if flags&sftpAttrExtended != 0 {
 		count, err := decoder.uint32()
-		if err != nil || uint64(count)*8 > uint64(decoder.remaining()) {
+		remaining := decoder.remaining()
+		// #nosec G115 -- remaining is checked non-negative before conversion.
+		if err != nil || remaining < 0 || uint64(count)*8 > uint64(remaining) {
 			return SFTPAttributes{}, errors.New("SFTP ATTRS extensions are malformed")
 		}
 		for index := uint32(0); index < count; index++ {
-			if _, err := decoder.string(); err != nil {
+			if err := decoder.skipString(); err != nil {
 				return SFTPAttributes{}, errors.New("SFTP ATTRS extension type is malformed")
 			}
-			if _, err := decoder.string(); err != nil {
+			if err := decoder.skipString(); err != nil {
 				return SFTPAttributes{}, errors.New("SFTP ATTRS extension data is malformed")
 			}
 		}
@@ -306,10 +313,10 @@ func parseSFTPStatus(decoder *sftpDecoder, requestID uint32) error {
 	if err != nil {
 		return errors.New("SFTP STATUS response is truncated")
 	}
-	if _, err := decoder.string(); err != nil {
+	if err := decoder.skipString(); err != nil {
 		return errors.New("SFTP STATUS message is malformed")
 	}
-	if _, err := decoder.string(); err != nil {
+	if err := decoder.skipString(); err != nil {
 		return errors.New("SFTP STATUS language is malformed")
 	}
 	if decoder.remaining() != 0 {
@@ -366,12 +373,14 @@ func (d *sftpDecoder) uint64() (uint64, error) {
 	return value, nil
 }
 
-func (d *sftpDecoder) string() ([]byte, error) {
+func (d *sftpDecoder) skipString() error {
 	length, err := d.uint32()
-	if err != nil || uint64(length) > uint64(d.remaining()) {
-		return nil, io.ErrUnexpectedEOF
+	remaining := d.remaining()
+	// #nosec G115 -- remaining is checked non-negative before conversion.
+	if err != nil || remaining < 0 || uint64(length) > uint64(remaining) {
+		return io.ErrUnexpectedEOF
 	}
-	value := d.value[d.offset : d.offset+int(length)]
+	// #nosec G115 -- length is bounded by the remaining in-memory slice.
 	d.offset += int(length)
-	return value, nil
+	return nil
 }

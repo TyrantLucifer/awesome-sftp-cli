@@ -78,6 +78,7 @@ func (plan Plan) CommandContext(ctx context.Context) (*exec.Cmd, error) {
 		return nil, fmt.Errorf("build external command: %w", err)
 	}
 
+	// #nosec G204 -- Revalidate above verifies the frozen executable identity; this is direct exec without shell evaluation.
 	cmd := exec.CommandContext(ctx, plan.Executable, plan.Args...)
 	cmd.Env = ScrubEnvironment(plan.Env)
 	return cmd, nil

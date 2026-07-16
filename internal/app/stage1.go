@@ -1050,9 +1050,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		case <-runCtx.Done():
 			return nil
 		case <-jobRefreshTicker.C:
-			if model.Drawer.Mode == tui.DrawerJobs {
+			switch model.Drawer.Mode {
+			case tui.DrawerJobs:
 				startIntent(tui.Intent{Kind: tui.IntentJobList})
-			} else if model.Drawer.Mode == tui.DrawerLog {
+			case tui.DrawerLog:
 				startIntent(tui.Intent{Kind: tui.IntentDiagnosticList, Limit: 256})
 			}
 		case <-leaseHeartbeatTicker.C:
@@ -1672,11 +1673,18 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 	identity.Mode = plan.Mode
 	identity.Offset = plan.Offset
 	identity.RequestedLimit = plan.Limit
+	if plan.Offset > math.MaxInt64 || plan.Limit > math.MaxUint32 {
+		actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
+		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: "preview read plan exceeds provider integer bounds"}
+		return
+	}
 	actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
 	var response ipc.ProviderReadResponse
 	expectedFingerprint := ipc.EncodeFingerprint(entry.Fingerprint)
 	err = client.Call(ctx, daemon.ProviderRead, ipc.ProviderReadRequest{
-		Location: ipc.EncodeLocation(location), Offset: int64(plan.Offset), Limit: uint32(plan.Limit),
+		Location:            ipc.EncodeLocation(location),
+		Offset:              int64(plan.Offset), // #nosec G115 -- bounded by math.MaxInt64 immediately above.
+		Limit:               uint32(plan.Limit), // #nosec G115 -- bounded by math.MaxUint32 immediately above.
 		ExpectedFingerprint: &expectedFingerprint,
 	}, &response)
 	if err != nil {

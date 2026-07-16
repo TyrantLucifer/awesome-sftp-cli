@@ -36,7 +36,7 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 	}
 	keyRoot := t.TempDir()
 	clientKey := filepath.Join(keyRoot, "client_key")
-	run(t, "/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", clientKey)
+	runSSHKeygen(t, "-q", "-t", "ed25519", "-N", "", "-f", clientKey)
 	// #nosec G304 -- path is generated inside this test's private TempDir.
 	publicKey, err := os.ReadFile(clientKey + ".pub")
 	if err != nil {
@@ -173,7 +173,7 @@ func TestStage2TemporarySSHDPTYUploadDownloadMVP(t *testing.T) {
 	}
 	keyRoot := t.TempDir()
 	clientKey := filepath.Join(keyRoot, "client_key")
-	run(t, "/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", clientKey)
+	runSSHKeygen(t, "-q", "-t", "ed25519", "-N", "", "-f", clientKey)
 	// #nosec G304 -- path is generated inside this test's private TempDir.
 	publicKey, err := os.ReadFile(clientKey + ".pub")
 	if err != nil {
@@ -376,7 +376,7 @@ func startTestSSHD(t *testing.T, username string, publicKey []byte, label string
 	t.Helper()
 	server := &testSSHD{root: t.TempDir()}
 	hostKey := filepath.Join(server.root, "host_key")
-	run(t, "/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", hostKey)
+	runSSHKeygen(t, "-q", "-t", "ed25519", "-N", "", "-f", hostKey)
 	authorized := filepath.Join(server.root, "authorized_keys")
 	// #nosec G703 -- destination is fixed inside this test's private TempDir.
 	if err := os.WriteFile(authorized, publicKey, 0o600); err != nil {
@@ -481,11 +481,11 @@ func assertContainsEntry(t *testing.T, ctx context.Context, implementation *sftp
 	t.Fatalf("SFTP list = %s, missing %s", strings.Join(names, ", "), expected)
 }
 
-func run(t *testing.T, binary string, args ...string) {
+func runSSHKeygen(t *testing.T, args ...string) {
 	t.Helper()
-	// #nosec G204 -- callers supply fixed /usr/bin/ssh-keygen and test-owned arguments only.
-	command := exec.Command(binary, args...)
+	// #nosec G204 -- executable is fixed and callers supply only test-owned arguments.
+	command := exec.Command("/usr/bin/ssh-keygen", args...)
 	if output, err := command.CombinedOutput(); err != nil {
-		t.Fatalf("%s: %v\n%s", binary, err, output)
+		t.Fatalf("ssh-keygen: %v\n%s", err, output)
 	}
 }

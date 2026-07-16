@@ -102,11 +102,11 @@ func Orchestrate(ctx context.Context, runner *Runner, request OrchestrationReque
 	limits := request.ImageLimits
 	imageEligible := request.BuiltIn.Kind == preview.KindImage && request.Capability.Protocol() != preview.ImageProtocolNone && mediaType == "image/png" && validImageLimits(limits)
 	externalEligibleBySize := externalMatched
-	if externalMatched && request.HasFileSize && request.FileSize > uint64(selected.maxInputBytes) {
+	if externalMatched && request.HasFileSize && exceedsSignedLimit(request.FileSize, selected.maxInputBytes) {
 		outcome.External = rejectedExternal(selected, CodeInputTooLarge)
 		externalEligibleBySize = false
 	}
-	if imageEligible && request.HasFileSize && request.FileSize > uint64(limits.MaxPayloadBytes) {
+	if imageEligible && request.HasFileSize && exceedsSignedLimit(request.FileSize, int64(limits.MaxPayloadBytes)) {
 		imageEligible = false
 		outcome.Code = CodeImageFailed
 	}
@@ -187,7 +187,11 @@ func externalEligible(result preview.Result, requested preview.ViewMode) bool {
 }
 
 func validImageLimits(limits preview.ImageOutputLimits) bool {
-	return limits.MaxPayloadBytes > 0 && limits.MaxPayloadBytes <= math.MaxInt64 && limits.MaxOutputBytes > 0 && limits.ChunkBytes > 0 && limits.MaxPixels > 0
+	return limits.MaxPayloadBytes > 0 && limits.MaxOutputBytes > 0 && limits.ChunkBytes > 0 && limits.MaxPixels > 0
+}
+
+func exceedsSignedLimit(value uint64, limit int64) bool {
+	return limit < 0 || value > math.MaxInt64 || int64(value) > limit
 }
 
 func validateLeasedMaterialization(leased LeasedMaterialization, maximum int64, hasFileSize bool, fileSize uint64) (os.FileInfo, error) {

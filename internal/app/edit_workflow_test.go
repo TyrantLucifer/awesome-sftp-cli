@@ -5,6 +5,7 @@ package app
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -615,6 +616,7 @@ func (fixture *editRPCFixture) Call(_ context.Context, route string, request any
 		response.(*daemon.EditSessionResponse).Session = editstore.Record{SessionID: got.SessionID, StateVersion: fixture.version}
 	case daemon.EditSessionTransition:
 		got := request.(daemon.EditSessionTransitionRequest).Request
+		// #nosec G115 -- fixture versions start at zero and increment only a few times in this bounded test.
 		if got.ExpectedVersion != fixture.version || got.Persistent.Version != edit.Version(fixture.version+1) {
 			fixture.t.Fatalf("transition = %#v at version %d", got, fixture.version)
 		}
@@ -637,9 +639,12 @@ func (fixture *editRPCFixture) Call(_ context.Context, route string, request any
 		if err != nil {
 			fixture.t.Fatal(err)
 		}
+		if size > math.MaxInt64 {
+			fixture.t.Fatalf("dirty fixture size %d exceeds int64", size)
+		}
 		response.(*daemon.CacheMarkDirtyResponse).Dirty = true
 		response.(*daemon.CacheMarkDirtyResponse).CurrentSHA256 = cache.BlobID(sha)
-		response.(*daemon.CacheMarkDirtyResponse).Size = int64(size)
+		response.(*daemon.CacheMarkDirtyResponse).Size = int64(size) // #nosec G115 -- bounded by math.MaxInt64 immediately above.
 	case daemon.ProviderStat:
 		if fixture.statErr != nil {
 			return fixture.statErr

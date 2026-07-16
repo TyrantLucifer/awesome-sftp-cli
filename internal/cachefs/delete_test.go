@@ -67,6 +67,7 @@ func TestDeleteExactCacheObjectsRefusesSymlinkOrUnknownChildren(t *testing.T) {
 	if err := store.DeleteMaterialization(materializationID, BlobIdentity{ID: cache.BlobID(strings.Repeat("a", 64)), Size: 8}); err == nil {
 		t.Fatal("DeleteMaterialization accepted a symlink")
 	}
+	// #nosec G304 -- outside is a test-owned path created above to prove symlink refusal.
 	if got, err := os.ReadFile(outside); err != nil || string(got) != "preserve" {
 		t.Fatalf("outside content = %q, %v", got, err)
 	}

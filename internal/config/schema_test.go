@@ -175,19 +175,19 @@ func TestExternalConfigRejectsUnboundedOrAmbiguousRules(t *testing.T) {
 			config.External.Opener = &CommandConfig{Executable: "/usr/bin/open", Args: []string{"bad\narg"}}
 		}},
 		{name: "empty match", mutate: func(config *Config) {
-			config.External.Previewers = []PreviewerConfig{validPreviewerConfig("one")}
+			config.External.Previewers = []PreviewerConfig{validPreviewerConfig()}
 			config.External.Previewers[0].MediaTypes = nil
 			config.External.Previewers[0].Extensions = nil
 		}},
 		{name: "duplicate name", mutate: func(config *Config) {
-			config.External.Previewers = []PreviewerConfig{validPreviewerConfig("one"), validPreviewerConfig("one")}
+			config.External.Previewers = []PreviewerConfig{validPreviewerConfig(), validPreviewerConfig()}
 		}},
 		{name: "zero timeout", mutate: func(config *Config) {
-			config.External.Previewers = []PreviewerConfig{validPreviewerConfig("one")}
+			config.External.Previewers = []PreviewerConfig{validPreviewerConfig()}
 			config.External.Previewers[0].TimeoutMS = 0
 		}},
 		{name: "zero input limit", mutate: func(config *Config) {
-			config.External.Previewers = []PreviewerConfig{validPreviewerConfig("one")}
+			config.External.Previewers = []PreviewerConfig{validPreviewerConfig()}
 			config.External.Previewers[0].MaxInputBytes = 0
 		}},
 	}
@@ -202,9 +202,9 @@ func TestExternalConfigRejectsUnboundedOrAmbiguousRules(t *testing.T) {
 	}
 }
 
-func validPreviewerConfig(name string) PreviewerConfig {
+func validPreviewerConfig() PreviewerConfig {
 	return PreviewerConfig{
-		Name: name, Extensions: []string{".txt"},
+		Name: "one", Extensions: []string{".txt"},
 		Command: CommandConfig{Executable: "preview"}, TimeoutMS: 1000, MaxInputBytes: 1024,
 	}
 }

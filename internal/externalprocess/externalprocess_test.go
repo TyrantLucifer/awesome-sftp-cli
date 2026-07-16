@@ -378,6 +378,7 @@ func TestNativeDefaultOpenerIsExactWhenAvailable(t *testing.T) {
 func writeExecutable(t *testing.T, dir, name string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
+	// #nosec G306 -- this owner-only test fixture must be executable.
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}

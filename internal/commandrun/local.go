@@ -28,6 +28,7 @@ type LocalPlan struct {
 
 	shell   externalprocess.ResolvedCommand
 	dirInfo os.FileInfo
+	command string
 }
 
 func ResolveLocalShell(explicit, environmentShell string) (externalprocess.ResolvedCommand, error) {
@@ -79,6 +80,7 @@ func PlanLocalCommand(shell externalprocess.ResolvedCommand, cwd, userText strin
 		Dir:        cwd,
 		shell:      shell,
 		dirInfo:    dirInfo,
+		command:    userText,
 	}, nil
 }
 
@@ -110,10 +112,11 @@ func RunLocalCommand(ctx context.Context, plan LocalPlan, streamBytes int) (Resu
 	if err != nil || !os.SameFile(plan.dirInfo, currentDir) || !currentDir.IsDir() || currentDir.Mode()&os.ModeSymlink != 0 {
 		return Result{}, fmt.Errorf("run local command: cwd identity changed")
 	}
-	if len(plan.Args) != 2 || plan.Args[0] != "-c" {
+	if plan.Executable != plan.shell.Executable || len(plan.Args) != 2 || plan.Args[0] != "-c" || plan.Args[1] != plan.command {
 		return Result{}, fmt.Errorf("run local command: invalid frozen argv")
 	}
 
+	// #nosec G204 -- Revalidate above verifies the frozen absolute shell identity, and argv is the fixed "-c", user-text plan.
 	cmd := exec.CommandContext(ctx, plan.Executable, plan.Args...)
 	cmd.Dir = plan.Dir
 	cmd.Env = externalprocess.ScrubEnvironment(os.Environ())

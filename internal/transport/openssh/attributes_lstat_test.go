@@ -18,6 +18,7 @@ func TestProbeLinkAttributesUsesRawSFTPLstatAndPreservesPresence(t *testing.T) {
 	}
 	binary := filepath.Join(testkit.PersistentTempDir(t), "ssh")
 	script := "#!/bin/sh\nexec \"$AMSFTP_LSTAT_TEST_BINARY\" -test.run=^TestLinkAttributeProbeHelperProcess$ -- \"$@\"\n"
+	// #nosec G306 -- this owner-only fixture must be executable.
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}

@@ -309,7 +309,6 @@ func RunRemoteCommand(ctx context.Context, plan RemotePlan, streamBytes int) (Re
 		killRemoteProcessGroup(command)
 		if !waited {
 			waitErr = <-waitDone
-			waited = true
 		}
 		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectNone, 0, plan.redactions)
 		return result, fmt.Errorf("run remote command marker: %w", markerErr)
@@ -319,7 +318,6 @@ func RunRemoteCommand(ctx context.Context, plan RemotePlan, streamBytes int) (Re
 		killRemoteProcessGroup(command)
 		if !waited {
 			waitErr = <-waitDone
-			waited = true
 		}
 		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectUnknown, 0, plan.redactions)
 		return result, err
@@ -328,38 +326,45 @@ func RunRemoteCommand(ctx context.Context, plan RemotePlan, streamBytes int) (Re
 	commandLine := plan.userText + "\n"
 	written, writeErr := writeCount(stdin, []byte(commandLine))
 	_ = stdin.Close()
+	commandBytesSent, conversionErr := nonNegativeUint64(written)
+	if conversionErr != nil {
+		killRemoteProcessGroup(command)
+		if !waited {
+			waitErr = <-waitDone
+		}
+		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectUnknown, 0, plan.redactions)
+		return result, fmt.Errorf("run remote command input byte count: %w", conversionErr)
+	}
 	if writeErr != nil {
 		killRemoteProcessGroup(command)
 		if !waited {
 			waitErr = <-waitDone
-			waited = true
 		}
 		effect := EffectNone
 		if written > 0 {
 			effect = EffectUnknown
 		}
-		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, effect, uint64(written), plan.redactions)
+		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, effect, commandBytesSent, plan.redactions)
 		return result, fmt.Errorf("run remote command input: %w", writeErr)
 	}
 	if !waited {
 		waitErr = <-waitDone
-		waited = true
 	}
 	if errors.Is(waitErr, exec.ErrWaitDelay) {
 		killRemoteProcessGroup(command)
-		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectUnknown, uint64(written), plan.redactions)
+		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectUnknown, commandBytesSent, plan.redactions)
 		return result, fmt.Errorf("run remote command detached output: %w", waitErr)
 	}
 	if err := runCtx.Err(); err != nil {
-		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectUnknown, uint64(written), plan.redactions)
+		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectUnknown, commandBytesSent, plan.redactions)
 		return result, err
 	}
 	var exitError *exec.ExitError
 	if waitErr != nil && !errors.As(waitErr, &exitError) {
-		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectUnknown, uint64(written), plan.redactions)
+		result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectUnknown, commandBytesSent, plan.redactions)
 		return result, fmt.Errorf("run remote command wait: %w", waitErr)
 	}
-	result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectKnown, uint64(written), plan.redactions)
+	result := remoteResult(command, stdoutRing, stderrRing, diagnostic, started, waitErr, EffectKnown, commandBytesSent, plan.redactions)
 	return result, nil
 }
 
@@ -429,6 +434,14 @@ func writeCount(writer io.Writer, value []byte) (int, error) {
 		}
 	}
 	return total, nil
+}
+
+func nonNegativeUint64(value int) (uint64, error) {
+	if value < 0 {
+		return 0, fmt.Errorf("negative value %d", value)
+	}
+	// #nosec G115 -- every non-negative int value is representable as uint64.
+	return uint64(value), nil
 }
 
 type markerGate struct {
@@ -503,7 +516,11 @@ func (buffer *diagnosticBuffer) Write(value []byte) (int, error) {
 		buffer.data = append(buffer.data, value[:count]...)
 	}
 	if len(value) > max(available, 0) {
-		buffer.discarded += uint64(len(value) - max(available, 0))
+		discarded, err := nonNegativeUint64(len(value) - max(available, 0))
+		if err != nil {
+			return 0, err
+		}
+		buffer.discarded += discarded
 	}
 	return len(value), nil
 }

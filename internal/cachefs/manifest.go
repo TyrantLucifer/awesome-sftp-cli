@@ -107,7 +107,10 @@ func (store *Store) PublishEntryManifest(entryID cache.EntryID, endpointID strin
 			if readErr == nil && existing.Manifest == manifest {
 				return existing, nil
 			}
-			return EntryManifestInfo{}, fmt.Errorf("%w: entry %s: %v", ErrPublicationConflict, entryID, readErr)
+			if readErr != nil {
+				return EntryManifestInfo{}, fmt.Errorf("%w: entry %s: %w", ErrPublicationConflict, entryID, readErr)
+			}
+			return EntryManifestInfo{}, fmt.Errorf("%w: entry %s differs from the published manifest", ErrPublicationConflict, entryID)
 		}
 		return EntryManifestInfo{}, err
 	}
@@ -166,7 +169,7 @@ func (store *Store) CreateMaterialization(ctx context.Context, id cache.Material
 		existing.Deduplicated = true
 		return existing, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
-		return MaterializationResult{}, fmt.Errorf("%w: materialization %s: %v", ErrPublicationConflict, id, err)
+		return MaterializationResult{}, fmt.Errorf("%w: materialization %s: %w", ErrPublicationConflict, id, err)
 	}
 	entry, err := store.ReadEntryManifest(entryID)
 	if err != nil {

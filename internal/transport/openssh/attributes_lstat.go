@@ -107,7 +107,7 @@ func exchangeSFTPLinkAttributes(reader io.Reader, writer io.Writer, rawPath stri
 	if err != nil {
 		return SFTPAttributes{}, fmt.Errorf("read SFTP LSTAT response: %w", err)
 	}
-	return parseSFTPAttributes(response, attributeProbeRequestID)
+	return parseSFTPAttributes(response)
 }
 
 func sftpLstatPacket(requestID uint32, rawPath string) []byte {

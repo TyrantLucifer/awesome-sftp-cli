@@ -3,6 +3,7 @@ package transfer
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -63,7 +64,12 @@ func TestFreezeSyncBackCreatesPlanV2WithOriginalDestinationPreconditionAndBindin
 	if !reflect.DeepEqual(plan.ExpectedDestination.Fingerprint, baseline.Fingerprint) {
 		t.Fatal("FreezeSyncBack replaced the edit baseline with a current destination observation")
 	}
-	if create.EditSession == nil || create.EditSession.SessionID != string(syncRequest.SessionID) || create.EditSession.ExpectedVersion != int64(syncRequest.SessionVersion) {
+	if syncRequest.SessionVersion > edit.Version(math.MaxInt64) {
+		t.Fatalf("test session version %d exceeds int64", syncRequest.SessionVersion)
+	}
+	// #nosec G115 -- the test asserts the session version fits int64 above.
+	expectedVersion := int64(syncRequest.SessionVersion)
+	if create.EditSession == nil || create.EditSession.SessionID != string(syncRequest.SessionID) || create.EditSession.ExpectedVersion != expectedVersion {
 		t.Fatalf("sync-back binding = %#v", create.EditSession)
 	}
 	reloaded, err := DecodePlan(jobstore.PlanRecord{

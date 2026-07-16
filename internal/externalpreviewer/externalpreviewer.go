@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"mime"
 	"os"
 	"os/exec"
@@ -391,7 +392,7 @@ func matchExtension(extensions []string, extension string) bool {
 type diagnosticBuffer struct {
 	mu        sync.Mutex
 	data      []byte
-	discarded uint64
+	discarded int
 }
 
 func (buffer *diagnosticBuffer) Write(value []byte) (int, error) {
@@ -400,7 +401,12 @@ func (buffer *diagnosticBuffer) Write(value []byte) (int, error) {
 	available := MaxDiagnosticBytes - len(buffer.data)
 	retained := min(max(available, 0), len(value))
 	buffer.data = append(buffer.data, value[:retained]...)
-	buffer.discarded += uint64(len(value) - retained)
+	discarded := len(value) - retained
+	if discarded > math.MaxInt-buffer.discarded {
+		buffer.discarded = math.MaxInt
+	} else {
+		buffer.discarded += discarded
+	}
 	return len(value), nil
 }
 

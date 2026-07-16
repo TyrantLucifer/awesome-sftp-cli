@@ -183,14 +183,15 @@ func TestOrchestrateRejectsUnverifiedOrSymlinkMaterializationAndStillReleases(t 
 
 func TestOrchestrateHundredGiBSparseFileStopsBeforeReadOrMaterialize(t *testing.T) {
 	t.Parallel()
-	const size = uint64(100) << 30
+	const size = 100 << 30
 	dir := t.TempDir()
 	path := filepath.Join(dir, "huge.bin")
+	// #nosec G304 -- path is created under this test's isolated temporary directory.
 	file, err := os.Create(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := file.Truncate(int64(size)); err != nil {
+	if err := file.Truncate(size); err != nil {
 		t.Fatal(err)
 	}
 	if err := file.Close(); err != nil {
@@ -200,13 +201,13 @@ func TestOrchestrateHundredGiBSparseFileStopsBeforeReadOrMaterialize(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if uint64(info.Size()) != size {
+	if info.Size() != size {
 		t.Fatalf("sparse size=%d", info.Size())
 	}
 	called := false
 	started := time.Now()
 	outcome := Orchestrate(context.Background(), newTestRunner(t, []Rule{{Name: "small", Match: Match{Extensions: []string{".bin"}}, Command: helperCommand(t, "exit", "0"), Timeout: 5 * time.Second, MaxInputBytes: 64 << 10}}), OrchestrationRequest{
-		Path: "huge.bin", BuiltIn: preview.Result{Kind: preview.KindBinary, View: preview.ViewAuto}, HasFileSize: true, FileSize: uint64(info.Size()),
+		Path: "huge.bin", BuiltIn: preview.Result{Kind: preview.KindBinary, View: preview.ViewAuto}, HasFileSize: true, FileSize: size,
 		Materialize: func(context.Context, int64) (LeasedMaterialization, error) {
 			called = true
 			return LeasedMaterialization{}, errors.New("must not run")

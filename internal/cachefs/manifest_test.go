@@ -118,12 +118,14 @@ func TestReadEntryManifestRejectsUnknownOversizeNoncanonicalSecretsAndSymlink(t 
 	}
 	for name, content := range cases {
 		t.Run(name, func(t *testing.T) {
+			// #nosec G703 -- info.Path is produced by the test-owned cache store.
 			if err := os.WriteFile(info.Path, content, 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := store.ReadEntryManifest(entryID); err == nil {
 				t.Fatal("ReadEntryManifest() succeeded")
 			}
+			// #nosec G703 -- info.Path is produced by the test-owned cache store.
 			if err := os.WriteFile(info.Path, original, 0o600); err != nil {
 				t.Fatal(err)
 			}

@@ -150,6 +150,7 @@ func TestRunnerRevalidatesFrozenExecutableAndIsolatesStartFailure(t *testing.T) 
 	}
 
 	invalid := filepath.Join(dir, "invalid-format")
+	// #nosec G306 -- the invalid fixture must be executable to exercise exec-format failure.
 	if err := os.WriteFile(invalid, []byte("not an executable format"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -282,6 +283,7 @@ func TestExternalPreviewerHelperProcess(t *testing.T) {
 	switch mode {
 	case "capture":
 		capture := arguments[1]
+		// #nosec G703 -- capture is supplied only by this test binary's isolated helper protocol.
 		if err := os.WriteFile(capture, []byte(strings.Join(arguments[2:], "\n")+"\n"), 0o600); err != nil {
 			os.Exit(90)
 		}
@@ -301,10 +303,12 @@ func TestExternalPreviewerHelperProcess(t *testing.T) {
 		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
 		time.Sleep(time.Second)
 	case "spawn-and-hang":
+		// #nosec G204 G702 -- this direct exec always launches the current test binary with fixed arguments.
 		child := exec.Command(os.Args[0], "-test.run=^TestExternalPreviewerHelperProcess$", "--", helperMarker, "hang")
 		if err := child.Start(); err != nil {
 			os.Exit(91)
 		}
+		// #nosec G703 -- the PID capture path is supplied only by the parent test helper.
 		if err := os.WriteFile(arguments[1], []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
 			os.Exit(92)
 		}
@@ -352,10 +356,12 @@ func copyExecutable(t *testing.T, dir, name string) string {
 		t.Fatal(err)
 	}
 	destination := filepath.Join(dir, name)
+	// #nosec G304 -- source is os.Executable for this test process.
 	data, err := os.ReadFile(source)
 	if err != nil {
 		t.Fatal(err)
 	}
+	// #nosec G306 G703 -- destination is test-owned and the copied binary must remain executable.
 	if err := os.WriteFile(destination, data, 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +385,7 @@ func mustReadFile(t *testing.T, path string) []byte {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
+		// #nosec G304 -- path is a test-owned helper capture path.
 		value, err := os.ReadFile(path)
 		if err == nil {
 			return value

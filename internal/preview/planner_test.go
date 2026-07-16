@@ -87,7 +87,7 @@ func TestPlanContinueUsesChunksAndSlidesAtRetainedCap(t *testing.T) {
 func TestApplyReadPlanBuildsBoundedInitialAndContinueWindows(t *testing.T) {
 	const fileSize = uint64(100) << 30
 	head := PlanHead(fileSize)
-	first := bytes.Repeat([]byte("a"), int(head.Limit))
+	first := bytes.Repeat([]byte("a"), 64*1024)
 	window, err := ApplyReadPlan(ReadWindow{}, head, first)
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +101,7 @@ func TestApplyReadPlanBuildsBoundedInitialAndContinueWindows(t *testing.T) {
 		if planErr != nil {
 			t.Fatal(planErr)
 		}
-		window, err = ApplyReadPlan(window, plan, bytes.Repeat([]byte("b"), int(plan.Limit)))
+		window, err = ApplyReadPlan(window, plan, bytes.Repeat([]byte("b"), 64*1024))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +110,7 @@ func TestApplyReadPlanBuildsBoundedInitialAndContinueWindows(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	window, err = ApplyReadPlan(window, plan, bytes.Repeat([]byte("c"), int(plan.Limit)))
+	window, err = ApplyReadPlan(window, plan, bytes.Repeat([]byte("c"), 64*1024))
 	if err != nil {
 		t.Fatal(err)
 	}

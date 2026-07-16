@@ -185,6 +185,7 @@ func recoveryDetails(persistent edit.PersistentSession) Details {
 func newEditDatabase(t *testing.T, ctx context.Context) *sql.DB {
 	t.Helper()
 	root := testkit.PersistentTempDir(t)
+	// #nosec G302 -- a traversable owner-only database directory requires execute permission.
 	if err := os.Chmod(root, 0o700); err != nil {
 		t.Fatal(err)
 	}

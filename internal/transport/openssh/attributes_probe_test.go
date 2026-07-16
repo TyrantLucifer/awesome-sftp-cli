@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -26,9 +27,14 @@ func TestAttributeProbePacketsAreExactSFTPVersion3(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	packetLength := 1 + 4 + 4 + len(path)
+	if packetLength > math.MaxUint8 || len(path) > math.MaxUint8 {
+		t.Fatal("test path no longer fits the single-byte packet fixture")
+	}
+	// #nosec G115 -- both fixture lengths are bounded by MaxUint8 above.
 	want := append(
 		[]byte{0, 0, 0, 5, sftpTypeInit, 0, 0, 0, sftpVersion3},
-		append([]byte{0, 0, 0, byte(1 + 4 + 4 + len(path)), sftpTypeStat, 0, 0, 0, attributeProbeRequestID, 0, 0, 0, byte(len(path))}, []byte(path)...)...,
+		append([]byte{0, 0, 0, byte(packetLength), sftpTypeStat, 0, 0, 0, attributeProbeRequestID, 0, 0, 0, byte(len(path))}, []byte(path)...)...,
 	)
 	if !bytes.Equal(output.Bytes(), want) {
 		t.Fatalf("wire packets = %x, want %x", output.Bytes(), want)
@@ -38,7 +44,7 @@ func TestAttributeProbePacketsAreExactSFTPVersion3(t *testing.T) {
 func TestParseSFTPAttributesPreservesProtocolPresence(t *testing.T) {
 	t.Run("uid gid and mode present even when numeric values are zero", func(t *testing.T) {
 		payload := attrsPayload(attributeProbeRequestID, sftpAttrUIDGID|sftpAttrPermissions, 0, 0, 0)
-		attributes, err := parseSFTPAttributes(payload, attributeProbeRequestID)
+		attributes, err := parseSFTPAttributes(payload)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -49,7 +55,7 @@ func TestParseSFTPAttributesPreservesProtocolPresence(t *testing.T) {
 
 	t.Run("missing uid gid remains nil", func(t *testing.T) {
 		payload := attrsPayload(attributeProbeRequestID, sftpAttrPermissions, 0, 0, 0o100755)
-		attributes, err := parseSFTPAttributes(payload, attributeProbeRequestID)
+		attributes, err := parseSFTPAttributes(payload)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -60,7 +66,7 @@ func TestParseSFTPAttributesPreservesProtocolPresence(t *testing.T) {
 
 	t.Run("all version 3 fields parse without changing presence", func(t *testing.T) {
 		payload := attrsPayload(attributeProbeRequestID, sftpAttrSize|sftpAttrUIDGID|sftpAttrPermissions|sftpAttrACModTime|sftpAttrExtended, 501, 20, 0o40750)
-		attributes, err := parseSFTPAttributes(payload, attributeProbeRequestID)
+		attributes, err := parseSFTPAttributes(payload)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -103,7 +109,7 @@ func TestParseSFTPAttributesFailsClosed(t *testing.T) {
 	}
 	for name, payload := range tests {
 		t.Run(name, func(t *testing.T) {
-			if _, err := parseSFTPAttributes(payload, attributeProbeRequestID); err == nil {
+			if _, err := parseSFTPAttributes(payload); err == nil {
 				t.Fatalf("parseSFTPAttributes(%x) error = nil", payload)
 			}
 		})
@@ -220,6 +226,7 @@ func TestAttributeProbeHelperProcess(t *testing.T) {
 		return
 	}
 	if marker := os.Getenv("AMSFTP_TEST_STARTED"); marker != "" {
+		// #nosec G703 -- the parent test supplies a path in its private temporary directory.
 		_ = os.WriteFile(marker, []byte("started"), 0o600)
 	}
 	if diagnostic := os.Getenv("AMSFTP_TEST_ATTR_STDERR"); diagnostic != "" {
@@ -284,11 +291,13 @@ func attributeProbeHelperConfig(t *testing.T, values map[string]string) Config {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.RemoveAll(directory) })
+	// #nosec G302 -- a traversable owner-only directory requires execute permission.
 	if err := os.Chmod(directory, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	binary := filepath.Join(directory, "ssh")
 	script := "#!/bin/sh\nexec \"$AMSFTP_TEST_BINARY\" -test.run=^TestAttributeProbeHelperProcess$ -- \"$@\"\n"
+	// #nosec G306 -- this owner-only fixture must be executable.
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -380,6 +389,10 @@ func writeUint32(destination io.Writer, value uint32) {
 }
 
 func writeString(destination io.Writer, value string) {
+	if len(value) > math.MaxUint32 {
+		panic("test SFTP string exceeds uint32")
+	}
+	// #nosec G115 -- the explicit bound above guarantees uint32 representation.
 	writeUint32(destination, uint32(len(value)))
 	_, _ = io.WriteString(destination, value)
 }

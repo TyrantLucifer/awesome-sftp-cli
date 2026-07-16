@@ -20,7 +20,7 @@ func (classifier lifecycleProcessClassifier) Classify(cache.ProcessIdentity) cac
 }
 
 func TestHeartbeatHandoffRequiresExactLiveProcessAndPreservesOpenerGrace(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	identity := cache.ProcessIdentity{PID: 42, BirthID: "birth-42"}
 	manager.processes = lifecycleProcessClassifier{status: cache.ProcessMatches}
@@ -83,7 +83,7 @@ func TestHeartbeatHandoffRequiresExactLiveProcessAndPreservesOpenerGrace(t *test
 }
 
 func TestHeartbeatHandoffAtomicallyAdoptsExactLiveLeaseAfterDaemonRestart(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	identity := cache.ProcessIdentity{PID: 52, BirthID: "birth-52"}
 	manager.processes = lifecycleProcessClassifier{status: cache.ProcessMatches}
@@ -129,7 +129,7 @@ func TestHeartbeatHandoffRefusesRestartAdoptionWithoutExactLiveProcess(t *testin
 		{name: "processless", requested: cache.ProcessIdentity{PID: 64, BirthID: "birth-64"}, status: cache.ProcessMatches},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			manager, _, _ := newManager(t)
+			manager, _ := newManager(t)
 			ctx := context.Background()
 			manager.processes = lifecycleProcessClassifier{status: cache.ProcessMatches}
 			manager.leaseState, _ = cache.NewLeaseManager(manager.clock, manager.processes, cache.DefaultLeaseExpiry, cache.DefaultOpenerGrace)
@@ -161,7 +161,7 @@ func TestHeartbeatHandoffRefusesRestartAdoptionWithoutExactLiveProcess(t *testin
 }
 
 func TestStartupLifecycleRecoversPendingThenFailsClosedOnUnknownBytes(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	ctx := context.Background()
 	published := publishLifecycleEntry(t, manager, cache.PolicyEphemeral, false, "pending")
 	claim, err := manager.catalog.BeginEviction(ctx, cache.EntryEviction(published.Entry.ID), manager.now())
@@ -179,13 +179,14 @@ func TestStartupLifecycleRecoversPendingThenFailsClosedOnUnknownBytes(t *testing
 	if _, err := files.InspectBlob(claim.BlobID); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("pending blob still exists: %v", err)
 	}
+	// #nosec G304 -- unknown is a test-owned path under the isolated cache root.
 	if got, err := os.ReadFile(unknown); err != nil || string(got) != "do not delete" {
 		t.Fatalf("unknown bytes changed: %q, %v", got, err)
 	}
 }
 
 func TestClearEligibleIsPolicyAwareAndRefusesAnyUnreconciledFilesystem(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	ctx := context.Background()
 	eph := publishLifecycleEntry(t, manager, cache.PolicyEphemeral, false, "ephemeral")
 	lru := publishLifecycleEntry(t, manager, cache.PolicyLRU, false, "lru")
@@ -227,7 +228,7 @@ func TestClearEligibleIsPolicyAwareAndRefusesAnyUnreconciledFilesystem(t *testin
 }
 
 func TestClearEphemeralSharedEntryPreservesTheSharedBlob(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	ctx := context.Background()
 	content := []byte("shared-content")
 	publish := func(path string, policy cache.Policy) PublishResult {

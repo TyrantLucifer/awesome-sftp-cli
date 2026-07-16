@@ -24,7 +24,7 @@ import (
 )
 
 func TestPublishCompleteBindsLocationFingerprintAndDeduplicatedContent(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	content := []byte("same verified content")
 	fingerprint := testSourceFingerprint(uint64(len(content)))
@@ -66,7 +66,7 @@ func TestPublishCompleteBindsLocationFingerprintAndDeduplicatedContent(t *testin
 }
 
 func TestPublishCompleteRejectsShortOrWeakSourceWithoutCatalogRows(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	request := PublishRequest{
 		Location:          testLocation(t, "/short"),
 		SourceFingerprint: testSourceFingerprint(10),
@@ -96,7 +96,7 @@ func TestPublishCompleteRejectsShortOrWeakSourceWithoutCatalogRows(t *testing.T)
 }
 
 func TestPrepareHandoffPublishesMaterializationBeforeAtomicReachabilityAndLease(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	content := []byte("editable")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -144,7 +144,7 @@ func TestPrepareHandoffPublishesMaterializationBeforeAtomicReachabilityAndLease(
 }
 
 func TestPrepareHandoffRejectsUnclassifiableSuppliedProcessIdentity(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	content := []byte("identity")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -170,7 +170,7 @@ func TestPrepareHandoffRejectsUnclassifiableSuppliedProcessIdentity(t *testing.T
 }
 
 func TestReleaseHandoffIsAtomicIdempotentAndNeverDeletesDirtyMaterialization(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	content := []byte("editable")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -215,7 +215,7 @@ func TestReleaseHandoffIsAtomicIdempotentAndNeverDeletesDirtyMaterialization(t *
 }
 
 func TestReleaseHandoffRollsBackWhenReferenceIdentityDoesNotMatch(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	content := []byte("editable")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -247,7 +247,7 @@ func TestReleaseHandoffRollsBackWhenReferenceIdentityDoesNotMatch(t *testing.T) 
 }
 
 func TestMarkDirtyHashesStableMaterializationAndRequiresExactOwner(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	content := []byte("editable")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -289,7 +289,7 @@ func TestMarkDirtyHashesStableMaterializationAndRequiresExactOwner(t *testing.T)
 }
 
 func TestEnforceQuotaDeletesExactClaimedEntryAndBlob(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	ctx := context.Background()
 	content := []byte("quota bytes")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -317,7 +317,7 @@ func TestEnforceQuotaDeletesExactClaimedEntryAndBlob(t *testing.T) {
 }
 
 func TestRecoverPendingEvictionsResumesAfterCatalogClaim(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	ctx := context.Background()
 	content := []byte("resume bytes")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -340,7 +340,7 @@ func TestRecoverPendingEvictionsResumesAfterCatalogClaim(t *testing.T) {
 }
 
 func TestEnforceQuotaReturnsResourceExhaustionWithoutMutatingProtectedContent(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	ctx := context.Background()
 	content := []byte("protected")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -369,7 +369,7 @@ func TestEnforceQuotaReturnsResourceExhaustionWithoutMutatingProtectedContent(t 
 }
 
 func TestEnforceQuotaEvictsOneSharedEntryWithoutDeletingDeduplicatedBlob(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	ctx := context.Background()
 	content := []byte("shared quota bytes")
 	first, err := manager.PublishComplete(ctx, PublishRequest{
@@ -404,7 +404,7 @@ func TestEnforceQuotaEvictsOneSharedEntryWithoutDeletingDeduplicatedBlob(t *test
 }
 
 func TestRecoverPendingEvictionPreservesPostClaimBlobReplacement(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	ctx := context.Background()
 	content := []byte("claimed identity")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -434,7 +434,7 @@ func TestRecoverPendingEvictionPreservesPostClaimBlobReplacement(t *testing.T) {
 }
 
 func TestRecoverPendingEvictionPreservesPostClaimMaterializationChange(t *testing.T) {
-	manager, _, _ := newManager(t)
+	manager, _ := newManager(t)
 	ctx := context.Background()
 	content := []byte("clean materialization")
 	published, err := manager.PublishComplete(ctx, PublishRequest{
@@ -475,7 +475,7 @@ func TestRecoverPendingEvictionPreservesPostClaimMaterializationChange(t *testin
 }
 
 func TestReconcilePreservesAndReportsFilesystemOrphans(t *testing.T) {
-	manager, files, _ := newManager(t)
+	manager, files := newManager(t)
 	orphan, err := files.PublishBlob(context.Background(), bytes.NewReader([]byte("orphan")), 6, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -496,7 +496,7 @@ type fixedClock struct{ now time.Time }
 
 func (clock fixedClock) Now() time.Time { return clock.now }
 
-func newManager(t *testing.T) (*Manager, *cachefs.Store, *sql.DB) {
+func newManager(t *testing.T) (*Manager, *cachefs.Store) {
 	t.Helper()
 	ctx := context.Background()
 	root := testkit.PersistentTempDir(t)
@@ -517,7 +517,7 @@ func newManager(t *testing.T) (*Manager, *cachefs.Store, *sql.DB) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return manager, files, database
+	return manager, files
 }
 
 func newVersion2Database(t *testing.T, ctx context.Context, path string) *sql.DB {

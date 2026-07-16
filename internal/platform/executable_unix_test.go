@@ -45,7 +45,7 @@ func TestValidateExecutableRejectsWritableAndSymlinkFiles(t *testing.T) {
 func TestSameExecutableIdentityRejectsSameInodeRewrite(t *testing.T) {
 	directory := privateTemporaryDirectory(t)
 	path := filepath.Join(directory, "ssh")
-	if err := os.WriteFile(path, []byte("before"), 0o700); err != nil {
+	if err := os.WriteFile(path, []byte("before"), 0o700); err != nil { // #nosec G306 -- executable fixture intentionally requires owner execute permission.
 		t.Fatal(err)
 	}
 	before, err := ExecutableIdentity(path)
@@ -54,7 +54,7 @@ func TestSameExecutableIdentityRejectsSameInodeRewrite(t *testing.T) {
 	}
 	originalModTime := before.ModTime()
 	time.Sleep(time.Millisecond)
-	if err := os.WriteFile(path, []byte("after!"), 0o700); err != nil {
+	if err := os.WriteFile(path, []byte("after!"), 0o700); err != nil { // #nosec G306 -- executable fixture intentionally requires owner execute permission.
 		t.Fatal(err)
 	}
 	if err := os.Chtimes(path, originalModTime, originalModTime); err != nil {

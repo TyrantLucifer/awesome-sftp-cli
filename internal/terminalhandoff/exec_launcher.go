@@ -61,6 +61,7 @@ func (launcher *ExecLauncher) Start(ctx context.Context) (Process, error) {
 	}
 	defer tty.Close()
 
+	// #nosec G204,G702 -- the absolute executable and argv are frozen before terminal suspension; this is direct exec without shell evaluation.
 	command := exec.Command(launcher.executable, launcher.arguments...)
 	command.Env = append([]string(nil), launcher.environment...)
 	command.Dir = launcher.directory

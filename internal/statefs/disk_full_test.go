@@ -122,7 +122,7 @@ func TestNativeXFSDiskFullRollsBackWithoutFalseCommit(t *testing.T) {
 		t.Fatalf("recover after native disk full: %v", err)
 	}
 	defer recovered.Close()
-	if report.Bootstrapped || report.SchemaHead != 1 {
+	if report.Bootstrapped || report.SchemaHead != 3 {
 		t.Fatalf("disk-full recovery report = %#v", report)
 	}
 	var count int
