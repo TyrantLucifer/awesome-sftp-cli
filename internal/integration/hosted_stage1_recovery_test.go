@@ -60,6 +60,7 @@ func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
 		`(failed)`,
 		`-exact "failed" {}`,
 		`stty rows 30 columns 200`,
+		`log_file -a -noappend $env(AMSFTP_OUTPUT)`,
 		`vt-observer`,
 	} {
 		if !strings.Contains(string(script), required) {
