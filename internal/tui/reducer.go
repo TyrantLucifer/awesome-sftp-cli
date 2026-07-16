@@ -8,6 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
@@ -65,6 +66,19 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		if model.Mode == ModePath {
+			if len(model.pathInput) == 0 && action.Text == "p" {
+				model.Mode = ModeNormal
+				switch model.CachePolicy {
+				case cache.PolicyLRU:
+					model.CachePolicy = cache.PolicyEphemeral
+				case cache.PolicyEphemeral:
+					model.CachePolicy = cache.PolicyPinnedOffline
+				default:
+					model.CachePolicy = cache.PolicyLRU
+				}
+				model.Notice = "workspace cache policy: " + string(model.CachePolicy)
+				return model, []Intent{{Kind: IntentCachePolicy, CachePolicy: model.CachePolicy}}
+			}
 			if len(model.pathInput) == 0 && (action.Text == "c" || action.Text == "C") {
 				model.Mode = ModeCacheClearConfirm
 				model.CacheClearScope = CacheClearWorkspace

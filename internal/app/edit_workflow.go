@@ -88,6 +88,19 @@ func newEditCoordinator(client editRPCCaller, localEndpoint domain.EndpointID, w
 	return &editCoordinator{client: client, localEndpoint: localEndpoint, workspaceID: workspaceID, policy: policy, now: time.Now, prepare: prepare, sessions: make(map[edit.SessionID]*liveEditSession), recoverable: make(map[edit.SessionID]recoverableEdit), heartbeatEvery: cache.DefaultLeaseHeartbeat}, nil
 }
 
+func (coordinator *editCoordinator) SetPolicy(policy cache.Policy) error {
+	if coordinator == nil {
+		return errors.New("set edit cache policy: nil coordinator")
+	}
+	switch policy {
+	case cache.PolicyLRU, cache.PolicyEphemeral, cache.PolicyPinnedOffline:
+		coordinator.policy = policy
+		return nil
+	default:
+		return fmt.Errorf("set edit cache policy: invalid policy %q", policy)
+	}
+}
+
 // ConfigureRecoveryCacheRoot installs the deterministic, read-only resolver
 // used to reopen an exact durable materialization after a client restart.
 func (coordinator *editCoordinator) ConfigureRecoveryCacheRoot(cacheRoot string) error {

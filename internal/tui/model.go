@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
@@ -471,6 +472,7 @@ type Model struct {
 	DeleteConfirmation int
 	RecoverableEdits   int
 	CacheClearScope    CacheClearScope
+	CachePolicy        cache.Policy
 
 	workspaceName []rune
 	pathInput     []rune
@@ -507,10 +509,11 @@ func NewModel(left, right PaneState) Model {
 	left.rebuildVisible()
 	right.rebuildVisible()
 	return Model{
-		Panes:  [2]PaneState{left, right},
-		Active: Left,
-		Mode:   ModeNormal,
-		Drawer: DrawerState{Mode: DrawerClosed, Focus: FocusPane, Rows: 6},
+		Panes:       [2]PaneState{left, right},
+		Active:      Left,
+		Mode:        ModeNormal,
+		Drawer:      DrawerState{Mode: DrawerClosed, Focus: FocusPane, Rows: 6},
+		CachePolicy: cache.PolicyLRU,
 	}
 }
 
@@ -543,6 +546,7 @@ const (
 	IntentEditRecoverable    IntentKind = "edit_recoverable"
 	IntentEditResume         IntentKind = "edit_resume"
 	IntentCacheClear         IntentKind = "cache_clear"
+	IntentCachePolicy        IntentKind = "cache_policy"
 	IntentRunCommand         IntentKind = "run_command"
 	IntentShell              IntentKind = "shell"
 )
@@ -588,6 +592,7 @@ type Intent struct {
 	SaveAsTarget          domain.Location
 	RefreshAfterEdit      bool
 	CacheClearScope       CacheClearScope
+	CachePolicy           cache.Policy
 }
 
 type Key string

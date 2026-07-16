@@ -548,7 +548,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		applyWorkspacePanePreferences(&right, restored.Panes[1])
 	}
 	model := tui.NewModel(left, right)
-	cachePolicy := workspace.CacheEphemeral
+	cachePolicy := workspace.CacheLRU
 	if restored != nil {
 		applyWorkspaceLayout(&model, restored.Layout)
 		cachePolicy = restored.CachePolicy
@@ -556,6 +556,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.PaneID(index), Query: paneState.Filter})
 		}
 	}
+	model.CachePolicy = cache.Policy(cachePolicy)
 	editWorkspace := cache.WorkspaceID(invocation.Workspace)
 	if editWorkspace == "" {
 		editWorkspace = "interactive"
@@ -631,6 +632,13 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			return
 		case tui.IntentEditRecoverable:
 			actions <- editFlow.Recoverable(runCtx, tui.MaxRecoverableEditSessions)
+			return
+		case tui.IntentCachePolicy:
+			if err := editFlow.SetPolicy(intent.CachePolicy); err != nil {
+				model.Notice = "cache policy change refused: " + err.Error()
+				return
+			}
+			cachePolicy = workspace.CachePolicy(intent.CachePolicy)
 			return
 		case tui.IntentCacheClear:
 			activeClient := client

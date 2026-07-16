@@ -1,6 +1,41 @@
 package tui
 
-import "testing"
+import (
+	"strings"
+	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+)
+
+func TestCachePolicyDefaultsToLRUAndCyclesExplicitly(t *testing.T) {
+	model := editTestModel(t)
+	if model.CachePolicy != cache.PolicyLRU {
+		t.Fatalf("default cache policy = %q, want %q", model.CachePolicy, cache.PolicyLRU)
+	}
+	for _, want := range []cache.Policy{cache.PolicyEphemeral, cache.PolicyPinnedOffline, cache.PolicyLRU} {
+		model, _ = Reduce(model, KeyPress{Key: KeyPath})
+		var intents []Intent
+		model, intents = Reduce(model, TextInput{Text: "p"})
+		if model.Mode != ModeNormal || model.CachePolicy != want || len(intents) != 1 || intents[0].Kind != IntentCachePolicy || intents[0].CachePolicy != want {
+			t.Fatalf("cycle to %q = mode %q policy %q intents %#v", want, model.Mode, model.CachePolicy, intents)
+		}
+	}
+}
+
+func TestStatusAlwaysDisplaysCurrentCachePolicy(t *testing.T) {
+	model := editTestModel(t)
+	surface := newMemorySurface(100, 10)
+	Render(surface, model, RenderOptions{})
+	if !strings.Contains(surface.String(), "cache:lru") {
+		t.Fatalf("status omitted default cache policy:\n%s", surface.String())
+	}
+	model.CachePolicy = cache.PolicyPinnedOffline
+	surface = newMemorySurface(100, 10)
+	Render(surface, model, RenderOptions{})
+	if !strings.Contains(surface.String(), "cache:pinned_offline") {
+		t.Fatalf("status omitted restored cache policy:\n%s", surface.String())
+	}
+}
 
 func TestCacheClearRequiresExplicitScopedConfirmation(t *testing.T) {
 	for _, test := range []struct {

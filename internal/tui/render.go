@@ -172,6 +172,7 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.RecoverableEdits != 0 {
 		status += fmt.Sprintf(" | edits:recoverable(%d)", model.RecoverableEdits)
 	}
+	status += " | cache:" + string(model.CachePolicy)
 	status += " | " + string(model.Mode)
 	if model.Notice != "" {
 		status += " | " + SanitizeTerminalText(model.Notice)

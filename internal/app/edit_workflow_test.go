@@ -76,6 +76,24 @@ func TestEditWorkflowPersistsDirtyObservationBeforeExplicitSyncBackJob(t *testin
 	}
 }
 
+func TestEditCoordinatorAcceptsOnlyFrozenCachePolicies(t *testing.T) {
+	fixture := newEditRPCFixture(t)
+	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyLRU, func(context.Context, string, edit.Purpose) (preparedExternalEdit, error) {
+		return preparedExternalEdit{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, policy := range []cache.Policy{cache.PolicyEphemeral, cache.PolicyPinnedOffline, cache.PolicyLRU} {
+		if err := coordinator.SetPolicy(policy); err != nil || coordinator.policy != policy {
+			t.Fatalf("SetPolicy(%q) = policy %q, err %v", policy, coordinator.policy, err)
+		}
+	}
+	if err := coordinator.SetPolicy("unknown"); err == nil || coordinator.policy != cache.PolicyLRU {
+		t.Fatalf("invalid policy changed coordinator to %q, err %v", coordinator.policy, err)
+	}
+}
+
 func TestOpenerRetainsLeaseUntilExplicitChangeCheck(t *testing.T) {
 	fixture := newEditRPCFixture(t)
 	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyLRU, func(context.Context, string, edit.Purpose) (preparedExternalEdit, error) {
