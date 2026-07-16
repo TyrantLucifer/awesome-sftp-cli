@@ -39,6 +39,8 @@
 - [ADR-0011：SFTP 流式目录游标窄 fork](adr/0011-pkg-sftp-streaming-directory-cursor.md)
 - [ADR-0012：Stage 2 Job schema、事件序列与保守重启状态机](adr/0012-durable-job-schema-and-restart-state-machine.md)
 - [ADR-0013：Stage 2 Provider mutation、提交、move 与 delete 后置条件](adr/0013-stage2-mutation-and-postconditions.md)
+- [ADR-0014：Stage 3 cache、Preview 与 edit-session 持久契约](adr/0014-stage3-cache-preview-and-edit-session-contracts.md)
+- [ADR-0015：Stage 3 external process、shell 与 TTY 契约](adr/0015-stage3-external-process-shell-and-tty-contracts.md)
 
 ## 2. 架构原则
 
