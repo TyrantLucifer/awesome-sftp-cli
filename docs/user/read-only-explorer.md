@@ -1,6 +1,6 @@
 # Explorer Baseline Guide
 
-This guide covers the Stage 1 `amsftp` browsing baseline: directory listing, bounded preview, OpenSSH reuse, workspaces, recovery, and diagnostics remain available in Stage 2. Durable copy, move, rename, delete, conflict, and Jobs controls are documented in the [Durable Transfers guide](durable-transfers.md). Shell, external editing, and managed cache remain deferred to Stage 3.
+This guide covers the Stage 1 `amsftp` browsing baseline, which remains available through Stage 3. Durable copy, move, rename, delete, conflict, and Jobs controls are documented in the [Durable Transfers guide](durable-transfers.md). Stage 3 drawers, range/image Preview, managed cache, external edit/open, recovery, and explicit shell surfaces are documented in the [Preview, Edit, Cache, and Shell guide](preview-edit-cache.md).
 
 ## Prerequisites
 
@@ -31,7 +31,7 @@ With no arguments, the startup picker combines saved workspaces and selectable H
 |---|---|
 | `Tab` | Switch the active pane without changing the other pane. |
 | `j`, `k` | Move down or up. A numeric prefix such as `12j` is supported; counts do not repeat unsafe actions. |
-| `h`, `l` | Open the parent, or open the selected directory/file preview. |
+| `h`, `l` | Open the parent; `l` enters a selected directory or opens bounded Preview/metadata for another object such as a file or symlink. |
 | `g` | Enter a canonical absolute path for the active pane. |
 | `c` | Switch only the active pane to `local` or an SSH Host alias. The old remote session is released after the replacement listing succeeds. |
 | `/` | Filter the entries already received for the active directory. |
@@ -41,11 +41,11 @@ With no arguments, the startup picker combines saved workspaces and selectable H
 | `Esc` | Cancel the innermost prompt or in-flight preview. |
 | `q`, `Ctrl-C` | Exit the client and restore the terminal. |
 
-The browsing surface remains read-only: it never mutates a Provider directly. Stage 2 mutations are separate durable Job RPCs. A preview reads at most 64 KiB, marks truncation, sanitizes terminal control characters, and can be canceled without allowing an older result to replace a newer one.
+The browsing surface remains read-only: it never mutates a Provider directly. Stage 2/3 mutations are separate durable Job RPCs. A single Preview provider read is at most 64 KiB, marks partial/truncation state, sanitizes terminal control characters, and can be canceled without allowing an older result to replace a newer one; its Stage 3 retained/range/image limits are in the dedicated guide.
 
 ## Workspaces
 
-A workspace stores two endpoint references, paths, active pane, sort/filter/hidden preferences, and the ephemeral cache policy. Remote endpoints store only their OpenSSH Host aliases. Passwords, private keys, agent contents, Kerberos tickets, askpass answers, and expanded SSH configuration are never workspace fields.
+A workspace stores two endpoint references, paths, active pane, sort/filter/hidden preferences, and one of the `lru`/`ephemeral`/`pinned_offline` cache policies. New workspaces default to `lru`. Remote endpoints store only their OpenSSH Host aliases. Passwords, private keys, agent contents, Kerberos tickets, askpass answers, and expanded SSH configuration are never workspace fields.
 
 Saving uses an owner-private temporary file, file sync, atomic replacement, and directory sync. If an existing workspace document is invalid, AMSFTP preserves its bytes instead of overwriting it. Loading a missing or damaged workspace returns to the startup picker with the error visible so another workspace or Host can be selected.
 
