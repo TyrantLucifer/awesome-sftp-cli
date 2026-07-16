@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 )
@@ -420,6 +422,56 @@ func TestSyncBackPlanUsesFrozenDestinationPreconditionAndRetainsPartOnConflict(t
 			}
 		})
 	}
+}
+
+func TestSyncBackStrongContentPreconditionRejectsSameFingerprintRewrite(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("edited payload"), ConflictOverwrite)
+	fixture.plan.Version = 2
+	fixture.plan.Origin = OriginSyncBack
+	fixture.plan.EditSessionID = strings.Repeat("4", 32)
+	fixture.plan.ExpectedSourceSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte("edited payload")))
+	finalPath := filepath.Join(fixture.destinationRoot, "final")
+	if err := os.WriteFile(finalPath, []byte("remote-a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("remote-a")))
+	fixture.plan.ExpectedDestination = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: edit.SHA256(remoteSHA)}
+	fixture.plan.OriginalDestinationPrecondition = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: edit.SHA256(remoteSHA)}
+	journal := newMemoryJournal()
+	journal.afterSave = func(checkpoint Checkpoint) {
+		if checkpoint.Phase != PhaseVerified {
+			return
+		}
+		if err := os.WriteFile(finalPath, []byte("remote-b"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if entry.Fingerprint.ModifiedAt == nil {
+			t.Fatal("fixture fingerprint has no modification time")
+		}
+		if err := os.Chtimes(finalPath, *entry.Fingerprint.ModifiedAt, *entry.Fingerprint.ModifiedAt); err != nil {
+			t.Fatal(err)
+		}
+		current, statErr := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final})
+		if statErr != nil {
+			t.Fatal(statErr)
+		}
+		if !reflect.DeepEqual(current.Fingerprint, entry.Fingerprint) {
+			t.Fatalf("test did not preserve fingerprint: current %#v baseline %#v", current.Fingerprint, entry.Fingerprint)
+		}
+		journal.afterSave = nil
+	}
+	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+	if err != nil {
+		t.Fatalf("Execute(sync-back): %v", err)
+	}
+	if result.Outcome != OutcomeWaitingConflict || !result.PartRetained {
+		t.Fatalf("sync-back result = %#v", result)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("remote-b"))
 }
 
 func TestWorkerProvesCommitAfterRenameResponseIsLost(t *testing.T) {

@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 )
@@ -82,12 +83,31 @@ type Request struct {
 	Path string
 	Data []byte
 	View ViewMode
+	// Object carries Provider facts that are independent of file content. It
+	// lets metadata views cover directories and symlinks without opening them
+	// as byte streams.
+	Object *ObjectMetadata
 
 	Offset   uint64
 	Complete bool
 
 	HasFileSize bool
 	FileSize    uint64
+}
+
+type ObjectMetadata struct {
+	Endpoint            string
+	CanonicalPath       string
+	Kind                string
+	Size                *uint64
+	ModifiedAt          *time.Time
+	Mode                *uint32
+	LinkTarget          string
+	FingerprintStrength string
+	FileID              string
+	VersionID           string
+	HashAlgorithm       string
+	HashHex             string
 }
 
 type ImageMetadata struct {
@@ -291,14 +311,60 @@ func renderMetadataResult(base Result, request Request, data []byte, rangeEnd ui
 	if base.Metadata.Complete {
 		status = "complete"
 	}
-	text := fmt.Sprintf("type: %s\nrange: %d..%d\ncaptured: %d bytes\nstatus: %s", mediaType, request.Offset, rangeEnd, len(data), status)
+	var text strings.Builder
+	text.Grow(min(limits.MaxOutputBytes, 1024))
+	fieldTruncated := false
+	appendField := func(label, value string) {
+		if value == "" || text.Len() >= limits.MaxOutputBytes {
+			return
+		}
+		perFieldMaximum := max(8, limits.MaxOutputBytes/16)
+		maximum := min(1024, min(perFieldMaximum, limits.MaxOutputBytes-text.Len()))
+		safe, truncated := sanitizeSingleLine(value, maximum)
+		line := label + string(safe)
+		if text.Len() != 0 {
+			line = "\n" + line
+		}
+		remaining := limits.MaxOutputBytes - text.Len()
+		if len(line) > remaining {
+			line = line[:remaining]
+			truncated = true
+		}
+		text.WriteString(line)
+		fieldTruncated = fieldTruncated || truncated
+	}
+	if object := request.Object; object != nil {
+		appendField("endpoint: ", object.Endpoint)
+		appendField("canonical path: ", object.CanonicalPath)
+		appendField("object kind: ", object.Kind)
+		if object.Size != nil {
+			appendField("size: ", fmt.Sprintf("%d bytes", *object.Size))
+		}
+		if object.ModifiedAt != nil {
+			appendField("modified: ", object.ModifiedAt.UTC().Format(time.RFC3339Nano))
+		}
+		if object.Mode != nil {
+			appendField("permissions: ", fmt.Sprintf("%04o", *object.Mode&0o7777))
+		}
+		appendField("link target: ", object.LinkTarget)
+		appendField("fingerprint: ", object.FingerprintStrength)
+		if object.HashAlgorithm != "" || object.HashHex != "" {
+			appendField("hash: ", object.HashAlgorithm+":"+object.HashHex)
+		}
+		appendField("file id: ", object.FileID)
+		appendField("version id: ", object.VersionID)
+	}
+	appendField("type: ", mediaType)
+	appendField("range: ", fmt.Sprintf("%d..%d", request.Offset, rangeEnd))
+	appendField("captured: ", fmt.Sprintf("%d bytes", len(data)))
+	appendField("status: ", status)
 	if request.HasFileSize {
-		text += fmt.Sprintf("\nsource size: %d bytes", request.FileSize)
+		appendField("source size: ", fmt.Sprintf("%d bytes", request.FileSize))
 	}
 	if base.Metadata.Width != 0 && base.Metadata.Height != 0 {
-		text += fmt.Sprintf("\ndimensions: %dx%d", base.Metadata.Width, base.Metadata.Height)
+		appendField("dimensions: ", fmt.Sprintf("%dx%d", base.Metadata.Width, base.Metadata.Height))
 	}
-	base.Text, base.Lines, base.Truncated = renderNumberedLines([]byte(text), limits, base.Truncated)
+	base.Text, base.Lines, base.Truncated = renderNumberedLines([]byte(text.String()), limits, base.Truncated || fieldTruncated)
 	return base
 }
 
@@ -545,6 +611,50 @@ func sanitizeText(data []byte, maximum int) ([]byte, bool) {
 				if !appendBytes('\\', 'u', hexDigits[(r>>12)&0xf], hexDigits[(r>>8)&0xf], hexDigits[(r>>4)&0xf], hexDigits[r&0xf]) {
 					return output, true
 				}
+			}
+		default:
+			var buffer [utf8.UTFMax]byte
+			encodedBytes := utf8.EncodeRune(buffer[:], r)
+			if !appendBytes(buffer[:encodedBytes]...) {
+				return output, true
+			}
+		}
+	}
+	return output, false
+}
+
+func sanitizeSingleLine(value string, maximum int) ([]byte, bool) {
+	output := make([]byte, 0, min(maximum, len(value)))
+	hexDigits := "0123456789abcdef"
+	appendBytes := func(bytes ...byte) bool {
+		if len(bytes) > maximum-len(output) {
+			return false
+		}
+		output = append(output, bytes...)
+		return true
+	}
+	for len(value) != 0 {
+		r, size := utf8.DecodeRuneInString(value)
+		if r == utf8.RuneError && size == 1 {
+			if !appendBytes('\\', 'x', hexDigits[value[0]>>4], hexDigits[value[0]&0xf]) {
+				return output, true
+			}
+			value = value[1:]
+			continue
+		}
+		value = value[size:]
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			if !appendBytes(' ') {
+				return output, true
+			}
+		case unicode.IsControl(r):
+			if r <= 0xff {
+				if !appendBytes('\\', 'x', hexDigits[(r>>4)&0xf], hexDigits[r&0xf]) {
+					return output, true
+				}
+			} else if !appendBytes('\\', 'u', hexDigits[(r>>12)&0xf], hexDigits[(r>>8)&0xf], hexDigits[(r>>4)&0xf], hexDigits[r&0xf]) {
+				return output, true
 			}
 		default:
 			var buffer [utf8.UTFMax]byte

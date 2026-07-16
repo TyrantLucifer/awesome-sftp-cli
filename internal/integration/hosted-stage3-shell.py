@@ -106,7 +106,7 @@ def wait_child(pid, fd, timeout=10):
     raise RuntimeError("PTY child %d did not exit" % pid)
 
 
-def exercise_shell(binary, observer, endpoint, cwd, marker, environment):
+def exercise_shell(binary, observer, endpoint, cwd, marker, command_marker, environment):
     pid, fd = pty.fork()
     if pid == 0:
         os.execve(binary, [binary, endpoint, endpoint], environment)
@@ -114,6 +114,20 @@ def exercise_shell(binary, observer, endpoint, cwd, marker, environment):
     try:
         set_size(fd, 24, 120)
         read_until(fd, observer, output, b"READ-ONLY")
+
+        # Prove the user-visible one-shot command surface through the real
+        # process cwd (local) or a fresh OpenSSH transport (remote). The second
+        # Enter is sent only after the bounded confirmation UI is visible.
+        os.write(fd, b"!")
+        read_until(fd, observer, output, b"One-time command")
+        os.write(fd, b"pwd > .amsftp-stage3-command-cwd")
+        os.write(fd, b"\r")
+        read_until(fd, observer, output, b"Confirm one-time command")
+        os.write(fd, b"\r")
+        wait_for_marker(command_marker, cwd)
+        output = bytearray()
+        read_until(fd, observer, output, b"command exit 0")
+
         os.write(fd, b"g")
         time.sleep(0.1)
         os.write(fd, b"s")
@@ -181,15 +195,18 @@ def main():
         endpoint = local_root
         cwd = local_root
         marker = os.path.join(local_root, ".amsftp-stage3-shell-cwd")
+        command_marker = os.path.join(local_root, ".amsftp-stage3-command-cwd")
         if len(sys.argv) == 6:
             alias = sys.argv[4]
             cwd = os.path.realpath(sys.argv[5])
             endpoint = alias + ":" + cwd
             marker = os.path.join(cwd, ".amsftp-stage3-shell-cwd")
-        daemon_group = exercise_shell(binary, observer, endpoint, cwd, marker, environment)
+            command_marker = os.path.join(cwd, ".amsftp-stage3-command-cwd")
+        daemon_group = exercise_shell(binary, observer, endpoint, cwd, marker, command_marker, environment)
         os.remove(marker)
+        os.remove(command_marker)
         mode = "remote OpenSSH" if len(sys.argv) == 6 else "local /bin/sh"
-        print("Stage 3 %s foreground PTY handoff and exact cwd smoke passed" % mode)
+        print("Stage 3 %s one-shot command plus foreground PTY handoff and exact cwd smoke passed" % mode)
     finally:
         if daemon_group is not None:
             try:

@@ -323,13 +323,23 @@ func (coordinator *editCoordinator) Begin(ctx context.Context, intent tui.Intent
 			_ = coordinator.release(context.Background(), materialized, ownerKind, string(sessionID))
 		}
 	}()
-	localSHA, _, err := hashRegularFile(materialized.Path)
+	localSHA, localSize, err := hashRegularFile(materialized.Path)
 	if err != nil {
 		return tui.EditSessionFailed{Pane: intent.Pane, Location: intent.Location, Message: "verify materialized edit target: " + err.Error()}
 	}
+	baselineFingerprint := ipc.DecodeFingerprint(materialized.SourceFingerprint)
+	baselineContentSHA := localSHA
+	if !materialized.Offline {
+		baselineRemote := coordinator.hashRemoteFile(ctx, intent.Location, &baselineFingerprint)
+		if baselineRemote.Status != edit.RemotePresent || baselineRemote.Kind != domain.EntryFile ||
+			!reflect.DeepEqual(baselineRemote.Fingerprint, baselineFingerprint) || baselineRemote.ContentSHA256 != localSHA || baselineRemote.Size != localSize {
+			return tui.EditSessionFailed{Pane: intent.Pane, Location: intent.Location, Message: "verify materialized edit target: remote content identity is unavailable or no longer matches the retained baseline"}
+		}
+		baselineContentSHA = baselineRemote.ContentSHA256
+	}
 	machine, err := edit.NewSession(edit.NewSessionRequest{ID: sessionID, Purpose: purpose, Baseline: edit.Baseline{
 		SourceEntryID: materialized.EntryID, MaterializationID: materialized.MaterializationID, Target: intent.Location,
-		ExpectedRemote: edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: domain.EntryFile, Fingerprint: ipc.DecodeFingerprint(materialized.SourceFingerprint)},
+		ExpectedRemote: edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: domain.EntryFile, Fingerprint: baselineFingerprint, ContentSHA256: baselineContentSHA},
 		LocalSHA256:    localSHA,
 	}})
 	if err != nil {
@@ -358,7 +368,11 @@ func (coordinator *editCoordinator) Begin(ctx context.Context, intent tui.Intent
 	if err != nil {
 		return tui.EditSessionFailed{Pane: intent.Pane, Location: intent.Location, Message: "prepare external process: " + err.Error() + "; materialization retained for recovery"}
 	}
-	return tui.EditLaunchReady{SessionID: sessionID, Pane: intent.Pane, Location: intent.Location, Command: live.prepared.command}
+	message := ""
+	if materialized.Offline {
+		message = "opened pinned offline content; remote freshness is " + string(materialized.Freshness) + " until reconnect revalidation"
+	}
+	return tui.EditLaunchReady{SessionID: sessionID, Pane: intent.Pane, Location: intent.Location, Command: live.prepared.command, Message: message}
 }
 
 func (coordinator *editCoordinator) Launch(ctx context.Context, sessionID edit.SessionID) tui.Action {
@@ -729,7 +743,39 @@ func (coordinator *editCoordinator) observeRemote(ctx context.Context, location 
 	if err != nil {
 		return edit.RemoteObservation{Status: edit.RemoteUnknown}
 	}
-	return edit.RemoteObservation{Status: edit.RemotePresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint}
+	if entry.Kind != domain.EntryFile {
+		return edit.RemoteObservation{Status: edit.RemotePresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint}
+	}
+	return coordinator.hashRemoteFile(ctx, location, &entry.Fingerprint)
+}
+
+func (coordinator *editCoordinator) hashRemoteFile(ctx context.Context, location domain.Location, expected *domain.Fingerprint) edit.RemoteObservation {
+	request := ipc.ProviderHashRequest{Location: ipc.EncodeLocation(location), MaxBytes: uint64(cache.DefaultGlobalBytes)}
+	if expected != nil {
+		encoded := ipc.EncodeFingerprint(*expected)
+		request.ExpectedFingerprint = &encoded
+	}
+	var response ipc.ProviderHashResponse
+	err := coordinator.client.Call(ctx, daemon.ProviderHash, request, &response)
+	if domain.IsCode(err, domain.CodeNotFound) {
+		return edit.RemoteObservation{Status: edit.RemoteDeleted}
+	}
+	if err != nil {
+		return edit.RemoteObservation{Status: edit.RemoteUnavailable}
+	}
+	entry, err := ipc.DecodeEntry(response.Info.Entry)
+	if err != nil || entry.Kind != domain.EntryFile || !reflect.DeepEqual(entry.Fingerprint, ipc.DecodeFingerprint(response.Info.Fingerprint)) ||
+		entry.Metadata.Size == nil || *entry.Metadata.Size != response.Size {
+		return edit.RemoteObservation{Status: edit.RemoteUnknown}
+	}
+	if expected != nil && !reflect.DeepEqual(entry.Fingerprint, *expected) {
+		return edit.RemoteObservation{Status: edit.RemoteUnavailable}
+	}
+	contentSHA, err := edit.ParseSHA256(response.SHA256)
+	if err != nil {
+		return edit.RemoteObservation{Status: edit.RemoteUnknown}
+	}
+	return edit.RemoteObservation{Status: edit.RemotePresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: contentSHA, Size: response.Size}
 }
 
 func observeLocal(path string) (edit.LocalObservation, uint64) {

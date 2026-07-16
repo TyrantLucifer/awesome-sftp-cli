@@ -61,9 +61,10 @@ const (
 )
 
 type RemotePrecondition struct {
-	Presence    ExpectedPresence
-	Kind        domain.EntryKind
-	Fingerprint domain.Fingerprint
+	Presence      ExpectedPresence
+	Kind          domain.EntryKind
+	Fingerprint   domain.Fingerprint
+	ContentSHA256 SHA256
 }
 
 type Baseline struct {
@@ -104,9 +105,11 @@ const (
 )
 
 type RemoteObservation struct {
-	Status      RemoteStatus
-	Kind        domain.EntryKind
-	Fingerprint domain.Fingerprint
+	Status        RemoteStatus
+	Kind          domain.EntryKind
+	Fingerprint   domain.Fingerprint
+	ContentSHA256 SHA256
+	Size          uint64
 }
 
 type PostEditorObservation struct {
@@ -491,7 +494,15 @@ func compareRemote(baseline RemotePrecondition, observation RemoteObservation) (
 		if baseline.Presence != ExpectedPresent {
 			return true, true
 		}
-		return !fingerprintEqual(observation.Fingerprint, baseline.Fingerprint), true
+		if observation.Kind == domain.EntryFile {
+			if _, err := ParseSHA256(string(baseline.ContentSHA256)); err != nil {
+				return false, false
+			}
+			if _, err := ParseSHA256(string(observation.ContentSHA256)); err != nil {
+				return false, false
+			}
+		}
+		return !fingerprintEqual(observation.Fingerprint, baseline.Fingerprint) || observation.ContentSHA256 != baseline.ContentSHA256, true
 	default:
 		return false, false
 	}
@@ -505,7 +516,12 @@ func preconditionFromObservation(observation RemoteObservation) (RemotePrecondit
 		if !reliableRemoteIdentity(observation.Kind, observation.Fingerprint) {
 			return RemotePrecondition{}, fmt.Errorf("observed remote identity is uncertain")
 		}
-		return RemotePrecondition{Presence: ExpectedPresent, Kind: observation.Kind, Fingerprint: cloneFingerprint(observation.Fingerprint)}, nil
+		if observation.Kind == domain.EntryFile {
+			if _, err := ParseSHA256(string(observation.ContentSHA256)); err != nil {
+				return RemotePrecondition{}, fmt.Errorf("observed remote content identity is uncertain")
+			}
+		}
+		return RemotePrecondition{Presence: ExpectedPresent, Kind: observation.Kind, Fingerprint: cloneFingerprint(observation.Fingerprint), ContentSHA256: observation.ContentSHA256}, nil
 	default:
 		return RemotePrecondition{}, fmt.Errorf("observed remote identity is unavailable")
 	}
@@ -526,6 +542,11 @@ func validateBaseline(baseline Baseline) error {
 	}
 	if baseline.ExpectedRemote.Presence != ExpectedPresent || baseline.ExpectedRemote.Kind != domain.EntryFile || !reliableRemoteIdentity(baseline.ExpectedRemote.Kind, baseline.ExpectedRemote.Fingerprint) {
 		return fmt.Errorf("create edit session baseline: expected remote identity is not reliably present")
+	}
+	if baseline.ExpectedRemote.ContentSHA256 != "" {
+		if _, err := ParseSHA256(string(baseline.ExpectedRemote.ContentSHA256)); err != nil {
+			return fmt.Errorf("create edit session baseline: expected remote content identity is uncertain: %w", err)
+		}
 	}
 	return nil
 }

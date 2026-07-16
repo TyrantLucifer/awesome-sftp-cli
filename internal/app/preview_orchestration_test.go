@@ -107,10 +107,76 @@ func TestPreviewLocationRunsConfiguredExternalFallbackUnderAReleasedCacheLease(t
 	}
 }
 
+func TestPreviewLocationRendersObjectMetadataWithoutContentRead(t *testing.T) {
+	for _, testCase := range []struct {
+		name       string
+		kind       domain.EntryKind
+		symlink    *domain.SymlinkInfo
+		wantTarget string
+		view       builtinpreview.ViewMode
+	}{
+		{name: "directory", kind: domain.EntryDirectory, view: builtinpreview.ViewAuto},
+		{name: "symlink", kind: domain.EntrySymlink, symlink: &domain.SymlinkInfo{RawTarget: "../actual"}, wantTarget: "link target: ../actual", view: builtinpreview.ViewAuto},
+		{name: "binary file metadata", kind: domain.EntryFile, view: builtinpreview.ViewMetadata},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			location, _ := domain.NewLocation("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", "/srv/item")
+			modified := time.Date(2026, 7, 16, 1, 2, 3, 0, time.UTC)
+			mode := uint32(0o755)
+			version := "version-1"
+			fingerprint := domain.Fingerprint{VersionID: &version}
+			if testCase.kind == domain.EntryDirectory {
+				fingerprint = domain.Fingerprint{}
+			}
+			fixture := &previewMetadataFixture{entry: domain.Entry{
+				Location: location, Name: "item", Kind: testCase.kind,
+				Metadata:    domain.Metadata{Mode: &mode, ModifiedAt: &modified},
+				Fingerprint: fingerprint, Symlink: testCase.symlink,
+			}}
+			identity := tui.PreviewRequestIdentity{RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", UIGeneration: 11, Mode: builtinpreview.ReadHead}
+			actions := make(chan tui.Action, 3)
+			previewLocation(context.Background(), fixture, identity, testCase.view, location, "workspace", cache.PolicyLRU, nil, builtinpreview.ImageCapabilityProof{}, actions)
+			begin, ok := (<-actions).(tui.BeginPreview)
+			if !ok || begin.View != builtinpreview.ViewMetadata || testCase.kind == domain.EntrySymlink && begin.Identity.Source.Location != location {
+				t.Fatalf("begin = %#v", begin)
+			}
+			chunk, ok := (<-actions).(tui.PreviewChunk)
+			if !ok || chunk.Kind != string(builtinpreview.KindMetadata) || !strings.Contains(string(chunk.Data), "endpoint: "+string(location.EndpointID)) || !strings.Contains(string(chunk.Data), "object kind: "+string(testCase.kind)) || !strings.Contains(string(chunk.Data), testCase.wantTarget) {
+				t.Fatalf("metadata chunk = %#v", chunk)
+			}
+			if fixture.reads != 0 || fixture.materializes != 0 {
+				t.Fatalf("metadata preview read/materialized content: %#v", fixture)
+			}
+		})
+	}
+}
+
 type previewMaterializeFixture struct {
 	fingerprint  domain.Fingerprint
 	materializes int
 	releases     int
+}
+
+type previewMetadataFixture struct {
+	entry        domain.Entry
+	reads        int
+	materializes int
+}
+
+func (fixture *previewMetadataFixture) Call(_ context.Context, route string, _ any, response any) error {
+	switch route {
+	case daemon.ProviderStat:
+		response.(*ipc.ProviderStatResponse).Entry = ipc.EncodeEntry(fixture.entry)
+		return nil
+	case daemon.ProviderRead:
+		fixture.reads++
+		return errors.New("metadata preview must not read content")
+	case daemon.CacheMaterialize:
+		fixture.materializes++
+		return errors.New("metadata preview must not materialize content")
+	default:
+		return errors.New("unexpected route")
+	}
 }
 
 type previewLocationFixture struct {

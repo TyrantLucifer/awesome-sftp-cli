@@ -430,6 +430,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		model.Notice = action.Message
 		return model, nil
 	case CommandCompleted:
+		model.CommandRunning = false
 		if !validPane(action.Pane) || action.Location.Path == "" {
 			return model, nil
 		}
@@ -472,6 +473,9 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		model.EditLaunch = EditLaunchState{Active: true, SessionID: action.SessionID, Pane: action.Pane, Location: action.Location, Command: action.Command}
 		model.Mode = ModeEditLaunchConfirm
 		model.Notice = "external command resolved; confirm direct execution"
+		if action.Message != "" {
+			model.Notice += "; " + action.Message
+		}
 		return model, nil
 	case EditSessionFinished:
 		model.Notice = action.Message
@@ -529,6 +533,10 @@ func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
+	if model.Mode == ModeNormal && model.CommandRunning && key == KeyEscape {
+		model.Notice = "canceling active one-time command"
+		return model, []Intent{{Kind: IntentCommandCancel}}
+	}
 	if model.Mode == ModeCacheClearConfirm {
 		switch key {
 		case KeyEscape:
@@ -729,6 +737,8 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			commandText := string(model.commandInput)
 			model.commandInput = nil
 			model.Mode = ModeNormal
+			model.CommandRunning = true
+			model.Notice = "one-time command running; Esc cancels"
 			return model, []Intent{{Kind: IntentRunCommand, Pane: model.Active, Location: pane.Location, Endpoint: pane.Endpoint, CommandText: commandText}}
 		default:
 			return model, nil
@@ -1055,6 +1065,10 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		}
 		return model, []Intent{{Kind: kind, Pane: model.Active, Location: entry.Location}}
 	case KeyCommand:
+		if model.CommandRunning {
+			model.Notice = "one-time command already running; Esc cancels"
+			return model, nil
+		}
 		model.commandInput = nil
 		model.Mode = ModeCommand
 		model.Notice = "one-time command: enter text, then confirm"

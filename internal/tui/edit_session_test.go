@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -70,6 +71,18 @@ func TestEditLaunchShowsFrozenExecutableBeforeConfirmation(t *testing.T) {
 	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
 	if model.Mode != ModeNormal || len(intents) != 1 || intents[0].Kind != IntentEditLaunch {
 		t.Fatalf("launch confirmation = mode %q intents %#v", model.Mode, intents)
+	}
+}
+
+func TestEditLaunchShowsPinnedOfflineUnknownFreshnessBeforeConfirmation(t *testing.T) {
+	model := editTestModel(t)
+	model, intents := Reduce(model, EditLaunchReady{
+		SessionID: "44444444444444444444444444444444", Pane: Left,
+		Location: model.Panes[Left].Entries[0].Location, Command: "/usr/bin/vi -- /private/cache/file",
+		Message: "opened pinned offline content; remote freshness is unknown until reconnect revalidation",
+	})
+	if model.Mode != ModeEditLaunchConfirm || len(intents) != 0 || !strings.Contains(model.Notice, "freshness is unknown") {
+		t.Fatalf("offline launch notice = mode %q notice %q intents %#v", model.Mode, model.Notice, intents)
 	}
 }
 

@@ -1,6 +1,8 @@
 package edit
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 	"testing"
 	"time"
@@ -45,6 +47,46 @@ func TestObservePostEditorChangeMatrixFailsClosed(t *testing.T) {
 			}
 			if result.Action != test.wantAction {
 				t.Fatalf("Action = %q, want %q", result.Action, test.wantAction)
+			}
+		})
+	}
+}
+
+func TestObserveDetectsSameFingerprintContentRewriteAndUncertainContentIdentity(t *testing.T) {
+	baselineFingerprint := testRemoteFingerprint("remote-v1")
+	baselineContent := testContentDigest("remote-content-a")
+	request := testNewSessionRequest(PurposeEditor)
+	request.Baseline.ExpectedRemote.Fingerprint = baselineFingerprint
+	request.Baseline.ExpectedRemote.ContentSHA256 = baselineContent
+	session, err := NewSession(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err = session.BeginObservation(session.Version())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name        string
+		content     SHA256
+		wantState   State
+		wantChanged bool
+	}{
+		{name: "same content", content: baselineContent, wantState: StateAwaitingUploadConfirmation},
+		{name: "same metadata rewritten content", content: testContentDigest("remote-content-b"), wantState: StateConflict, wantChanged: true},
+		{name: "content identity unavailable", wantState: StateRecoveryRequired},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			observed, evaluation, observeErr := session.Observe(session.Version(), PostEditorObservation{
+				Local:  localPresent(testDigest("c")),
+				Remote: RemoteObservation{Status: RemotePresent, Kind: domain.EntryFile, Fingerprint: baselineFingerprint, ContentSHA256: test.content},
+			})
+			if observeErr != nil {
+				t.Fatal(observeErr)
+			}
+			if observed.State() != test.wantState || evaluation.RemoteChanged != test.wantChanged {
+				t.Fatalf("observation = state %q evaluation %#v", observed.State(), evaluation)
 			}
 		})
 	}
@@ -137,6 +179,12 @@ func TestNewSessionValidatesTypedIdentityAndBaseline(t *testing.T) {
 	request.Baseline.ExpectedRemote.Fingerprint = domain.Fingerprint{}
 	if _, err := NewSession(request); err == nil {
 		t.Fatal("NewSession() accepted weak remote baseline fingerprint")
+	}
+
+	request = testNewSessionRequest(PurposeEditor)
+	request.Baseline.ExpectedRemote.ContentSHA256 = SHA256("uncertain")
+	if _, err := NewSession(request); err == nil {
+		t.Fatal("NewSession() accepted malformed remote content identity")
 	}
 }
 
@@ -374,9 +422,10 @@ func testNewSessionRequest(purpose Purpose) NewSessionRequest {
 			MaterializationID: cache.MaterializationID(strings.Repeat("3", 32)),
 			Target:            target,
 			ExpectedRemote: RemotePrecondition{
-				Presence:    ExpectedPresent,
-				Kind:        domain.EntryFile,
-				Fingerprint: testRemoteFingerprint("remote-v1"),
+				Presence:      ExpectedPresent,
+				Kind:          domain.EntryFile,
+				Fingerprint:   testRemoteFingerprint("remote-v1"),
+				ContentSHA256: testContentDigest("remote-v1"),
 			},
 			LocalSHA256: testDigest("b"),
 		},
@@ -384,6 +433,11 @@ func testNewSessionRequest(purpose Purpose) NewSessionRequest {
 }
 
 func testDigest(character string) SHA256 { return SHA256(strings.Repeat(character, 64)) }
+
+func testContentDigest(value string) SHA256 {
+	digest := sha256.Sum256([]byte(value))
+	return SHA256(hex.EncodeToString(digest[:]))
+}
 
 func testRemoteFingerprint(version string) domain.Fingerprint {
 	size := uint64(12)
@@ -397,7 +451,11 @@ func localPresent(digest SHA256) LocalObservation {
 }
 
 func remotePresent(fingerprint domain.Fingerprint) RemoteObservation {
-	return RemoteObservation{Status: RemotePresent, Kind: domain.EntryFile, Fingerprint: fingerprint}
+	content := "remote-content"
+	if fingerprint.VersionID != nil {
+		content = *fingerprint.VersionID
+	}
+	return RemoteObservation{Status: RemotePresent, Kind: domain.EntryFile, Fingerprint: fingerprint, ContentSHA256: testContentDigest(content)}
 }
 
 func fingerprintVersion(fingerprint domain.Fingerprint) string {
@@ -408,5 +466,5 @@ func fingerprintVersion(fingerprint domain.Fingerprint) string {
 }
 
 func equalPrecondition(left, right RemotePrecondition) bool {
-	return left.Presence == right.Presence && left.Kind == right.Kind && fingerprintVersion(left.Fingerprint) == fingerprintVersion(right.Fingerprint)
+	return left.Presence == right.Presence && left.Kind == right.Kind && fingerprintVersion(left.Fingerprint) == fingerprintVersion(right.Fingerprint) && left.ContentSHA256 == right.ContentSHA256
 }

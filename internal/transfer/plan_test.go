@@ -48,8 +48,8 @@ func TestFreezeSyncBackCreatesPlanV2WithOriginalDestinationPreconditionAndBindin
 		SourceEntryID:     "2222222222222222222222222222222222222222222222222222222222222222",
 		MaterializationID: "33333333333333333333333333333333", Target: target,
 		LocalSHA256: edit.SHA256(strings.Repeat("a", 64)), Decision: edit.DecisionUpload,
-		OriginalDestinationPrecondition: edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: baseline.Kind, Fingerprint: baseline.Fingerprint},
-		DestinationPrecondition:         edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: baseline.Kind, Fingerprint: baseline.Fingerprint},
+		OriginalDestinationPrecondition: edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: baseline.Kind, Fingerprint: baseline.Fingerprint, ContentSHA256: edit.SHA256(strings.Repeat("b", 64))},
+		DestinationPrecondition:         edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: baseline.Kind, Fingerprint: baseline.Fingerprint, ContentSHA256: edit.SHA256(strings.Repeat("b", 64))},
 	}
 	plan, create, err := planner.FreezeSyncBack(context.Background(), SyncBackFreezeRequest{
 		SyncBack: syncRequest, Source: sourceRef, RequestID: planTestRequestID, PlanID: planTestPlanID,
@@ -63,6 +63,9 @@ func TestFreezeSyncBackCreatesPlanV2WithOriginalDestinationPreconditionAndBindin
 	}
 	if !reflect.DeepEqual(plan.ExpectedDestination.Fingerprint, baseline.Fingerprint) {
 		t.Fatal("FreezeSyncBack replaced the edit baseline with a current destination observation")
+	}
+	if plan.ExpectedDestination.ContentSHA256 != edit.SHA256(strings.Repeat("b", 64)) {
+		t.Fatalf("content precondition = %q", plan.ExpectedDestination.ContentSHA256)
 	}
 	if syncRequest.SessionVersion > edit.Version(math.MaxInt64) {
 		t.Fatalf("test session version %d exceeds int64", syncRequest.SessionVersion)

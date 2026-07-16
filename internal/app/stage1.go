@@ -16,6 +16,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
@@ -611,6 +612,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	var paneRecoveries [2]paneRecovery
 	var previewGeneration uint64
 	var previewCancel context.CancelFunc
+	var commandMu sync.Mutex
+	var commandCancel context.CancelFunc
+	var commandGeneration uint64
 	previewRequestGenerator := &domain.RandomGenerator{}
 	var startIntent func(tui.Intent)
 	startIntent = func(intent tui.Intent) {
@@ -889,13 +893,38 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		case tui.IntentRunCommand:
 			frozenIntent := intent
 			environment := append([]string(nil), os.Environ()...)
+			commandMu.Lock()
+			if commandCancel != nil {
+				commandMu.Unlock()
+				actions <- tui.CommandCompleted{Pane: intent.Pane, Location: intent.Location, ExitCode: -1, Message: "command rejected: another one-time command is still running"}
+				return
+			}
+			commandCtx, cancel := context.WithCancel(runCtx)
+			commandCancel = cancel
+			commandGeneration++
+			generation := commandGeneration
+			commandMu.Unlock()
 			go func() {
-				result := runCommandIntent(runCtx, frozenIntent, environment)
+				defer cancel()
+				result := runCommandIntent(commandCtx, frozenIntent, environment)
+				commandMu.Lock()
+				if commandGeneration == generation {
+					commandCancel = nil
+				}
+				commandMu.Unlock()
 				select {
 				case actions <- result:
 				case <-runCtx.Done():
 				}
 			}()
+			return
+		case tui.IntentCommandCancel:
+			commandMu.Lock()
+			cancel := commandCancel
+			commandMu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
 			return
 		case tui.IntentShell:
 			model.Notice = runShellIntent(runCtx, intent, append([]string(nil), os.Environ()...), screen, reprobeTerminalImages)
@@ -1653,6 +1682,23 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
 		return
 	}
+	if entry.Kind != domain.EntryFile {
+		view = builtinpreview.ViewMetadata
+	}
+	if view == builtinpreview.ViewMetadata {
+		if source, freezeErr := builtinpreview.FreezeSource(location, entry.Fingerprint); freezeErr == nil {
+			identity.Source = source
+		}
+		actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
+		result := builtinpreview.Render(builtinpreview.Request{
+			Path: string(location.Path), View: view, Object: previewObjectMetadata(entry), Complete: true,
+		}, builtinpreview.DefaultLimits())
+		actions <- tui.PreviewChunk{
+			Generation: generation, Identity: identity, Data: []byte(result.Text), Done: true,
+			Truncated: result.Truncated, Rendered: true, Kind: string(result.Kind), Summary: result.Summary,
+		}
+		return
+	}
 	source, err := builtinpreview.FreezeSource(location, entry.Fingerprint)
 	if err != nil {
 		actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
@@ -1757,6 +1803,36 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 	if outcome.Kind == externalpreviewer.OutcomeTerminalImage && len(outcome.TerminalBytes) != 0 {
 		actions <- tui.PreviewTerminalImage{Generation: generation, Identity: identity, Protocol: outcome.ImageProtocol, Data: append([]byte(nil), outcome.TerminalBytes...)}
 	}
+}
+
+func previewObjectMetadata(entry domain.Entry) *builtinpreview.ObjectMetadata {
+	metadata := &builtinpreview.ObjectMetadata{
+		Endpoint: string(entry.Location.EndpointID), CanonicalPath: string(entry.Location.Path), Kind: string(entry.Kind),
+		Size: entry.Metadata.Size, ModifiedAt: entry.Metadata.ModifiedAt, Mode: entry.Metadata.Mode,
+		FingerprintStrength: string(entry.Fingerprint.Strength()),
+	}
+	if metadata.Size == nil {
+		metadata.Size = entry.Fingerprint.Size
+	}
+	if metadata.ModifiedAt == nil {
+		metadata.ModifiedAt = entry.Fingerprint.ModifiedAt
+	}
+	if entry.Symlink != nil {
+		metadata.LinkTarget = entry.Symlink.RawTarget
+	}
+	if entry.Fingerprint.FileID != nil {
+		metadata.FileID = *entry.Fingerprint.FileID
+	}
+	if entry.Fingerprint.VersionID != nil {
+		metadata.VersionID = *entry.Fingerprint.VersionID
+	}
+	if entry.Fingerprint.HashAlgorithm != nil {
+		metadata.HashAlgorithm = *entry.Fingerprint.HashAlgorithm
+	}
+	if entry.Fingerprint.HashHex != nil {
+		metadata.HashHex = *entry.Fingerprint.HashHex
+	}
+	return metadata
 }
 
 func planPreviewRead(fileSize uint64, mode builtinpreview.ReadMode, offset uint64) (builtinpreview.ReadPlan, error) {

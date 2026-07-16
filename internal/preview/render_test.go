@@ -7,7 +7,48 @@ import (
 	"math"
 	"strings"
 	"testing"
+	"time"
 )
+
+func TestRenderObjectMetadataIncludesBoundedSanitizedProviderFacts(t *testing.T) {
+	modified := time.Date(2026, 7, 16, 12, 34, 56, 0, time.UTC)
+	mode := uint32(0o120777)
+	size := uint64(4096)
+	result := Render(Request{
+		Path: "/srv/report\x1b[2J", View: ViewMetadata,
+		Object: &ObjectMetadata{
+			Endpoint: "ep_remote", CanonicalPath: "/srv/report\x1b[2J", Kind: "symlink",
+			Size: &size, ModifiedAt: &modified, Mode: &mode, LinkTarget: "../actual\nname",
+			FingerprintStrength: "strong", HashAlgorithm: "sha256", HashHex: strings.Repeat("a", 64),
+		},
+	}, DefaultLimits())
+	if result.Kind != KindMetadata || result.Metadata == nil {
+		t.Fatalf("metadata result = %#v", result)
+	}
+	for _, want := range []string{
+		"endpoint: ep_remote", "canonical path: /srv/report\\x1b[2J", "object kind: symlink",
+		"size: 4096 bytes", "modified: 2026-07-16T12:34:56Z", "permissions: 0777",
+		"link target: ../actual name", "fingerprint: strong", "hash: sha256:" + strings.Repeat("a", 64),
+	} {
+		if !strings.Contains(result.Text, want) {
+			t.Fatalf("metadata missing %q: %q", want, result.Text)
+		}
+	}
+	if strings.ContainsRune(result.Text, '\x1b') || len(result.Text) > DefaultLimits().MaxOutputBytes {
+		t.Fatalf("metadata was unsafe or unbounded: %q", result.Text)
+	}
+}
+
+func TestRenderObjectMetadataBoundsHostileProviderFieldsBeforeComposition(t *testing.T) {
+	limits := DefaultLimits()
+	limits.MaxOutputBytes = 256
+	result := Render(Request{View: ViewMetadata, Object: &ObjectMetadata{
+		Endpoint: strings.Repeat("e", limits.MaxInputBytes), CanonicalPath: strings.Repeat("p", limits.MaxInputBytes), Kind: "other",
+	}}, limits)
+	if result.Kind != KindMetadata || !result.Truncated || len(result.Text) > limits.MaxOutputBytes {
+		t.Fatalf("bounded metadata = %#v", result)
+	}
+}
 
 func TestRenderTextIsTerminalSafeNumberedAndBounded(t *testing.T) {
 	limits := DefaultLimits()

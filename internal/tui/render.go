@@ -579,6 +579,11 @@ func renderCommandModal(surface Surface, model Model, width, height int) {
 	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
 	surface.PutClipped(x+1, y+1, modalWidth-2, "Endpoint: "+SanitizeTerminalText(endpoint), StyleStatus)
 	surface.PutClipped(x+1, y+2, modalWidth-2, "CWD: "+SanitizeTerminalText(string(pane.Location.Path)), StyleStatus)
+	execution := "Exec: local shell -c; cwd via process Dir"
+	if pane.Endpoint.Kind == domain.EndpointSSH {
+		execution = "Exec: fresh ssh -T; cwd marker; no fallback"
+	}
+	surface.PutClipped(x+1, y+3, modalWidth-2, execution, StyleStatus)
 	surface.PutClipped(x+1, y+4, modalWidth-2, "Command: "+SanitizeTerminalText(string(model.commandInput)), StyleStatus)
 	surface.PutClipped(x+1, y+5, modalWidth-2, footer, StyleStatus)
 }

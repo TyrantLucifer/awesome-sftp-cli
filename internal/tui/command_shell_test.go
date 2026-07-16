@@ -79,9 +79,28 @@ func TestTranslateCommandAndRenderConfirmationContext(t *testing.T) {
 	surface := newMemorySurface(100, 16)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"Confirm one-time command", "true", string(model.Panes[model.Active].Location.Path), "[Enter] run"} {
+	for _, want := range []string{"Confirm one-time command", "true", string(model.Panes[model.Active].Location.Path), "local shell -c", "[Enter] run"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("command modal missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRemoteCommandConfirmationShowsFreshTransportAndNoFallback(t *testing.T) {
+	model := testModel(t)
+	pane := model.Panes[model.Active]
+	pane.Endpoint.Kind = "ssh"
+	pane.Endpoint.DisplayName = "example-remote"
+	model.Panes[model.Active] = pane
+	model, _ = Reduce(model, KeyPress{Key: KeyCommand})
+	model, _ = Reduce(model, TextInput{Text: "true"})
+	model, _ = Reduce(model, KeyPress{Key: KeySubmit})
+	surface := newMemorySurface(100, 16)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"fresh ssh -T", "cwd marker", "no fallback"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("remote command modal missing %q:\n%s", want, got)
 		}
 	}
 }
@@ -100,5 +119,28 @@ func TestCommandCompletionIsBoundedVisibleAndRefreshesFrozenPane(t *testing.T) {
 		if !strings.Contains(model.Notice, want) {
 			t.Fatalf("notice %q missing %q", model.Notice, want)
 		}
+	}
+}
+
+func TestOneTimeCommandIsSingleFlightAndEscapeCancelsTheActiveRun(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyCommand})
+	model, _ = Reduce(model, TextInput{Text: "sleep 60"})
+	model, _ = Reduce(model, KeyPress{Key: KeySubmit})
+	model, intents := Reduce(model, KeyPress{Key: KeySubmit})
+	if !model.CommandRunning || len(intents) != 1 || intents[0].Kind != IntentRunCommand {
+		t.Fatalf("confirmed command = running %t intents %#v", model.CommandRunning, intents)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeyCommand})
+	if len(intents) != 0 || model.Mode != ModeNormal || !strings.Contains(model.Notice, "already running") {
+		t.Fatalf("second command = mode %q intents %#v notice %q", model.Mode, intents, model.Notice)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeyEscape})
+	if len(intents) != 1 || intents[0].Kind != IntentCommandCancel || !model.CommandRunning {
+		t.Fatalf("cancel command = running %t intents %#v", model.CommandRunning, intents)
+	}
+	model, _ = Reduce(model, CommandCompleted{Pane: Left, Location: model.Panes[Left].Location, Message: "command canceled"})
+	if model.CommandRunning {
+		t.Fatal("command remained active after completion")
 	}
 }

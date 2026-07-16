@@ -433,6 +433,20 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 		}
 		return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
 	}
+	if plan.Version == 2 && finalExists && plan.ExpectedDestination.ContentSHA256 != "" {
+		contentSHA, hashErr := verifyFile(ctx, destinationProvider, final, plan.ExpectedDestination.Fingerprint, buffer)
+		if hashErr != nil {
+			return Result{}, hashErr
+		}
+		if contentSHA != string(plan.ExpectedDestination.ContentSHA256) {
+			checkpoint.Phase = PhaseWaitingConflict
+			checkpoint.Outcome = OutcomeWaitingConflict
+			if err := worker.journal.Save(ctx, checkpoint); err != nil {
+				return Result{}, err
+			}
+			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
+		}
+	}
 	if finalExists {
 		switch plan.ConflictPolicy {
 		case ConflictAsk:
@@ -576,9 +590,10 @@ func validDestinationPrecondition(expected *DestinationPrecondition) bool {
 	}
 	switch expected.Presence {
 	case DestinationAbsent:
-		return expected.Kind == "" && expected.Fingerprint.Strength() == domain.FingerprintWeak
+		return expected.Kind == "" && expected.Fingerprint.Strength() == domain.FingerprintWeak && expected.ContentSHA256 == ""
 	case DestinationPresent:
-		return expected.Kind == domain.EntryFile && expected.Fingerprint.Strength() != domain.FingerprintWeak
+		return expected.Kind == domain.EntryFile && expected.Fingerprint.Strength() != domain.FingerprintWeak &&
+			(expected.ContentSHA256 == "" || validateLowerHexIdentity(string(expected.ContentSHA256), 64) == nil)
 	default:
 		return false
 	}

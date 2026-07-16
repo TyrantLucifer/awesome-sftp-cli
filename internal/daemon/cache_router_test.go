@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -195,7 +196,126 @@ func TestCacheMaterializeFailsClosedWhenCacheUnavailableOrTargetIsDirectory(t *t
 	}
 }
 
+func TestCacheMaterializeReopensOneVerifiedPinnedEntryOfflineAndRevalidatesOnline(t *testing.T) {
+	ctx := context.Background()
+	root := testkit.PersistentTempDir(t)
+	sourcePath := filepath.Join(root, "offline.txt")
+	if err := os.WriteFile(sourcePath, []byte("first verified version"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	local, err := localfs.New(localfs.Config{Endpoint: domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Root: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	implementation := &disconnectingProvider{Provider: local}
+	sessions, err := NewProviderSessions([]provider.Provider{implementation}, 64<<10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions.SetCacheManager(newDaemonCacheManager(t, ctx, root))
+	session := sessions.NewSession()
+	defer session.Close()
+	location, _ := domain.NewLocation(endpointID, domain.CanonicalPath(sourcePath))
+	request := CacheMaterializeRequest{
+		Location: ipc.EncodeLocation(location), WorkspaceID: "workspace", Policy: cache.PolicyPinnedOffline, Pinned: true,
+		OwnerKind: cache.LeaseOwnerPreview, OwnerID: "preview-online",
+	}
+	materialize := func(request CacheMaterializeRequest) (CacheMaterializeResponse, error) {
+		payload, marshalErr := json.Marshal(request)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		value, handleErr := session.Handle(ctx, CacheMaterialize, payload)
+		if handleErr != nil {
+			return CacheMaterializeResponse{}, handleErr
+		}
+		return value.(CacheMaterializeResponse), nil
+	}
+	online, err := materialize(request)
+	if err != nil || online.Offline || online.Freshness != cache.EntryFresh {
+		t.Fatalf("online materialize = %#v, %v", online, err)
+	}
+	implementation.disconnected = true
+	request.OwnerID = "preview-offline"
+	offline, err := materialize(request)
+	if err != nil || !offline.Offline || offline.Freshness != cache.EntryUnknown || offline.EntryID != online.EntryID || offline.MaterializationID == online.MaterializationID {
+		t.Fatalf("offline materialize = %#v, %v; online=%#v", offline, err, online)
+	}
+	if content, readErr := os.ReadFile(offline.Path); readErr != nil || string(content) != "first verified version" {
+		t.Fatalf("offline content = %q, %v", content, readErr)
+	}
+	request.Policy, request.Pinned, request.OwnerID = cache.PolicyLRU, false, "preview-unpinned"
+	if _, err := materialize(request); !domain.IsCode(err, domain.CodeTransportInterrupted) {
+		t.Fatalf("unpin/disconnected error = %v, want transport_interrupted", err)
+	}
+	implementation.disconnected = false
+	if err := os.WriteFile(sourcePath, []byte("second remote version"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request.Policy, request.Pinned, request.OwnerID = cache.PolicyPinnedOffline, true, "preview-reconnected"
+	reconnected, err := materialize(request)
+	if err != nil || reconnected.Offline || reconnected.Freshness != cache.EntryFresh || reconnected.EntryID == online.EntryID {
+		t.Fatalf("reconnected materialize = %#v, %v; first=%#v", reconnected, err, online)
+	}
+	implementation.disconnected = true
+	request.OwnerID = "preview-ambiguous"
+	if _, err := materialize(request); err == nil || domain.IsCode(err, domain.CodeTransportInterrupted) {
+		t.Fatalf("ambiguous historical versions were reused by path: %v", err)
+	}
+}
+
+func TestCacheMaterializeReturnsTypedResourceExhaustedWhenLiveQuotaCannotAdmit(t *testing.T) {
+	ctx := context.Background()
+	root := testkit.PersistentTempDir(t)
+	sourcePath := filepath.Join(root, "too-large.txt")
+	if err := os.WriteFile(sourcePath, []byte("two bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	implementation, err := localfs.New(localfs.Config{Endpoint: domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Root: "/"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions, err := NewProviderSessions([]provider.Provider{implementation}, 64<<10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sessions.SetCacheManager(newDaemonCacheManagerWithLimits(t, ctx, root, cache.Limits{GlobalBytes: 1, GlobalEntries: 1, WorkspaceBytes: 1, MaxCandidates: 16}))
+	session := sessions.NewSession()
+	defer session.Close()
+	location, _ := domain.NewLocation(endpointID, domain.CanonicalPath(sourcePath))
+	payload, _ := json.Marshal(CacheMaterializeRequest{
+		Location: ipc.EncodeLocation(location), WorkspaceID: "workspace", Policy: cache.PolicyLRU,
+		OwnerKind: cache.LeaseOwnerPreview, OwnerID: "preview-owner",
+	})
+	if _, err := session.Handle(ctx, CacheMaterialize, payload); !domain.IsCode(err, domain.CodeResourceExhausted) {
+		t.Fatalf("materialize error = %v, want resource_exhausted", err)
+	}
+}
+
+type disconnectingProvider struct {
+	provider.Provider
+	disconnected bool
+}
+
+func (implementation *disconnectingProvider) OpenRead(ctx context.Context, request provider.OpenReadRequest) (provider.ReadHandle, error) {
+	if implementation.disconnected {
+		location := request.Location
+		return nil, &domain.OpError{
+			Code: domain.CodeTransportInterrupted, Message: "fixture disconnected", Operation: "open_read",
+			EndpointID: location.EndpointID, Location: &location, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone,
+			Cause: errors.New("fixture transport unavailable"),
+		}
+	}
+	return implementation.Provider.OpenRead(ctx, request)
+}
+
 func newDaemonCacheManager(t *testing.T, ctx context.Context, root string) *cachemanager.Manager {
+	return newDaemonCacheManagerWithLimits(t, ctx, root, cache.DefaultLimits())
+}
+
+func newDaemonCacheManagerWithLimits(t *testing.T, ctx context.Context, root string, limits cache.Limits) *cachemanager.Manager {
 	t.Helper()
 	stateRoot := filepath.Join(root, "state-"+strings.Repeat("s", 4))
 	if err := os.Mkdir(stateRoot, 0o700); err != nil {
@@ -218,7 +338,7 @@ func newDaemonCacheManager(t *testing.T, ctx context.Context, root string) *cach
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager, err := cachemanager.New(files, catalog, foundation.RealClock{}, strings.Repeat("d", 32), cache.DefaultLimits())
+	manager, err := cachemanager.New(files, catalog, foundation.RealClock{}, strings.Repeat("d", 32), limits)
 	if err != nil {
 		t.Fatal(err)
 	}

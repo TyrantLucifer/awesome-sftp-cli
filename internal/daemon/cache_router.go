@@ -43,6 +43,8 @@ type CacheMaterializeResponse struct {
 	LeaseID           cache.LeaseID           `json:"lease_id"`
 	Path              string                  `json:"path"`
 	SourceFingerprint ipc.WireFingerprint     `json:"source_fingerprint"`
+	Freshness         cache.EntryFreshness    `json:"freshness"`
+	Offline           bool                    `json:"offline"`
 }
 
 type CacheReleaseHandoffRequest struct {
@@ -306,6 +308,17 @@ func (s *providerSession) cacheMaterialize(ctx context.Context, payload json.Raw
 	}
 	handle, err := implementation.OpenRead(ctx, providerapi.OpenReadRequest{Location: location})
 	if err != nil {
+		if domain.IsCode(err, domain.CodeTransportInterrupted) && request.Policy == cache.PolicyPinnedOffline && request.Pinned {
+			offline, offlineErr := s.cache.ResolvePinnedOffline(ctx, cachemanager.PinnedOfflineRequest{Location: location, WorkspaceID: request.WorkspaceID})
+			switch {
+			case offlineErr == nil:
+				return s.prepareCacheMaterialization(ctx, request, location, offline.Entry, offline.SourceFingerprint, true)
+			case errors.Is(offlineErr, cachemanager.ErrPinnedOfflineUnavailable):
+				return nil, err
+			default:
+				return nil, &domain.OpError{Code: domain.CodeIntegrityFailed, Message: "pinned offline cache content could not be selected safely", EndpointID: location.EndpointID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone, Cause: offlineErr}
+			}
+		}
 		return nil, err
 	}
 	defer func() { resultErr = errors.Join(resultErr, handle.Close(context.Background())) }()
@@ -322,8 +335,15 @@ func (s *providerSession) cacheMaterialize(ctx context.Context, payload json.Raw
 		Pinned: request.Pinned, Source: providerHandleReader{ctx: ctx, handle: handle}, MaxBytes: expectedSize, ExpectedSize: &expectedSize,
 	})
 	if err != nil {
+		if errors.Is(err, cachemanager.ErrQuotaUnsatisfied) {
+			return nil, &domain.OpError{Code: domain.CodeResourceExhausted, Message: "cache quota cannot admit materialization", EndpointID: location.EndpointID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone, Cause: err}
+		}
 		return nil, internalError("materialize verified cache content", err)
 	}
+	return s.prepareCacheMaterialization(ctx, request, location, published.Entry, info.Fingerprint, false)
+}
+
+func (s *providerSession) prepareCacheMaterialization(ctx context.Context, request CacheMaterializeRequest, location domain.Location, entry cache.Entry, sourceFingerprint domain.Fingerprint, offline bool) (any, error) {
 	materializationID, err := randomMaterializationID()
 	if err != nil {
 		return nil, internalError("create materialization identity", err)
@@ -337,15 +357,23 @@ func (s *providerSession) cacheMaterialize(ctx context.Context, payload json.Raw
 		return nil, internalError("create cache lease identity", err)
 	}
 	handoff, err := s.cache.PrepareHandoff(ctx, cachemanager.HandoffRequest{
-		EntryID: published.Entry.ID, MaterializationID: materializationID, ReferenceID: referenceID, LeaseID: leaseID,
+		EntryID: entry.ID, MaterializationID: materializationID, ReferenceID: referenceID, LeaseID: leaseID,
 		OwnerKind: request.OwnerKind, OwnerID: request.OwnerID, Pinned: request.Pinned, Process: request.Process,
 	})
 	if err != nil {
+		if errors.Is(err, cachemanager.ErrQuotaUnsatisfied) {
+			return nil, &domain.OpError{Code: domain.CodeResourceExhausted, Message: "cache quota cannot admit materialization", EndpointID: location.EndpointID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone, Cause: err}
+		}
 		return nil, internalError("prepare cache handoff", err)
 	}
+	freshness := cache.EntryFresh
+	if offline {
+		freshness = cache.EntryUnknown
+	}
 	return CacheMaterializeResponse{
-		EntryID: published.Entry.ID, MaterializationID: handoff.Materialization.ID, ReferenceID: handoff.Reference.ID,
-		LeaseID: handoff.Lease.ID, Path: handoff.Path, SourceFingerprint: ipc.EncodeFingerprint(info.Fingerprint),
+		EntryID: entry.ID, MaterializationID: handoff.Materialization.ID, ReferenceID: handoff.Reference.ID,
+		LeaseID: handoff.Lease.ID, Path: handoff.Path, SourceFingerprint: ipc.EncodeFingerprint(sourceFingerprint),
+		Freshness: freshness, Offline: offline,
 	}, nil
 }
 

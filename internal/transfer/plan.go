@@ -80,9 +80,10 @@ const (
 // DestinationPrecondition is the edit baseline frozen before Plan creation.
 // Workers compare it at commit and never replace it with a fresh observation.
 type DestinationPrecondition struct {
-	Presence    DestinationPresence `json:"presence"`
-	Kind        domain.EntryKind    `json:"kind,omitempty"`
-	Fingerprint domain.Fingerprint  `json:"fingerprint,omitempty"`
+	Presence      DestinationPresence `json:"presence"`
+	Kind          domain.EntryKind    `json:"kind,omitempty"`
+	Fingerprint   domain.Fingerprint  `json:"fingerprint,omitempty"`
+	ContentSHA256 edit.SHA256         `json:"content_sha256,omitempty"`
 }
 
 type FileRef struct {
@@ -466,7 +467,7 @@ func destinationPreconditionFromEdit(value edit.RemotePrecondition) (Destination
 	case edit.ExpectedAbsent:
 		return DestinationPrecondition{Presence: DestinationAbsent}, nil
 	case edit.ExpectedPresent:
-		result := DestinationPrecondition{Presence: DestinationPresent, Kind: value.Kind, Fingerprint: cloneFingerprint(value.Fingerprint)}
+		result := DestinationPrecondition{Presence: DestinationPresent, Kind: value.Kind, Fingerprint: cloneFingerprint(value.Fingerprint), ContentSHA256: value.ContentSHA256}
 		if !validDestinationPrecondition(&result) {
 			return DestinationPrecondition{}, errors.New("freeze sync-back: invalid expected-present destination identity")
 		}

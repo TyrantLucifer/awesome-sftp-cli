@@ -473,6 +473,7 @@ type Model struct {
 	RecoverableEdits   int
 	CacheClearScope    CacheClearScope
 	CachePolicy        cache.Policy
+	CommandRunning     bool
 
 	workspaceName []rune
 	pathInput     []rune
@@ -548,6 +549,7 @@ const (
 	IntentCacheClear         IntentKind = "cache_clear"
 	IntentCachePolicy        IntentKind = "cache_policy"
 	IntentRunCommand         IntentKind = "run_command"
+	IntentCommandCancel      IntentKind = "command_cancel"
 	IntentShell              IntentKind = "shell"
 )
 
@@ -782,6 +784,7 @@ type EditLaunchReady struct {
 	Pane      PaneID
 	Location  domain.Location
 	Command   string
+	Message   string
 }
 
 type EditSessionFinished struct {
