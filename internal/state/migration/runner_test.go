@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -73,8 +74,10 @@ func TestRunnerRollsBackWholeMigrationOnStatementFailure(t *testing.T) {
 		},
 		MaxMigrationWalBytes: 1,
 	}
-	if err := (Runner{}).Apply(ctx, connection, migration, "2026-07-16T00:00:00Z"); err == nil {
+	if err := (Runner{AttemptID: "55555555555555555555555555555555"}).Apply(ctx, connection, migration, "2026-07-16T00:00:00Z"); err == nil {
 		t.Fatal("Apply() error = nil, want duplicate table failure")
+	} else if !strings.Contains(err.Error(), "statement 1") {
+		t.Fatalf("Apply() error = %v, want second-statement failure", err)
 	}
 	var count int
 	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE name='first_table'").Scan(&count); err != nil {
@@ -97,8 +100,10 @@ func TestRunnerRejectsSQLTailBeforeOpeningTransaction(t *testing.T) {
 	defer connection.Close()
 
 	migration := Migration{Version: 2, Name: "tail", Statements: []string{"CREATE TABLE escaped(id INTEGER); CREATE TABLE tail(id INTEGER)"}, MaxMigrationWalBytes: 1}
-	if err := (Runner{}).Apply(ctx, connection, migration, "2026-07-16T00:00:00Z"); err == nil {
+	if err := (Runner{AttemptID: "66666666666666666666666666666666"}).Apply(ctx, connection, migration, "2026-07-16T00:00:00Z"); err == nil {
 		t.Fatal("Apply() error = nil, want SQL tail rejection")
+	} else if !strings.Contains(err.Error(), "tokens after statement separator") {
+		t.Fatalf("Apply() error = %v, want SQL-tail admission failure", err)
 	}
 	var count int
 	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema").Scan(&count); err != nil {

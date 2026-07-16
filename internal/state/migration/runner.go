@@ -18,9 +18,11 @@ const (
 
 // Runner applies already-compiled migrations on one reserved connection. It
 // deliberately does not expose transaction controls to migration data.
-type Runner struct{}
+type Runner struct {
+	AttemptID string
+}
 
-func (Runner) Apply(ctx context.Context, connection *sql.Conn, migration Migration, appliedAt string) error {
+func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration Migration, appliedAt string) error {
 	if connection == nil {
 		return fmt.Errorf("apply migration: nil connection")
 	}
@@ -30,6 +32,14 @@ func (Runner) Apply(ctx context.Context, connection *sql.Conn, migration Migrati
 	digest, err := Checksum(migration)
 	if err != nil {
 		return fmt.Errorf("apply migration: %w", err)
+	}
+	if migration.Version > 1 {
+		if !attemptIDPattern.MatchString(runner.AttemptID) {
+			return fmt.Errorf("apply migration version %d: exact active attempt ID is required", migration.Version)
+		}
+		if migration.MaxMigrationWalBytes == 0 || migration.MaxMigrationWalBytes > maxMigrationWalBytes {
+			return fmt.Errorf("apply migration version %d: WAL budget %d is outside 1..%d", migration.Version, migration.MaxMigrationWalBytes, maxMigrationWalBytes)
+		}
 	}
 	admitted := make([]AdmittedStatement, len(migration.Statements))
 	for index, statement := range migration.Statements {
@@ -91,6 +101,16 @@ func (Runner) Apply(ctx context.Context, connection *sql.Conn, migration Migrati
 		appliedAt,
 	); err != nil {
 		return fmt.Errorf("apply migration version %d history: %w", migration.Version, err)
+	}
+	if migration.Version > 1 {
+		updated, err := connection.ExecContext(ctx, "UPDATE migration_attempts SET current_head=? WHERE singleton=1 AND attempt_id=? AND current_head=? AND target_head>=? AND status='running' AND backup_sha256 IS NOT NULL", migration.Version, runner.AttemptID, migration.Version-1, migration.Version)
+		if err != nil {
+			return fmt.Errorf("apply migration version %d attempt head: %w", migration.Version, err)
+		}
+		rows, err := updated.RowsAffected()
+		if err != nil || rows != 1 {
+			return fmt.Errorf("apply migration version %d attempt head: active attempt is not the required running prefix", migration.Version)
+		}
 	}
 	if _, err := connection.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("apply migration version %d commit: %w", migration.Version, err)
