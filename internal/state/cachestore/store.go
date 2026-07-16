@@ -329,6 +329,35 @@ func (store *Store) HeartbeatLease(ctx context.Context, item cache.Lease) error 
 	})
 }
 
+// AdoptAndHeartbeatLease atomically transfers an exact active process-bound
+// lease to a new daemon instance while renewing it. Native liveness is checked
+// by the manager immediately before this transaction; the store repeats every
+// persisted identity predicate and the previous heartbeat as its concurrency
+// boundary.
+func (store *Store) AdoptAndHeartbeatLease(ctx context.Context, previous cache.Lease, renewed cache.Lease) error {
+	if err := validateLease(previous, false); err != nil {
+		return fmt.Errorf("adopt cache lease: invalid previous lease: %w", err)
+	}
+	if err := validateLease(renewed, false); err != nil {
+		return fmt.Errorf("adopt cache lease: invalid renewed lease: %w", err)
+	}
+	if previous.Process == nil || renewed.Process == nil || previous.ID != renewed.ID || previous.Target != renewed.Target ||
+		previous.OwnerKind != renewed.OwnerKind || previous.OwnerID != renewed.OwnerID || *previous.Process != *renewed.Process ||
+		previous.DaemonInstanceID == renewed.DaemonInstanceID || renewed.HeartbeatAt.Before(previous.HeartbeatAt) {
+		return fmt.Errorf("adopt cache lease: lease identity or daemon transition does not match")
+	}
+	owner, err := encodeLeaseOwner(previous.OwnerKind)
+	if err != nil {
+		return err
+	}
+	blob, materialization := targetValues(previous.Target)
+	pid, birth := processValues(previous.Process)
+	return store.write(ctx, 1, func(_ *sql.Conn, writer *transactionWriter) error {
+		result, err := writer.ExecContext(ctx, "UPDATE cache_leases SET daemon_instance_id=?,heartbeat_at_unix=?,expires_at_unix=?,grace_until_unix=? WHERE lease_id=? AND state='active' AND daemon_instance_id=? AND owner_kind=? AND owner_id=? AND blob_sha256 IS ? AND materialization_id IS ? AND owner_pid IS ? AND process_birth_identity IS ? AND heartbeat_at_unix=?", renewed.DaemonInstanceID, unix(renewed.HeartbeatAt), unix(renewed.ExpiresAt), unix(renewed.GraceUntil), previous.ID, previous.DaemonInstanceID, owner, previous.OwnerID, blob, materialization, pid, birth, unix(previous.HeartbeatAt))
+		return requireOne("adopt cache lease", result, err)
+	})
+}
+
 func (store *Store) ReleaseLease(ctx context.Context, item cache.Lease) error {
 	if err := validateLease(item, true); err != nil {
 		return fmt.Errorf("release cache lease: %w", err)
@@ -402,6 +431,13 @@ func (store *Store) ReleaseHandoff(ctx context.Context, request ReleaseHandoffRe
 
 func (store *Store) ListLeases(ctx context.Context) ([]cache.Lease, error) {
 	return listLeases(ctx, store.database)
+}
+
+func (store *Store) GetLease(ctx context.Context, id cache.LeaseID) (cache.Lease, error) {
+	if _, err := cache.ParseLeaseID(string(id)); err != nil {
+		return cache.Lease{}, fmt.Errorf("get cache lease: %w", err)
+	}
+	return scanLease(store.database.QueryRowContext(ctx, leaseSelect+" WHERE lease_id=?", id))
 }
 
 func listLeases(ctx context.Context, source queryer) ([]cache.Lease, error) {

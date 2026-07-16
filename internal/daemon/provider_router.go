@@ -182,8 +182,14 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.cacheMaterialize(ctx, payload)
 	case CacheMarkDirty:
 		return s.cacheMarkDirty(ctx, payload)
+	case CacheHeartbeat:
+		return s.cacheHeartbeat(ctx, payload)
 	case CacheReleaseHandoff:
 		return s.cacheReleaseHandoff(ctx, payload)
+	case CacheClear:
+		return s.cacheClear(ctx, payload)
+	case CacheLifecycle:
+		return s.cacheLifecycle(ctx, payload)
 	case EditSessionCreate, EditSessionGet, EditSessionTransition, EditSessionEvents, EditSessionRecoverable:
 		return s.handleEditSession(ctx, name, payload)
 	case JobCapture, JobCaptureDelete, JobCreateCopy, JobCreateSyncBack, JobCreateDelete, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:

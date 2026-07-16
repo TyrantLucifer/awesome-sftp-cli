@@ -20,7 +20,10 @@ import (
 const (
 	CacheMaterialize    = "cache.materialize"
 	CacheMarkDirty      = "cache.mark_dirty"
+	CacheHeartbeat      = "cache.heartbeat"
 	CacheReleaseHandoff = "cache.release_handoff"
+	CacheClear          = "cache.clear"
+	CacheLifecycle      = "cache.lifecycle"
 )
 
 type CacheMaterializeRequest struct {
@@ -66,6 +69,163 @@ type CacheMarkDirtyResponse struct {
 	Dirty         bool         `json:"dirty"`
 	CurrentSHA256 cache.BlobID `json:"current_sha256"`
 	Size          int64        `json:"size"`
+}
+
+type CacheHeartbeatRequest struct {
+	MaterializationID cache.MaterializationID `json:"materialization_id"`
+	LeaseID           cache.LeaseID           `json:"lease_id"`
+	OwnerKind         cache.LeaseOwnerKind    `json:"owner_kind"`
+	OwnerID           string                  `json:"owner_id"`
+	Process           cache.ProcessIdentity   `json:"process"`
+}
+
+type CacheHeartbeatResponse struct {
+	Renewed         bool  `json:"renewed"`
+	HeartbeatAtUnix int64 `json:"heartbeat_at_unix"`
+	ExpiresAtUnix   int64 `json:"expires_at_unix"`
+	GraceUntilUnix  int64 `json:"grace_until_unix"`
+}
+
+type CacheClearRequest struct {
+	Scope       cachemanager.ClearScope `json:"scope"`
+	WorkspaceID cache.WorkspaceID       `json:"workspace_id,omitempty"`
+	MaxTargets  int                     `json:"max_targets"`
+	MaxVisited  int                     `json:"max_visited"`
+}
+
+type CacheStatus struct {
+	Blobs            int  `json:"blobs"`
+	Entries          int  `json:"entries"`
+	Materializations int  `json:"materializations"`
+	References       int  `json:"references"`
+	Leases           int  `json:"leases"`
+	NeedsAttention   bool `json:"needs_attention"`
+	Fresh            int  `json:"fresh"`
+	Stale            int  `json:"stale"`
+	UnknownFreshness int  `json:"unknown_freshness"`
+	LRU              int  `json:"lru"`
+	Ephemeral        int  `json:"ephemeral"`
+	PinnedOffline    int  `json:"pinned_offline"`
+	Pinned           int  `json:"pinned"`
+	Dirty            int  `json:"dirty"`
+	FilesystemIssues int  `json:"filesystem_issues"`
+	CatalogIssues    int  `json:"catalog_issues"`
+	ScanTruncated    bool `json:"scan_truncated"`
+}
+
+type CacheClearResponse struct {
+	Deleted   int            `json:"deleted"`
+	Protected int            `json:"protected"`
+	Remaining cache.Quantity `json:"remaining"`
+	Status    CacheStatus    `json:"status"`
+}
+
+type CacheLifecycleRequest struct {
+	MaxVisited int `json:"max_visited"`
+	MaxBatches int `json:"max_batches"`
+}
+
+type CacheLifecycleResponse struct {
+	Recovered  int         `json:"recovered"`
+	Deleted    int         `json:"deleted"`
+	Status     CacheStatus `json:"status"`
+	CatalogErr string      `json:"catalog_error,omitempty"`
+}
+
+func (s *providerSession) cacheHeartbeat(ctx context.Context, payload json.RawMessage) (any, error) {
+	if s.cache == nil {
+		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	var request CacheHeartbeatRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode cache heartbeat request", err)
+	}
+	lease, err := s.cache.HeartbeatHandoff(ctx, cachemanager.HeartbeatHandoffRequest{
+		MaterializationID: request.MaterializationID, LeaseID: request.LeaseID,
+		OwnerKind: request.OwnerKind, OwnerID: request.OwnerID, Process: request.Process,
+	})
+	if err != nil {
+		return nil, &domain.OpError{Code: domain.CodeConflict, Message: "cache heartbeat identity was rejected", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone, Cause: err}
+	}
+	return CacheHeartbeatResponse{Renewed: true, HeartbeatAtUnix: lease.HeartbeatAt.Unix(), ExpiresAtUnix: lease.ExpiresAt.Unix(), GraceUntilUnix: lease.GraceUntil.Unix()}, nil
+}
+
+func (s *providerSession) cacheClear(ctx context.Context, payload json.RawMessage) (any, error) {
+	if s.cache == nil {
+		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	var request CacheClearRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode cache clear request", err)
+	}
+	result, err := s.cache.ClearEligible(ctx, cachemanager.ClearRequest{Scope: request.Scope, WorkspaceID: request.WorkspaceID, MaxTargets: request.MaxTargets, MaxVisited: request.MaxVisited})
+	if errors.Is(err, cachemanager.ErrCacheNeedsAttention) {
+		return nil, &domain.OpError{Code: domain.CodeIntegrityFailed, Message: "cache clear refused unreconciled content", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone, Cause: err}
+	}
+	if err != nil {
+		return nil, internalError("clear eligible cache content", err)
+	}
+	return CacheClearResponse{Deleted: len(result.Deleted), Protected: result.Protected, Remaining: result.Remaining, Status: cacheStatus(result.Status)}, nil
+}
+
+func (s *providerSession) cacheLifecycle(ctx context.Context, payload json.RawMessage) (any, error) {
+	if s.cache == nil {
+		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	var request CacheLifecycleRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode cache lifecycle request", err)
+	}
+	result, err := s.cache.RunStartupLifecycle(ctx, cachemanager.StartupLifecycleRequest{MaxVisited: request.MaxVisited, MaxBatches: request.MaxBatches})
+	if errors.Is(err, cachemanager.ErrCacheNeedsAttention) {
+		return nil, &domain.OpError{Code: domain.CodeIntegrityFailed, Message: "cache lifecycle found unreconciled content", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone, Cause: err}
+	}
+	if err != nil {
+		return nil, internalError("run cache lifecycle", err)
+	}
+	return CacheLifecycleResponse{Recovered: len(result.Recovered), Deleted: len(result.Quota.Deleted), Status: cacheStatus(result.Reconcile), CatalogErr: result.CatalogErr}, nil
+}
+
+func cacheStatus(report cachemanager.ReconcileReport) CacheStatus {
+	status := CacheStatus{
+		Blobs: len(report.Snapshot.Blobs), Entries: len(report.Snapshot.Entries),
+		Materializations: len(report.Snapshot.Materializations), References: len(report.Snapshot.References),
+		Leases: len(report.Snapshot.Leases), NeedsAttention: report.NeedsAttention,
+		FilesystemIssues: len(report.Filesystem.Orphans) + len(report.Filesystem.Unknown) + len(report.Filesystem.Symlinks),
+		CatalogIssues: len(report.UncatalogedBlobs) + len(report.UncatalogedEntries) + len(report.UncatalogedMaterializations) +
+			len(report.MissingBlobs) + len(report.MissingEntries) + len(report.MissingMaterializations) + len(report.DirtyCandidates),
+		ScanTruncated: report.Filesystem.Truncated,
+	}
+	for _, entry := range report.Snapshot.Entries {
+		switch entry.Freshness {
+		case cache.EntryFresh:
+			status.Fresh++
+		case cache.EntryStale:
+			status.Stale++
+		case cache.EntryUnknown:
+			status.UnknownFreshness++
+		}
+		switch entry.Policy {
+		case cache.PolicyLRU:
+			status.LRU++
+		case cache.PolicyEphemeral:
+			status.Ephemeral++
+		case cache.PolicyPinnedOffline:
+			status.PinnedOffline++
+		}
+		if entry.Pinned {
+			status.Pinned++
+		}
+	}
+	for _, materialization := range report.Snapshot.Materializations {
+		if materialization.Pinned {
+			status.Pinned++
+		}
+		if materialization.State == cache.MaterializationDirty {
+			status.Dirty++
+		}
+	}
+	return status
 }
 
 func (s *providerSession) cacheMarkDirty(ctx context.Context, payload json.RawMessage) (any, error) {

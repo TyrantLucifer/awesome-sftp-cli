@@ -157,6 +157,65 @@ type ReleaseHandoffRequest struct {
 	OwnerID           string
 }
 
+type HeartbeatHandoffRequest struct {
+	MaterializationID cache.MaterializationID
+	LeaseID           cache.LeaseID
+	OwnerKind         cache.LeaseOwnerKind
+	OwnerID           string
+	Process           cache.ProcessIdentity
+}
+
+// HeartbeatHandoff renews only the exact active lease created for a live,
+// classifiable process. The catalog update repeats every identity predicate so
+// a concurrent release or replacement cannot be renewed accidentally.
+func (manager *Manager) HeartbeatHandoff(ctx context.Context, request HeartbeatHandoffRequest) (cache.Lease, error) {
+	if manager == nil || manager.catalog == nil || manager.clock == nil || manager.leaseState == nil || manager.processes == nil {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff: nil manager")
+	}
+	if ctx == nil {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff: nil context")
+	}
+	if _, err := cache.ParseMaterializationID(string(request.MaterializationID)); err != nil {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff: %w", err)
+	}
+	if request.OwnerID == "" || len(request.OwnerID) > 128 {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff: invalid owner ID")
+	}
+	if err := request.Process.Validate(); err != nil {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff: invalid process identity: %w", err)
+	}
+	if manager.processes.Classify(request.Process) != cache.ProcessMatches {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff: process identity is not live and classifiable")
+	}
+	lease, err := manager.catalog.GetLease(ctx, request.LeaseID)
+	if err != nil {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff lease: %w", err)
+	}
+	if lease.State != cache.LeaseActive || lease.OwnerKind != request.OwnerKind || lease.OwnerID != request.OwnerID || lease.Target != cache.MaterializationTarget(request.MaterializationID) || lease.Process == nil || *lease.Process != request.Process {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff: lease identity does not match")
+	}
+	renewed, err := manager.leaseState.Heartbeat(lease)
+	if err != nil {
+		return cache.Lease{}, err
+	}
+	// Version 2 persists whole seconds; native clocks commonly include a
+	// monotonic/sub-second component that must not enter the frozen schema.
+	renewed.HeartbeatAt = renewed.HeartbeatAt.UTC().Truncate(time.Second)
+	renewed.ExpiresAt = renewed.ExpiresAt.UTC().Truncate(time.Second)
+	renewed.GraceUntil = renewed.GraceUntil.UTC().Truncate(time.Second)
+	previousDaemonID := lease.DaemonInstanceID
+	renewed.DaemonInstanceID = manager.daemonID
+	if previousDaemonID != manager.daemonID {
+		err = manager.catalog.AdoptAndHeartbeatLease(ctx, lease, renewed)
+	} else {
+		err = manager.catalog.HeartbeatLease(ctx, renewed)
+	}
+	if err != nil {
+		return cache.Lease{}, fmt.Errorf("heartbeat cache handoff catalog: %w", err)
+	}
+	return renewed, nil
+}
+
 func (manager *Manager) PrepareHandoff(ctx context.Context, request HandoffRequest) (HandoffResult, error) {
 	if manager == nil || manager.files == nil || manager.catalog == nil || manager.clock == nil {
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff: nil manager")
@@ -245,7 +304,7 @@ func (manager *Manager) Reconcile(ctx context.Context, maxVisited int) (Reconcil
 	}
 	snapshot, err := manager.catalog.LoadSnapshot(ctx)
 	if err != nil {
-		return ReconcileReport{}, fmt.Errorf("reconcile cache catalog: %w", err)
+		return ReconcileReport{Filesystem: filesystem, NeedsAttention: true}, fmt.Errorf("reconcile cache catalog: %w", err)
 	}
 	report := ReconcileReport{Filesystem: filesystem, Snapshot: snapshot}
 	fsBlobs := make(map[cache.BlobID]struct{}, len(filesystem.VerifiedBlobs))

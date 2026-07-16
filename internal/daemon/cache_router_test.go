@@ -84,6 +84,29 @@ func TestCacheMaterializeReadsCompleteProviderFileAndReturnsLeasedPrivatePath(t 
 	if _, err := cache.ParseLeaseID(string(response.LeaseID)); err != nil {
 		t.Fatal(err)
 	}
+	heartbeatPayload, err := json.Marshal(CacheHeartbeatRequest{
+		MaterializationID: response.MaterializationID, LeaseID: response.LeaseID,
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session", Process: identity,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err = session.Handle(ctx, CacheHeartbeat, heartbeatPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if heartbeat, ok := value.(CacheHeartbeatResponse); !ok || !heartbeat.Renewed || heartbeat.GraceUntilUnix != heartbeat.ExpiresAtUnix {
+		t.Fatalf("heartbeat response = %#v", value)
+	}
+	reused := identity
+	reused.BirthID += "-reused"
+	heartbeatPayload, _ = json.Marshal(CacheHeartbeatRequest{
+		MaterializationID: response.MaterializationID, LeaseID: response.LeaseID,
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session", Process: reused,
+	})
+	if _, err := session.Handle(ctx, CacheHeartbeat, heartbeatPayload); err == nil {
+		t.Fatal("heartbeat accepted a reused process identity")
+	}
 	reconcile, err := manager.Reconcile(ctx, 100)
 	if err != nil || len(reconcile.Snapshot.Leases) != 1 || reconcile.Snapshot.Leases[0].Process == nil || *reconcile.Snapshot.Leases[0].Process != identity {
 		t.Fatalf("caller process identity was not persisted: %#v, %v", reconcile.Snapshot.Leases, err)
@@ -122,6 +145,26 @@ func TestCacheMaterializeReadsCompleteProviderFileAndReturnsLeasedPrivatePath(t 
 		if released, ok := value.(CacheReleaseHandoffResponse); !ok || !released.Released {
 			t.Fatalf("release attempt %d response = %#v", attempt+1, value)
 		}
+	}
+	clearPayload, err := json.Marshal(CacheClearRequest{Scope: cachemanager.ClearAll, MaxTargets: 16, MaxVisited: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err = session.Handle(ctx, CacheClear, clearPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cleared, ok := value.(CacheClearResponse)
+	if !ok || cleared.Deleted != 0 || cleared.Protected == 0 || cleared.Status.Dirty != 1 || cleared.Status.NeedsAttention {
+		t.Fatalf("clear response = %#v", value)
+	}
+	lifecyclePayload, _ := json.Marshal(CacheLifecycleRequest{MaxVisited: 100, MaxBatches: 2})
+	value, err = session.Handle(ctx, CacheLifecycle, lifecyclePayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle, ok := value.(CacheLifecycleResponse); !ok || lifecycle.Status.Dirty != 1 || lifecycle.Status.NeedsAttention {
+		t.Fatalf("lifecycle response = %#v", value)
 	}
 }
 
