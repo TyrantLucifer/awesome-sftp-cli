@@ -110,7 +110,6 @@ func TestUnixPlatformPTYRoundTrip(t *testing.T) {
 
 	master, slave := openTestPTY(t)
 	defer master.Close()
-	defer slave.Close()
 
 	command := exec.Command(os.Args[0], "-test.run=^TestUnixPlatformPTYRoundTrip$") //nolint:gosec // exact current test binary and fixed test selector
 	command.Env = append(os.Environ(), "AMSFTP_TERMINAL_HANDOFF_PTY_HELPER=1")
@@ -119,17 +118,28 @@ func TestUnixPlatformPTYRoundTrip(t *testing.T) {
 	command.Stderr = slave
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true, Ctty: 0}
 	var transcript bytes.Buffer
+	if err := command.Start(); err != nil {
+		_ = slave.Close()
+		t.Fatalf("start PTY helper: %v", err)
+	}
+	// Drop the parent's slave descriptor once the helper has inherited it. When
+	// the helper exits, closing its last slave descriptor causes the master read
+	// to finish (EOF on Darwin, EIO on Linux), so copyDone is causally tied to
+	// process cleanup instead of relying on a concurrent master Close to unblock.
+	if err := slave.Close(); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		t.Fatalf("close parent PTY slave: %v", err)
+	}
 	copyDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(&transcript, master)
 		close(copyDone)
 	}()
-	if err := command.Run(); err != nil {
-		_ = master.Close()
+	if err := command.Wait(); err != nil {
 		<-copyDone
 		t.Fatalf("PTY helper error = %v\n%s", err, transcript.String())
 	}
-	_ = master.Close()
 	<-copyDone
 }
 
