@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"time"
 )
@@ -118,8 +119,19 @@ func RecordVerifiedBackup(ctx context.Context, connection *sql.Conn, attemptID s
 		if attempt.AttemptID != attemptID || attempt.Status != AttemptPreparing || attempt.CurrentHead != attempt.OriginalHead || attempt.BackupSHA256 != nil {
 			return fmt.Errorf("record migration backup: attempt is not an unbacked preparing singleton")
 		}
+		catalogTime := createdAt.Unix()
+		var latest sql.NullInt64
+		if err := connection.QueryRowContext(ctx, "SELECT max(created_at_unix) FROM migration_backups").Scan(&latest); err != nil {
+			return fmt.Errorf("record migration backup: read latest catalog time: %w", err)
+		}
+		if latest.Valid && catalogTime <= latest.Int64 {
+			if latest.Int64 == math.MaxInt64 {
+				return fmt.Errorf("record migration backup: catalog time overflows int64")
+			}
+			catalogTime = latest.Int64 + 1
+		}
 		backupHex := hex.EncodeToString(backupDigest[:])
-		if _, err := connection.ExecContext(ctx, "INSERT INTO migration_backups(attempt_id, original_head, target_head, migration_set_sha256, backup_basename, backup_sha256, created_at_unix, status) VALUES(?, ?, ?, ?, ?, ?, ?, 'verified')", attempt.AttemptID, attempt.OriginalHead, attempt.TargetHead, attempt.MigrationSetSHA256, attempt.ReservedBackupBasename, backupHex, createdAt.Unix()); err != nil {
+		if _, err := connection.ExecContext(ctx, "INSERT INTO migration_backups(attempt_id, original_head, target_head, migration_set_sha256, backup_basename, backup_sha256, created_at_unix, status) VALUES(?, ?, ?, ?, ?, ?, ?, 'verified')", attempt.AttemptID, attempt.OriginalHead, attempt.TargetHead, attempt.MigrationSetSHA256, attempt.ReservedBackupBasename, backupHex, catalogTime); err != nil {
 			return fmt.Errorf("record migration backup: insert catalog: %w", err)
 		}
 		updated, err := connection.ExecContext(ctx, "UPDATE migration_attempts SET backup_sha256=?, status='ready', error_kind=NULL WHERE singleton=1 AND attempt_id=? AND status='preparing' AND backup_sha256 IS NULL", backupHex, attemptID)
@@ -231,7 +243,9 @@ func RearmAttemptAfterExplicitValidation(ctx context.Context, connection *sql.Co
 			return err
 		}
 		wantDigest := hex.EncodeToString(request.MigrationSetDigest[:])
-		if attempt.AttemptID != request.AttemptID || attempt.OriginalHead != int64(request.OriginalHead) || attempt.TargetHead != int64(request.TargetHead) || attempt.MigrationSetSHA256 != wantDigest {
+		originalHead := int64(request.OriginalHead) //nolint:gosec // validateAttemptRequest bounds the head to maxMigrationVersion
+		targetHead := int64(request.TargetHead)     //nolint:gosec // validateAttemptRequest bounds the head to maxMigrationVersion
+		if attempt.AttemptID != request.AttemptID || attempt.OriginalHead != originalHead || attempt.TargetHead != targetHead || attempt.MigrationSetSHA256 != wantDigest {
 			return fmt.Errorf("rearm migration attempt: active attempt does not match revalidated frozen request")
 		}
 		var next AttemptStatus
@@ -263,12 +277,18 @@ func RearmAttemptAfterExplicitValidation(ctx context.Context, connection *sql.Co
 	return result, nil
 }
 
-func ClearCompletedAttempt(ctx context.Context, connection *sql.Conn, attemptID string) error {
-	if connection == nil || !attemptIDPattern.MatchString(attemptID) {
+func ClearCompletedAttempt(ctx context.Context, connection *sql.Conn, request AttemptRequest) error {
+	if connection == nil {
 		return fmt.Errorf("clear completed migration attempt: invalid input")
 	}
+	if err := validateAttemptRequest(request); err != nil {
+		return fmt.Errorf("clear completed migration attempt: %w", err)
+	}
+	originalHead := int64(request.OriginalHead) //nolint:gosec // validateAttemptRequest bounds the head to maxMigrationVersion
+	targetHead := int64(request.TargetHead)     //nolint:gosec // validateAttemptRequest bounds the head to maxMigrationVersion
+	setDigest := hex.EncodeToString(request.MigrationSetDigest[:])
 	return withImmediate(ctx, connection, func() error {
-		deleted, err := connection.ExecContext(ctx, "DELETE FROM migration_attempts WHERE singleton=1 AND attempt_id=? AND status='running' AND backup_sha256 IS NOT NULL AND current_head=target_head", attemptID)
+		deleted, err := connection.ExecContext(ctx, "DELETE FROM migration_attempts WHERE singleton=1 AND attempt_id=? AND original_head=? AND target_head=? AND migration_set_sha256=? AND status='running' AND backup_sha256 IS NOT NULL AND current_head=target_head", request.AttemptID, originalHead, targetHead, setDigest)
 		if err != nil {
 			return fmt.Errorf("clear completed migration attempt: %w", err)
 		}

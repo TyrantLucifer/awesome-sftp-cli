@@ -14,7 +14,7 @@ import (
 func TestEvaluateMigrationSpaceUsesLargestPendingBudgetAndExactBoundary(t *testing.T) {
 	t.Parallel()
 
-	want := uint64(10*4096 + 2*1024*1024 + migrationSpaceReserveBytes)
+	want := 10*4096 + 2*1024*1024 + migrationSpaceReserveBytes
 	report, err := EvaluateMigrationSpace(MigrationSpaceInput{
 		PageCount: 10, PageSize: 4096, AvailableBytes: want,
 		PendingWalBudgets: []uint64{1024 * 1024, 2 * 1024 * 1024, 512 * 1024},

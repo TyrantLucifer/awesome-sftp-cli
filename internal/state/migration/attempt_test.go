@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"math"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -199,7 +200,7 @@ func TestAttemptInterruptionAndCompletionAreConservative(t *testing.T) {
 	if RestartDecision(interrupted) != RestartHoldExplicitResume {
 		t.Fatal("interrupted attempt auto-continued")
 	}
-	if err := ClearCompletedAttempt(ctx, connection, request.AttemptID); err == nil {
+	if err := ClearCompletedAttempt(ctx, connection, request); err == nil {
 		t.Fatal("ClearCompletedAttempt(interrupted prefix) error = nil")
 	}
 
@@ -213,7 +214,12 @@ func TestAttemptInterruptionAndCompletionAreConservative(t *testing.T) {
 	if err := (Runner{AttemptID: request.AttemptID}).Apply(ctx, connection, v2, "2026-07-16T00:00:02Z"); err != nil {
 		t.Fatalf("apply version 2: %v", err)
 	}
-	if err := ClearCompletedAttempt(ctx, connection, request.AttemptID); err != nil {
+	mismatch := request
+	mismatch.MigrationSetDigest = sha256.Sum256([]byte("changed completion set"))
+	if err := ClearCompletedAttempt(ctx, connection, mismatch); err == nil {
+		t.Fatal("ClearCompletedAttempt(mismatched set) error = nil")
+	}
+	if err := ClearCompletedAttempt(ctx, connection, request); err != nil {
 		t.Fatalf("ClearCompletedAttempt(): %v", err)
 	}
 	if _, err := LoadAttempt(ctx, connection); !errors.Is(err, ErrNoAttempt) {
@@ -223,6 +229,62 @@ func TestAttemptInterruptionAndCompletionAreConservative(t *testing.T) {
 	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_backups WHERE attempt_id=? AND status='verified'", request.AttemptID).Scan(&catalogRows); err != nil || catalogRows != 1 {
 		t.Fatalf("retained catalog rows = %d, error=%v", catalogRows, err)
 	}
+}
+
+func TestRecordVerifiedBackupUsesMonotonicCatalogTimeAndRejectsOverflow(t *testing.T) {
+	t.Parallel()
+
+	t.Run("clock rollback", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		connection := version1Connection(t, ctx)
+		if _, err := connection.ExecContext(ctx, "INSERT INTO migration_backups(attempt_id, original_head, target_head, migration_set_sha256, backup_basename, backup_sha256, created_at_unix, status) VALUES('aa000000000000000000000000000000', 1, 2, ?, '.amsftp-backup-v1-aa000000000000000000000000000000.sqlite3', ?, 1000, 'verified')", strings.Repeat("a", 64), strings.Repeat("b", 64)); err != nil {
+			t.Fatalf("insert prior catalog row: %v", err)
+		}
+		request := AttemptRequest{
+			AttemptID: "bb000000000000000000000000000000", OriginalHead: 1, TargetHead: 2,
+			MigrationSetDigest: sha256.Sum256([]byte("monotonic catalog")),
+		}
+		if _, _, err := PrepareAttempt(ctx, connection, request); err != nil {
+			t.Fatalf("PrepareAttempt(): %v", err)
+		}
+		if _, err := RecordVerifiedBackup(ctx, connection, request.AttemptID, sha256.Sum256([]byte("backup")), time.Unix(500, 0)); err != nil {
+			t.Fatalf("RecordVerifiedBackup(): %v", err)
+		}
+		var createdAt int64
+		if err := connection.QueryRowContext(ctx, "SELECT created_at_unix FROM migration_backups WHERE attempt_id=?", request.AttemptID).Scan(&createdAt); err != nil {
+			t.Fatalf("read monotonic catalog time: %v", err)
+		}
+		if createdAt != 1001 {
+			t.Fatalf("created_at_unix = %d, want 1001", createdAt)
+		}
+	})
+
+	t.Run("overflow", func(t *testing.T) {
+		t.Parallel()
+		ctx := context.Background()
+		connection := version1Connection(t, ctx)
+		if _, err := connection.ExecContext(ctx, "INSERT INTO migration_backups(attempt_id, original_head, target_head, migration_set_sha256, backup_basename, backup_sha256, created_at_unix, status) VALUES('cc000000000000000000000000000000', 1, 2, ?, '.amsftp-backup-v1-cc000000000000000000000000000000.sqlite3', ?, ?, 'verified')", strings.Repeat("c", 64), strings.Repeat("d", 64), int64(math.MaxInt64)); err != nil {
+			t.Fatalf("insert maximum catalog time: %v", err)
+		}
+		request := AttemptRequest{
+			AttemptID: "dd000000000000000000000000000000", OriginalHead: 1, TargetHead: 2,
+			MigrationSetDigest: sha256.Sum256([]byte("catalog overflow")),
+		}
+		if _, _, err := PrepareAttempt(ctx, connection, request); err != nil {
+			t.Fatalf("PrepareAttempt(): %v", err)
+		}
+		if _, err := RecordVerifiedBackup(ctx, connection, request.AttemptID, sha256.Sum256([]byte("backup")), time.Unix(500, 0)); err == nil {
+			t.Fatal("RecordVerifiedBackup(overflow) error = nil")
+		}
+		attempt, err := LoadAttempt(ctx, connection)
+		if err != nil {
+			t.Fatalf("LoadAttempt(): %v", err)
+		}
+		if attempt.Status != AttemptPreparing || attempt.BackupSHA256 != nil {
+			t.Fatalf("attempt changed on catalog overflow = %#v", attempt)
+		}
+	})
 }
 
 func version1Connection(t *testing.T, ctx context.Context) *sql.Conn {

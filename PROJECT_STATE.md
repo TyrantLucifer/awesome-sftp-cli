@@ -9,7 +9,7 @@
 
 ## Current outcome
 
-Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; the M2.1 Version 1 foundation now includes the frozen schema/contract, safe APFS/ext4/XFS state boundary, atomic bootstrap/runtime validation, transactional Job/events, conservative pre-bind restart recovery, frozen migration-set attempts, online backup sanitization/restore hold, crash adoption, and overflow-safe free-space calculation. Retention, migration/runtime WAL enforcement, sidecar/bootstrap crash fixtures, cross-process native probe and integrated upgrade orchestration remain before M2.1 can complete.
+Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; the M2.1 Version 1 foundation now includes the frozen schema/contract, safe APFS/ext4/XFS state boundary, atomic bootstrap/runtime validation, transactional Job/events, conservative pre-bind restart recovery, frozen migration-set attempts, online backup sanitization/restore hold, crash adoption, overflow-safe free-space calculation, and deterministic crash-resumable retention of the newest two verified backups. Migration/runtime WAL enforcement, sidecar/bootstrap crash fixtures, cross-process native probe and integrated upgrade orchestration remain before M2.1 can complete.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -37,7 +37,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Complete ADR-0008 migration retention and migration/runtime WAL-budget enforcement around the implemented attempt, online-backup and space-gate foundation.
+Complete ADR-0008 migration/runtime WAL-budget enforcement around the implemented attempt, online-backup, space-gate and retention foundation.
 
 ## Current risks
 
