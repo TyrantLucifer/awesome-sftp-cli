@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
@@ -228,7 +229,29 @@ func renderDrawer(surface Surface, model Model, y, width, rows int) {
 	case DrawerJobs:
 		renderJobsDrawer(surface, model.Jobs, model.JobCursor, y+1, width, rows-1)
 	case DrawerLog:
-		surface.PutClipped(0, y+1, width, "No bounded log records", StylePreview)
+		renderLogDrawer(surface, model.Diagnostics, y+1, width, rows-1)
+	}
+}
+
+func renderLogDrawer(surface Surface, records []diagnostic.Record, y, width, rows int) {
+	if len(records) == 0 {
+		surface.PutClipped(0, y, width, "No bounded log records", StylePreview)
+		return
+	}
+	start := max(0, len(records)-rows)
+	for row := 0; row < rows && start+row < len(records); row++ {
+		record := records[start+row]
+		line := fmt.Sprintf("%s  %-5s  %s/%s", record.Time.Format("15:04:05"), record.Level, record.Component, record.Event)
+		if record.JobID != "" {
+			line += "  job=" + string(record.JobID)
+		}
+		if record.EndpointID != "" {
+			line += "  endpoint=" + string(record.EndpointID)
+		}
+		if record.ErrorCode != "" {
+			line += "  code=" + string(record.ErrorCode)
+		}
+		surface.PutClipped(0, y+row, width, line, StylePreview)
 	}
 }
 

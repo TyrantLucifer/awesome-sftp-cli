@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
@@ -389,6 +390,7 @@ type Model struct {
 	Auth               AuthState
 	Clipboard          ClipboardState
 	Jobs               []transfer.JobView
+	Diagnostics        []diagnostic.Record
 	Drawer             DrawerState
 	JobCursor          int
 	Notice             string
@@ -454,6 +456,7 @@ const (
 	IntentJobResume          IntentKind = "job_resume"
 	IntentJobCancel          IntentKind = "job_cancel"
 	IntentJobResolveConflict IntentKind = "job_resolve_conflict"
+	IntentDiagnosticList     IntentKind = "diagnostic_list"
 )
 
 const PreviewByteLimit = 64 * 1024
@@ -464,6 +467,7 @@ type Intent struct {
 	Location              domain.Location
 	Locations             []domain.Location
 	Limit                 int
+	AfterSequence         uint64
 	ChallengeID           string
 	Answer                []byte
 	Cancel                bool
@@ -624,6 +628,10 @@ type JobUpdated struct {
 	Snapshot jobstore.Snapshot
 	Message  string
 }
+type DiagnosticsLoaded struct {
+	Records []diagnostic.Record
+	Message string
+}
 
 func (KeyPress) isAction()              {}
 func (CountDigit) isAction()            {}
@@ -645,6 +653,7 @@ func (RenamePrepared) isAction()        {}
 func (JobCreated) isAction()            {}
 func (JobsLoaded) isAction()            {}
 func (JobUpdated) isAction()            {}
+func (DiagnosticsLoaded) isAction()     {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

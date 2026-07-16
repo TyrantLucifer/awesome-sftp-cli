@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
@@ -365,6 +366,10 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 				break
 			}
 		}
+		model.Notice = action.Message
+		return model, nil
+	case DiagnosticsLoaded:
+		model.Diagnostics = append([]diagnostic.Record(nil), action.Records...)
 		model.Notice = action.Message
 		return model, nil
 	default:
@@ -868,6 +873,8 @@ func drawerOpenIntents(model Model, mode DrawerMode, switching bool) []Intent {
 		return previewOpenIntents(model, switching)
 	case DrawerJobs:
 		return []Intent{{Kind: IntentJobList}}
+	case DrawerLog:
+		return []Intent{{Kind: IntentDiagnosticList, Limit: 256}}
 	default:
 		return nil
 	}

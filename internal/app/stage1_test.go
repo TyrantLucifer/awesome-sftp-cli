@@ -227,6 +227,13 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Kind != "local" {
 		t.Fatalf("endpoints = %#v", endpoints.Endpoints)
 	}
+	var diagnostics daemon.DiagnosticListResponse
+	if err := client.Call(context.Background(), daemon.DiagnosticList, daemon.DiagnosticListRequest{Limit: 256}, &diagnostics); err != nil {
+		t.Fatalf("list bounded diagnostics: %v", err)
+	}
+	if len(diagnostics.Records) == 0 || len(diagnostics.Records) > 256 {
+		t.Fatalf("diagnostic records = %d, want 1..256", len(diagnostics.Records))
+	}
 	var workspaces workspace.ListResponse
 	if err := client.Call(context.Background(), daemon.WorkspaceList, workspace.ListRequest{}, &workspaces); err != nil {
 		t.Fatalf("list daemon workspaces: %v", err)
@@ -260,6 +267,34 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 	if _, err := os.Lstat(paths.ControlSocket); !os.IsNotExist(err) {
 		t.Fatalf("socket remains after shutdown: %v", err)
+	}
+}
+
+func TestParseDaemonArgsRequiresOneExactExplicitMigrationResumeFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		args       []string
+		wantResume bool
+		wantError  bool
+	}{
+		{name: "ordinary daemon"},
+		{name: "explicit resume", args: []string{"--resume-migration"}, wantResume: true},
+		{name: "unknown flag", args: []string{"--resume"}, wantError: true},
+		{name: "duplicate flag", args: []string{"--resume-migration", "--resume-migration"}, wantError: true},
+		{name: "positional argument", args: []string{"resume-migration"}, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			options, err := parseDaemonArgs(tt.args)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("parseDaemonArgs(%q) error = %v, wantError=%t", tt.args, err, tt.wantError)
+			}
+			if options.explicitMigrationResume != tt.wantResume {
+				t.Fatalf("parseDaemonArgs(%q) options = %#v", tt.args, options)
+			}
+		})
 	}
 }
 

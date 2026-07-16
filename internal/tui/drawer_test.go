@@ -3,7 +3,9 @@ package tui
 import (
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
@@ -49,6 +51,26 @@ func TestDrawerReducerOpensFocusesSwitchesAndClosesWithoutChangingPane(t *testin
 
 	if model.Active != originalActive || model.Panes[Left].Location != originalLeft || model.Panes[Right].Location != originalRight {
 		t.Fatalf("drawer transitions changed pane context: active=%v left=%#v right=%#v", model.Active, model.Panes[Left].Location, model.Panes[Right].Location)
+	}
+}
+
+func TestLogDrawerRequestsAndRendersBoundedSanitizedSnapshot(t *testing.T) {
+	model := testModel(t)
+	model, intents := Reduce(model, KeyPress{Key: KeyLogDrawer})
+	if len(intents) != 1 || intents[0].Kind != IntentDiagnosticList || intents[0].Limit != 256 {
+		t.Fatalf("Log open intents = %#v", intents)
+	}
+	model, _ = Reduce(model, DiagnosticsLoaded{Records: []diagnostic.Record{{
+		Sequence: 7, Time: time.Unix(100, 0).UTC(), Level: "ERROR", Message: "diagnostic",
+		Component: "cache", Event: "quota_exhausted", ErrorCode: domain.CodeResourceExhausted,
+	}}})
+	surface := newMemorySurface(100, 12)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"[Log]", "ERROR", "cache", "quota_exhausted", "resource_exhausted"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Log drawer missing %q:\n%s", want, got)
+		}
 	}
 }
 

@@ -58,15 +58,37 @@ func runtimePaths() (platform.Paths, platform.ValidationPurpose, error) {
 	return paths, platform.RuntimeValidationPurpose(paths), nil
 }
 
-func runDaemon(ctx context.Context, _ []string, _ io.Writer, _ io.Writer) error {
+type daemonOptions struct {
+	explicitMigrationResume bool
+}
+
+func parseDaemonArgs(args []string) (daemonOptions, error) {
+	if len(args) == 0 {
+		return daemonOptions{}, nil
+	}
+	if len(args) == 1 && args[0] == "--resume-migration" {
+		return daemonOptions{explicitMigrationResume: true}, nil
+	}
+	return daemonOptions{}, fmt.Errorf("daemon accepts only the optional --resume-migration flag")
+}
+
+func runDaemon(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
+	options, err := parseDaemonArgs(args)
+	if err != nil {
+		return err
+	}
 	paths, purpose, err := runtimePaths()
 	if err != nil {
 		return err
 	}
-	return runDaemonWithPaths(ctx, paths, purpose)
+	return runDaemonWithPathsAndOptions(ctx, paths, purpose, options)
 }
 
 func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (returnErr error) {
+	return runDaemonWithPathsAndOptions(ctx, paths, purpose, daemonOptions{})
+}
+
+func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, options daemonOptions) (returnErr error) {
 	lock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
 	if errors.Is(err, platform.ErrInstanceLocked) {
 		return nil
@@ -88,6 +110,7 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		}
 		stateDatabase, _, stateOpenErr = statefs.Initialize(ctx, statefs.InitializeConfig{
 			Root: paths.StateDir, DatabasePath: databasePath,
+			ExplicitMigrationResume: options.explicitMigrationResume,
 		})
 		if stateOpenErr == nil {
 			store, err := jobstore.New(ctx, stateDatabase)
@@ -113,12 +136,14 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		}()
 	}
 	var logger *slog.Logger
+	var diagnosticRecords *diagnostic.Ring
 	if stateOpenErr == nil {
 		daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
 		if err != nil {
 			return err
 		}
 		logger = daemonLog.Logger
+		diagnosticRecords = daemonLog.Records
 		defer func() {
 			returnErr = errors.Join(returnErr, daemonLog.Close())
 		}()
@@ -126,7 +151,8 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		// A rejected/corrupt/newer state database must not trigger any further
 		// persistent writes. Stage 1 browsing remains available with an
 		// in-memory diagnostic logger and no mutation store.
-		logger = slog.New(diagnostic.NewJSONHandler(io.Discard, nil))
+		diagnosticRecords = diagnostic.NewRing(0)
+		logger = slog.New(diagnostic.NewRingHandler(diagnosticRecords, nil))
 		logger.Error("persistent state unavailable; mutation disabled", diagnostic.Component("state"), diagnostic.Event("read_only_degraded"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
 	}
 	if _, err := os.Lstat(paths.ControlSocket); err == nil {
@@ -165,6 +191,7 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	if err != nil {
 		return err
 	}
+	sessions.SetDiagnosticSource(diagnosticRecords)
 	if stateOpenErr == nil {
 		workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
 		if err != nil {
@@ -640,6 +667,26 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				}
 			}()
 			return
+		case tui.IntentDiagnosticList:
+			activeClient := client
+			go func() {
+				var response daemon.DiagnosticListResponse
+				listErr := activeClient.Call(runCtx, daemon.DiagnosticList, daemon.DiagnosticListRequest{
+					AfterSequence: intent.AfterSequence,
+					Limit:         intent.Limit,
+					EndpointID:    intent.EndpointID,
+					JobID:         intent.JobID,
+				}, &response)
+				result := tui.DiagnosticsLoaded{Records: response.Records}
+				if listErr != nil {
+					result.Message = "list diagnostics failed: " + clientErrorMessage(listErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
 		case tui.IntentJobPause, tui.IntentJobResume, tui.IntentJobCancel, tui.IntentJobResolveConflict:
 			activeClient := client
 			go func() {
@@ -828,6 +875,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		case <-jobRefreshTicker.C:
 			if model.Drawer.Mode == tui.DrawerJobs {
 				startIntent(tui.Intent{Kind: tui.IntentJobList})
+			} else if model.Drawer.Mode == tui.DrawerLog {
+				startIntent(tui.Intent{Kind: tui.IntentDiagnosticList, Limit: 256})
 			}
 		case err := <-authErrors:
 			if authFailureLostDaemon(err, func() error {

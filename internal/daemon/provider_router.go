@@ -34,6 +34,7 @@ const (
 	WorkspaceList      = "workspace.list"
 	WorkspaceLoad      = "workspace.load"
 	WorkspaceSave      = "workspace.save"
+	DiagnosticList     = "diagnostic.list"
 )
 
 type SSHConnector func(context.Context, string) (providerapi.Provider, error)
@@ -49,6 +50,7 @@ type ProviderSessions struct {
 	authBroker      *auth.Broker
 	workspace       *workspace.Store
 	transfer        TransferService
+	diagnostics     DiagnosticSource
 	nextOwner       atomic.Uint64
 }
 
@@ -63,9 +65,10 @@ func (s *ProviderSessions) SetSSHConnector(connector SSHConnector) { s.connectSS
 func (s *ProviderSessions) SetEndpointConnector(connector EndpointConnector) {
 	s.connectEndpoint = connector
 }
-func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)          { s.authBroker = broker }
-func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store)   { s.workspace = store }
-func (s *ProviderSessions) SetTransferService(service TransferService) { s.transfer = service }
+func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)           { s.authBroker = broker }
+func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store)    { s.workspace = store }
+func (s *ProviderSessions) SetTransferService(service TransferService)  { s.transfer = service }
+func (s *ProviderSessions) SetDiagnosticSource(source DiagnosticSource) { s.diagnostics = source }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	if len(providers) == 0 {
@@ -109,6 +112,7 @@ func (s *ProviderSessions) NewSession() Session {
 		cursors:      make(map[cursorKey]providerapi.Provider),
 		workspace:    s.workspace,
 		transfer:     s.transfer,
+		diagnostics:  s.diagnostics,
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -140,6 +144,7 @@ type providerSession struct {
 	authOwner    auth.OwnerID
 	workspace    *workspace.Store
 	transfer     TransferService
+	diagnostics  DiagnosticSource
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -162,6 +167,8 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.loadWorkspace(payload)
 	case WorkspaceSave:
 		return s.saveWorkspace(payload)
+	case DiagnosticList:
+		return s.listDiagnostics(payload)
 	case JobCapture, JobCaptureDelete, JobCreateCopy, JobCreateDelete, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:
 		return s.handleJob(ctx, name, payload)
 	case ProviderConnectSSH:
