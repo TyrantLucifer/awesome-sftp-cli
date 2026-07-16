@@ -222,7 +222,7 @@ switch -- $env(AMSFTP_CASE_MODE) {
     exit 0
   }
   failure {
-    after 1000
+    expect_prompt {(?i)connect .* failed:}
     send -- "q"
     expect_process_exit
     record_observation bounded_failure

@@ -1233,6 +1233,9 @@ func TestManagerNeverPersistsProviderErrorDetails(t *testing.T) {
 			t.Fatalf("event persisted secret: %s", event.PayloadJSON)
 		}
 	}
+	// Wait for the manager worker to leave its terminal transition before
+	// asserting that the store is idle enough for a WAL truncate.
+	manager.Close()
 	if err := store.CheckpointIdle(context.Background()); err != nil {
 		t.Fatalf("CheckpointIdle(): %v", err)
 	}
