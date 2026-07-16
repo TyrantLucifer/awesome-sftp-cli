@@ -89,24 +89,30 @@ func TestResolveEditorUsesStrictPrecedenceAndFailsClosed(t *testing.T) {
 	visual := writeExecutable(t, dir, "visual-editor")
 	editor := writeExecutable(t, dir, "editor")
 
-	resolved, err := ResolveEditor(map[string]string{
-		"AMSFTP_EDITOR": filepath.Base(amsftp) + ` --wait "two words"`,
-		"VISUAL":        filepath.Base(visual),
-		"EDITOR":        filepath.Base(editor),
+	resolved, err := ResolveEditor(&Command{Executable: filepath.Base(amsftp), Args: []string{"--wait", "$literal"}}, map[string]string{
+		"VISUAL": filepath.Base(visual),
+		"EDITOR": filepath.Base(editor),
 	}, dir)
 	if err != nil {
 		t.Fatalf("ResolveEditor: %v", err)
 	}
-	if resolved.Executable != amsftp || !reflect.DeepEqual(resolved.Args, []string{"--wait", "two words"}) {
+	if resolved.Executable != amsftp || !reflect.DeepEqual(resolved.Args, []string{"--wait", "$literal"}) {
 		t.Fatalf("resolved = %#v", resolved)
 	}
 
-	_, err = ResolveEditor(map[string]string{
-		"AMSFTP_EDITOR": "broken | command",
-		"VISUAL":        filepath.Base(visual),
+	_, err = ResolveEditor(nil, map[string]string{
+		"VISUAL": "broken | command",
+		"EDITOR": filepath.Base(editor),
 	}, dir)
 	if err == nil {
 		t.Fatal("invalid higher-priority editor unexpectedly fell back")
+	}
+
+	_, err = ResolveEditor(&Command{Executable: "missing"}, map[string]string{
+		"VISUAL": filepath.Base(visual),
+	}, dir)
+	if err == nil {
+		t.Fatal("invalid explicit editor unexpectedly fell back")
 	}
 }
 
@@ -115,10 +121,9 @@ func TestResolveEditorSkipsEmptyValuesAndUsesDefaults(t *testing.T) {
 
 	dir := t.TempDir()
 	visual := writeExecutable(t, dir, "visual-editor")
-	resolved, err := ResolveEditor(map[string]string{
-		"AMSFTP_EDITOR": "",
-		"VISUAL":        filepath.Base(visual),
-		"EDITOR":        "missing",
+	resolved, err := ResolveEditor(nil, map[string]string{
+		"VISUAL": filepath.Base(visual),
+		"EDITOR": "missing",
 	}, dir)
 	if err != nil {
 		t.Fatalf("ResolveEditor: %v", err)
@@ -129,7 +134,7 @@ func TestResolveEditorSkipsEmptyValuesAndUsesDefaults(t *testing.T) {
 
 	dir = t.TempDir()
 	vim := writeExecutable(t, dir, "vim")
-	resolved, err = ResolveEditor(nil, dir)
+	resolved, err = ResolveEditor(nil, nil, dir)
 	if err != nil {
 		t.Fatalf("ResolveEditor defaults: %v", err)
 	}

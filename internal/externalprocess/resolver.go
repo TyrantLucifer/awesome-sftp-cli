@@ -58,10 +58,18 @@ func (command ResolvedCommand) Revalidate() error {
 	return nil
 }
 
-// ResolveEditor applies the frozen environment priority. A non-empty invalid
-// higher-priority value is an error and never falls through to a lower value.
-func ResolveEditor(environment map[string]string, pathEnvironment string) (ResolvedCommand, error) {
-	for _, key := range []string{"AMSFTP_EDITOR", "VISUAL", "EDITOR"} {
+// ResolveEditor applies the frozen explicit configuration then environment
+// priority. A non-empty invalid higher-priority value is an error and never
+// falls through to a lower value.
+func ResolveEditor(explicit *Command, environment map[string]string, pathEnvironment string) (ResolvedCommand, error) {
+	if explicit != nil {
+		resolved, err := ResolveCommand(*explicit, pathEnvironment)
+		if err != nil {
+			return ResolvedCommand{}, fmt.Errorf("resolve explicit editor: %w", err)
+		}
+		return resolved, nil
+	}
+	for _, key := range []string{"VISUAL", "EDITOR"} {
 		value := environment[key]
 		if value == "" {
 			continue
