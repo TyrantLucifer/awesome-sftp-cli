@@ -214,7 +214,27 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeEditRecovery {
 		renderEditRecoveryModal(surface, model, width, height)
 	}
+	if model.Mode == ModeCacheClearConfirm {
+		renderCacheClearModal(surface, model, width, height)
+	}
 	return stats
+}
+
+func renderCacheClearModal(surface Surface, model Model, width, height int) {
+	if width < 28 || height < 6 {
+		return
+	}
+	modalWidth := min(width-4, 82)
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, height/2-2)
+	scope := "current workspace"
+	if model.CacheClearScope == CacheClearAll {
+		scope = "all workspaces"
+	}
+	surface.PutClipped(x, y, modalWidth, " Clear eligible cache ", StyleActiveHeader)
+	surface.PutClipped(x, y+1, modalWidth, "Scope: "+scope, StylePlain)
+	surface.PutClipped(x, y+2, modalWidth, "Dirty, pinned, leased, referenced, edit-bound, and unknown content is preserved.", StyleError)
+	surface.PutClipped(x, y+3, modalWidth, "Enter clear · Esc cancel", StyleStatus)
 }
 
 func renderEditRecoveryModal(surface Surface, model Model, width, height int) {

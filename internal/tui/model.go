@@ -42,6 +42,7 @@ const (
 	ModeEditSaveAs        Mode = "edit_save_as"
 	ModeEditLaunchConfirm Mode = "edit_launch_confirm"
 	ModeEditRecovery      Mode = "edit_recovery"
+	ModeCacheClearConfirm Mode = "cache_clear_confirm"
 )
 
 type SortKey string
@@ -426,6 +427,13 @@ type EditRecoveryState struct {
 	Cursor int
 }
 
+type CacheClearScope string
+
+const (
+	CacheClearWorkspace CacheClearScope = "workspace"
+	CacheClearAll       CacheClearScope = "all"
+)
+
 func (p PreviewState) DisplayText() string {
 	if p.Binary {
 		return "[binary preview omitted]"
@@ -461,6 +469,7 @@ type Model struct {
 	Notice             string
 	DeleteConfirmation int
 	RecoverableEdits   int
+	CacheClearScope    CacheClearScope
 
 	workspaceName []rune
 	pathInput     []rune
@@ -532,6 +541,7 @@ const (
 	IntentEditLaunch         IntentKind = "edit_launch"
 	IntentEditRecoverable    IntentKind = "edit_recoverable"
 	IntentEditResume         IntentKind = "edit_resume"
+	IntentCacheClear         IntentKind = "cache_clear"
 	IntentRunCommand         IntentKind = "run_command"
 	IntentShell              IntentKind = "shell"
 )
@@ -576,6 +586,7 @@ type Intent struct {
 	EditDecision          edit.DecisionKind
 	SaveAsTarget          domain.Location
 	RefreshAfterEdit      bool
+	CacheClearScope       CacheClearScope
 }
 
 type Key string
@@ -675,6 +686,12 @@ type PreviewChunk struct {
 	Kind       string
 	Summary    string
 	Message    string
+}
+type PreviewTerminalImage struct {
+	Generation uint64
+	Identity   PreviewRequestIdentity
+	Protocol   builtinpreview.ImageProtocol
+	Data       []byte
 }
 type AuthChallengeReceived struct {
 	ChallengeID string
@@ -777,6 +794,12 @@ type EditRecoveryLoaded struct {
 	Sessions []EditRecoveryItem
 	Message  string
 }
+type CacheCleared struct {
+	Deleted        int
+	Protected      int
+	RemainingBytes int64
+	Message        string
+}
 
 func (KeyPress) isAction()              {}
 func (CountDigit) isAction()            {}
@@ -788,6 +811,7 @@ func (ListingFailed) isAction()         {}
 func (SetFilter) isAction()             {}
 func (BeginPreview) isAction()          {}
 func (PreviewChunk) isAction()          {}
+func (PreviewTerminalImage) isAction()  {}
 func (AuthChallengeReceived) isAction() {}
 func (PaneConnected) isAction()         {}
 func (PaneConnectionChanged) isAction() {}
@@ -805,6 +829,7 @@ func (EditLaunchReady) isAction()       {}
 func (EditSessionFinished) isAction()   {}
 func (EditSessionFailed) isAction()     {}
 func (EditRecoveryLoaded) isAction()    {}
+func (CacheCleared) isAction()          {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

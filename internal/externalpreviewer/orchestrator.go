@@ -29,9 +29,10 @@ type LeasedMaterialization struct {
 }
 
 type OrchestrationRequest struct {
-	Path      string
-	MediaType string
-	BuiltIn   preview.Result
+	Path          string
+	MediaType     string
+	BuiltIn       preview.Result
+	RequestedView preview.ViewMode
 
 	HasFileSize bool
 	FileSize    uint64
@@ -80,7 +81,7 @@ const leaseReleaseTimeout = 5 * time.Second
 // its lease remains active for the entire image read or child lifetime.
 func Orchestrate(ctx context.Context, runner *Runner, request OrchestrationRequest) (outcome OrchestrationOutcome) {
 	outcome = OrchestrationOutcome{Kind: OutcomeBuiltIn, Code: CodeNoFallback, BuiltIn: request.BuiltIn, ImageProtocol: preview.ImageProtocolNone, External: noMatchResult()}
-	if ctx == nil || request.Path == "" || !externalEligible(request.BuiltIn) {
+	if ctx == nil || request.Path == "" || !externalEligible(request.BuiltIn, request.RequestedView) {
 		return outcome
 	}
 	if ctx.Err() != nil {
@@ -178,8 +179,8 @@ func Orchestrate(ctx context.Context, runner *Runner, request OrchestrationReque
 	return outcome
 }
 
-func externalEligible(result preview.Result) bool {
-	if result.View != "" && result.View != preview.ViewAuto {
+func externalEligible(result preview.Result, requested preview.ViewMode) bool {
+	if requested != "" && requested != preview.ViewAuto {
 		return false
 	}
 	return result.Kind == preview.KindImage || result.Kind == preview.KindBinary

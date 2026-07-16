@@ -290,6 +290,10 @@ func TestExternalPreviewerHelperProcess(t *testing.T) {
 		_, _ = fmt.Fprint(os.Stdout, strings.Repeat("stdout-must-be-discarded\n", 1024))
 		_, _ = fmt.Fprint(os.Stderr, strings.Repeat("diagnostic "+secret+"\r\n\u2028", 1024))
 		os.Exit(17)
+	case "ansi-diagnostic":
+		secret := arguments[1]
+		_, _ = fmt.Fprint(os.Stderr, "\x1b[2Jdiagnostic "+secret+"\r\n")
+		os.Exit(17)
 	case "exit":
 		code, _ := strconv.Atoi(arguments[1])
 		os.Exit(code)

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -24,7 +25,7 @@ func TestDefaultConfigIsValid(t *testing.T) {
 	}
 
 	got := Default()
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("Default() = %#v, want %#v", got, want)
 	}
 	if err := got.Validate(); err != nil {
@@ -37,7 +38,7 @@ func TestDecodeAcceptsCanonicalConfig(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode() returned error: %v", err)
 	}
-	if got != Default() {
+	if !reflect.DeepEqual(got, Default()) {
 		t.Fatalf("Decode() = %#v, want %#v", got, Default())
 	}
 }
@@ -131,6 +132,80 @@ func TestConfigValidateRejectsInvalidValues(t *testing.T) {
 				t.Fatalf("Validate() error = %q, want it to contain %q", err, test.wantError)
 			}
 		})
+	}
+}
+
+func TestDecodeAcceptsBoundedStructuredExternalCommands(t *testing.T) {
+	input := `{
+	  "schema_version": 1,
+	  "ipc": {"max_frame_bytes": 8388608},
+	  "listing": {"default_page_size": 256, "max_page_size": 4096},
+	  "external": {
+	    "editor": {"executable": "vim", "argv": ["-f"]},
+	    "opener": {"executable": "/usr/bin/open", "argv": []},
+	    "previewers": [{
+	      "name": "pdf",
+	      "media_types": ["application/pdf"],
+	      "extensions": [".pdf"],
+	      "command": {"executable": "pdftotext", "argv": ["-"]},
+	      "timeout_ms": 5000,
+	      "max_input_bytes": 1048576,
+	      "require_complete": true
+	    }]
+	  }
+	}`
+	got, err := Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.External.Editor == nil || got.External.Editor.Executable != "vim" || len(got.External.Previewers) != 1 {
+		t.Fatalf("external config = %#v", got.External)
+	}
+}
+
+func TestExternalConfigRejectsUnboundedOrAmbiguousRules(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{name: "empty editor", mutate: func(config *Config) {
+			config.External.Editor = &CommandConfig{}
+		}},
+		{name: "control argument", mutate: func(config *Config) {
+			config.External.Opener = &CommandConfig{Executable: "/usr/bin/open", Args: []string{"bad\narg"}}
+		}},
+		{name: "empty match", mutate: func(config *Config) {
+			config.External.Previewers = []PreviewerConfig{validPreviewerConfig("one")}
+			config.External.Previewers[0].MediaTypes = nil
+			config.External.Previewers[0].Extensions = nil
+		}},
+		{name: "duplicate name", mutate: func(config *Config) {
+			config.External.Previewers = []PreviewerConfig{validPreviewerConfig("one"), validPreviewerConfig("one")}
+		}},
+		{name: "zero timeout", mutate: func(config *Config) {
+			config.External.Previewers = []PreviewerConfig{validPreviewerConfig("one")}
+			config.External.Previewers[0].TimeoutMS = 0
+		}},
+		{name: "zero input limit", mutate: func(config *Config) {
+			config.External.Previewers = []PreviewerConfig{validPreviewerConfig("one")}
+			config.External.Previewers[0].MaxInputBytes = 0
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			config := Default()
+			test.mutate(&config)
+			if err := config.Validate(); err == nil {
+				t.Fatal("Validate() returned nil error")
+			}
+		})
+	}
+}
+
+func validPreviewerConfig(name string) PreviewerConfig {
+	return PreviewerConfig{
+		Name: name, Extensions: []string{".txt"},
+		Command: CommandConfig{Executable: "preview"}, TimeoutMS: 1000, MaxInputBytes: 1024,
 	}
 }
 

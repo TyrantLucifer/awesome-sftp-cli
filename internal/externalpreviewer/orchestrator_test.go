@@ -33,6 +33,25 @@ func TestOrchestrateKeepsSupportedBuiltinFormatsOutOfExternalProcesses(t *testin
 	}
 }
 
+func TestOrchestrateHonorsTheRequestedViewInsteadOfTheResolvedBinaryView(t *testing.T) {
+	called := false
+	runner := newTestRunner(t, []Rule{{
+		Name: "binary", Match: Match{Extensions: []string{".bin"}}, Command: helperCommand(t, "exit", "0"),
+		Timeout: 5 * time.Second, MaxInputBytes: 1024,
+	}})
+	outcome := Orchestrate(context.Background(), runner, OrchestrationRequest{
+		Path: "asset.bin", RequestedView: preview.ViewMetadata,
+		BuiltIn: preview.Result{Kind: preview.KindBinary, View: preview.ViewMetadata},
+		Materialize: func(context.Context, int64) (LeasedMaterialization, error) {
+			called = true
+			return LeasedMaterialization{}, nil
+		},
+	})
+	if outcome.Kind != OutcomeBuiltIn || called {
+		t.Fatalf("explicit hex outcome=%+v materialized=%t", outcome, called)
+	}
+}
+
 func TestOrchestrateCanceledRequestNeverMaterializes(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())

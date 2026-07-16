@@ -1,0 +1,119 @@
+//go:build darwin || linux
+
+package app
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"runtime"
+	"time"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"golang.org/x/sys/unix"
+)
+
+type externalRuntimeConfig struct {
+	editor    externalprocess.ResolvedCommand
+	editorErr error
+	opener    externalprocess.ResolvedCommand
+	openerErr error
+	previewer *externalpreviewer.Runner
+}
+
+func loadApplicationConfig(path string) (config.Config, error) {
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return config.Default(), nil
+	} else if err != nil {
+		return config.Config{}, fmt.Errorf("inspect config: %w", err)
+	}
+	if err := platform.ValidatePrivateFile(path, platform.ValidatePersistent); err != nil {
+		return config.Config{}, fmt.Errorf("validate config: %w", err)
+	}
+	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
+	if err != nil {
+		return config.Config{}, fmt.Errorf("open config: %w", err)
+	}
+	file := os.NewFile(uintptr(descriptor), path)
+	if file == nil {
+		_ = unix.Close(descriptor)
+		return config.Config{}, errors.New("open config: invalid descriptor")
+	}
+	defer file.Close()
+	opened, err := file.Stat()
+	if err != nil || !opened.Mode().IsRegular() {
+		return config.Config{}, fmt.Errorf("open config: invalid regular file")
+	}
+	current, err := os.Lstat(path)
+	if err != nil || !os.SameFile(opened, current) {
+		return config.Config{}, errors.New("open config: file identity changed")
+	}
+	decoded, err := config.Decode(file)
+	if err != nil {
+		return config.Config{}, err
+	}
+	return decoded, nil
+}
+
+func resolveExternalRuntimeConfig(input config.ExternalConfig, environment []string) (externalRuntimeConfig, error) {
+	environmentMap := environmentValues(environment)
+	pathEnvironment := environmentMap["PATH"]
+	editor, editorErr := externalprocess.ResolveEditor(commandConfig(input.Editor), environmentMap, pathEnvironment)
+	opener, openerErr := externalprocess.ResolveOpener(commandConfig(input.Opener), runtime.GOOS, pathEnvironment)
+	result := externalRuntimeConfig{editor: editor, editorErr: editorErr, opener: opener, openerErr: openerErr}
+	if len(input.Previewers) == 0 {
+		return result, nil
+	}
+	rules := make([]externalpreviewer.Rule, 0, len(input.Previewers))
+	for index, item := range input.Previewers {
+		command, err := externalprocess.ResolveCommand(externalprocess.Command{Executable: item.Command.Executable, Args: append([]string(nil), item.Command.Args...)}, pathEnvironment)
+		if err != nil {
+			return externalRuntimeConfig{}, fmt.Errorf("resolve external previewer %d: %w", index, err)
+		}
+		rules = append(rules, externalpreviewer.Rule{
+			Name: item.Name, Match: externalpreviewer.Match{MediaTypes: append([]string(nil), item.MediaTypes...), Extensions: append([]string(nil), item.Extensions...)},
+			Command: command, Timeout: time.Duration(item.TimeoutMS) * time.Millisecond, MaxInputBytes: item.MaxInputBytes, RequireComplete: item.RequireComplete,
+		})
+	}
+	runner, err := externalpreviewer.New(rules, environment)
+	if err != nil {
+		return externalRuntimeConfig{}, err
+	}
+	result.previewer = runner
+	return result, nil
+}
+
+func (runtime externalRuntimeConfig) command(purpose edit.Purpose) (externalprocess.ResolvedCommand, error) {
+	switch purpose {
+	case edit.PurposeEditor:
+		return runtime.editor, runtime.editorErr
+	case edit.PurposeOpener:
+		return runtime.opener, runtime.openerErr
+	default:
+		return externalprocess.ResolvedCommand{}, fmt.Errorf("resolve external action: unsupported purpose %q", purpose)
+	}
+}
+
+func commandConfig(input *config.CommandConfig) *externalprocess.Command {
+	if input == nil {
+		return nil
+	}
+	return &externalprocess.Command{Executable: input.Executable, Args: append([]string(nil), input.Args...)}
+}
+
+func environmentValues(environment []string) map[string]string {
+	result := make(map[string]string)
+	for _, entry := range environment {
+		for index := range entry {
+			if entry[index] == '=' {
+				result[entry[:index]] = entry[index+1:]
+				break
+			}
+		}
+	}
+	return result
+}

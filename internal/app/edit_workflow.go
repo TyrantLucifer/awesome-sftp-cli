@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"runtime"
 	"strings"
 	"time"
 
@@ -737,26 +736,7 @@ func externalExitMessage(result terminalhandoff.Result, err error) string {
 	}
 }
 
-func prepareExternalEdit(ctx context.Context, materialization string, purpose edit.Purpose, environment []string, screen handoffTCellScreen) (preparedExternalEdit, error) {
-	environmentMap := make(map[string]string)
-	for _, entry := range environment {
-		for index := range entry {
-			if entry[index] == '=' {
-				environmentMap[entry[:index]] = entry[index+1:]
-				break
-			}
-		}
-	}
-	var resolved externalprocess.ResolvedCommand
-	var err error
-	if purpose == edit.PurposeEditor {
-		resolved, err = externalprocess.ResolveEditor(nil, environmentMap, environmentMap["PATH"])
-	} else {
-		resolved, err = externalprocess.ResolveOpener(nil, runtime.GOOS, environmentMap["PATH"])
-	}
-	if err != nil {
-		return preparedExternalEdit{}, err
-	}
+func prepareExternalEdit(ctx context.Context, materialization string, resolved externalprocess.ResolvedCommand, environment []string, screen handoffTCellScreen) (preparedExternalEdit, error) {
 	plan, err := externalprocess.NewPlan(resolved, materialization, environment)
 	if err != nil {
 		return preparedExternalEdit{}, err

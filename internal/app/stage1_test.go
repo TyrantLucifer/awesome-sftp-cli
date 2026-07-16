@@ -132,6 +132,33 @@ func TestPlanPreviewReadRoutesHeadTailAndAbsoluteRange(t *testing.T) {
 	}
 }
 
+func TestTerminalImageOutputAcceptsOnlyTheCurrentVisiblePreviewIdentity(t *testing.T) {
+	endpoint := domain.Endpoint{ID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: domain.EndpointLocal}
+	location := domain.Location{EndpointID: endpoint.ID, Path: "/image.png"}
+	model := tui.NewModel(tui.NewPaneState(endpoint, location), tui.NewPaneState(endpoint, location))
+	model.Drawer.Mode = tui.DrawerPreview
+	version := "v1"
+	source, err := builtinpreview.FreezeSource(location, domain.Fingerprint{VersionID: &version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := tui.PreviewRequestIdentity{RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", Pane: tui.Left, Source: source, UIGeneration: 7}
+	model, _ = tui.Reduce(model, tui.BeginPreview{Generation: 7, Location: location, Identity: identity, View: builtinpreview.ViewAuto})
+	current := tui.PreviewTerminalImage{Generation: 7, Identity: identity, Protocol: builtinpreview.ImageProtocolKitty, Data: []byte("bounded")}
+	if !terminalImageCurrent(model, current) {
+		t.Fatal("current terminal image was rejected")
+	}
+	stale := current
+	stale.Generation = 6
+	if terminalImageCurrent(model, stale) {
+		t.Fatal("stale terminal image was accepted")
+	}
+	model.Drawer.Mode = tui.DrawerClosed
+	if terminalImageCurrent(model, current) {
+		t.Fatal("hidden preview terminal image was accepted")
+	}
+}
+
 func TestEndpointSwitchFailurePreservesCommittedConnectionState(t *testing.T) {
 	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
 	location, err := domain.NewLocation(endpointID, "/tmp")

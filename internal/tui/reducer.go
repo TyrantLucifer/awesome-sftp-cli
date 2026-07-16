@@ -65,6 +65,15 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		if model.Mode == ModePath {
+			if len(model.pathInput) == 0 && (action.Text == "c" || action.Text == "C") {
+				model.Mode = ModeCacheClearConfirm
+				model.CacheClearScope = CacheClearWorkspace
+				if action.Text == "C" {
+					model.CacheClearScope = CacheClearAll
+				}
+				model.Notice = "cache clear only removes currently eligible managed content"
+				return model, nil
+			}
 			if len(model.pathInput) == 0 && (action.Text == "s" || action.Text == "S") {
 				pane := model.Panes[model.Active]
 				model.Mode = ModeNormal
@@ -478,6 +487,12 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			model.Notice = fmt.Sprintf("%d recoverable edit session(s) retained", action.Count)
 		}
 		return model, nil
+	case CacheCleared:
+		model.Notice = action.Message
+		if model.Notice == "" {
+			model.Notice = fmt.Sprintf("cache cleared %d eligible item(s); %d protected; %d bytes remain", action.Deleted, action.Protected, action.RemainingBytes)
+		}
+		return model, nil
 	default:
 		return model, nil
 	}
@@ -499,6 +514,22 @@ func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
+	if model.Mode == ModeCacheClearConfirm {
+		switch key {
+		case KeyEscape:
+			model.Mode = ModeNormal
+			model.CacheClearScope = ""
+			model.Notice = "cache clear canceled"
+			return model, nil
+		case KeySubmit:
+			scope := model.CacheClearScope
+			model.Mode = ModeNormal
+			model.CacheClearScope = ""
+			return model, []Intent{{Kind: IntentCacheClear, Pane: model.Active, Location: model.Panes[model.Active].Location, CacheClearScope: scope}}
+		default:
+			return model, nil
+		}
+	}
 	if model.Mode == ModeEditRecovery {
 		if len(model.EditRecovery.Items) == 0 {
 			model.Mode = ModeNormal

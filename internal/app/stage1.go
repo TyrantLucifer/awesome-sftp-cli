@@ -27,6 +27,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
@@ -462,6 +463,16 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
+	applicationConfig, err := loadApplicationConfig(paths.ConfigFile)
+	if err != nil {
+		return err
+	}
+	environment := append([]string(nil), os.Environ()...)
+	externalRuntime, err := resolveExternalRuntimeConfig(applicationConfig.External, environment)
+	if err != nil {
+		return err
+	}
+	terminalImageCapability := probeTerminalImageCapability(environment)
 	client, err := connectDaemon(ctx, paths, purpose)
 	if err != nil {
 		return err
@@ -547,7 +558,11 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		editWorkspace = "interactive"
 	}
 	editFlow, err := newEditCoordinator(client, localEndpoint.ID, editWorkspace, cache.Policy(cachePolicy), func(launchCtx context.Context, materialization string, purpose edit.Purpose) (preparedExternalEdit, error) {
-		return prepareExternalEdit(launchCtx, materialization, purpose, append([]string(nil), os.Environ()...), screen)
+		command, commandErr := externalRuntime.command(purpose)
+		if commandErr != nil {
+			return preparedExternalEdit{}, commandErr
+		}
+		return prepareExternalEdit(launchCtx, materialization, command, environment, screen)
 	})
 	if err != nil {
 		return err
@@ -613,6 +628,28 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			return
 		case tui.IntentEditRecoverable:
 			actions <- editFlow.Recoverable(runCtx, tui.MaxRecoverableEditSessions)
+			return
+		case tui.IntentCacheClear:
+			activeClient := client
+			go func() {
+				scope := cachemanager.ClearWorkspace
+				workspace := editWorkspace
+				if intent.CacheClearScope == tui.CacheClearAll {
+					scope, workspace = cachemanager.ClearAll, ""
+				}
+				var response daemon.CacheClearResponse
+				clearErr := activeClient.Call(runCtx, daemon.CacheClear, daemon.CacheClearRequest{
+					Scope: scope, WorkspaceID: workspace, MaxTargets: cache.DefaultMaxCandidates, MaxVisited: 10_000,
+				}, &response)
+				result := tui.CacheCleared{Deleted: response.Deleted, Protected: response.Protected, RemainingBytes: response.Remaining.Bytes}
+				if clearErr != nil {
+					result.Message = "cache clear refused safely: " + clientErrorMessage(clearErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
 			return
 		case tui.IntentConnectEndpoint:
 			select {
@@ -829,7 +866,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			go func() {
 				defer cancel()
-				previewLocation(requestCtx, activeClient, identity, view, intent.Location, actions)
+				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability, actions)
 			}()
 			return
 		case tui.IntentPreviewCancel:
@@ -988,9 +1025,16 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	defer jobRefreshTicker.Stop()
 	leaseHeartbeatTicker := time.NewTicker(cache.DefaultLeaseHeartbeat)
 	defer leaseHeartbeatTicker.Stop()
+	var pendingTerminalImage *tui.PreviewTerminalImage
 	for {
 		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
 		screen.Show()
+		if pendingTerminalImage != nil {
+			if err := writeTerminalImage(pendingTerminalImage.Data); err != nil {
+				model.Notice = "terminal image output failed safely: " + err.Error()
+			}
+			pendingTerminalImage = nil
+		}
 		select {
 		case <-runCtx.Done():
 			return nil
@@ -1096,6 +1140,14 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				startIntent(intent)
 			}
 		case action := <-actions:
+			if image, ok := action.(tui.PreviewTerminalImage); ok {
+				if terminalImageCurrent(model, image) {
+					copy := image
+					copy.Data = append([]byte(nil), image.Data...)
+					pendingTerminalImage = &copy
+				}
+				continue
+			}
 			listingCurrent := true
 			switch result := action.(type) {
 			case tui.ListingPage:
@@ -1156,6 +1208,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 		}
 	}
+}
+
+func terminalImageCurrent(model tui.Model, image tui.PreviewTerminalImage) bool {
+	return len(image.Data) != 0 && image.Generation == model.Preview.Generation && image.Identity == model.Preview.Identity && model.Drawer.Mode == tui.DrawerPreview
 }
 
 func workspaceDocument(model tui.Model, updatedAt time.Time, cachePolicy workspace.CachePolicy) (workspace.Document, error) {
@@ -1546,7 +1602,30 @@ func recoveryParent(location domain.Location) (domain.Location, bool) {
 	return domain.Location{EndpointID: location.EndpointID, Path: domain.CanonicalPath(parent)}, true
 }
 
-func previewLocation(ctx context.Context, client *daemon.Client, identity tui.PreviewRequestIdentity, view builtinpreview.ViewMode, location domain.Location, actions chan<- tui.Action) {
+func writeTerminalImage(data []byte) error {
+	limits := builtinpreview.DefaultImageOutputLimits()
+	if len(data) == 0 || len(data) > limits.MaxOutputBytes {
+		return fmt.Errorf("terminal image bytes exceed the bounded output contract")
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
+	if err != nil {
+		return err
+	}
+	defer tty.Close()
+	for len(data) != 0 {
+		written, writeErr := tty.Write(data)
+		if writeErr != nil {
+			return writeErr
+		}
+		if written <= 0 {
+			return io.ErrShortWrite
+		}
+		data = data[written:]
+	}
+	return nil
+}
+
+func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.PreviewRequestIdentity, view builtinpreview.ViewMode, location domain.Location, workspaceID cache.WorkspaceID, policy cache.Policy, runner *externalpreviewer.Runner, capability builtinpreview.ImageCapabilityProof, actions chan<- tui.Action) {
 	generation := identity.UIGeneration
 	var statResponse ipc.ProviderStatResponse
 	if err := client.Call(ctx, daemon.ProviderStat, ipc.ProviderStatRequest{Location: ipc.EncodeLocation(location)}, &statResponse); err != nil {
@@ -1613,6 +1692,12 @@ func previewLocation(ctx context.Context, client *daemon.Client, identity tui.Pr
 		Path: string(location.Path), Data: window.Data, View: view, Offset: window.Offset, Complete: window.Complete,
 		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
 	}, builtinpreview.DefaultLimits())
+	outcome := externalpreviewer.Orchestrate(ctx, runner, externalpreviewer.OrchestrationRequest{
+		Path: string(location.Path), BuiltIn: result, RequestedView: view,
+		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
+		Capability: capability, ImageLimits: builtinpreview.DefaultImageOutputLimits(),
+		Materialize: previewMaterializer(client, location, source, entry.Metadata.Size != nil, fileSize, workspaceID, policy, string(identity.RequestID)),
+	})
 	summary := result.Summary
 	if result.Warning != "" {
 		if summary != "" {
@@ -1620,10 +1705,38 @@ func previewLocation(ctx context.Context, client *daemon.Client, identity tui.Pr
 		}
 		summary += result.Warning
 	}
+	switch outcome.Kind {
+	case externalpreviewer.OutcomeTerminalImage:
+		if summary != "" {
+			summary += "; "
+		}
+		summary += "terminal image rendered via " + string(outcome.ImageProtocol)
+	case externalpreviewer.OutcomeExternal:
+		if summary != "" {
+			summary += "; "
+		}
+		summary += "external previewer " + outcome.External.Rule + " completed"
+	default:
+		if outcome.External.Matched && outcome.External.Status != externalpreviewer.StatusSucceeded {
+			if summary != "" {
+				summary += "; "
+			}
+			summary += "external previewer " + outcome.External.Rule + " " + string(outcome.External.Code)
+		}
+	}
+	if outcome.ReleaseFailed {
+		if summary != "" {
+			summary += "; "
+		}
+		summary += "preview cache lease release needs recovery"
+	}
 	actions <- tui.PreviewChunk{
 		Generation: generation, Identity: identity, Data: []byte(result.Text), Done: true,
 		Truncated: result.Truncated || result.Partial, Rendered: true,
 		Kind: string(result.Kind), Summary: summary,
+	}
+	if outcome.Kind == externalpreviewer.OutcomeTerminalImage && len(outcome.TerminalBytes) != 0 {
+		actions <- tui.PreviewTerminalImage{Generation: generation, Identity: identity, Protocol: outcome.ImageProtocol, Data: append([]byte(nil), outcome.TerminalBytes...)}
 	}
 }
 
