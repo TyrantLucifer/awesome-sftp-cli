@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"path"
 	"time"
@@ -88,7 +87,7 @@ func ProbeAttributes(ctx context.Context, config Config, canonicalAbsoluteRawPat
 	if err != nil {
 		return SFTPAttributes{}, fmt.Errorf("revalidate OpenSSH executable for attribute probe: %w", err)
 	}
-	if !os.SameFile(before, after) {
+	if !platform.SameExecutableIdentity(before, after) {
 		return SFTPAttributes{}, errors.New("OpenSSH executable changed before attribute probe start")
 	}
 	if err := command.Start(); err != nil {
