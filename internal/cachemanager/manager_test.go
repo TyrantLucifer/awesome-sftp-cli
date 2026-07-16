@@ -66,7 +66,7 @@ func TestPublishCompleteBindsLocationFingerprintAndDeduplicatedContent(t *testin
 }
 
 func TestPublishCompleteRejectsShortOrWeakSourceWithoutCatalogRows(t *testing.T) {
-	manager, _ := newManager(t)
+	manager, files := newManager(t)
 	request := PublishRequest{
 		Location:          testLocation(t, "/short"),
 		SourceFingerprint: testSourceFingerprint(10),
@@ -92,6 +92,235 @@ func TestPublishCompleteRejectsShortOrWeakSourceWithoutCatalogRows(t *testing.T)
 	}
 	if len(snapshot.Blobs) != 0 || len(snapshot.Entries) != 0 {
 		t.Fatalf("failed publication wrote catalog rows: %#v", snapshot)
+	}
+	reconcile, err := manager.Reconcile(context.Background(), 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reconcile.NeedsAttention || len(reconcile.Filesystem.VerifiedBlobs) != 0 || len(reconcile.Filesystem.Orphans) != 0 {
+		t.Fatalf("failed short publication left filesystem residue: %#v", reconcile)
+	}
+	if _, err := files.Scan(100); err != nil {
+		t.Fatalf("scan cache after rejected publication: %v", err)
+	}
+}
+
+func TestPublishCompleteAdmitsByEvictingCleanLRUBeforeCatalogCommit(t *testing.T) {
+	manager, files := newManager(t)
+	ctx := context.Background()
+	oldContent := []byte("old")
+	old, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/old"), SourceFingerprint: testSourceFingerprint(uint64(len(oldContent))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(oldContent), MaxBytes: int64(len(oldContent)), ExpectedSize: sizePointer(int64(len(oldContent))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: 3, GlobalEntries: 1, WorkspaceBytes: 3, MaxCandidates: 8}
+	newContent := []byte("new")
+	newResult, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/new"), SourceFingerprint: testSourceFingerprint(uint64(len(newContent))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(newContent), MaxBytes: int64(len(newContent)), ExpectedSize: sizePointer(int64(len(newContent))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := files.InspectBlob(old.Blob.ID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("old LRU blob survived admission: %v", err)
+	}
+	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := cache.Account(snapshot)
+	if err != nil || usage.Global != (cache.Quantity{Bytes: 3, Entries: 1}) || len(snapshot.Entries) != 1 || snapshot.Entries[0].ID != newResult.Entry.ID {
+		t.Fatalf("admitted snapshot = %#v usage=%#v err=%v", snapshot, usage, err)
+	}
+}
+
+func TestPublishCompleteRejectsWhenOnlyProtectedContentCouldMakeRoom(t *testing.T) {
+	manager, files := newManager(t)
+	ctx := context.Background()
+	protectedContent := []byte("keep")
+	protected, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/protected-admission"), SourceFingerprint: testSourceFingerprint(uint64(len(protectedContent))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Pinned: true, Source: bytes.NewReader(protectedContent), MaxBytes: int64(len(protectedContent)), ExpectedSize: sizePointer(int64(len(protectedContent))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: 4, GlobalEntries: 1, WorkspaceBytes: 4, MaxCandidates: 8}
+	incoming := []byte("deny")
+	_, err = manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/denied-admission"), SourceFingerprint: testSourceFingerprint(uint64(len(incoming))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(incoming), MaxBytes: int64(len(incoming)), ExpectedSize: sizePointer(int64(len(incoming))),
+	})
+	if !errors.Is(err, ErrQuotaUnsatisfied) {
+		t.Fatalf("protected admission error = %v, want ErrQuotaUnsatisfied", err)
+	}
+	if _, err := files.InspectBlob(protected.Blob.ID); err != nil {
+		t.Fatalf("protected blob changed: %v", err)
+	}
+	snapshot, loadErr := manager.catalog.LoadSnapshot(ctx)
+	if loadErr != nil || len(snapshot.Blobs) != 1 || len(snapshot.Entries) != 1 || snapshot.Entries[0].ID != protected.Entry.ID {
+		t.Fatalf("protected admission snapshot = %#v, %v", snapshot, loadErr)
+	}
+	reconcile, reconcileErr := manager.Reconcile(ctx, 100)
+	if reconcileErr != nil || reconcile.NeedsAttention {
+		t.Fatalf("reconcile after denied admission = %#v, %v", reconcile, reconcileErr)
+	}
+}
+
+func TestPublishCompleteEnforcesWorkspaceShareAtAdmission(t *testing.T) {
+	manager, _ := newManager(t)
+	ctx := context.Background()
+	firstContent := []byte("123456")
+	first, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/workspace-first"), SourceFingerprint: testSourceFingerprint(uint64(len(firstContent))), WorkspaceID: "workspace-a",
+		Policy: cache.PolicyLRU, Pinned: true, Source: bytes.NewReader(firstContent), MaxBytes: int64(len(firstContent)), ExpectedSize: sizePointer(int64(len(firstContent))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: 20, GlobalEntries: 4, WorkspaceBytes: 10, MaxCandidates: 8}
+	secondContent := []byte("abcde")
+	_, err = manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/workspace-second"), SourceFingerprint: testSourceFingerprint(uint64(len(secondContent))), WorkspaceID: "workspace-a",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(secondContent), MaxBytes: int64(len(secondContent)), ExpectedSize: sizePointer(int64(len(secondContent))),
+	})
+	if !errors.Is(err, ErrQuotaUnsatisfied) {
+		t.Fatalf("workspace admission error = %v", err)
+	}
+	snapshot, loadErr := manager.catalog.LoadSnapshot(ctx)
+	if loadErr != nil || len(snapshot.Entries) != 1 || snapshot.Entries[0].ID != first.Entry.ID {
+		t.Fatalf("workspace admission snapshot = %#v, %v", snapshot, loadErr)
+	}
+}
+
+func TestPublishCompleteCrossWorkspaceDedupMovesBlobToSharedAccounting(t *testing.T) {
+	manager, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("shared")
+	first, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/shared-workspace-a"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace-a",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: int64(len(content)), GlobalEntries: 2, WorkspaceBytes: 1, MaxCandidates: 8}
+	second, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/shared-workspace-b"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace-b",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Blob.ID != second.Blob.ID || !second.Deduplicated {
+		t.Fatalf("cross-workspace publications = %#v %#v", first, second)
+	}
+	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := cache.Account(snapshot)
+	if err != nil || usage.SharedBytes != int64(len(content)) || usage.Workspaces["workspace-a"] != 0 || usage.Workspaces["workspace-b"] != 0 {
+		t.Fatalf("cross-workspace usage = %#v, %v", usage, err)
+	}
+}
+
+func TestPublishCompleteDedupAdmissionNeverDeletesTheIncomingBlob(t *testing.T) {
+	manager, files := newManager(t)
+	ctx := context.Background()
+	content := []byte("same")
+	first, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/dedup-first"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: int64(len(content)), GlobalEntries: 1, WorkspaceBytes: int64(len(content)), MaxCandidates: 8}
+	_, err = manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/dedup-second"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if !errors.Is(err, ErrQuotaUnsatisfied) {
+		t.Fatalf("deduplicated admission error = %v", err)
+	}
+	if _, err := files.InspectBlob(first.Blob.ID); err != nil {
+		t.Fatalf("deduplicated incoming blob was deleted: %v", err)
+	}
+	snapshot, loadErr := manager.catalog.LoadSnapshot(ctx)
+	if loadErr != nil || len(snapshot.Blobs) != 1 || len(snapshot.Entries) != 1 || snapshot.Entries[0].ID != first.Entry.ID {
+		t.Fatalf("deduplicated admission snapshot = %#v, %v", snapshot, loadErr)
+	}
+}
+
+func TestConcurrentPublishAdmissionsCannotSpendTheSameCapacity(t *testing.T) {
+	manager, _ := newManager(t)
+	manager.limits = cache.Limits{GlobalBytes: 1, GlobalEntries: 1, WorkspaceBytes: 1, MaxCandidates: 8}
+	ctx := context.Background()
+	requests := []PublishRequest{
+		{Location: testLocation(t, "/concurrent-a"), SourceFingerprint: testSourceFingerprint(1), WorkspaceID: "workspace", Policy: cache.PolicyLRU, Source: bytes.NewReader([]byte("a")), MaxBytes: 1, ExpectedSize: sizePointer(1)},
+		{Location: testLocation(t, "/concurrent-b"), SourceFingerprint: testSourceFingerprint(1), WorkspaceID: "workspace", Policy: cache.PolicyLRU, Source: bytes.NewReader([]byte("b")), MaxBytes: 1, ExpectedSize: sizePointer(1)},
+	}
+	start := make(chan struct{})
+	errorsByRequest := make(chan error, len(requests))
+	for _, request := range requests {
+		request := request
+		go func() {
+			<-start
+			_, err := manager.PublishComplete(ctx, request)
+			errorsByRequest <- err
+		}()
+	}
+	close(start)
+	for range requests {
+		if err := <-errorsByRequest; err != nil {
+			t.Fatal(err)
+		}
+	}
+	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := cache.Account(snapshot)
+	if err != nil || usage.Global.Bytes > 1 || usage.Global.Entries+usage.Materializations > 1 || len(snapshot.Entries) != 1 {
+		t.Fatalf("concurrent admission exceeded capacity: snapshot=%#v usage=%#v err=%v", snapshot, usage, err)
+	}
+}
+
+func TestPrepareHandoffBoundsRepeatedZeroByteMaterializationsAndLeases(t *testing.T) {
+	manager, _ := newManager(t)
+	ctx := context.Background()
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/empty"), SourceFingerprint: testSourceFingerprint(0), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(nil), MaxBytes: 0, ExpectedSize: sizePointer(0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: 0, GlobalEntries: 2, WorkspaceBytes: 0, MaxCandidates: 8}
+	first, err := manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("1", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("2", 32)), LeaseID: cache.LeaseID(strings.Repeat("3", 32)),
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "first",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("4", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("5", 32)), LeaseID: cache.LeaseID(strings.Repeat("6", 32)),
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "second",
+	})
+	if !errors.Is(err, ErrQuotaUnsatisfied) {
+		t.Fatalf("second zero-byte handoff error = %v", err)
+	}
+	snapshot, loadErr := manager.catalog.LoadSnapshot(ctx)
+	if loadErr != nil || len(snapshot.Materializations) != 1 || snapshot.Materializations[0].ID != first.Materialization.ID || len(snapshot.References) != 1 || len(snapshot.Leases) != 1 {
+		t.Fatalf("bounded zero-byte snapshot = %#v, %v", snapshot, loadErr)
 	}
 }
 

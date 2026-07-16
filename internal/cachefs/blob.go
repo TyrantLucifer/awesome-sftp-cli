@@ -30,6 +30,8 @@ type PublishResult struct {
 	Deduplicated bool
 }
 
+// PublishBlob treats an expected identity with an empty ID as a size-only
+// expectation. Either form is verified while bytes are still in staging.
 func (store *Store) PublishBlob(ctx context.Context, source io.Reader, maxBytes int64, expected *BlobIdentity) (PublishResult, error) {
 	if store == nil {
 		return PublishResult{}, fmt.Errorf("publish cache blob: nil store")
@@ -44,8 +46,10 @@ func (store *Store) PublishBlob(ctx context.Context, source io.Reader, maxBytes 
 		return PublishResult{}, fmt.Errorf("publish cache blob: max bytes must be in [0,%d]", int64(math.MaxInt64-1))
 	}
 	if expected != nil {
-		if _, err := cache.ParseBlobID(string(expected.ID)); err != nil {
-			return PublishResult{}, fmt.Errorf("publish cache blob expected identity: %w", err)
+		if expected.ID != "" {
+			if _, err := cache.ParseBlobID(string(expected.ID)); err != nil {
+				return PublishResult{}, fmt.Errorf("publish cache blob expected identity: %w", err)
+			}
 		}
 		if expected.Size < 0 {
 			return PublishResult{}, fmt.Errorf("publish cache blob expected identity: negative size")
@@ -89,7 +93,7 @@ func (store *Store) PublishBlob(ctx context.Context, source io.Reader, maxBytes 
 	var sum [sha256.Size]byte
 	copy(sum[:], digest.Sum(nil))
 	identity := BlobIdentity{ID: cache.BlobIDFromDigest(sum), Size: written}
-	if expected != nil && identity != *expected {
+	if expected != nil && (identity.Size != expected.Size || expected.ID != "" && identity.ID != expected.ID) {
 		cleanup()
 		return PublishResult{}, fmt.Errorf("%w: expected id=%s size=%d, computed id=%s size=%d", ErrIdentityMismatch, expected.ID, expected.Size, identity.ID, identity.Size)
 	}

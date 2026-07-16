@@ -193,6 +193,17 @@ func TestPublishBlobRejectsOversizeAndIdentityMismatchWithoutPublication(t *test
 		assertDirectoryEmpty(t, filepath.Join(store.Root(), "staging"))
 	})
 
+	t.Run("size-only expectation", func(t *testing.T) {
+		store := newStore(t)
+		content := []byte("actual")
+		expected := BlobIdentity{Size: int64(len(content) + 1)}
+		if _, err := store.PublishBlob(context.Background(), bytes.NewReader(content), int64(len(content)+1), &expected); !errors.Is(err, ErrIdentityMismatch) {
+			t.Fatalf("PublishBlob() error = %v, want ErrIdentityMismatch", err)
+		}
+		assertNoBlobFiles(t, store.Root())
+		assertDirectoryEmpty(t, filepath.Join(store.Root(), "staging"))
+	})
+
 	t.Run("source failure", func(t *testing.T) {
 		store := newStore(t)
 		sourceErr := errors.New("injected source failure")

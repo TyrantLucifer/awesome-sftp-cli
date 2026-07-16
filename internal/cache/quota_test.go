@@ -68,11 +68,98 @@ func TestAccountIncludesMaterializationBytesInGlobalAndWorkspaceUsage(t *testing
 	if err != nil {
 		t.Fatalf("account materialization: %v", err)
 	}
-	if usage.Global != (Quantity{Bytes: 125, Entries: 1}) {
+	if usage.Global != (Quantity{Bytes: 125, Entries: 1}) || usage.Materializations != 1 {
 		t.Fatalf("global usage = %+v", usage.Global)
 	}
 	if usage.Workspaces["workspace-a"] != 125 {
 		t.Fatalf("workspace usage = %d, want 125", usage.Workspaces["workspace-a"])
+	}
+}
+
+func TestPlanAdmissionEvictsExistingLRUWithoutSelectingIncomingContent(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	oldBlob := testBlob('a', 8, now.Add(-time.Hour))
+	oldEntry := testEntry('b', oldBlob.ID, "workspace-a", now.Add(-time.Hour))
+	newBlob := testBlob('c', 8, now)
+	newEntry := testEntry('d', newBlob.ID, "workspace-a", now)
+	plan, err := PlanAdmission(
+		Snapshot{Blobs: []Blob{oldBlob}, Entries: []Entry{oldEntry}},
+		Admission{Blob: &newBlob, Entry: &newEntry},
+		Limits{GlobalBytes: 8, GlobalEntries: 1, WorkspaceBytes: 8, MaxCandidates: 8},
+		testLeaseManager(t, now),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []EvictionTarget{EntryEviction(oldEntry.ID), BlobEviction(oldBlob.ID)}
+	if !plan.Satisfied || !equalEvictions(plan.Targets, want) {
+		t.Fatalf("admission plan = %#v, want targets %#v", plan, want)
+	}
+}
+
+func TestPlanAdmissionAccountsCrossWorkspaceDedupAsShared(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	blob := testBlob('a', 8, now)
+	first := testEntry('b', blob.ID, "workspace-a", now)
+	second := testEntry('c', blob.ID, "workspace-b", now)
+	plan, err := PlanAdmission(
+		Snapshot{Blobs: []Blob{blob}, Entries: []Entry{first}},
+		Admission{Entry: &second},
+		Limits{GlobalBytes: 8, GlobalEntries: 2, WorkspaceBytes: 1, MaxCandidates: 8},
+		testLeaseManager(t, now),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Satisfied || len(plan.Targets) != 0 || plan.Before.SharedBytes != 8 {
+		t.Fatalf("cross-workspace admission = %#v", plan)
+	}
+}
+
+func TestPlanAdmissionDoesNotEvictSoleEntryBackingIncomingDeduplicatedBlob(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	blob := testBlob('a', 8, now)
+	first := testEntry('b', blob.ID, "workspace-a", now.Add(-time.Hour))
+	second := testEntry('c', blob.ID, "workspace-a", now)
+	plan, err := PlanAdmission(
+		Snapshot{Blobs: []Blob{blob}, Entries: []Entry{first}},
+		Admission{Entry: &second},
+		Limits{GlobalBytes: 8, GlobalEntries: 1, WorkspaceBytes: 8, MaxCandidates: 8},
+		testLeaseManager(t, now),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Satisfied || len(plan.Targets) != 0 || plan.Diagnostic.Required.Entries != 1 {
+		t.Fatalf("deduplicated replacement admission = %#v", plan)
+	}
+}
+
+func TestPlanAdmissionBoundsZeroByteMaterializationsByGlobalEntries(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	blob := testBlob('a', 0, now)
+	entry := testEntry('b', blob.ID, "workspace-a", now)
+	entry.Pinned = true
+	materialization := testMaterialization('c', entry.ID, blob.ID, 0, MaterializationClean, now)
+	plan, err := PlanAdmission(
+		Snapshot{Blobs: []Blob{blob}, Entries: []Entry{entry}},
+		Admission{Materialization: &materialization},
+		Limits{GlobalBytes: 0, GlobalEntries: 1, WorkspaceBytes: 0, MaxCandidates: 8},
+		testLeaseManager(t, now),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Satisfied || plan.Diagnostic.Required.Entries != 1 || len(plan.Targets) != 0 {
+		t.Fatalf("zero-byte materialization admission = %#v", plan)
 	}
 }
 

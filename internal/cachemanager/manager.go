@@ -7,10 +7,13 @@ package cachemanager
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"math"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
@@ -22,13 +25,14 @@ import (
 )
 
 type Manager struct {
-	files      *cachefs.Store
-	catalog    *cachestore.Store
-	clock      cache.Clock
-	daemonID   string
-	limits     cache.Limits
-	leaseState *cache.LeaseManager
-	processes  cache.ProcessClassifier
+	admissionMu sync.Mutex
+	files       *cachefs.Store
+	catalog     *cachestore.Store
+	clock       cache.Clock
+	daemonID    string
+	limits      cache.Limits
+	leaseState  *cache.LeaseManager
+	processes   cache.ProcessClassifier
 }
 
 func New(files *cachefs.Store, catalog *cachestore.Store, clock cache.Clock, daemonID string, limits cache.Limits) (*Manager, error) {
@@ -95,8 +99,27 @@ func (manager *Manager) PublishComplete(ctx context.Context, request PublishRequ
 	if request.ExpectedSize != nil && (*request.ExpectedSize < 0 || *request.ExpectedSize > request.MaxBytes) {
 		return PublishResult{}, fmt.Errorf("publish complete cache entry: invalid expected size")
 	}
+	var sourceSize *int64
+	if request.SourceFingerprint.Size != nil {
+		if *request.SourceFingerprint.Size > math.MaxInt64 || *request.SourceFingerprint.Size > uint64(request.MaxBytes) {
+			return PublishResult{}, fmt.Errorf("publish complete cache entry: source fingerprint size exceeds byte limit")
+		}
+		value := int64(*request.SourceFingerprint.Size) //nolint:gosec // the explicit MaxInt64 bound above makes this conversion exact
+		sourceSize = &value
+		if request.ExpectedSize != nil && *request.ExpectedSize != value {
+			return PublishResult{}, fmt.Errorf("publish complete cache entry: expected size conflicts with source fingerprint")
+		}
+	}
+	manager.admissionMu.Lock()
+	defer manager.admissionMu.Unlock()
 
-	publication, err := manager.files.PublishBlob(ctx, request.Source, request.MaxBytes, nil)
+	var expected *cachefs.BlobIdentity
+	if request.ExpectedSize != nil {
+		expected = &cachefs.BlobIdentity{Size: *request.ExpectedSize}
+	} else if sourceSize != nil {
+		expected = &cachefs.BlobIdentity{Size: *sourceSize}
+	}
+	publication, err := manager.files.PublishBlob(ctx, request.Source, request.MaxBytes, expected)
 	if err != nil {
 		return PublishResult{}, fmt.Errorf("publish complete cache entry bytes: %w", err)
 	}
@@ -114,16 +137,22 @@ func (manager *Manager) PublishComplete(ctx context.Context, request PublishRequ
 	if err != nil {
 		return PublishResult{}, err
 	}
-	manifest, err := manager.files.PublishEntryManifest(entryID, string(request.Location.EndpointID), []byte(request.Location.Path), fingerprint, publication.Identity)
-	if err != nil {
-		return PublishResult{}, fmt.Errorf("publish complete cache entry manifest: %w", err)
-	}
 	now := manager.now()
 	blob := cache.Blob{ID: publication.Identity.ID, Size: publication.Identity.Size, State: cache.BlobPublished, CreatedAt: now, LastAccessAt: now}
 	entry := cache.Entry{
 		ID: entryID, EndpointID: string(request.Location.EndpointID), CanonicalPath: append([]byte(nil), []byte(request.Location.Path)...),
 		Fingerprint: fingerprint, Freshness: cache.EntryFresh, Policy: request.Policy, WorkspaceID: request.WorkspaceID,
 		Pinned: request.Pinned, BlobID: blob.ID, CreatedAt: now, LastAccessAt: now,
+	}
+	if err := manager.admitLocked(ctx, cache.Admission{Blob: &blob, Entry: &entry}); err != nil {
+		if !publication.Deduplicated {
+			err = errors.Join(err, manager.files.DeleteBlob(publication.Identity))
+		}
+		return PublishResult{}, fmt.Errorf("publish complete cache entry admission: %w", err)
+	}
+	manifest, err := manager.files.PublishEntryManifest(entryID, string(request.Location.EndpointID), []byte(request.Location.Path), fingerprint, publication.Identity)
+	if err != nil {
+		return PublishResult{}, fmt.Errorf("publish complete cache entry manifest: %w", err)
 	}
 	if err := manager.catalog.Publish(ctx, blob, entry); err != nil {
 		return PublishResult{}, fmt.Errorf("publish complete cache entry catalog: %w", err)
@@ -228,6 +257,8 @@ func (manager *Manager) PrepareHandoff(ctx context.Context, request HandoffReque
 			return HandoffResult{}, fmt.Errorf("prepare cache handoff: supplied process identity is not live and classifiable")
 		}
 	}
+	manager.admissionMu.Lock()
+	defer manager.admissionMu.Unlock()
 	entry, err := manager.catalog.GetEntry(ctx, request.EntryID)
 	if err != nil {
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff entry: %w", err)
@@ -236,14 +267,17 @@ func (manager *Manager) PrepareHandoff(ctx context.Context, request HandoffReque
 	if err != nil {
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff blob: %w", err)
 	}
-	filesystemResult, err := manager.files.CreateMaterialization(ctx, request.MaterializationID, entry.ID, cachefs.BlobIdentity{ID: blob.ID, Size: blob.Size})
-	if err != nil {
-		return HandoffResult{}, fmt.Errorf("prepare cache handoff bytes: %w", err)
-	}
 	now := manager.now()
 	materialization := cache.Materialization{
 		ID: request.MaterializationID, EntryID: entry.ID, BaselineBlobID: blob.ID, CurrentBlobID: blob.ID,
 		Size: blob.Size, State: cache.MaterializationClean, Pinned: request.Pinned, CreatedAt: now, LastAccessAt: now,
+	}
+	if err := manager.admitLocked(ctx, cache.Admission{Materialization: &materialization}); err != nil {
+		return HandoffResult{}, fmt.Errorf("prepare cache handoff admission: %w", err)
+	}
+	filesystemResult, err := manager.files.CreateMaterialization(ctx, request.MaterializationID, entry.ID, cachefs.BlobIdentity{ID: blob.ID, Size: blob.Size})
+	if err != nil {
+		return HandoffResult{}, fmt.Errorf("prepare cache handoff bytes: %w", err)
 	}
 	referenceOwner, err := referenceOwner(request.OwnerKind)
 	if err != nil {

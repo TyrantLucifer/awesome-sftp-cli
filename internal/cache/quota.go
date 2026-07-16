@@ -20,9 +20,10 @@ type Quantity struct {
 }
 
 type Usage struct {
-	Global      Quantity
-	Workspaces  map[WorkspaceID]int64
-	SharedBytes int64
+	Global           Quantity
+	Materializations int
+	Workspaces       map[WorkspaceID]int64
+	SharedBytes      int64
 }
 
 type Limits struct {
@@ -74,6 +75,49 @@ type EvictionPlan struct {
 	Satisfied  bool
 	Considered int
 	Diagnostic QuotaDiagnostic
+}
+
+// Admission describes catalog records that are not visible yet but must fit
+// before their publishing transaction commits. Incoming records are protected
+// from their own eviction plan; only pre-existing clean LRU state may make
+// room for them.
+type Admission struct {
+	Blob            *Blob
+	Entry           *Entry
+	Materialization *Materialization
+}
+
+func PlanAdmission(snapshot Snapshot, admission Admission, limits Limits, leases *LeaseManager) (EvictionPlan, error) {
+	working := cloneSnapshot(snapshot)
+	switch {
+	case admission.Entry != nil && admission.Materialization == nil:
+		if admission.Blob != nil {
+			working.Blobs = append(working.Blobs, *admission.Blob)
+		} else {
+			// A sole catalog entry is also the durable ownership claim for its
+			// blob. Until the incoming deduplicated entry commits, evicting that
+			// entry would delete bytes the admission still needs.
+			for index := range working.Entries {
+				if working.Entries[index].BlobID == admission.Entry.BlobID {
+					working.Entries[index].Pinned = true
+				}
+			}
+		}
+		entry := *admission.Entry
+		entry.Pinned = true
+		working.Entries = append(working.Entries, entry)
+	case admission.Materialization != nil && admission.Blob == nil && admission.Entry == nil:
+		materialization := *admission.Materialization
+		materialization.Pinned = true
+		working.Materializations = append(working.Materializations, materialization)
+	default:
+		return EvictionPlan{}, fmt.Errorf("plan cache admission: exactly one entry or materialization is required")
+	}
+	plan, err := PlanEvictions(working, limits, leases)
+	if err != nil {
+		return EvictionPlan{}, fmt.Errorf("plan cache admission: %w", err)
+	}
+	return plan, nil
 }
 
 func Account(snapshot Snapshot) (Usage, error) {
@@ -158,7 +202,7 @@ func (limits Limits) validate() error {
 }
 
 func accountValidated(snapshot Snapshot) (Usage, error) {
-	usage := Usage{Global: Quantity{Entries: len(snapshot.Entries)}, Workspaces: make(map[WorkspaceID]int64)}
+	usage := Usage{Global: Quantity{Entries: len(snapshot.Entries)}, Materializations: len(snapshot.Materializations), Workspaces: make(map[WorkspaceID]int64)}
 	entriesByBlob := make(map[BlobID][]Entry)
 	entriesByID := make(map[EntryID]Entry, len(snapshot.Entries))
 	for _, entry := range snapshot.Entries {
@@ -382,7 +426,7 @@ func removeBlob(snapshot *Snapshot, blobID BlobID) {
 }
 
 func withinLimits(usage Usage, limits Limits) bool {
-	if usage.Global.Bytes > limits.GlobalBytes || usage.Global.Entries > limits.GlobalEntries {
+	if usage.Global.Bytes > limits.GlobalBytes || globalObjects(usage) > limits.GlobalEntries {
 		return false
 	}
 	for _, bytes := range usage.Workspaces {
@@ -409,7 +453,7 @@ func improvesViolation(before Usage, after Usage, limits Limits) bool {
 	if before.Global.Bytes > limits.GlobalBytes && after.Global.Bytes < before.Global.Bytes {
 		return true
 	}
-	if before.Global.Entries > limits.GlobalEntries && after.Global.Entries < before.Global.Entries {
+	if globalObjects(before) > limits.GlobalEntries && globalObjects(after) < globalObjects(before) {
 		return true
 	}
 	for workspaceID, bytes := range before.Workspaces {
@@ -497,8 +541,8 @@ func requiredQuantity(usage Usage, limits Limits) Quantity {
 	if usage.Global.Bytes > limits.GlobalBytes {
 		required.Bytes = usage.Global.Bytes - limits.GlobalBytes
 	}
-	if usage.Global.Entries > limits.GlobalEntries {
-		required.Entries = usage.Global.Entries - limits.GlobalEntries
+	if globalObjects(usage) > limits.GlobalEntries {
+		required.Entries = globalObjects(usage) - limits.GlobalEntries
 	}
 	var workspaceRequired int64
 	for _, bytes := range usage.Workspaces {
@@ -510,6 +554,10 @@ func requiredQuantity(usage Usage, limits Limits) Quantity {
 		required.Bytes = workspaceRequired
 	}
 	return required
+}
+
+func globalObjects(usage Usage) int {
+	return usage.Global.Entries + usage.Materializations
 }
 
 func cloneSnapshot(snapshot Snapshot) Snapshot {
