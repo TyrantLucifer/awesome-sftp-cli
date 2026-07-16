@@ -15,6 +15,7 @@ import (
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestInitializeCreatesFrozenPrivateLayout(t *testing.T) {
@@ -509,7 +510,7 @@ func TestScanReportsCrashTempsUnknownOrphansAndSymlinksWithoutMutation(t *testin
 
 func privateRoot(t *testing.T) string {
 	t.Helper()
-	directory := t.TempDir()
+	directory := testkit.PersistentTempDir(t)
 	if err := os.Chmod(directory, 0o700); err != nil { //nolint:gosec // exact owner-private directory mode
 		t.Fatalf("Chmod(temp root): %v", err)
 	}

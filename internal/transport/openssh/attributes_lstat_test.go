@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"reflect"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestProbeLinkAttributesUsesRawSFTPLstatAndPreservesPresence(t *testing.T) {
@@ -14,7 +16,7 @@ func TestProbeLinkAttributesUsesRawSFTPLstatAndPreservesPresence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	binary := filepath.Join(t.TempDir(), "ssh")
+	binary := filepath.Join(testkit.PersistentTempDir(t), "ssh")
 	script := "#!/bin/sh\nexec \"$AMSFTP_LSTAT_TEST_BINARY\" -test.run=^TestLinkAttributeProbeHelperProcess$ -- \"$@\"\n"
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatal(err)

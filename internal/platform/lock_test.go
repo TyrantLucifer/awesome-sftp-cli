@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestAcquireInstanceLockIsExclusiveAndReleases(t *testing.T) {
@@ -141,7 +143,7 @@ func processLockPath(pid int) string {
 
 func privateTemporaryDirectory(t *testing.T) string {
 	t.Helper()
-	directory := t.TempDir()
+	directory := testkit.PersistentTempDir(t)
 	// #nosec G302 -- owner-private directories intentionally use 0700.
 	if err := os.Chmod(directory, 0o700); err != nil {
 		t.Fatalf("chmod temporary directory: %v", err)

@@ -9,10 +9,12 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestDarwinNativeACLValidationAcceptsPrivateTemporaryDirectory(t *testing.T) {
-	directory := t.TempDir()
+	directory := testkit.PersistentTempDir(t)
 	// #nosec G302 -- owner-private directories intentionally use 0700.
 	if err := os.Chmod(directory, 0o700); err != nil {
 		t.Fatalf("chmod temporary directory: %v", err)

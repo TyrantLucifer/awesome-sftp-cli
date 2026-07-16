@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 )
 
@@ -16,7 +17,7 @@ func TestPlanLocalShellUsesFrozenDirectoryWithoutCommandText(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PlanLocalShell(shell, t.TempDir(), os.Environ())
+	plan, err := PlanLocalShell(shell, testkit.PersistentTempDir(t), os.Environ())
 	if err != nil {
 		t.Fatal(err)
 	}

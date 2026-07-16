@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 )
 
@@ -442,7 +443,7 @@ func writeRemoteSSHHelper(t *testing.T, mode, capture string) (string, []string)
 	if err != nil {
 		t.Fatal(err)
 	}
-	directory := t.TempDir()
+	directory := testkit.PersistentTempDir(t)
 	binary := filepath.Join(directory, "ssh")
 	script := "#!/bin/sh\nexec \"$AMSFTP_REMOTE_TEST_BINARY\" -test.run=^TestRemoteSSHHelperProcess$ -- \"$@\"\n"
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
@@ -479,7 +480,7 @@ func cloneAttributes(input map[string]openssh.SFTPAttributes) map[string]openssh
 
 func writeRemoteSSH(t *testing.T) string {
 	t.Helper()
-	directory := t.TempDir()
+	directory := testkit.PersistentTempDir(t)
 	path := filepath.Join(directory, "ssh")
 	if err := os.WriteFile(path, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
 		t.Fatal(err)

@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestResolveLocalShellUsesAbsolutePrecedenceAndFailsClosed(t *testing.T) {
-	dir := t.TempDir()
+	dir := testkit.PersistentTempDir(t)
 	explicit := writeShell(t, dir, "explicit")
 	environment := writeShell(t, dir, "environment")
 	resolved, err := ResolveLocalShell(explicit, environment)
@@ -36,7 +37,7 @@ func TestResolveLocalShellUsesAbsolutePrecedenceAndFailsClosed(t *testing.T) {
 }
 
 func TestPlanLocalCommandKeepsCanonicalCWDOutOfExactArgv(t *testing.T) {
-	dir := t.TempDir()
+	dir := testkit.PersistentTempDir(t)
 	shell := writeShell(t, dir, "shell with spaces")
 	resolved, err := externalprocess.ResolveCommand(externalprocess.Command{Executable: shell}, "")
 	if err != nil {
@@ -59,7 +60,7 @@ func TestPlanLocalCommandKeepsCanonicalCWDOutOfExactArgv(t *testing.T) {
 }
 
 func TestPlanLocalCommandRejectsUnsafeOrOversizedTextAndCWD(t *testing.T) {
-	dir := t.TempDir()
+	dir := testkit.PersistentTempDir(t)
 	resolved, err := externalprocess.ResolveCommand(externalprocess.Command{Executable: writeShell(t, dir, "shell")}, "")
 	if err != nil {
 		t.Fatal(err)
@@ -69,7 +70,7 @@ func TestPlanLocalCommandRejectsUnsafeOrOversizedTextAndCWD(t *testing.T) {
 			t.Fatalf("unsafe command %q succeeded", text)
 		}
 	}
-	link := filepath.Join(t.TempDir(), "cwd-link")
+	link := filepath.Join(testkit.PersistentTempDir(t), "cwd-link")
 	if err := os.Symlink(dir, link); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +126,7 @@ func testPlan(t *testing.T, text string) LocalPlan {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PlanLocalCommand(resolved, t.TempDir(), text)
+	plan, err := PlanLocalCommand(resolved, testkit.PersistentTempDir(t), text)
 	if err != nil {
 		t.Fatal(err)
 	}
