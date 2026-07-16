@@ -426,6 +426,24 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			return model, nil
 		}
 	}
+	if model.Mode == ModeMoveConfirm {
+		switch key {
+		case KeyEscape:
+			model.pendingMove = nil
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			intents := append([]Intent(nil), model.pendingMove...)
+			model.repeatMove = append([]Intent(nil), intents...)
+			model.repeatDelete = nil
+			model.repeatIntents = nil
+			model.pendingMove = nil
+			model.Mode = ModeNormal
+			return model, intents
+		default:
+			return model, nil
+		}
+	}
 	if model.Mode == ModeRename {
 		switch key {
 		case KeyBackspace:
@@ -454,7 +472,8 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 				return model, nil
 			}
 			intent := Intent{Kind: IntentCreateCopyJob, Pane: model.Active, Location: parent, Clipboard: transfer.ClipboardCut, Source: model.pendingRename, Name: name}
-			model.repeatIntents = []Intent{intent}
+			model.repeatMove = []Intent{intent}
+			model.repeatIntents = nil
 			model.repeatDelete = nil
 			model.renameInput = nil
 			model.pendingRename = transfer.FileRef{}
@@ -630,7 +649,13 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 				})
 			}
 		}
+		if model.Clipboard.Kind == transfer.ClipboardCut {
+			model.pendingMove = append([]Intent(nil), intents...)
+			model.Mode = ModeMoveConfirm
+			return model, nil
+		}
 		model.repeatIntents = append([]Intent(nil), intents...)
+		model.repeatMove = nil
 		model.repeatDelete = nil
 		return model, intents
 	case KeyDelete:
@@ -652,6 +677,11 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			model.pendingDelete = append([]transfer.FileRef(nil), model.repeatDelete...)
 			model.DeleteConfirmation = 1
 			model.Mode = ModeDeleteConfirm
+			return model, nil
+		}
+		if len(model.repeatMove) != 0 {
+			model.pendingMove = append([]Intent(nil), model.repeatMove...)
+			model.Mode = ModeMoveConfirm
 			return model, nil
 		}
 		if len(model.repeatIntents) != 0 {

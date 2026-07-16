@@ -111,7 +111,13 @@ func TestReducerCapturesFrozenCopyOrCutAndPastesIntoCurrentPane(t *testing.T) {
 			}
 			model, _ = Reduce(model, ClipboardCaptured{Clipboard: test.clipboard, Reference: reference})
 			model, _ = Reduce(model, KeyPress{Key: KeyTab})
-			_, intents = Reduce(model, KeyPress{Key: KeyPaste})
+			model, intents = Reduce(model, KeyPress{Key: KeyPaste})
+			if test.clipboard == transfer.ClipboardCut {
+				if len(intents) != 0 || model.Mode != ModeMoveConfirm {
+					t.Fatalf("cut paste bypassed confirmation: model=%#v intents=%#v", model, intents)
+				}
+				model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+			}
 			if len(intents) != 1 {
 				t.Fatalf("paste intents = %#v, want one", intents)
 			}
@@ -124,10 +130,22 @@ func TestReducerCapturesFrozenCopyOrCutAndPastesIntoCurrentPane(t *testing.T) {
 			}
 			model, _ = Reduce(model, CountDigit{Digit: 2})
 			model, intents = Reduce(model, KeyPress{Key: KeyPaste})
+			if test.clipboard == transfer.ClipboardCut {
+				if len(intents) != 0 || model.Mode != ModeMoveConfirm {
+					t.Fatalf("counted cut bypassed confirmation: model=%#v intents=%#v", model, intents)
+				}
+				model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+			}
 			if len(intents) != 2 || intents[0].Source != reference || intents[1].Source != reference {
 				t.Fatalf("counted paste intents = %#v", intents)
 			}
-			_, repeated := Reduce(model, KeyPress{Key: KeyRepeat})
+			repeatedModel, repeated := Reduce(model, KeyPress{Key: KeyRepeat})
+			if test.clipboard == transfer.ClipboardCut {
+				if len(repeated) != 0 || repeatedModel.Mode != ModeMoveConfirm {
+					t.Fatalf("cut repeat bypassed confirmation: model=%#v intents=%#v", repeatedModel, repeated)
+				}
+				_, repeated = Reduce(repeatedModel, KeyPress{Key: KeySubmit})
+			}
 			if !reflect.DeepEqual(repeated, intents) {
 				t.Fatalf("repeat intents = %#v, want frozen %#v", repeated, intents)
 			}
@@ -228,6 +246,10 @@ func TestReducerRenameUsesFrozenReferenceAndRejectsMultiSelection(t *testing.T) 
 	}
 	if intents[0].Clipboard != transfer.ClipboardCut || intents[0].Source != reference || intents[0].Name != "renamed.txt" || intents[0].Location.Path != "/left" {
 		t.Fatalf("rename intent = %#v", intents[0])
+	}
+	model, repeated := Reduce(model, KeyPress{Key: KeyRepeat})
+	if len(repeated) != 0 || model.Mode != ModeMoveConfirm {
+		t.Fatalf("rename repeat bypassed confirmation: model=%#v intents=%#v", model, repeated)
 	}
 
 	model = testModel(t)

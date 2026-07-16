@@ -124,6 +124,36 @@ def run_copy(binary, observer, source, destination, environment, filename, expec
     return pid
 
 
+def run_move(binary, observer, source, destination, environment, filename):
+    pid, fd = launch(binary, source, destination, environment)
+    output = bytearray()
+    source_path = os.path.join(source, filename)
+    destination_path = os.path.join(destination, filename)
+    try:
+        read_until(fd, observer, output, filename.encode("utf-8"))
+        os.write(fd, b"d")
+        read_until(fd, observer, output, b"cut source captured")
+        os.write(fd, b"\t")
+        os.write(fd, b"p")
+        read_until(fd, observer, output, b"Confirm durable move")
+        os.write(fd, b"\r")
+        read_until(fd, observer, output, b"Job queued:")
+        wait_for_path(destination_path)
+        wait_for_absence(source_path)
+        os.write(fd, b"J")
+        read_until(fd, observer, output, b"completed")
+        os.write(fd, b"q")
+        wait_child(pid, fd)
+    except Exception:
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        raise
+    finally:
+        os.close(fd)
+
+
 def prove_reattach(binary, observer, source, destination, environment):
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
@@ -249,10 +279,13 @@ def main():
             leftovers = [name for name in os.listdir(destination) if ".part-" in name]
             if leftovers:
                 raise RuntimeError("completed copy retained part files: %r" % leftovers)
-            run_rename(binary, observer, destination, source, environment, "payload.txt", "renamed.txt")
-            run_delete(binary, observer, destination, source, environment, "renamed.txt")
+            with open(os.path.join(source, "move.txt"), "wb") as handle:
+                handle.write(b"stage2-confirmed-move\n")
+            run_move(binary, observer, source, destination, environment, "move.txt")
+            run_rename(binary, observer, destination, source, environment, "move.txt", "renamed.txt")
+            run_delete(binary, observer, destination, source, environment, "payload.txt")
             prove_reattach(binary, observer, source, destination, environment)
-            print("Stage 2 local PTY copy, rename, confirmed delete, and durable Jobs reattach MVP passed")
+            print("Stage 2 local PTY copy, confirmed move, rename, confirmed delete, and durable Jobs reattach MVP passed")
         else:
             alias = sys.argv[2]
             remote_root = os.path.realpath(sys.argv[3])

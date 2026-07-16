@@ -212,6 +212,9 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeRename {
 		renderRenameModal(surface, model.pendingRename, string(model.renameInput), width, height)
 	}
+	if model.Mode == ModeMoveConfirm {
+		renderMoveModal(surface, model.pendingMove, width, height)
+	}
 	if model.Mode == ModeDeleteConfirm {
 		renderDeleteModal(surface, model.pendingDelete, model.DeleteConfirmation, width, height)
 	}
@@ -364,6 +367,26 @@ func renderDeleteModal(surface Surface, references []transfer.FileRef, confirmat
 	}
 	surface.PutClipped(x+1, y+4, modalWidth-2, message, StyleError)
 	surface.PutClipped(x+1, y+5, modalWidth-2, "[Enter] confirm  [Esc] cancel", StyleStatus)
+}
+
+func renderMoveModal(surface Surface, intents []Intent, width, height int) {
+	modalWidth := min(width-4, 72)
+	if modalWidth < 20 || height < 7 {
+		return
+	}
+	const modalHeight = 6
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, "Confirm durable move", StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, fmt.Sprintf("Frozen operations: %d", len(intents)), StyleStatus)
+	if len(intents) != 0 {
+		line := fmt.Sprintf("%s → %s", intents[0].Source.Location.Path, intents[0].Location.Path)
+		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(line), StyleStatus)
+	}
+	surface.PutClipped(x+1, y+4, modalWidth-2, "Source is deleted only after destination verification. [Enter] queue  [Esc] cancel", StyleStatus)
 }
 
 func renderAuthModal(surface Surface, state AuthState, width, height int) {

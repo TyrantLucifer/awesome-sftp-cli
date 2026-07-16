@@ -30,6 +30,7 @@ const (
 	ModePath          Mode = "path"
 	ModeEndpoint      Mode = "endpoint"
 	ModeRename        Mode = "rename"
+	ModeMoveConfirm   Mode = "move_confirm"
 	ModeDeleteConfirm Mode = "delete_confirm"
 )
 
@@ -377,7 +378,9 @@ type Model struct {
 	renameInput   []rune
 	pendingRename transfer.FileRef
 	pendingDelete []transfer.FileRef
+	pendingMove   []Intent
 	repeatDelete  []transfer.FileRef
+	repeatMove    []Intent
 	repeatIntents []Intent
 	Width         int
 	Height        int
