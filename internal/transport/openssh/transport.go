@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -147,7 +146,7 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 		cancel()
 		return nil, fmt.Errorf("revalidate OpenSSH executable: %w", err)
 	}
-	if !os.SameFile(before, after) {
+	if !platform.SameExecutableIdentity(before, after) {
 		cancel()
 		return nil, errors.New("OpenSSH executable changed before start")
 	}

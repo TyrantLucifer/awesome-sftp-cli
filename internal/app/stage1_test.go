@@ -14,6 +14,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
@@ -104,6 +105,60 @@ func TestListingResultCurrentRejectsStaleGeneration(t *testing.T) {
 	}
 }
 
+func TestPlanPreviewReadRoutesHeadTailAndAbsoluteRange(t *testing.T) {
+	const fileSize = uint64(100 * 1024 * 1024 * 1024)
+	const rangeOffset = uint64(50 * 1024 * 1024 * 1024)
+	wantRange, err := builtinpreview.PlanRange(fileSize, rangeOffset, builtinpreview.ReadChunkBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		mode   builtinpreview.ReadMode
+		offset uint64
+		want   builtinpreview.ReadPlan
+	}{
+		{mode: builtinpreview.ReadHead, want: builtinpreview.PlanHead(fileSize)},
+		{mode: builtinpreview.ReadTail, want: builtinpreview.PlanTail(fileSize)},
+		{mode: builtinpreview.ReadRange, offset: rangeOffset, want: wantRange},
+	}
+	for _, test := range tests {
+		got, err := planPreviewRead(fileSize, test.mode, test.offset)
+		if err != nil || got != test.want {
+			t.Fatalf("planPreviewRead(%q,%d) = %#v, %v; want %#v", test.mode, test.offset, got, err, test.want)
+		}
+	}
+	if _, err := planPreviewRead(fileSize, "invalid", 0); err == nil {
+		t.Fatal("invalid preview mode succeeded")
+	}
+}
+
+func TestTerminalImageOutputAcceptsOnlyTheCurrentVisiblePreviewIdentity(t *testing.T) {
+	endpoint := domain.Endpoint{ID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: domain.EndpointLocal}
+	location := domain.Location{EndpointID: endpoint.ID, Path: "/image.png"}
+	model := tui.NewModel(tui.NewPaneState(endpoint, location), tui.NewPaneState(endpoint, location))
+	model.Drawer.Mode = tui.DrawerPreview
+	version := "v1"
+	source, err := builtinpreview.FreezeSource(location, domain.Fingerprint{VersionID: &version})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := tui.PreviewRequestIdentity{RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", Pane: tui.Left, Source: source, UIGeneration: 7}
+	model, _ = tui.Reduce(model, tui.BeginPreview{Generation: 7, Location: location, Identity: identity, View: builtinpreview.ViewAuto})
+	current := tui.PreviewTerminalImage{Generation: 7, Identity: identity, Protocol: builtinpreview.ImageProtocolKitty, Data: []byte("bounded")}
+	if !terminalImageCurrent(model, current) {
+		t.Fatal("current terminal image was rejected")
+	}
+	stale := current
+	stale.Generation = 6
+	if terminalImageCurrent(model, stale) {
+		t.Fatal("stale terminal image was accepted")
+	}
+	model.Drawer.Mode = tui.DrawerClosed
+	if terminalImageCurrent(model, current) {
+		t.Fatal("hidden preview terminal image was accepted")
+	}
+}
+
 func TestEndpointSwitchFailurePreservesCommittedConnectionState(t *testing.T) {
 	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
 	location, err := domain.NewLocation(endpointID, "/tmp")
@@ -167,8 +222,9 @@ func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
 	rightPane.Sort = tui.SortState{Key: tui.SortModified, Descending: true}
 	rightPane.ShowHidden = true
 	model.Panes[tui.Right] = rightPane
+	model.Drawer = tui.DrawerState{Mode: tui.DrawerLog, Focus: tui.FocusPane, Rows: 8}
 	now := time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC)
-	document, err := workspaceDocument(model, now)
+	document, err := workspaceDocument(model, now, workspace.CachePinnedOffline)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,11 +237,46 @@ func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
 	if document.Panes[1].Sort.Key != workspace.SortModified || document.Panes[1].Sort.Direction != workspace.SortDescending || !document.Panes[1].ShowHidden {
 		t.Fatalf("remote pane preferences = %#v", document.Panes[1])
 	}
+	if document.Layout.Drawer != (workspace.DrawerState{Mode: workspace.DrawerLog, Focus: workspace.FocusPane, Rows: 8}) || document.CachePolicy != workspace.CachePinnedOffline {
+		t.Fatalf("workspace drawer/cache = %#v/%q", document.Layout.Drawer, document.CachePolicy)
+	}
 	restored := tui.NewPaneState(domain.Endpoint{ID: rightID, Kind: domain.EndpointSSH, SSHHostAlias: "prod"}, rightLocation)
 	applyWorkspacePanePreferences(&restored, document.Panes[1])
 	if restored.Sort != rightPane.Sort || !restored.ShowHidden {
 		t.Fatalf("restored preferences = %#v", restored)
 	}
+}
+
+func TestApplyWorkspaceLayoutRestoresDrawerWithoutSensitiveContent(t *testing.T) {
+	model := testModelForWorkspaceLayout(t)
+	applyWorkspaceLayout(&model, workspace.LayoutState{
+		ActivePane: 1,
+		Drawer:     workspace.DrawerState{Mode: workspace.DrawerJobs, Focus: workspace.FocusDrawer, Rows: 7},
+	})
+	if model.Active != tui.Right || model.Drawer != (tui.DrawerState{Mode: tui.DrawerJobs, Focus: tui.FocusDrawer, Rows: 7}) {
+		t.Fatalf("restored layout = active:%v drawer:%#v", model.Active, model.Drawer)
+	}
+	if len(model.Jobs) != 0 || len(model.Diagnostics) != 0 || len(model.Preview.Data) != 0 {
+		t.Fatalf("workspace restored transient drawer bodies: %#v", model)
+	}
+}
+
+func testModelForWorkspaceLayout(t *testing.T) tui.Model {
+	t.Helper()
+	leftID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	rightID := domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	left, err := domain.NewLocation(leftID, "/left")
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := domain.NewLocation(rightID, "/right")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tui.NewModel(
+		tui.NewPaneState(domain.Endpoint{ID: leftID, Kind: domain.EndpointLocal}, left),
+		tui.NewPaneState(domain.Endpoint{ID: rightID, Kind: domain.EndpointLocal}, right),
+	)
 }
 
 func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
@@ -199,15 +290,21 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 		t.Fatal(err)
 	}
 	persistent := testkit.PersistentTempDir(t)
-	paths := platform.Paths{StateDir: filepath.Join(persistent, "state"), LogFile: filepath.Join(persistent, "log", "daemon.jsonl"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
+	paths := platform.Paths{StateDir: filepath.Join(persistent, "state"), LogFile: filepath.Join(persistent, "log", "daemon.jsonl"), CacheDir: filepath.Join(persistent, "cache"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
 	purpose := platform.ValidateRuntimeFallback
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() { done <- runDaemonWithPaths(ctx, paths, purpose) }()
 	var client *daemon.Client
 	var err error
-	deadline := time.Now().Add(5 * time.Second)
+	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
+		select {
+		case daemonErr := <-done:
+			cancel()
+			t.Fatalf("daemon exited before readiness: %v", daemonErr)
+		default:
+		}
 		attemptCtx, stop := context.WithTimeout(context.Background(), 200*time.Millisecond)
 		client, err = connectExisting(attemptCtx, paths, purpose)
 		stop()
@@ -226,6 +323,19 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Kind != "local" {
 		t.Fatalf("endpoints = %#v", endpoints.Endpoints)
+	}
+	for _, cachePath := range []string{paths.CacheDir, filepath.Join(paths.CacheDir, "content-v1", "blobs", "sha256")} {
+		metadata, statErr := os.Lstat(cachePath)
+		if statErr != nil || !metadata.IsDir() || metadata.Mode().Perm() != 0o700 {
+			t.Fatalf("cache path %q = %#v, %v", cachePath, metadata, statErr)
+		}
+	}
+	var diagnostics daemon.DiagnosticListResponse
+	if err := client.Call(context.Background(), daemon.DiagnosticList, daemon.DiagnosticListRequest{Limit: 256}, &diagnostics); err != nil {
+		t.Fatalf("list bounded diagnostics: %v", err)
+	}
+	if len(diagnostics.Records) == 0 || len(diagnostics.Records) > 256 {
+		t.Fatalf("diagnostic records = %d, want 1..256", len(diagnostics.Records))
 	}
 	var workspaces workspace.ListResponse
 	if err := client.Call(context.Background(), daemon.WorkspaceList, workspace.ListRequest{}, &workspaces); err != nil {
@@ -260,6 +370,34 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 	if _, err := os.Lstat(paths.ControlSocket); !os.IsNotExist(err) {
 		t.Fatalf("socket remains after shutdown: %v", err)
+	}
+}
+
+func TestParseDaemonArgsRequiresOneExactExplicitMigrationResumeFlag(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name       string
+		args       []string
+		wantResume bool
+		wantError  bool
+	}{
+		{name: "ordinary daemon"},
+		{name: "explicit resume", args: []string{"--resume-migration"}, wantResume: true},
+		{name: "unknown flag", args: []string{"--resume"}, wantError: true},
+		{name: "duplicate flag", args: []string{"--resume-migration", "--resume-migration"}, wantError: true},
+		{name: "positional argument", args: []string{"resume-migration"}, wantError: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			options, err := parseDaemonArgs(tt.args)
+			if (err != nil) != tt.wantError {
+				t.Fatalf("parseDaemonArgs(%q) error = %v, wantError=%t", tt.args, err, tt.wantError)
+			}
+			if options.explicitMigrationResume != tt.wantResume {
+				t.Fatalf("parseDaemonArgs(%q) options = %#v", tt.args, options)
+			}
+		})
 	}
 }
 

@@ -1,0 +1,842 @@
+// Package cachestore persists the typed Stage 3 cache catalog in the frozen
+// SQLite Version 2 schema. File publication and deletion remain cachefs-owned.
+package cachestore
+
+import (
+	"context"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/wal"
+)
+
+const (
+	statementWALBudget = uint64(1024 * 1024)
+	fingerprintCodec   = "amsftp-canonical-v1"
+	maxListResults     = 1_000_000
+)
+
+type Store struct {
+	database *sql.DB
+	walGuard *wal.FileGuard
+}
+
+func New(ctx context.Context, database *sql.DB) (*Store, error) {
+	if database == nil {
+		return nil, fmt.Errorf("new cache store: nil database")
+	}
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("new cache store: reserve validation connection: %w", err)
+	}
+	defer connection.Close()
+	var head uint64
+	if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&head); err != nil {
+		return nil, fmt.Errorf("new cache store: read schema head: %w", err)
+	}
+	compiled := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
+	contracts := map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract(), 3: migration.Version3SchemaContract()}
+	if head != 2 && head != 3 {
+		return nil, fmt.Errorf("new cache store: unsupported schema head %d", head)
+	}
+	if err := migration.ValidateHead(ctx, connection, compiled, contracts, head); err != nil {
+		return nil, fmt.Errorf("new cache store: %w", err)
+	}
+	guard, err := wal.OpenFileGuard(ctx, connection)
+	if err != nil {
+		return nil, fmt.Errorf("new cache store: %w", err)
+	}
+	return &Store{database: database, walGuard: guard}, nil
+}
+
+func (store *Store) Publish(ctx context.Context, blob cache.Blob, entry cache.Entry) error {
+	if err := validateBlob(blob); err != nil {
+		return fmt.Errorf("publish cache catalog: %w", err)
+	}
+	if err := validateEntry(entry); err != nil {
+		return fmt.Errorf("publish cache catalog: %w", err)
+	}
+	if entry.BlobID != blob.ID {
+		return fmt.Errorf("publish cache catalog: entry blob %q does not match published blob %q", entry.BlobID, blob.ID)
+	}
+	if blob.State != cache.BlobPublished {
+		return fmt.Errorf("publish cache catalog: blob %q is not published", blob.ID)
+	}
+	return store.write(ctx, 2, func(connection *sql.Conn, writer *transactionWriter) error {
+		result, err := writer.ExecContext(ctx, "INSERT INTO cache_blobs(sha256,size_bytes,basename,state,created_at_unix,last_access_unix) VALUES(?,?,?,?,?,?) ON CONFLICT(sha256) DO UPDATE SET last_access_unix=max(cache_blobs.last_access_unix,excluded.last_access_unix) WHERE cache_blobs.size_bytes=excluded.size_bytes AND cache_blobs.basename=excluded.basename AND cache_blobs.state='published' AND excluded.state='published'", blob.ID, blob.Size, blobBasename(blob.ID), blob.State, unix(blob.CreatedAt), unix(blob.LastAccessAt))
+		if err := requireOne("publish cache blob", result, err); err != nil {
+			return fmt.Errorf("publish cache blob %q: %w", blob.ID, err)
+		}
+		strength, algorithm, encoded := encodeFingerprint(entry.Fingerprint)
+		result, err = writer.ExecContext(ctx, `INSERT INTO cache_entries(entry_id,endpoint_id,path_bytes,fingerprint_strength,fingerprint_size,modified_unix_nano,modified_precision,file_id,version_id,hash_algorithm,hash_hex,freshness,policy,workspace_id,pinned,blob_sha256,complete,created_at_unix,last_access_unix)
+			VALUES(?,?,?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(entry_id) DO UPDATE SET
+				freshness=excluded.freshness,
+				policy=excluded.policy,
+				pinned=excluded.pinned,
+				last_access_unix=max(cache_entries.last_access_unix,excluded.last_access_unix)
+			WHERE cache_entries.endpoint_id=excluded.endpoint_id
+				AND cache_entries.path_bytes=excluded.path_bytes
+				AND cache_entries.fingerprint_strength=excluded.fingerprint_strength
+				AND cache_entries.fingerprint_size IS excluded.fingerprint_size
+				AND cache_entries.modified_unix_nano IS excluded.modified_unix_nano
+				AND cache_entries.modified_precision IS excluded.modified_precision
+				AND cache_entries.file_id IS excluded.file_id
+				AND cache_entries.version_id IS excluded.version_id
+				AND cache_entries.hash_algorithm IS excluded.hash_algorithm
+				AND cache_entries.hash_hex IS excluded.hash_hex
+				AND cache_entries.workspace_id=excluded.workspace_id
+				AND cache_entries.blob_sha256=excluded.blob_sha256
+				AND cache_entries.complete=1 AND excluded.complete=1`, entry.ID, entry.EndpointID, entry.CanonicalPath, strength, algorithm, encoded, entry.Freshness, entry.Policy, string(entry.WorkspaceID), boolInt(entry.Pinned), entry.BlobID, 1, unix(entry.CreatedAt), unix(entry.LastAccessAt))
+		if err := requireOne("publish cache entry", result, err); err != nil {
+			return fmt.Errorf("publish cache entry %q: %w", entry.ID, err)
+		}
+		return nil
+	})
+}
+
+func (store *Store) GetBlob(ctx context.Context, id cache.BlobID) (cache.Blob, error) {
+	if _, err := cache.ParseBlobID(string(id)); err != nil {
+		return cache.Blob{}, fmt.Errorf("get cache blob: %w", err)
+	}
+	return scanBlob(store.database.QueryRowContext(ctx, blobSelect+" WHERE sha256=?", id))
+}
+
+// MarkEntryUnknown records that an otherwise complete cache entry was reused
+// without a live remote freshness observation.
+func (store *Store) MarkEntryUnknown(ctx context.Context, id cache.EntryID) error {
+	if _, err := cache.ParseEntryID(string(id)); err != nil {
+		return fmt.Errorf("mark cache entry freshness unknown: %w", err)
+	}
+	return store.updateOne(ctx, "mark cache entry freshness unknown", "UPDATE cache_entries SET freshness='unknown' WHERE entry_id=? AND complete=1", id)
+}
+
+func (store *Store) ListBlobs(ctx context.Context) ([]cache.Blob, error) {
+	return listBlobs(ctx, store.database)
+}
+
+func listBlobs(ctx context.Context, source queryer) ([]cache.Blob, error) {
+	rows, err := source.QueryContext(ctx, blobSelect+" ORDER BY sha256")
+	if err != nil {
+		return nil, fmt.Errorf("list cache blobs: %w", err)
+	}
+	defer rows.Close()
+	var result []cache.Blob
+	for rows.Next() {
+		item, err := scanBlob(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list cache blobs: %w", err)
+	}
+	return result, nil
+}
+
+func (store *Store) TouchBlob(ctx context.Context, id cache.BlobID, at time.Time) error {
+	if _, err := cache.ParseBlobID(string(id)); err != nil {
+		return fmt.Errorf("touch cache blob: %w", err)
+	}
+	if err := validateTime("blob access", at); err != nil {
+		return err
+	}
+	return store.updateOne(ctx, "touch cache blob", "UPDATE cache_blobs SET last_access_unix=? WHERE sha256=? AND last_access_unix<=?", unix(at), id, unix(at))
+}
+
+func (store *Store) GetEntry(ctx context.Context, id cache.EntryID) (cache.Entry, error) {
+	if _, err := cache.ParseEntryID(string(id)); err != nil {
+		return cache.Entry{}, fmt.Errorf("get cache entry: %w", err)
+	}
+	return scanEntry(store.database.QueryRowContext(ctx, entrySelect+" WHERE entry_id=?", id))
+}
+
+func (store *Store) ListEntries(ctx context.Context) ([]cache.Entry, error) {
+	return listEntries(ctx, store.database)
+}
+
+func listEntries(ctx context.Context, source queryer) ([]cache.Entry, error) {
+	rows, err := source.QueryContext(ctx, entrySelect+" ORDER BY entry_id")
+	if err != nil {
+		return nil, fmt.Errorf("list cache entries: %w", err)
+	}
+	defer rows.Close()
+	var result []cache.Entry
+	for rows.Next() {
+		item, err := scanEntry(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list cache entries: %w", err)
+	}
+	return result, nil
+}
+
+func (store *Store) TouchEntry(ctx context.Context, id cache.EntryID, at time.Time) error {
+	if _, err := cache.ParseEntryID(string(id)); err != nil {
+		return fmt.Errorf("touch cache entry: %w", err)
+	}
+	if err := validateTime("entry access", at); err != nil {
+		return err
+	}
+	return store.updateOne(ctx, "touch cache entry", "UPDATE cache_entries SET last_access_unix=? WHERE entry_id=? AND last_access_unix<=?", unix(at), id, unix(at))
+}
+
+func (store *Store) CreateMaterialization(ctx context.Context, item cache.Materialization) error {
+	if err := validateMaterialization(item); err != nil {
+		return fmt.Errorf("create cache materialization: %w", err)
+	}
+	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
+		_, err := w.ExecContext(ctx, "INSERT INTO cache_materializations(materialization_id,entry_id,baseline_blob_sha256,basename,size_bytes,current_sha256,state,pinned,created_at_unix,updated_at_unix,last_access_unix) VALUES(?,?,?,?,?,?,?,?,?,?,?)", item.ID, item.EntryID, item.BaselineBlobID, materializationBasename(item.ID), item.Size, item.CurrentBlobID, item.State, boolInt(item.Pinned), unix(item.CreatedAt), unix(item.LastAccessAt), unix(item.LastAccessAt))
+		if err != nil {
+			return fmt.Errorf("create cache materialization %q: %w", item.ID, err)
+		}
+		return nil
+	})
+}
+
+func (store *Store) UpdateMaterialization(ctx context.Context, item cache.Materialization) error {
+	if err := validateMaterialization(item); err != nil {
+		return fmt.Errorf("update cache materialization: %w", err)
+	}
+	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
+		result, err := w.ExecContext(ctx, "UPDATE cache_materializations SET entry_id=?,baseline_blob_sha256=?,size_bytes=?,current_sha256=?,state=?,pinned=?,updated_at_unix=?,last_access_unix=? WHERE materialization_id=? AND basename=? AND created_at_unix=? AND updated_at_unix<=? AND last_access_unix<=?", item.EntryID, item.BaselineBlobID, item.Size, item.CurrentBlobID, item.State, boolInt(item.Pinned), unix(item.LastAccessAt), unix(item.LastAccessAt), item.ID, materializationBasename(item.ID), unix(item.CreatedAt), unix(item.LastAccessAt), unix(item.LastAccessAt))
+		return requireOne("update cache materialization", result, err)
+	})
+}
+
+func (store *Store) ListMaterializations(ctx context.Context) ([]cache.Materialization, error) {
+	return listMaterializations(ctx, store.database)
+}
+
+// PrepareHandoff atomically makes one already-durable filesystem
+// materialization reachable and leased before an external process can observe
+// its path. Filesystem publication remains cachefs-owned and must complete
+// before this catalog transaction begins.
+func (store *Store) PrepareHandoff(ctx context.Context, item cache.Materialization, reference cache.Reference, lease cache.Lease) error {
+	if err := validateMaterialization(item); err != nil {
+		return fmt.Errorf("prepare cache handoff: %w", err)
+	}
+	if err := validateReference(reference); err != nil {
+		return fmt.Errorf("prepare cache handoff: %w", err)
+	}
+	if err := validateLease(lease, false); err != nil {
+		return fmt.Errorf("prepare cache handoff: %w", err)
+	}
+	if reference.Target != cache.MaterializationTarget(item.ID) || lease.Target != cache.MaterializationTarget(item.ID) {
+		return fmt.Errorf("prepare cache handoff: reference and lease must target materialization %q", item.ID)
+	}
+	owner, err := encodeLeaseOwner(lease.OwnerKind)
+	if err != nil {
+		return fmt.Errorf("prepare cache handoff: %w", err)
+	}
+	pid, birth := processValues(lease.Process)
+	return store.write(ctx, 3, func(_ *sql.Conn, writer *transactionWriter) error {
+		result, err := writer.ExecContext(ctx, "INSERT INTO cache_materializations(materialization_id,entry_id,baseline_blob_sha256,basename,size_bytes,current_sha256,state,pinned,created_at_unix,updated_at_unix,last_access_unix) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM cache_entries AS e JOIN cache_blobs AS b ON b.sha256=e.blob_sha256 WHERE e.entry_id=? AND e.blob_sha256=? AND b.state='published' AND NOT EXISTS(SELECT 1 FROM cache_references AS r WHERE r.owner_kind='workspace' AND r.owner_id=?||e.entry_id AND r.blob_sha256=e.blob_sha256))", item.ID, item.EntryID, item.BaselineBlobID, materializationBasename(item.ID), item.Size, item.CurrentBlobID, item.State, boolInt(item.Pinned), unix(item.CreatedAt), unix(item.LastAccessAt), unix(item.LastAccessAt), item.EntryID, item.BaselineBlobID, evictionEntryOwnerPrefix)
+		if err := requireOne("prepare cache handoff materialization", result, err); err != nil {
+			return errors.Join(ErrEvictionProtected, fmt.Errorf("prepare cache handoff materialization %q: %w", item.ID, err))
+		}
+		if _, err := writer.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,blob_sha256,materialization_id,created_at_unix) VALUES(?,?,?,NULL,?,?)", reference.ID, reference.OwnerKind, reference.OwnerID, item.ID, unix(reference.CreatedAt)); err != nil {
+			return fmt.Errorf("prepare cache handoff reference %q: %w", reference.ID, err)
+		}
+		if _, err := writer.ExecContext(ctx, "INSERT INTO cache_leases(lease_id,blob_sha256,materialization_id,owner_kind,owner_id,daemon_instance_id,owner_pid,process_birth_identity,heartbeat_at_unix,expires_at_unix,grace_until_unix,state) VALUES(?,NULL,?,?,?,?,?,?,?,?,?,'active')", lease.ID, item.ID, owner, lease.OwnerID, lease.DaemonInstanceID, pid, birth, unix(lease.HeartbeatAt), unix(lease.ExpiresAt), unix(lease.GraceUntil)); err != nil {
+			return fmt.Errorf("prepare cache handoff lease %q: %w", lease.ID, err)
+		}
+		return nil
+	})
+}
+
+func listMaterializations(ctx context.Context, source queryer) ([]cache.Materialization, error) {
+	rows, err := source.QueryContext(ctx, materializationSelect+" ORDER BY materialization_id")
+	if err != nil {
+		return nil, fmt.Errorf("list cache materializations: %w", err)
+	}
+	defer rows.Close()
+	var result []cache.Materialization
+	for rows.Next() {
+		item, err := scanMaterialization(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list cache materializations: %w", err)
+	}
+	return result, nil
+}
+
+func (store *Store) AddReference(ctx context.Context, item cache.Reference) error {
+	if err := validateReference(item); err != nil {
+		return fmt.Errorf("add cache reference: %w", err)
+	}
+	blob, materialization := targetValues(item.Target)
+	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
+		result, err := w.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,blob_sha256,materialization_id,created_at_unix) SELECT ?,?,?,?,?,? WHERE (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_blobs WHERE sha256=? AND state='published')) OR (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_materializations WHERE materialization_id=? AND state<>'deleting'))", item.ID, item.OwnerKind, item.OwnerID, blob, materialization, unix(item.CreatedAt), blob, blob, materialization, materialization)
+		if err := requireOne("add cache reference", result, err); err != nil {
+			if err != nil && !strings.Contains(err.Error(), "UNIQUE constraint") {
+				return errors.Join(ErrEvictionProtected, fmt.Errorf("add cache reference %q: %w", item.ID, err))
+			}
+			return fmt.Errorf("add cache reference %q: %w", item.ID, err)
+		}
+		return nil
+	})
+}
+
+func (store *Store) RemoveReference(ctx context.Context, id cache.ReferenceID) error {
+	if _, err := cache.ParseReferenceID(string(id)); err != nil {
+		return fmt.Errorf("remove cache reference: %w", err)
+	}
+	return store.updateOne(ctx, "remove cache reference", "DELETE FROM cache_references WHERE reference_id=?", id)
+}
+
+func (store *Store) ListReferences(ctx context.Context, limit int) ([]cache.Reference, error) {
+	if err := validateListLimit(limit); err != nil {
+		return nil, fmt.Errorf("list cache references: %w", err)
+	}
+	return queryReferences(ctx, store.database, referenceSelect+" ORDER BY reference_id LIMIT ?", limit)
+}
+
+func listReferences(ctx context.Context, source queryer) ([]cache.Reference, error) {
+	return queryReferences(ctx, source, referenceSelect+" ORDER BY reference_id")
+}
+
+func queryReferences(ctx context.Context, source queryer, query string, args ...any) ([]cache.Reference, error) {
+	rows, err := source.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list cache references: %w", err)
+	}
+	defer rows.Close()
+	var result []cache.Reference
+	for rows.Next() {
+		item, err := scanReference(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list cache references: %w", err)
+	}
+	return result, nil
+}
+
+// ListPreviewReferences returns at most limit exact preview reachability
+// references. A limit of two lets lifecycle callers distinguish an exact
+// reference from ambiguous catalog state without an unbounded scan.
+func (store *Store) ListPreviewReferences(ctx context.Context, ownerID string, materializationID cache.MaterializationID, limit int) ([]cache.Reference, error) {
+	if ownerID == "" || len(ownerID) > 128 {
+		return nil, fmt.Errorf("list preview cache references: invalid owner ID")
+	}
+	if _, err := cache.ParseMaterializationID(string(materializationID)); err != nil {
+		return nil, fmt.Errorf("list preview cache references: %w", err)
+	}
+	if err := validateListLimit(limit); err != nil {
+		return nil, fmt.Errorf("list preview cache references: %w", err)
+	}
+	return queryReferences(ctx, store.database, referenceSelect+" WHERE owner_kind='preview' AND owner_id=? AND materialization_id=? ORDER BY reference_id LIMIT ?", ownerID, materializationID, limit)
+}
+
+func (store *Store) AcquireLease(ctx context.Context, item cache.Lease) error {
+	if err := validateLease(item, false); err != nil {
+		return fmt.Errorf("acquire cache lease: %w", err)
+	}
+	blob, materialization := targetValues(item.Target)
+	owner, err := encodeLeaseOwner(item.OwnerKind)
+	if err != nil {
+		return err
+	}
+	pid, birth := processValues(item.Process)
+	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
+		result, err := w.ExecContext(ctx, "INSERT INTO cache_leases(lease_id,blob_sha256,materialization_id,owner_kind,owner_id,daemon_instance_id,owner_pid,process_birth_identity,heartbeat_at_unix,expires_at_unix,grace_until_unix,state) SELECT ?,?,?,?,?,?,?,?,?,?,?,'active' WHERE (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_blobs WHERE sha256=? AND state='published')) OR (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_materializations WHERE materialization_id=? AND state<>'deleting'))", item.ID, blob, materialization, owner, item.OwnerID, item.DaemonInstanceID, pid, birth, unix(item.HeartbeatAt), unix(item.ExpiresAt), unix(item.GraceUntil), blob, blob, materialization, materialization)
+		if err := requireOne("acquire cache lease", result, err); err != nil {
+			return errors.Join(ErrEvictionProtected, fmt.Errorf("acquire cache lease %q: %w", item.ID, err))
+		}
+		return nil
+	})
+}
+
+func (store *Store) HeartbeatLease(ctx context.Context, item cache.Lease) error {
+	if err := validateLease(item, false); err != nil {
+		return fmt.Errorf("heartbeat cache lease: %w", err)
+	}
+	owner, err := encodeLeaseOwner(item.OwnerKind)
+	if err != nil {
+		return err
+	}
+	blob, materialization := targetValues(item.Target)
+	pid, birth := processValues(item.Process)
+	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
+		result, err := w.ExecContext(ctx, "UPDATE cache_leases SET heartbeat_at_unix=?,expires_at_unix=?,grace_until_unix=? WHERE lease_id=? AND state='active' AND daemon_instance_id=? AND owner_kind=? AND owner_id=? AND blob_sha256 IS ? AND materialization_id IS ? AND owner_pid IS ? AND process_birth_identity IS ? AND heartbeat_at_unix<=?", unix(item.HeartbeatAt), unix(item.ExpiresAt), unix(item.GraceUntil), item.ID, item.DaemonInstanceID, owner, item.OwnerID, blob, materialization, pid, birth, unix(item.HeartbeatAt))
+		return requireOne("heartbeat cache lease", result, err)
+	})
+}
+
+// AdoptAndHeartbeatLease atomically transfers an exact active process-bound
+// lease to a new daemon instance while renewing it. Native liveness is checked
+// by the manager immediately before this transaction; the store repeats every
+// persisted identity predicate and the previous heartbeat as its concurrency
+// boundary.
+func (store *Store) AdoptAndHeartbeatLease(ctx context.Context, previous cache.Lease, renewed cache.Lease) error {
+	if err := validateLease(previous, false); err != nil {
+		return fmt.Errorf("adopt cache lease: invalid previous lease: %w", err)
+	}
+	if err := validateLease(renewed, false); err != nil {
+		return fmt.Errorf("adopt cache lease: invalid renewed lease: %w", err)
+	}
+	if previous.Process == nil || renewed.Process == nil || previous.ID != renewed.ID || previous.Target != renewed.Target ||
+		previous.OwnerKind != renewed.OwnerKind || previous.OwnerID != renewed.OwnerID || *previous.Process != *renewed.Process ||
+		previous.DaemonInstanceID == renewed.DaemonInstanceID || renewed.HeartbeatAt.Before(previous.HeartbeatAt) {
+		return fmt.Errorf("adopt cache lease: lease identity or daemon transition does not match")
+	}
+	owner, err := encodeLeaseOwner(previous.OwnerKind)
+	if err != nil {
+		return err
+	}
+	blob, materialization := targetValues(previous.Target)
+	pid, birth := processValues(previous.Process)
+	return store.write(ctx, 1, func(_ *sql.Conn, writer *transactionWriter) error {
+		result, err := writer.ExecContext(ctx, "UPDATE cache_leases SET daemon_instance_id=?,heartbeat_at_unix=?,expires_at_unix=?,grace_until_unix=? WHERE lease_id=? AND state='active' AND daemon_instance_id=? AND owner_kind=? AND owner_id=? AND blob_sha256 IS ? AND materialization_id IS ? AND owner_pid IS ? AND process_birth_identity IS ? AND heartbeat_at_unix=?", renewed.DaemonInstanceID, unix(renewed.HeartbeatAt), unix(renewed.ExpiresAt), unix(renewed.GraceUntil), previous.ID, previous.DaemonInstanceID, owner, previous.OwnerID, blob, materialization, pid, birth, unix(previous.HeartbeatAt))
+		return requireOne("adopt cache lease", result, err)
+	})
+}
+
+func (store *Store) ReleaseLease(ctx context.Context, item cache.Lease) error {
+	if err := validateLease(item, true); err != nil {
+		return fmt.Errorf("release cache lease: %w", err)
+	}
+	owner, err := encodeLeaseOwner(item.OwnerKind)
+	if err != nil {
+		return err
+	}
+	blob, materialization := targetValues(item.Target)
+	pid, birth := processValues(item.Process)
+	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
+		result, err := w.ExecContext(ctx, "UPDATE cache_leases SET heartbeat_at_unix=?,expires_at_unix=?,grace_until_unix=?,state='released' WHERE lease_id=? AND state='active' AND daemon_instance_id=? AND owner_kind=? AND owner_id=? AND blob_sha256 IS ? AND materialization_id IS ? AND owner_pid IS ? AND process_birth_identity IS ? AND heartbeat_at_unix<=?", unix(item.ReleasedAt), unix(maxTime(item.ExpiresAt, item.ReleasedAt)), unix(maxTime(item.GraceUntil, maxTime(item.ExpiresAt, item.ReleasedAt))), item.ID, item.DaemonInstanceID, owner, item.OwnerID, blob, materialization, pid, birth, unix(item.ReleasedAt))
+		return requireOne("release cache lease", result, err)
+	})
+}
+
+type ReleaseHandoffRequest struct {
+	MaterializationID cache.MaterializationID
+	ReferenceID       cache.ReferenceID
+	LeaseID           cache.LeaseID
+	OwnerKind         cache.LeaseOwnerKind
+	OwnerID           string
+	ReleasedAt        time.Time
+}
+
+// ReleaseHandoff atomically releases the process lease and removes its exact
+// reachability reference. It never updates or deletes the materialization.
+func (store *Store) ReleaseHandoff(ctx context.Context, request ReleaseHandoffRequest) error {
+	if _, err := cache.ParseMaterializationID(string(request.MaterializationID)); err != nil {
+		return fmt.Errorf("release cache handoff: %w", err)
+	}
+	if _, err := cache.ParseReferenceID(string(request.ReferenceID)); err != nil {
+		return fmt.Errorf("release cache handoff: %w", err)
+	}
+	if _, err := cache.ParseLeaseID(string(request.LeaseID)); err != nil {
+		return fmt.Errorf("release cache handoff: %w", err)
+	}
+	owner, err := encodeLeaseOwner(request.OwnerKind)
+	if err != nil || request.OwnerID == "" || len(request.OwnerID) > 128 || validateTime("handoff release", request.ReleasedAt) != nil {
+		return fmt.Errorf("release cache handoff: invalid owner or time")
+	}
+	return store.write(ctx, 2, func(connection *sql.Conn, writer *transactionWriter) error {
+		var state, storedOwner, storedOwnerID, materializationID string
+		if err := connection.QueryRowContext(ctx, "SELECT state,owner_kind,owner_id,materialization_id FROM cache_leases WHERE lease_id=?", request.LeaseID).Scan(&state, &storedOwner, &storedOwnerID, &materializationID); err != nil {
+			return fmt.Errorf("release cache handoff lease: %w", err)
+		}
+		if storedOwner != owner || storedOwnerID != request.OwnerID || materializationID != string(request.MaterializationID) || state != string(cache.LeaseActive) && state != string(cache.LeaseReleased) {
+			return errors.New("release cache handoff: lease identity does not match")
+		}
+		var referenceOwner, referenceOwnerID, referenceMaterialization string
+		referenceErr := connection.QueryRowContext(ctx, "SELECT owner_kind,owner_id,materialization_id FROM cache_references WHERE reference_id=?", request.ReferenceID).Scan(&referenceOwner, &referenceOwnerID, &referenceMaterialization)
+		if referenceErr != nil && !errors.Is(referenceErr, sql.ErrNoRows) {
+			return fmt.Errorf("release cache handoff reference: %w", referenceErr)
+		}
+		if errors.Is(referenceErr, sql.ErrNoRows) && state == string(cache.LeaseActive) {
+			return errors.New("release cache handoff: active lease reference is missing")
+		}
+		if referenceErr == nil && (referenceOwner != owner || referenceOwnerID != request.OwnerID || referenceMaterialization != string(request.MaterializationID)) {
+			return errors.New("release cache handoff: reference identity does not match")
+		}
+		released := unix(request.ReleasedAt)
+		if _, err := writer.ExecContext(ctx, "UPDATE cache_leases SET heartbeat_at_unix=max(heartbeat_at_unix,?),expires_at_unix=max(expires_at_unix,?),grace_until_unix=max(grace_until_unix,expires_at_unix,?),state='released' WHERE lease_id=? AND state='active'", released, released, released, request.LeaseID); err != nil {
+			return fmt.Errorf("release cache handoff lease: %w", err)
+		}
+		if _, err := writer.ExecContext(ctx, "DELETE FROM cache_references WHERE reference_id=?", request.ReferenceID); err != nil {
+			return fmt.Errorf("release cache handoff reference: %w", err)
+		}
+		return nil
+	})
+}
+
+func (store *Store) ListLeases(ctx context.Context, limit int) ([]cache.Lease, error) {
+	if err := validateListLimit(limit); err != nil {
+		return nil, fmt.Errorf("list cache leases: %w", err)
+	}
+	return queryLeases(ctx, store.database, leaseSelect+" ORDER BY lease_id LIMIT ?", limit)
+}
+
+func (store *Store) GetLease(ctx context.Context, id cache.LeaseID) (cache.Lease, error) {
+	if _, err := cache.ParseLeaseID(string(id)); err != nil {
+		return cache.Lease{}, fmt.Errorf("get cache lease: %w", err)
+	}
+	return scanLease(store.database.QueryRowContext(ctx, leaseSelect+" WHERE lease_id=?", id))
+}
+
+func listLeases(ctx context.Context, source queryer) ([]cache.Lease, error) {
+	return queryLeases(ctx, source, leaseSelect+" ORDER BY lease_id")
+}
+
+func queryLeases(ctx context.Context, source queryer, query string, args ...any) ([]cache.Lease, error) {
+	rows, err := source.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("list cache leases: %w", err)
+	}
+	defer rows.Close()
+	var result []cache.Lease
+	for rows.Next() {
+		item, err := scanLease(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list cache leases: %w", err)
+	}
+	return result, nil
+}
+
+// ListActivePreviewLeasesAfter pages only the leases startup cleanup is
+// authorized to reclaim. Released and durable editor/opener leases cannot
+// pin the cursor at the front of every batch.
+func (store *Store) ListActivePreviewLeasesAfter(ctx context.Context, after cache.LeaseID, limit int) ([]cache.Lease, error) {
+	if after != "" {
+		if _, err := cache.ParseLeaseID(string(after)); err != nil {
+			return nil, fmt.Errorf("list active preview cache leases: %w", err)
+		}
+	}
+	if err := validateListLimit(limit); err != nil {
+		return nil, fmt.Errorf("list active preview cache leases: %w", err)
+	}
+	return queryLeases(ctx, store.database, leaseSelect+" WHERE state='active' AND owner_kind='preview' AND lease_id>? ORDER BY lease_id LIMIT ?", after, limit)
+}
+
+func (store *Store) LoadSnapshot(ctx context.Context) (cache.Snapshot, error) {
+	return store.LoadSnapshotBounded(ctx, maxListResults)
+}
+
+// LoadSnapshotBounded refuses the catalog before allocating record slices
+// when the transaction snapshot contains more than maxRecords rows in total.
+func (store *Store) LoadSnapshotBounded(ctx context.Context, maxRecords int) (result cache.Snapshot, returnErr error) {
+	if store == nil || store.database == nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: nil database")
+	}
+	if err := validateListLimit(maxRecords); err != nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: %w", err)
+	}
+	connection, err := store.database.Conn(ctx)
+	if err != nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: reserve connection: %w", err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, connection.Close()) }()
+	if _, err := connection.ExecContext(ctx, "BEGIN"); err != nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: begin read transaction: %w", err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_, rollbackErr := connection.ExecContext(context.Background(), "ROLLBACK")
+			returnErr = errors.Join(returnErr, rollbackErr)
+		}
+	}()
+	var recordCount int64
+	if err := connection.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM cache_blobs) +
+		(SELECT COUNT(*) FROM cache_entries) +
+		(SELECT COUNT(*) FROM cache_materializations) +
+		(SELECT COUNT(*) FROM cache_references) +
+		(SELECT COUNT(*) FROM cache_leases)`).Scan(&recordCount); err != nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: count records: %w", err)
+	}
+	if recordCount < 0 || recordCount > int64(maxRecords) {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: catalog has %d records, limit is %d", recordCount, maxRecords)
+	}
+	blobs, err := listBlobs(ctx, connection)
+	if err != nil {
+		return cache.Snapshot{}, err
+	}
+	entries, err := listEntries(ctx, connection)
+	if err != nil {
+		return cache.Snapshot{}, err
+	}
+	materializations, err := listMaterializations(ctx, connection)
+	if err != nil {
+		return cache.Snapshot{}, err
+	}
+	references, err := listReferences(ctx, connection)
+	if err != nil {
+		return cache.Snapshot{}, err
+	}
+	leases, err := listLeases(ctx, connection)
+	if err != nil {
+		return cache.Snapshot{}, err
+	}
+	result = cache.Snapshot{Blobs: blobs, Entries: entries, Materializations: materializations, References: references, Leases: leases}
+	if err := result.Validate(); err != nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: %w", err)
+	}
+	if _, err := connection.ExecContext(ctx, "COMMIT"); err != nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: commit read transaction: %w", err)
+	}
+	committed = true
+	return result, nil
+}
+
+type queryer interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func validateListLimit(limit int) error {
+	if limit <= 0 || limit > maxListResults {
+		return fmt.Errorf("limit must be between 1 and %d", maxListResults)
+	}
+	return nil
+}
+
+func (store *Store) updateOne(ctx context.Context, label, query string, args ...any) error {
+	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
+		result, err := w.ExecContext(ctx, query, args...)
+		return requireOne(label, result, err)
+	})
+}
+
+func requireOne(label string, result sql.Result, err error) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	count, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s: count rows: %w", label, err)
+	}
+	if count != 1 {
+		return fmt.Errorf("%s: row not found or state changed", label)
+	}
+	return nil
+}
+
+type transactionWriter struct {
+	connection  *sql.Conn
+	transaction *wal.FileTransaction
+	next        int
+}
+
+func (w *transactionWriter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	result, execErr := w.connection.ExecContext(ctx, query, args...)
+	observeErr := w.transaction.AfterStatement(w.next)
+	w.next++
+	return result, errors.Join(execErr, observeErr)
+}
+
+func (store *Store) write(ctx context.Context, statements int, operation func(*sql.Conn, *transactionWriter) error) (returnErr error) {
+	if store == nil || store.database == nil || store.walGuard == nil {
+		return fmt.Errorf("cache store: nil database")
+	}
+	connection, err := store.database.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("cache store: reserve connection: %w", err)
+	}
+	defer func() { returnErr = errors.Join(returnErr, connection.Close()) }()
+	budgets := make([]uint64, statements)
+	for i := range budgets {
+		budgets[i] = statementWALBudget
+	}
+	transaction, err := store.walGuard.Begin(budgets)
+	if err != nil {
+		return fmt.Errorf("cache store: WAL preflight: %w", err)
+	}
+	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return fmt.Errorf("cache store: begin immediate: %w", errors.Join(err, transaction.AfterRollback()))
+	}
+	writer := &transactionWriter{connection: connection, transaction: transaction}
+	if err := operation(connection, writer); err != nil {
+		_, rollbackErr := connection.ExecContext(context.Background(), "ROLLBACK")
+		return errors.Join(err, rollbackErr, transaction.AfterRollback())
+	}
+	if writer.next != statements {
+		_, rollbackErr := connection.ExecContext(context.Background(), "ROLLBACK")
+		return errors.Join(fmt.Errorf("cache store: observed %d statements, want %d", writer.next, statements), rollbackErr, transaction.AfterRollback())
+	}
+	if err := transaction.BeforeCommit(); err != nil {
+		_, rollbackErr := connection.ExecContext(context.Background(), "ROLLBACK")
+		return errors.Join(err, rollbackErr, transaction.AfterRollback())
+	}
+	if _, err := connection.ExecContext(ctx, "COMMIT"); err != nil {
+		_, rollbackErr := connection.ExecContext(context.Background(), "ROLLBACK")
+		return fmt.Errorf("cache store: commit: %w", errors.Join(err, rollbackErr, transaction.AfterRollback()))
+	}
+	if err := transaction.AfterCommit(); err != nil {
+		return fmt.Errorf("cache store: committed WAL observation: %w", err)
+	}
+	if _, err := store.walGuard.PassiveCheckpoint(ctx, connection); err != nil {
+		return fmt.Errorf("cache store: committed passive checkpoint: %w", err)
+	}
+	return nil
+}
+
+func validateBlob(item cache.Blob) error {
+	if err := item.Validate(); err != nil {
+		return err
+	}
+	if err := validateTime("blob creation", item.CreatedAt); err != nil {
+		return err
+	}
+	return validateTime("blob access", item.LastAccessAt)
+}
+func validateEntry(item cache.Entry) error {
+	if err := item.Validate(); err != nil {
+		return err
+	}
+	if len(item.EndpointID) > 255 {
+		return fmt.Errorf("cache entry endpoint ID exceeds Version 2 bound")
+	}
+	if len(item.CanonicalPath) > 4096 {
+		return fmt.Errorf("cache entry path exceeds Version 2 bound")
+	}
+	if len(item.WorkspaceID) > 128 {
+		return fmt.Errorf("cache entry workspace ID exceeds Version 2 bound")
+	}
+	if err := validateTime("entry creation", item.CreatedAt); err != nil {
+		return err
+	}
+	return validateTime("entry access", item.LastAccessAt)
+}
+func validateMaterialization(item cache.Materialization) error {
+	if err := item.Validate(); err != nil {
+		return err
+	}
+	if err := validateTime("materialization creation", item.CreatedAt); err != nil {
+		return err
+	}
+	return validateTime("materialization access", item.LastAccessAt)
+}
+func validateReference(item cache.Reference) error {
+	if item.OwnerKind == cache.ReferenceOwnerStage2Part {
+		return fmt.Errorf("cache reference owner kind %q is not persistable in Version 2", item.OwnerKind)
+	}
+	if err := item.Validate(); err != nil {
+		return err
+	}
+	if len(item.OwnerID) > 128 {
+		return fmt.Errorf("cache reference owner ID exceeds Version 2 bound")
+	}
+	return validateTime("reference creation", item.CreatedAt)
+}
+func validateLease(item cache.Lease, released bool) error {
+	if err := item.Validate(); err != nil {
+		return err
+	}
+	if released != (item.State == cache.LeaseReleased) {
+		return fmt.Errorf("cache lease state does not match operation")
+	}
+	if len(item.OwnerID) > 128 {
+		return fmt.Errorf("cache lease owner ID exceeds Version 2 bound")
+	}
+	if !lowerHex(item.DaemonInstanceID, 32) {
+		return fmt.Errorf("cache lease daemon instance ID must be 32 lowercase hex characters")
+	}
+	if item.Process != nil && len(item.Process.BirthID) > 128 {
+		return fmt.Errorf("cache lease process birth identity exceeds Version 2 bound")
+	}
+	for label, value := range map[string]time.Time{"heartbeat": item.HeartbeatAt, "expiry": item.ExpiresAt, "grace": item.GraceUntil} {
+		if err := validateTime("lease "+label, value); err != nil {
+			return err
+		}
+	}
+	if released {
+		return validateTime("lease release", item.ReleasedAt)
+	}
+	return nil
+}
+func validateTime(label string, value time.Time) error {
+	if value.IsZero() || value.Unix() <= 0 {
+		return fmt.Errorf("validate %s: time must be after Unix epoch", label)
+	}
+	if value.Nanosecond() != 0 {
+		return fmt.Errorf("validate %s: Version 2 stores whole seconds", label)
+	}
+	return nil
+}
+func encodeFingerprint(value cache.Fingerprint) (string, string, string) {
+	return string(value.Strength), fingerprintCodec, hex.EncodeToString(value.Canonical)
+}
+func blobBasename(id cache.BlobID) string {
+	return "blobs/sha256/" + string(id[:2]) + "/" + string(id) + ".blob"
+}
+func materializationBasename(id cache.MaterializationID) string {
+	return "materializations/" + string(id) + "/content"
+}
+func boolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}
+func unix(value time.Time) int64 { return value.Unix() }
+func targetValues(value cache.Target) (any, any) {
+	if value.BlobID != "" {
+		return value.BlobID, nil
+	}
+	return nil, value.MaterializationID
+}
+func processValues(value *cache.ProcessIdentity) (any, any) {
+	if value == nil {
+		return nil, nil
+	}
+	return value.PID, value.BirthID
+}
+func maxTime(a, b time.Time) time.Time {
+	if a.Before(b) {
+		return b
+	}
+	return a
+}
+func lowerHex(value string, width int) bool {
+	if len(value) != width {
+		return false
+	}
+	for _, c := range value {
+		if !strings.ContainsRune("0123456789abcdef", c) {
+			return false
+		}
+	}
+	return true
+}
+
+func encodeLeaseOwner(value cache.LeaseOwnerKind) (string, error) {
+	switch value {
+	case cache.LeaseOwnerPreview:
+		return "preview", nil
+	case cache.LeaseOwnerEditor:
+		return "edit", nil
+	case cache.LeaseOwnerOpener:
+		return "open", nil
+	case cache.LeaseOwnerUpload:
+		return "upload", nil
+	default:
+		return "", fmt.Errorf("cache lease owner kind %q is not persistable in Version 2", value)
+	}
+}

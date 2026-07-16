@@ -51,7 +51,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 	case *tcell.EventKey:
 		switch event.Key() {
 		case tcell.KeyEnter:
-			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm {
+			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm || mode == ModeCommand || mode == ModeCommandConfirm || mode == ModeEditDecision || mode == ModeEditSaveAs || mode == ModeEditLaunchConfirm || mode == ModeEditRecovery || mode == ModeCacheClearConfirm {
 				return KeyPress{Key: KeySubmit}, true
 			}
 		case tcell.KeyTab:
@@ -61,7 +61,19 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 		case tcell.KeyBackspace:
 			return KeyPress{Key: KeyBackspace}, true
 		case tcell.KeyRune:
-			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename {
+			if mode == ModeEditRecovery {
+				switch event.Str() {
+				case "j":
+					return KeyPress{Key: KeyDown}, true
+				case "k":
+					return KeyPress{Key: KeyUp}, true
+				case "K":
+					return KeyPress{Key: KeyPreviewDrawer}, true
+				default:
+					return nil, false
+				}
+			}
+			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeCommand || mode == ModeEditSaveAs {
 				return TextInput{Text: event.Str()}, true
 			}
 			if value := event.Str(); len(value) == 1 && value[0] >= '0' && value[0] <= '9' {
@@ -108,8 +120,20 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 				return KeyPress{Key: KeyRepeat}, true
 			case "p":
 				return KeyPress{Key: KeyPaste}, true
+			case "e":
+				return KeyPress{Key: KeyEdit}, true
+			case "o":
+				return KeyPress{Key: KeyOpenExternal}, true
+			case "E":
+				return KeyPress{Key: KeyEditRecovery}, true
+			case "!":
+				return KeyPress{Key: KeyCommand}, true
+			case "K":
+				return KeyPress{Key: KeyPreviewDrawer}, true
 			case "J":
 				return KeyPress{Key: KeyJobs}, true
+			case "L":
+				return KeyPress{Key: KeyLogDrawer}, true
 			case "P":
 				return KeyPress{Key: KeyJobPause}, true
 			case "U":

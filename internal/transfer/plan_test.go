@@ -3,18 +3,89 @@ package transfer
 import (
 	"context"
 	"errors"
+	"math"
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 )
+
+func TestFreezeSyncBackCreatesPlanV2WithOriginalDestinationPreconditionAndBinding(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(sourceRoot, "materialized"), []byte("edited"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destinationRoot, "document.txt"), []byte("baseline"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointSSH)
+	planner := NewPlanner(MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination})
+	sourceRef, err := planner.Capture(context.Background(), normalizePlanTest(t, source, "/materialized"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := normalizePlanTest(t, destination, "/document.txt")
+	baseline, err := destination.Stat(context.Background(), providerapi.StatRequest{Location: target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(destinationRoot, "document.txt"), []byte("changed before planning"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	syncRequest := edit.SyncBackRequest{
+		PlanVersion: 2, Origin: edit.SyncBackOrigin, SessionID: edit.SessionID(strings.Repeat("4", 32)), SessionVersion: 3,
+		SourceEntryID:     "2222222222222222222222222222222222222222222222222222222222222222",
+		MaterializationID: "33333333333333333333333333333333", Target: target,
+		LocalSHA256: edit.SHA256(strings.Repeat("a", 64)), Decision: edit.DecisionUpload,
+		OriginalDestinationPrecondition: edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: baseline.Kind, Fingerprint: baseline.Fingerprint, ContentSHA256: edit.SHA256(strings.Repeat("b", 64))},
+		DestinationPrecondition:         edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: baseline.Kind, Fingerprint: baseline.Fingerprint, ContentSHA256: edit.SHA256(strings.Repeat("b", 64))},
+	}
+	plan, create, err := planner.FreezeSyncBack(context.Background(), SyncBackFreezeRequest{
+		SyncBack: syncRequest, Source: sourceRef, RequestID: planTestRequestID, PlanID: planTestPlanID,
+		JobID: planTestJobID, EventID: planTestEventID, BindingEventID: "sync-back-bound", Now: time.Unix(1_800_000_000, 0),
+	})
+	if err != nil {
+		t.Fatalf("FreezeSyncBack(): %v", err)
+	}
+	if plan.Version != 2 || plan.Origin != OriginSyncBack || plan.EditSessionID != string(syncRequest.SessionID) || plan.ExpectedDestination == nil || plan.OriginalDestinationPrecondition == nil {
+		t.Fatalf("sync-back Plan = %#v", plan)
+	}
+	if !reflect.DeepEqual(plan.ExpectedDestination.Fingerprint, baseline.Fingerprint) {
+		t.Fatal("FreezeSyncBack replaced the edit baseline with a current destination observation")
+	}
+	if plan.ExpectedDestination.ContentSHA256 != edit.SHA256(strings.Repeat("b", 64)) {
+		t.Fatalf("content precondition = %q", plan.ExpectedDestination.ContentSHA256)
+	}
+	if plan.PreservedDestination.EndpointID != target.EndpointID || !strings.Contains(string(plan.PreservedDestination.Path), ".amsftp-original-") {
+		t.Fatalf("preserved destination = %#v", plan.PreservedDestination)
+	}
+	if syncRequest.SessionVersion > edit.Version(math.MaxInt64) {
+		t.Fatalf("test session version %d exceeds int64", syncRequest.SessionVersion)
+	}
+	// #nosec G115 -- the test asserts the session version fits int64 above.
+	expectedVersion := int64(syncRequest.SessionVersion)
+	if create.EditSession == nil || create.EditSession.SessionID != string(syncRequest.SessionID) || create.EditSession.ExpectedVersion != expectedVersion {
+		t.Fatalf("sync-back binding = %#v", create.EditSession)
+	}
+	reloaded, err := DecodePlan(jobstore.PlanRecord{
+		PlanID: create.PlanID, Kind: create.Kind, SourceJSON: create.SourceJSON, DestinationJSON: create.DestinationJSON,
+		Route: create.Route, Verification: create.Verification, ConflictPolicy: create.ConflictPolicy, FrozenAt: create.Now,
+	}, create.JobID)
+	if err != nil || !reflect.DeepEqual(reloaded, plan) {
+		t.Fatalf("DecodePlan(sync-back) = (%#v, %v), want %#v", reloaded, err, plan)
+	}
+}
 
 const (
 	planTestRequestID domain.RequestID = "req_aaaaaaaaaaaaaaaaaaaaaaaaaa"

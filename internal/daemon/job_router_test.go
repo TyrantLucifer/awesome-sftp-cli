@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
@@ -50,6 +51,12 @@ func TestProviderSessionExposesOnlyHighLevelTransferAndJobRoutes(t *testing.T) {
 	if deleted.Snapshot.JobID != service.snapshot.JobID || !service.deleted.IrreversibleConfirmed {
 		t.Fatalf("deleted = %#v, intent = %#v", deleted, service.deleted)
 	}
+	syncBack := handlePayload[JobSnapshotResponse](t, session, JobCreateSyncBack, JobCreateSyncBackRequest{Intent: transfer.SyncBackIntent{
+		SyncBack: edit.SyncBackRequest{SessionID: "44444444444444444444444444444444"}, Source: captured.Reference,
+	}})
+	if syncBack.Snapshot.JobID != service.snapshot.JobID || service.syncBack.SyncBack.SessionID != "44444444444444444444444444444444" {
+		t.Fatalf("sync-back = %#v, intent = %#v", syncBack, service.syncBack)
+	}
 	listed := handlePayload[JobListResponse](t, session, JobList, JobListRequest{Limit: 20})
 	if len(listed.Jobs) != 1 || listed.Jobs[0].Snapshot.JobID != service.snapshot.JobID {
 		t.Fatalf("listed = %#v", listed)
@@ -83,6 +90,7 @@ type recordingTransferService struct {
 	captured    domain.Location
 	created     transfer.Intent
 	deleted     transfer.DeleteIntent
+	syncBack    transfer.SyncBackIntent
 	pauseCalls  int
 	resumeCalls int
 	cancelCalls int
@@ -107,6 +115,11 @@ func (service *recordingTransferService) CreateCopy(_ context.Context, intent tr
 
 func (service *recordingTransferService) CreateDelete(_ context.Context, intent transfer.DeleteIntent) (jobstore.Snapshot, error) {
 	service.deleted = intent
+	return service.snapshot, nil
+}
+
+func (service *recordingTransferService) CreateSyncBack(_ context.Context, intent transfer.SyncBackIntent) (jobstore.Snapshot, error) {
+	service.syncBack = intent
 	return service.snapshot, nil
 }
 

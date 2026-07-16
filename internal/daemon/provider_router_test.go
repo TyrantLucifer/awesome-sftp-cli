@@ -2,7 +2,9 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"net"
 	"os"
 	"path/filepath"
@@ -59,6 +61,14 @@ func TestProviderSessionRoutesListStatAndBoundedRead(t *testing.T) {
 	if got := string(data); got != "2345" {
 		t.Fatalf("read data = %q, want 2345", got)
 	}
+	hashed := handlePayload[ipc.ProviderHashResponse](t, session, ProviderHash, ipc.ProviderHashRequest{
+		Location: normalized.Location,
+		MaxBytes: 10,
+	})
+	wantSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("0123456789")))
+	if hashed.Size != 10 || hashed.SHA256 != wantSHA {
+		t.Fatalf("hash response = %#v, want size 10 SHA %s", hashed, wantSHA)
+	}
 
 	root := handlePayload[ipc.ProviderNormalizeResponse](t, session, ProviderNormalize, ipc.ProviderNormalizeRequest{
 		EndpointID: string(implementation.Descriptor().ID),
@@ -95,6 +105,13 @@ func TestProviderSessionRejectsWriteSurfaceAndOversizedRead(t *testing.T) {
 	}
 	if _, err := session.Handle(context.Background(), ProviderRead, payload); !domain.IsCode(err, domain.CodeInvalidArgument) {
 		t.Fatalf("oversized read error = %v, want invalid_argument", err)
+	}
+	payload, err = json.Marshal(ipc.ProviderHashRequest{Location: location, MaxBytes: 9})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Handle(context.Background(), ProviderHash, payload); !domain.IsCode(err, domain.CodeResourceExhausted) {
+		t.Fatalf("undersized hash budget error = %v, want resource_exhausted", err)
 	}
 }
 

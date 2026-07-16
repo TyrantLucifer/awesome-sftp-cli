@@ -103,7 +103,36 @@ func ValidateRenameRequest(endpointID domain.EndpointID, request RenameRequest) 
 	if err := validateLocation(endpointID, request.Source, "rename"); err != nil {
 		return err
 	}
-	return validateLocation(endpointID, request.Destination, "rename")
+	if err := validateLocation(endpointID, request.Destination, "rename"); err != nil {
+		return err
+	}
+	return nil
+}
+
+func ValidatePreserveDestinationRequest(endpointID domain.EndpointID, request PreserveDestinationRequest) error {
+	if err := validateLocation(endpointID, request.Source, "preserve_destination"); err != nil {
+		return err
+	}
+	if err := validateLocation(endpointID, request.Backup, "preserve_destination"); err != nil {
+		return err
+	}
+	if request.Source == request.Backup || request.ExpectedFingerprint.Strength() == domain.FingerprintWeak ||
+		!lowerHex(request.ExpectedSHA256, 64) || request.ExpectedSize < 0 || request.MaxBytes < request.ExpectedSize || request.MaxBytes > 2*1024*1024*1024 {
+		return invalidRequest("preserve_destination", endpointID, request.Source, "invalid bounded preservation precondition")
+	}
+	return nil
+}
+
+func lowerHex(value string, length int) bool {
+	if len(value) != length {
+		return false
+	}
+	for _, character := range value {
+		if (character < '0' || character > '9') && (character < 'a' || character > 'f') {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateRemoveRequest checks provider identity and location.

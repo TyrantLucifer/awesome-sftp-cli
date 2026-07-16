@@ -40,17 +40,23 @@ jobs:
       - run: make lint
       - run: make fuzz-smoke
       - run: make supply-chain
-      - name: Run real OpenSSH SFTP and Stage 2 PTY integration
+      - name: Run real OpenSSH, editor, opener, command, and PTY integration
         env:
           AMSFTP_REAL_SSHD: "1"
         run: |
           set -euo pipefail
-          if ! command -v sshd >/dev/null 2>&1; then
+          install_stage3_fixtures=0
+          for command in sshd nvim vim xdg-open; do
+            if ! command -v "${command}" >/dev/null 2>&1; then
+              install_stage3_fixtures=1
+            fi
+          done
+          if test "${install_stage3_fixtures}" = 1; then
             sudo apt-get update
-            sudo apt-get install -y openssh-server
+            sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y neovim openssh-server vim xdg-utils
           fi
           sudo mkdir -p /run/sshd
-          go test -count=1 -run '^(TestRealOpenSSHSFTPHostAliasAndNonDefaultPort|TestStage2TemporarySSHDPTYUploadDownloadMVP)$' ./internal/integration
+          go test -count=1 -run '^(TestRealOpenSSHSFTPHostAliasAndNonDefaultPort|TestStage2TemporarySSHDPTYUploadDownloadMVP|TestStage3NativeEditorsDirectExecMaterialization|TestStage3NativeDefaultOpenerDirectExec|TestStage3TemporarySSHDRemoteShellForegroundPTY)$' ./internal/integration
       - name: Record provenance
         run: |
           set -euo pipefail

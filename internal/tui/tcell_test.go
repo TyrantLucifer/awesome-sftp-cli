@@ -49,6 +49,8 @@ func TestTranslateTCellEvents(t *testing.T) {
 		{name: "rename", event: tcell.NewEventKey(tcell.KeyRune, "r", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyRename}},
 		{name: "repeat", event: tcell.NewEventKey(tcell.KeyRune, ".", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyRepeat}},
 		{name: "paste", event: tcell.NewEventKey(tcell.KeyRune, "p", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyPaste}},
+		{name: "edit", event: tcell.NewEventKey(tcell.KeyRune, "e", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyEdit}},
+		{name: "open external", event: tcell.NewEventKey(tcell.KeyRune, "o", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyOpenExternal}},
 		{name: "jobs", event: tcell.NewEventKey(tcell.KeyRune, "J", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyJobs}},
 		{name: "job pause", event: tcell.NewEventKey(tcell.KeyRune, "P", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyJobPause}},
 		{name: "job resume", event: tcell.NewEventKey(tcell.KeyRune, "U", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyJobResume}},

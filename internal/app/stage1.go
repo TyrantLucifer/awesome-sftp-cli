@@ -2,30 +2,43 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachemanager"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/sshconfig"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/editstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
@@ -58,15 +71,37 @@ func runtimePaths() (platform.Paths, platform.ValidationPurpose, error) {
 	return paths, platform.RuntimeValidationPurpose(paths), nil
 }
 
-func runDaemon(ctx context.Context, _ []string, _ io.Writer, _ io.Writer) error {
+type daemonOptions struct {
+	explicitMigrationResume bool
+}
+
+func parseDaemonArgs(args []string) (daemonOptions, error) {
+	if len(args) == 0 {
+		return daemonOptions{}, nil
+	}
+	if len(args) == 1 && args[0] == "--resume-migration" {
+		return daemonOptions{explicitMigrationResume: true}, nil
+	}
+	return daemonOptions{}, fmt.Errorf("daemon accepts only the optional --resume-migration flag")
+}
+
+func runDaemon(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
+	options, err := parseDaemonArgs(args)
+	if err != nil {
+		return err
+	}
 	paths, purpose, err := runtimePaths()
 	if err != nil {
 		return err
 	}
-	return runDaemonWithPaths(ctx, paths, purpose)
+	return runDaemonWithPathsAndOptions(ctx, paths, purpose, options)
 }
 
 func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (returnErr error) {
+	return runDaemonWithPathsAndOptions(ctx, paths, purpose, daemonOptions{})
+}
+
+func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, options daemonOptions) (returnErr error) {
 	lock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
 	if errors.Is(err, platform.ErrInstanceLocked) {
 		return nil
@@ -78,6 +113,7 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	generator := &domain.RandomGenerator{}
 	var stateDatabase *sql.DB
 	var jobStore *jobstore.Store
+	var editStore *editstore.Store
 	var stateOpenErr error
 	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
 		stateOpenErr = fmt.Errorf("prepare persistent state: %w", err)
@@ -88,6 +124,7 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		}
 		stateDatabase, _, stateOpenErr = statefs.Initialize(ctx, statefs.InitializeConfig{
 			Root: paths.StateDir, DatabasePath: databasePath,
+			ExplicitMigrationResume: options.explicitMigrationResume,
 		})
 		if stateOpenErr == nil {
 			store, err := jobstore.New(ctx, stateDatabase)
@@ -98,14 +135,22 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 				err = store.CheckpointIdle(ctx)
 			}
 			if err == nil {
-				jobStore = store
+				var durableEdits *editstore.Store
+				durableEdits, err = editstore.New(ctx, stateDatabase)
+				if err == nil {
+					jobStore = store
+					editStore = durableEdits
+				}
 			}
 			if err != nil {
-				stateOpenErr = fmt.Errorf("recover durable Jobs: %w", err)
+				stateOpenErr = fmt.Errorf("initialize durable Jobs and edit sessions: %w", err)
 				_ = stateDatabase.Close()
 				stateDatabase = nil
 			}
 		}
+	}
+	if options.explicitMigrationResume && stateOpenErr != nil {
+		return fmt.Errorf("explicit migration resume failed: %w", stateOpenErr)
 	}
 	if stateDatabase != nil {
 		defer func() {
@@ -113,12 +158,14 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		}()
 	}
 	var logger *slog.Logger
+	var diagnosticRecords *diagnostic.Ring
 	if stateOpenErr == nil {
 		daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
 		if err != nil {
 			return err
 		}
 		logger = daemonLog.Logger
+		diagnosticRecords = daemonLog.Records
 		defer func() {
 			returnErr = errors.Join(returnErr, daemonLog.Close())
 		}()
@@ -126,7 +173,8 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		// A rejected/corrupt/newer state database must not trigger any further
 		// persistent writes. Stage 1 browsing remains available with an
 		// in-memory diagnostic logger and no mutation store.
-		logger = slog.New(diagnostic.NewJSONHandler(io.Discard, nil))
+		diagnosticRecords = diagnostic.NewRing(0)
+		logger = slog.New(diagnostic.NewRingHandler(diagnosticRecords, nil))
 		logger.Error("persistent state unavailable; mutation disabled", diagnostic.Component("state"), diagnostic.Event("read_only_degraded"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
 	}
 	if _, err := os.Lstat(paths.ControlSocket); err == nil {
@@ -164,6 +212,36 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	sessions, err := daemon.NewProviderSessions([]provider.Provider{local}, tui.PreviewByteLimit)
 	if err != nil {
 		return err
+	}
+	if editStore != nil {
+		sessions.SetEditSessionStore(editStore)
+	}
+	sessions.SetDiagnosticSource(diagnosticRecords)
+	if stateDatabase != nil && paths.CacheDir != "" {
+		cacheErr := platform.PreparePrivateDirectory(paths.CacheDir, platform.ValidatePersistent)
+		var files *cachefs.Store
+		if cacheErr == nil {
+			files, cacheErr = cachefs.Initialize(paths.CacheDir)
+		}
+		var catalog *cachestore.Store
+		if cacheErr == nil {
+			catalog, cacheErr = cachestore.New(ctx, stateDatabase)
+		}
+		var cacheManager *cachemanager.Manager
+		if cacheErr == nil {
+			cacheManager, cacheErr = cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), cache.DefaultLimits())
+		}
+		var lifecycle cachemanager.StartupLifecycleResult
+		if cacheErr == nil {
+			lifecycle, cacheErr = cacheManager.RunStartupLifecycle(ctx, cachemanager.StartupLifecycleRequest{MaxVisited: 10_000, MaxBatches: 64})
+		}
+		if cacheErr != nil {
+			logger.Error("content cache unavailable; browsing and durable Jobs remain enabled", diagnostic.Component("cache"), diagnostic.Event("cache_unavailable"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
+		} else {
+			sessions.SetCacheManager(cacheManager)
+			report := lifecycle.Reconcile
+			logger.Info("content cache initialized", diagnostic.Component("cache"), diagnostic.Event("cache_initialized"), slog.Bool("needs_attention", report.NeedsAttention), slog.Int("recovered_evictions", len(lifecycle.Recovered)), slog.Int("quota_evictions", len(lifecycle.Quota.Deleted)), slog.Int("verified_blobs", len(report.Filesystem.VerifiedBlobs)), slog.Int("verified_entries", len(report.Filesystem.VerifiedEntries)), slog.Int("verified_materializations", len(report.Filesystem.VerifiedMaterializations)))
+		}
 	}
 	if stateOpenErr == nil {
 		workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
@@ -247,6 +325,11 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	return daemon.Serve(ctx, listener, server)
+}
+
+func cacheDaemonID(sessionID domain.SessionID) string {
+	digest := sha256.Sum256([]byte(sessionID))
+	return hex.EncodeToString(digest[:16])
 }
 
 func sshConnectMessage(code domain.Code) string {
@@ -381,6 +464,19 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
+	applicationConfig, err := loadApplicationConfig(paths.ConfigFile)
+	if err != nil {
+		return err
+	}
+	environment := append([]string(nil), os.Environ()...)
+	externalRuntime, err := resolveExternalRuntimeConfig(applicationConfig.External, environment)
+	if err != nil {
+		return err
+	}
+	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
+	reprobeTerminalImages := func() {
+		terminalImageCapability.Reprobe(append([]string(nil), os.Environ()...))
+	}
 	client, err := connectDaemon(ctx, paths, purpose)
 	if err != nil {
 		return err
@@ -453,13 +549,31 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		applyWorkspacePanePreferences(&right, restored.Panes[1])
 	}
 	model := tui.NewModel(left, right)
+	cachePolicy := workspace.CacheLRU
 	if restored != nil {
-		if restored.Layout.ActivePane == int(tui.Right) {
-			model.Active = tui.Right
-		}
+		applyWorkspaceLayout(&model, restored.Layout)
+		cachePolicy = restored.CachePolicy
 		for index, paneState := range restored.Panes {
 			model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.PaneID(index), Query: paneState.Filter})
 		}
+	}
+	model.CachePolicy = cache.Policy(cachePolicy)
+	editWorkspace := cache.WorkspaceID(invocation.Workspace)
+	if editWorkspace == "" {
+		editWorkspace = "interactive"
+	}
+	editFlow, err := newEditCoordinator(client, localEndpoint.ID, editWorkspace, cache.Policy(cachePolicy), func(launchCtx context.Context, materialization string, purpose edit.Purpose) (preparedExternalEdit, error) {
+		command, commandErr := externalRuntime.command(purpose)
+		if commandErr != nil {
+			return preparedExternalEdit{}, commandErr
+		}
+		return prepareExternalEdit(launchCtx, materialization, command, environment, screen, reprobeTerminalImages)
+	})
+	if err != nil {
+		return err
+	}
+	if err := editFlow.ConfigureRecoveryCacheRoot(paths.CacheDir); err != nil {
+		return err
 	}
 	runCtx, stop := context.WithCancel(ctx)
 	authClient, err := connectDaemon(runCtx, paths, purpose)
@@ -498,8 +612,60 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	var paneRecoveries [2]paneRecovery
 	var previewGeneration uint64
 	var previewCancel context.CancelFunc
-	startIntent := func(intent tui.Intent) {
+	var commandMu sync.Mutex
+	var commandCancel context.CancelFunc
+	var commandGeneration uint64
+	previewRequestGenerator := &domain.RandomGenerator{}
+	var startIntent func(tui.Intent)
+	startIntent = func(intent tui.Intent) {
 		switch intent.Kind {
+		case tui.IntentEdit, tui.IntentOpenExternal:
+			actions <- editFlow.Begin(runCtx, intent)
+			return
+		case tui.IntentEditLaunch:
+			actions <- editFlow.Launch(runCtx, intent.EditSessionID)
+			return
+		case tui.IntentEditCheck:
+			actions <- editFlow.Check(runCtx, intent.EditSessionID)
+			return
+		case tui.IntentEditDecision:
+			actions <- editFlow.Decide(runCtx, intent)
+			return
+		case tui.IntentEditResume:
+			actions <- editFlow.Resume(runCtx, intent.EditSessionID, intent.Pane)
+			return
+		case tui.IntentEditRecoverable:
+			actions <- editFlow.Recoverable(runCtx, tui.MaxRecoverableEditSessions)
+			return
+		case tui.IntentCachePolicy:
+			if err := editFlow.SetPolicy(intent.CachePolicy); err != nil {
+				model.Notice = "cache policy change refused: " + err.Error()
+				return
+			}
+			cachePolicy = workspace.CachePolicy(intent.CachePolicy)
+			return
+		case tui.IntentCacheClear:
+			activeClient := client
+			go func() {
+				scope := cachemanager.ClearWorkspace
+				workspace := editWorkspace
+				if intent.CacheClearScope == tui.CacheClearAll {
+					scope, workspace = cachemanager.ClearAll, ""
+				}
+				var response daemon.CacheClearResponse
+				clearErr := activeClient.Call(runCtx, daemon.CacheClear, daemon.CacheClearRequest{
+					Scope: scope, WorkspaceID: workspace, MaxTargets: cache.DefaultMaxCandidates, MaxVisited: 10_000,
+				}, &response)
+				result := tui.CacheCleared{Deleted: response.Deleted, Protected: response.Protected, RemainingBytes: response.Remaining.Bytes}
+				if clearErr != nil {
+					result.Message = "cache clear refused safely: " + clientErrorMessage(clearErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
 		case tui.IntentConnectEndpoint:
 			select {
 			case connectRequests <- intent:
@@ -520,7 +686,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}()
 			return
 		case tui.IntentWorkspaceSave:
-			document, documentErr := workspaceDocument(model, time.Now().UTC())
+			document, documentErr := workspaceDocument(model, time.Now().UTC(), cachePolicy)
 			if documentErr != nil {
 				actions <- tui.WorkspaceSaveResult{Name: intent.Name, Message: "workspace save failed: " + documentErr.Error()}
 				return
@@ -640,6 +806,26 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				}
 			}()
 			return
+		case tui.IntentDiagnosticList:
+			activeClient := client
+			go func() {
+				var response daemon.DiagnosticListResponse
+				listErr := activeClient.Call(runCtx, daemon.DiagnosticList, daemon.DiagnosticListRequest{
+					AfterSequence: intent.AfterSequence,
+					Limit:         intent.Limit,
+					EndpointID:    intent.EndpointID,
+					JobID:         intent.JobID,
+				}, &response)
+				result := tui.DiagnosticsLoaded{Records: response.Records}
+				if listErr != nil {
+					result.Message = "list diagnostics failed: " + clientErrorMessage(listErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
 		case tui.IntentJobPause, tui.IntentJobResume, tui.IntentJobCancel, tui.IntentJobResolveConflict:
 			activeClient := client
 			go func() {
@@ -674,11 +860,28 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			previewCancel = cancel
 			previewGeneration++
 			generation := previewGeneration
+			requestID, requestIDErr := domain.NewRequestID(previewRequestGenerator)
+			if requestIDErr != nil {
+				model.Notice = "preview request failed: " + requestIDErr.Error()
+				return
+			}
 			activeClient := client
-			actions <- tui.BeginPreview{Generation: generation, Location: intent.Location}
+			mode := intent.PreviewMode
+			if mode == "" {
+				mode = builtinpreview.ReadHead
+			}
+			view := intent.PreviewView
+			if view == "" {
+				view = builtinpreview.ViewAuto
+			}
+			identity := tui.PreviewRequestIdentity{
+				RequestID: requestID, Pane: intent.Pane, EndpointSession: intent.EndpointSession,
+				EndpointGeneration: intent.EndpointGeneration, Mode: mode, Offset: intent.PreviewOffset,
+				RequestedLimit: builtinpreview.ReadChunkBytes, UIGeneration: generation,
+			}
 			go func() {
 				defer cancel()
-				previewLocation(requestCtx, activeClient, generation, intent.Location, actions)
+				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability.Current(), actions)
 			}()
 			return
 		case tui.IntentPreviewCancel:
@@ -686,6 +889,46 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				previewCancel()
 				previewCancel = nil
 			}
+			return
+		case tui.IntentRunCommand:
+			frozenIntent := intent
+			environment := append([]string(nil), os.Environ()...)
+			commandMu.Lock()
+			if commandCancel != nil {
+				commandMu.Unlock()
+				actions <- tui.CommandCompleted{Pane: intent.Pane, Location: intent.Location, ExitCode: -1, Message: "command rejected: another one-time command is still running"}
+				return
+			}
+			commandCtx, cancel := context.WithCancel(runCtx)
+			commandCancel = cancel
+			commandGeneration++
+			generation := commandGeneration
+			commandMu.Unlock()
+			go func() {
+				defer cancel()
+				result := runCommandIntent(commandCtx, frozenIntent, environment)
+				commandMu.Lock()
+				if commandGeneration == generation {
+					commandCancel = nil
+				}
+				commandMu.Unlock()
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentCommandCancel:
+			commandMu.Lock()
+			cancel := commandCancel
+			commandMu.Unlock()
+			if cancel != nil {
+				cancel()
+			}
+			return
+		case tui.IntentShell:
+			model.Notice = runShellIntent(runCtx, intent, append([]string(nil), os.Environ()...), screen, reprobeTerminalImages)
+			startIntent(tui.Intent{Kind: tui.IntentList, Pane: intent.Pane, Location: intent.Location})
 			return
 		case tui.IntentList:
 		default:
@@ -817,17 +1060,34 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		startConnection(pane, start, false, false, client)
 	}
+	startIntent(tui.Intent{Kind: tui.IntentEditRecoverable})
 	jobRefreshTicker := time.NewTicker(500 * time.Millisecond)
 	defer jobRefreshTicker.Stop()
+	leaseHeartbeatTicker := time.NewTicker(cache.DefaultLeaseHeartbeat)
+	defer leaseHeartbeatTicker.Stop()
+	var pendingTerminalImage *tui.PreviewTerminalImage
 	for {
 		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
 		screen.Show()
+		if pendingTerminalImage != nil {
+			if err := writeTerminalImage(pendingTerminalImage.Data); err != nil {
+				model.Notice = "terminal image output failed safely: " + err.Error()
+			}
+			pendingTerminalImage = nil
+		}
 		select {
 		case <-runCtx.Done():
 			return nil
 		case <-jobRefreshTicker.C:
-			if model.ShowJobs {
+			switch model.Drawer.Mode {
+			case tui.DrawerJobs:
 				startIntent(tui.Intent{Kind: tui.IntentJobList})
+			case tui.DrawerLog:
+				startIntent(tui.Intent{Kind: tui.IntentDiagnosticList, Limit: 256})
+			}
+		case <-leaseHeartbeatTicker.C:
+			if err := editFlow.Heartbeat(runCtx); err != nil {
+				model.Notice = "cache lease heartbeat failed; durable edit recovery remains retained: " + clientErrorMessage(err)
 			}
 		case err := <-authErrors:
 			if authFailureLostDaemon(err, func() error {
@@ -875,6 +1135,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			oldClient := client
 			client = result.client
 			localEndpoint = result.local
+			editFlow.client = client
+			editFlow.localEndpoint = localEndpoint.ID
 			_ = oldClient.Close()
 			if authCancel != nil {
 				authCancel()
@@ -919,6 +1181,14 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				startIntent(intent)
 			}
 		case action := <-actions:
+			if image, ok := action.(tui.PreviewTerminalImage); ok {
+				if terminalImageCurrent(model, image) {
+					copy := image
+					copy.Data = append([]byte(nil), image.Data...)
+					pendingTerminalImage = &copy
+				}
+				continue
+			}
 			listingCurrent := true
 			switch result := action.(type) {
 			case tui.ListingPage:
@@ -981,12 +1251,18 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	}
 }
 
-func workspaceDocument(model tui.Model, updatedAt time.Time) (workspace.Document, error) {
+func terminalImageCurrent(model tui.Model, image tui.PreviewTerminalImage) bool {
+	return len(image.Data) != 0 && image.Generation == model.Preview.Generation && image.Identity == model.Preview.Identity && model.Drawer.Mode == tui.DrawerPreview
+}
+
+func workspaceDocument(model tui.Model, updatedAt time.Time, cachePolicy workspace.CachePolicy) (workspace.Document, error) {
 	document := workspace.Document{
 		SchemaVersion: workspace.SchemaVersion,
 		UpdatedAt:     updatedAt.UTC(),
-		Layout:        workspace.LayoutState{ActivePane: int(model.Active)},
-		CachePolicy:   workspace.CacheEphemeral,
+		Layout: workspace.LayoutState{ActivePane: int(model.Active), Drawer: workspace.DrawerState{
+			Mode: workspace.DrawerMode(model.Drawer.Mode), Focus: workspace.FocusTarget(model.Drawer.Focus), Rows: model.Drawer.Rows,
+		}},
+		CachePolicy: cachePolicy,
 	}
 	for index, paneState := range model.Panes {
 		endpoint := workspace.EndpointRef{Kind: paneState.Endpoint.Kind}
@@ -1009,6 +1285,19 @@ func workspaceDocument(model tui.Model, updatedAt time.Time) (workspace.Document
 		return workspace.Document{}, err
 	}
 	return document, nil
+}
+
+func applyWorkspaceLayout(model *tui.Model, layout workspace.LayoutState) {
+	if layout.ActivePane == int(tui.Right) {
+		model.Active = tui.Right
+	} else {
+		model.Active = tui.Left
+	}
+	model.Drawer = tui.DrawerState{
+		Mode:  tui.DrawerMode(layout.Drawer.Mode),
+		Focus: tui.FocusTarget(layout.Drawer.Focus),
+		Rows:  layout.Drawer.Rows,
+	}
 }
 
 func applyWorkspacePanePreferences(target *tui.PaneState, saved workspace.Pane) {
@@ -1354,19 +1643,219 @@ func recoveryParent(location domain.Location) (domain.Location, bool) {
 	return domain.Location{EndpointID: location.EndpointID, Path: domain.CanonicalPath(parent)}, true
 }
 
-func previewLocation(ctx context.Context, client *daemon.Client, generation uint64, location domain.Location, actions chan<- tui.Action) {
-	var response ipc.ProviderReadResponse
-	err := client.Call(ctx, daemon.ProviderRead, ipc.ProviderReadRequest{Location: ipc.EncodeLocation(location), Limit: tui.PreviewByteLimit}, &response)
+func writeTerminalImage(data []byte) error {
+	limits := builtinpreview.DefaultImageOutputLimits()
+	if len(data) == 0 || len(data) > limits.MaxOutputBytes {
+		return fmt.Errorf("terminal image bytes exceed the bounded output contract")
+	}
+	tty, err := os.OpenFile("/dev/tty", os.O_WRONLY, 0)
 	if err != nil {
+		return err
+	}
+	defer tty.Close()
+	for len(data) != 0 {
+		written, writeErr := tty.Write(data)
+		if writeErr != nil {
+			return writeErr
+		}
+		if written <= 0 {
+			return io.ErrShortWrite
+		}
+		data = data[written:]
+	}
+	return nil
+}
+
+func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.PreviewRequestIdentity, view builtinpreview.ViewMode, location domain.Location, workspaceID cache.WorkspaceID, policy cache.Policy, runner *externalpreviewer.Runner, capability builtinpreview.ImageCapabilityProof, actions chan<- tui.Action) {
+	generation := identity.UIGeneration
+	var statResponse ipc.ProviderStatResponse
+	if err := client.Call(ctx, daemon.ProviderStat, ipc.ProviderStatRequest{Location: ipc.EncodeLocation(location)}, &statResponse); err != nil {
 		if ctx.Err() == nil {
+			actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
 			actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: clientErrorMessage(err)}
 		}
 		return
 	}
-	data, err := response.Data.Decode()
+	entry, err := ipc.DecodeEntry(statResponse.Entry)
 	if err != nil {
+		actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
 		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
 		return
 	}
-	actions <- tui.PreviewChunk{Generation: generation, Data: data, Done: true, Truncated: !response.EOF}
+	if entry.Kind != domain.EntryFile {
+		view = builtinpreview.ViewMetadata
+	}
+	if view == builtinpreview.ViewMetadata {
+		// Metadata previews do not require a content fingerprint, but reducer
+		// request isolation still requires the source location to be bound.
+		identity.Source.Location = location
+		if source, freezeErr := builtinpreview.FreezeSource(location, entry.Fingerprint); freezeErr == nil {
+			identity.Source = source
+		}
+		actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
+		result := builtinpreview.Render(builtinpreview.Request{
+			Path: string(location.Path), View: view, Object: previewObjectMetadata(entry), Complete: true,
+		}, builtinpreview.DefaultLimits())
+		actions <- tui.PreviewChunk{
+			Generation: generation, Identity: identity, Data: []byte(result.Text), Done: true,
+			Truncated: result.Truncated, Rendered: true, Kind: string(result.Kind), Summary: result.Summary,
+		}
+		return
+	}
+	source, err := builtinpreview.FreezeSource(location, entry.Fingerprint)
+	if err != nil {
+		actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
+		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
+		return
+	}
+	identity.Source = source
+	fileSize := builtinpreview.ReadChunkBytes
+	if entry.Metadata.Size != nil {
+		fileSize = *entry.Metadata.Size
+	}
+	plan, err := planPreviewRead(fileSize, identity.Mode, identity.Offset)
+	if err != nil {
+		actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
+		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
+		return
+	}
+	identity.Mode = plan.Mode
+	identity.Offset = plan.Offset
+	identity.RequestedLimit = plan.Limit
+	if plan.Offset > math.MaxInt64 || plan.Limit > math.MaxUint32 {
+		actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
+		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: "preview read plan exceeds provider integer bounds"}
+		return
+	}
+	actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
+	var response ipc.ProviderReadResponse
+	expectedFingerprint := ipc.EncodeFingerprint(entry.Fingerprint)
+	err = client.Call(ctx, daemon.ProviderRead, ipc.ProviderReadRequest{
+		Location:            ipc.EncodeLocation(location),
+		Offset:              int64(plan.Offset), // #nosec G115 -- bounded by math.MaxInt64 immediately above.
+		Limit:               uint32(plan.Limit), // #nosec G115 -- bounded by math.MaxUint32 immediately above.
+		ExpectedFingerprint: &expectedFingerprint,
+	}, &response)
+	if err != nil {
+		if ctx.Err() == nil {
+			actions <- tui.PreviewChunk{Generation: generation, Identity: identity, Done: true, Message: clientErrorMessage(err)}
+		}
+		return
+	}
+	if !source.Matches(location, ipc.DecodeFingerprint(response.Info.Fingerprint)) {
+		actions <- tui.PreviewChunk{Generation: generation, Identity: identity, Done: true, Message: "preview source changed during read"}
+		return
+	}
+	data, err := response.Data.Decode()
+	if err != nil {
+		actions <- tui.PreviewChunk{Generation: generation, Identity: identity, Done: true, Message: err.Error()}
+		return
+	}
+	window, err := builtinpreview.ApplyReadPlan(builtinpreview.ReadWindow{}, plan, data)
+	if err != nil {
+		actions <- tui.PreviewChunk{Generation: generation, Identity: identity, Done: true, Message: err.Error()}
+		return
+	}
+	result := builtinpreview.Render(builtinpreview.Request{
+		Path: string(location.Path), Data: window.Data, View: view, Offset: window.Offset, Complete: window.Complete,
+		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
+	}, builtinpreview.DefaultLimits())
+	outcome := externalpreviewer.Orchestrate(ctx, runner, externalpreviewer.OrchestrationRequest{
+		Path: string(location.Path), BuiltIn: result, RequestedView: view,
+		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
+		Capability: capability, ImageLimits: builtinpreview.DefaultImageOutputLimits(),
+		Materialize: previewMaterializer(client, location, source, entry.Metadata.Size != nil, fileSize, workspaceID, policy, string(identity.RequestID)),
+	})
+	summary := result.Summary
+	if result.Warning != "" {
+		if summary != "" {
+			summary += "; "
+		}
+		summary += result.Warning
+	}
+	switch outcome.Kind {
+	case externalpreviewer.OutcomeTerminalImage:
+		if summary != "" {
+			summary += "; "
+		}
+		summary += "terminal image rendered via " + string(outcome.ImageProtocol)
+	case externalpreviewer.OutcomeExternal:
+		if summary != "" {
+			summary += "; "
+		}
+		summary += "external previewer " + outcome.External.Rule + " completed"
+	default:
+		if outcome.External.Matched && outcome.External.Status != externalpreviewer.StatusSucceeded {
+			if summary != "" {
+				summary += "; "
+			}
+			summary += "external previewer " + outcome.External.Rule + " " + string(outcome.External.Code)
+		}
+	}
+	if outcome.ReleaseFailed {
+		if summary != "" {
+			summary += "; "
+		}
+		summary += "preview cache lease release needs recovery"
+	}
+	actions <- tui.PreviewChunk{
+		Generation: generation, Identity: identity, Data: []byte(result.Text), Done: true,
+		Truncated: result.Truncated || result.Partial, Rendered: true,
+		Kind: string(result.Kind), Summary: summary,
+	}
+	if outcome.Kind == externalpreviewer.OutcomeTerminalImage && len(outcome.TerminalBytes) != 0 {
+		actions <- tui.PreviewTerminalImage{Generation: generation, Identity: identity, Protocol: outcome.ImageProtocol, Data: append([]byte(nil), outcome.TerminalBytes...)}
+	}
+}
+
+func previewObjectMetadata(entry domain.Entry) *builtinpreview.ObjectMetadata {
+	metadata := &builtinpreview.ObjectMetadata{
+		Endpoint: string(entry.Location.EndpointID), CanonicalPath: string(entry.Location.Path), Kind: string(entry.Kind),
+		Size: entry.Metadata.Size, ModifiedAt: entry.Metadata.ModifiedAt, Mode: entry.Metadata.Mode,
+		FingerprintStrength: string(entry.Fingerprint.Strength()),
+	}
+	if metadata.Size == nil {
+		metadata.Size = entry.Fingerprint.Size
+	}
+	if metadata.ModifiedAt == nil {
+		metadata.ModifiedAt = entry.Fingerprint.ModifiedAt
+	}
+	if entry.Symlink != nil {
+		metadata.LinkTarget = entry.Symlink.RawTarget
+	}
+	if entry.Fingerprint.FileID != nil {
+		metadata.FileID = *entry.Fingerprint.FileID
+	}
+	if entry.Fingerprint.VersionID != nil {
+		metadata.VersionID = *entry.Fingerprint.VersionID
+	}
+	if entry.Fingerprint.HashAlgorithm != nil {
+		metadata.HashAlgorithm = *entry.Fingerprint.HashAlgorithm
+	}
+	if entry.Fingerprint.HashHex != nil {
+		metadata.HashHex = *entry.Fingerprint.HashHex
+	}
+	return metadata
+}
+
+func planPreviewRead(fileSize uint64, mode builtinpreview.ReadMode, offset uint64) (builtinpreview.ReadPlan, error) {
+	var plan builtinpreview.ReadPlan
+	var err error
+	switch mode {
+	case "", builtinpreview.ReadHead:
+		plan = builtinpreview.PlanHead(fileSize)
+	case builtinpreview.ReadTail:
+		plan = builtinpreview.PlanTail(fileSize)
+	case builtinpreview.ReadRange, builtinpreview.ReadContinue:
+		plan, err = builtinpreview.PlanRange(fileSize, offset, builtinpreview.ReadChunkBytes)
+	default:
+		return builtinpreview.ReadPlan{}, fmt.Errorf("unsupported preview read mode %q", mode)
+	}
+	if err != nil {
+		return builtinpreview.ReadPlan{}, err
+	}
+	if plan.Offset > math.MaxInt64 {
+		return builtinpreview.ReadPlan{}, fmt.Errorf("preview offset %d exceeds Provider range limit", plan.Offset)
+	}
+	return plan, nil
 }

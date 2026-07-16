@@ -4,9 +4,14 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
@@ -21,17 +26,24 @@ const (
 type Mode string
 
 const (
-	ModeNormal        Mode = "normal"
-	ModeFilter        Mode = "filter"
-	ModeVisual        Mode = "visual"
-	ModeVisualLine    Mode = "visual_line"
-	ModeAuth          Mode = "auth"
-	ModeWorkspace     Mode = "workspace_save"
-	ModePath          Mode = "path"
-	ModeEndpoint      Mode = "endpoint"
-	ModeRename        Mode = "rename"
-	ModeMoveConfirm   Mode = "move_confirm"
-	ModeDeleteConfirm Mode = "delete_confirm"
+	ModeNormal            Mode = "normal"
+	ModeFilter            Mode = "filter"
+	ModeVisual            Mode = "visual"
+	ModeVisualLine        Mode = "visual_line"
+	ModeAuth              Mode = "auth"
+	ModeWorkspace         Mode = "workspace_save"
+	ModePath              Mode = "path"
+	ModeEndpoint          Mode = "endpoint"
+	ModeRename            Mode = "rename"
+	ModeMoveConfirm       Mode = "move_confirm"
+	ModeDeleteConfirm     Mode = "delete_confirm"
+	ModeCommand           Mode = "command"
+	ModeCommandConfirm    Mode = "command_confirm"
+	ModeEditDecision      Mode = "edit_decision"
+	ModeEditSaveAs        Mode = "edit_save_as"
+	ModeEditLaunchConfirm Mode = "edit_launch_confirm"
+	ModeEditRecovery      Mode = "edit_recovery"
+	ModeCacheClearConfirm Mode = "cache_clear_confirm"
 )
 
 type SortKey string
@@ -321,13 +333,51 @@ func cloneMarks(marks map[domain.Location]struct{}) map[domain.Location]struct{}
 
 type PreviewState struct {
 	Generation uint64
+	Identity   PreviewRequestIdentity
 	Location   domain.Location
 	Data       []byte
 	BytesRead  int
 	Loading    bool
 	Truncated  bool
 	Binary     bool
+	Kind       string
+	Summary    string
 	Message    string
+	View       builtinpreview.ViewMode
+}
+
+type PreviewRequestIdentity struct {
+	RequestID          domain.RequestID
+	Pane               PaneID
+	EndpointSession    domain.SessionID
+	EndpointGeneration uint64
+	Source             builtinpreview.FrozenSource
+	Mode               builtinpreview.ReadMode
+	Offset             uint64
+	RequestedLimit     uint64
+	UIGeneration       uint64
+}
+
+type DrawerMode string
+
+const (
+	DrawerClosed  DrawerMode = "closed"
+	DrawerPreview DrawerMode = "preview"
+	DrawerJobs    DrawerMode = "jobs"
+	DrawerLog     DrawerMode = "log"
+)
+
+type FocusTarget string
+
+const (
+	FocusPane   FocusTarget = "pane"
+	FocusDrawer FocusTarget = "drawer"
+)
+
+type DrawerState struct {
+	Mode  DrawerMode
+	Focus FocusTarget
+	Rows  int
 }
 
 type AuthState struct {
@@ -340,6 +390,51 @@ type AuthState struct {
 
 	answer []rune
 }
+
+type EditDecisionState struct {
+	Active       bool
+	SessionID    edit.SessionID
+	Pane         PaneID
+	Location     domain.Location
+	State        edit.State
+	Message      string
+	Decision     edit.DecisionKind
+	ConflictView edit.ConflictView
+}
+
+type EditLaunchState struct {
+	Active    bool
+	SessionID edit.SessionID
+	Pane      PaneID
+	Location  domain.Location
+	Command   string
+}
+
+const MaxRecoverableEditSessions = 64
+
+type EditRecoveryItem struct {
+	SessionID  edit.SessionID
+	Purpose    edit.Purpose
+	Location   domain.Location
+	State      edit.State
+	Lifecycle  string
+	UpdatedAt  time.Time
+	Decision   edit.DecisionKind
+	Usable     bool
+	Diagnostic string
+}
+
+type EditRecoveryState struct {
+	Items  []EditRecoveryItem
+	Cursor int
+}
+
+type CacheClearScope string
+
+const (
+	CacheClearWorkspace CacheClearScope = "workspace"
+	CacheClearAll       CacheClearScope = "all"
+)
 
 func (p PreviewState) DisplayText() string {
 	if p.Binary {
@@ -365,17 +460,27 @@ type Model struct {
 	Count              int
 	Preview            PreviewState
 	Auth               AuthState
+	EditDecision       EditDecisionState
+	EditLaunch         EditLaunchState
+	EditRecovery       EditRecoveryState
 	Clipboard          ClipboardState
 	Jobs               []transfer.JobView
-	ShowJobs           bool
+	Diagnostics        []diagnostic.Record
+	Drawer             DrawerState
 	JobCursor          int
 	Notice             string
 	DeleteConfirmation int
+	RecoverableEdits   int
+	CacheClearScope    CacheClearScope
+	CachePolicy        cache.Policy
+	CommandRunning     bool
 
 	workspaceName []rune
 	pathInput     []rune
 	endpointInput []rune
 	renameInput   []rune
+	commandInput  []rune
+	editSaveAs    []rune
 	pendingRename transfer.FileRef
 	pendingDelete []transfer.FileRef
 	pendingMove   []Intent
@@ -404,7 +509,13 @@ func NewModel(left, right PaneState) Model {
 	right.visible = nil
 	left.rebuildVisible()
 	right.rebuildVisible()
-	return Model{Panes: [2]PaneState{left, right}, Active: Left, Mode: ModeNormal}
+	return Model{
+		Panes:       [2]PaneState{left, right},
+		Active:      Left,
+		Mode:        ModeNormal,
+		Drawer:      DrawerState{Mode: DrawerClosed, Focus: FocusPane, Rows: 6},
+		CachePolicy: cache.PolicyLRU,
+	}
 }
 
 type IntentKind string
@@ -427,9 +538,23 @@ const (
 	IntentJobResume          IntentKind = "job_resume"
 	IntentJobCancel          IntentKind = "job_cancel"
 	IntentJobResolveConflict IntentKind = "job_resolve_conflict"
+	IntentDiagnosticList     IntentKind = "diagnostic_list"
+	IntentEdit               IntentKind = "edit"
+	IntentOpenExternal       IntentKind = "open_external"
+	IntentEditDecision       IntentKind = "edit_decision"
+	IntentEditCheck          IntentKind = "edit_check"
+	IntentEditLaunch         IntentKind = "edit_launch"
+	IntentEditRecoverable    IntentKind = "edit_recoverable"
+	IntentEditResume         IntentKind = "edit_resume"
+	IntentCacheClear         IntentKind = "cache_clear"
+	IntentCachePolicy        IntentKind = "cache_policy"
+	IntentRunCommand         IntentKind = "run_command"
+	IntentCommandCancel      IntentKind = "command_cancel"
+	IntentShell              IntentKind = "shell"
 )
 
 const PreviewByteLimit = 64 * 1024
+const CommandByteLimit = 32 * 1024
 
 type Intent struct {
 	Kind                  IntentKind
@@ -437,12 +562,15 @@ type Intent struct {
 	Location              domain.Location
 	Locations             []domain.Location
 	Limit                 int
+	AfterSequence         uint64
 	ChallengeID           string
 	Answer                []byte
 	Cancel                bool
 	Name                  string
 	Endpoint              domain.Endpoint
 	EndpointID            domain.EndpointID
+	EndpointSession       domain.SessionID
+	EndpointGeneration    uint64
 	Connection            domain.ConnectionState
 	CapabilityGeneration  uint64
 	Capabilities          domain.CapabilitySnapshot
@@ -456,6 +584,17 @@ type Intent struct {
 	JobID                 domain.JobID
 	Resolution            transfer.ConflictPolicy
 	ApplyAll              bool
+	CommandText           string
+	ShellHome             bool
+	PreviewMode           builtinpreview.ReadMode
+	PreviewOffset         uint64
+	PreviewView           builtinpreview.ViewMode
+	EditSessionID         edit.SessionID
+	EditDecision          edit.DecisionKind
+	SaveAsTarget          domain.Location
+	RefreshAfterEdit      bool
+	CacheClearScope       CacheClearScope
+	CachePolicy           cache.Policy
 }
 
 type Key string
@@ -485,7 +624,13 @@ const (
 	KeyDelete                Key = "delete"
 	KeyRename                Key = "rename"
 	KeyRepeat                Key = "repeat"
+	KeyEdit                  Key = "edit"
+	KeyOpenExternal          Key = "open_external"
+	KeyEditRecovery          Key = "edit_recovery"
+	KeyCommand               Key = "command"
+	KeyPreviewDrawer         Key = "preview_drawer"
 	KeyJobs                  Key = "jobs"
+	KeyLogDrawer             Key = "log_drawer"
 	KeyJobPause              Key = "job_pause"
 	KeyJobResume             Key = "job_resume"
 	KeyJobCancel             Key = "job_cancel"
@@ -536,13 +681,25 @@ type SetFilter struct {
 type BeginPreview struct {
 	Generation uint64
 	Location   domain.Location
+	Identity   PreviewRequestIdentity
+	View       builtinpreview.ViewMode
 }
 type PreviewChunk struct {
 	Generation uint64
+	Identity   PreviewRequestIdentity
 	Data       []byte
 	Done       bool
 	Truncated  bool
+	Rendered   bool
+	Kind       string
+	Summary    string
 	Message    string
+}
+type PreviewTerminalImage struct {
+	Generation uint64
+	Identity   PreviewRequestIdentity
+	Protocol   builtinpreview.ImageProtocol
+	Data       []byte
 }
 type AuthChallengeReceived struct {
 	ChallengeID string
@@ -595,6 +752,64 @@ type JobUpdated struct {
 	Snapshot jobstore.Snapshot
 	Message  string
 }
+type DiagnosticsLoaded struct {
+	Records []diagnostic.Record
+	Message string
+}
+
+type CommandCompleted struct {
+	Pane            PaneID
+	Location        domain.Location
+	ExitCode        int
+	Stdout          []byte
+	Stderr          []byte
+	StdoutDiscarded uint64
+	StderrDiscarded uint64
+	EffectUnknown   bool
+	Message         string
+}
+
+type EditSessionObserved struct {
+	SessionID    edit.SessionID
+	Pane         PaneID
+	Location     domain.Location
+	State        edit.State
+	Message      string
+	Decision     edit.DecisionKind
+	ConflictView edit.ConflictView
+}
+
+type EditLaunchReady struct {
+	SessionID edit.SessionID
+	Pane      PaneID
+	Location  domain.Location
+	Command   string
+	Message   string
+}
+
+type EditSessionFinished struct {
+	Pane     PaneID
+	Location domain.Location
+	Message  string
+}
+
+type EditSessionFailed struct {
+	Pane     PaneID
+	Location domain.Location
+	Message  string
+}
+
+type EditRecoveryLoaded struct {
+	Count    int
+	Sessions []EditRecoveryItem
+	Message  string
+}
+type CacheCleared struct {
+	Deleted        int
+	Protected      int
+	RemainingBytes int64
+	Message        string
+}
 
 func (KeyPress) isAction()              {}
 func (CountDigit) isAction()            {}
@@ -606,6 +821,7 @@ func (ListingFailed) isAction()         {}
 func (SetFilter) isAction()             {}
 func (BeginPreview) isAction()          {}
 func (PreviewChunk) isAction()          {}
+func (PreviewTerminalImage) isAction()  {}
 func (AuthChallengeReceived) isAction() {}
 func (PaneConnected) isAction()         {}
 func (PaneConnectionChanged) isAction() {}
@@ -616,6 +832,14 @@ func (RenamePrepared) isAction()        {}
 func (JobCreated) isAction()            {}
 func (JobsLoaded) isAction()            {}
 func (JobUpdated) isAction()            {}
+func (DiagnosticsLoaded) isAction()     {}
+func (CommandCompleted) isAction()      {}
+func (EditSessionObserved) isAction()   {}
+func (EditLaunchReady) isAction()       {}
+func (EditSessionFinished) isAction()   {}
+func (EditSessionFailed) isAction()     {}
+func (EditRecoveryLoaded) isAction()    {}
+func (CacheCleared) isAction()          {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

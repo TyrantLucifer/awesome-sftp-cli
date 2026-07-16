@@ -42,10 +42,10 @@ func TestBootstrapRecoversFromProcessDeathAtDurabilityBoundaries(t *testing.T) {
 			}
 
 			path := filepath.Join(root, "amsftp.db")
-			database, report, err := Initialize(context.Background(), InitializeConfig{
+			database, report, err := Initialize(context.Background(), withVersion1CompiledState(InitializeConfig{
 				Root: root, DatabasePath: path,
 				Random: strings.NewReader(strings.Repeat("r", probeRandomBytes+16)), Now: time.Unix(2_000, 0),
-			})
+			}))
 			if err != nil {
 				t.Fatalf("Initialize(after %s crash): %v", point, err)
 			}
@@ -62,10 +62,10 @@ func TestBootstrapRecoversFromProcessDeathAtDurabilityBoundaries(t *testing.T) {
 			}
 			assertOnlyFinalStateFile(t, root)
 
-			reopened, secondReport, err := Initialize(context.Background(), InitializeConfig{
+			reopened, secondReport, err := Initialize(context.Background(), withVersion1CompiledState(InitializeConfig{
 				Root: root, DatabasePath: path,
 				Random: strings.NewReader(strings.Repeat("s", probeRandomBytes)), Now: time.Unix(2_001, 0),
-			})
+			}))
 			if err != nil {
 				t.Fatalf("Initialize(second restart after %s): %v", point, err)
 			}
@@ -83,10 +83,10 @@ func TestBootstrapRecoversFromProcessDeathAtDurabilityBoundaries(t *testing.T) {
 func TestRuntimeRecoversCommittedWALAfterProcessDeath(t *testing.T) {
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(context.Background(), InitializeConfig{
+	database, _, err := Initialize(context.Background(), withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("w", probeRandomBytes+16)), Now: time.Unix(2_100, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Initialize(fixture): %v", err)
 	}
@@ -99,10 +99,10 @@ func TestRuntimeRecoversCommittedWALAfterProcessDeath(t *testing.T) {
 		t.Fatalf("post-crash identity = %#v, error=%v, want sidecars", identity, err)
 	}
 
-	recovered, report, err := Initialize(context.Background(), InitializeConfig{
+	recovered, report, err := Initialize(context.Background(), withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("x", probeRandomBytes)), Now: time.Unix(2_101, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Initialize(WAL recovery): %v", err)
 	}
@@ -132,7 +132,7 @@ func TestStateFSProcessDeathHelper(t *testing.T) {
 	path := filepath.Join(root, "amsftp.db")
 	switch mode {
 	case "bootstrap":
-		database, _, err := Initialize(context.Background(), InitializeConfig{
+		database, _, err := Initialize(context.Background(), withVersion1CompiledState(InitializeConfig{
 			Root: root, DatabasePath: path,
 			Random: strings.NewReader(strings.Repeat("c", probeRandomBytes+16)), Now: time.Unix(1_999, 0),
 			bootstrapFault: func(actual string) {
@@ -140,7 +140,7 @@ func TestStateFSProcessDeathHelper(t *testing.T) {
 					os.Exit(crashHelperExitCode)
 				}
 			},
-		})
+		}))
 		if err != nil {
 			t.Fatalf("bootstrap helper: %v", err)
 		}

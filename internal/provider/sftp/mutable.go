@@ -2,7 +2,9 @@ package sftp
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path"
@@ -15,6 +17,7 @@ import (
 )
 
 var _ providerapi.MutableProvider = (*Provider)(nil)
+var _ providerapi.DestinationPreserver = (*Provider)(nil)
 
 func (p *Provider) OpenWrite(ctx context.Context, request providerapi.OpenWriteRequest) (providerapi.WriteHandle, error) {
 	if err := p.check(ctx, "open_write", &request.Location); err != nil {
@@ -172,6 +175,156 @@ func (p *Provider) Rename(ctx context.Context, request providerapi.RenameRequest
 		return providerapi.RenameResult{}, p.mapMutationError("rename", &request.Source, err, domain.EffectApplied)
 	}
 	return providerapi.RenameResult{Atomic: false, Replaced: false}, nil
+}
+
+func (p *Provider) PreserveDestination(ctx context.Context, request providerapi.PreserveDestinationRequest) (providerapi.PreserveDestinationResult, error) {
+	if err := p.check(ctx, "preserve_destination", &request.Source); err != nil {
+		return providerapi.PreserveDestinationResult{}, err
+	}
+	if err := providerapi.ValidatePreserveDestinationRequest(p.endpoint.ID, request); err != nil {
+		return providerapi.PreserveDestinationResult{}, err
+	}
+	if err := p.validateMutableLocation(request.Source, "preserve_destination"); err != nil {
+		return providerapi.PreserveDestinationResult{}, err
+	}
+	if err := p.validateMutableLocation(request.Backup, "preserve_destination"); err != nil {
+		return providerapi.PreserveDestinationResult{}, err
+	}
+	if p.preserveSlot == nil {
+		return providerapi.PreserveDestinationResult{}, p.opError(domain.CodeInternal, "preserve_destination", &request.Source, "preservation slot is unavailable", errRetryNever, nil)
+	}
+	select {
+	case p.preserveSlot <- struct{}{}:
+	case <-ctx.Done():
+		return providerapi.PreserveDestinationResult{}, p.mapMutationError("preserve_destination", &request.Source, ctx.Err(), domain.EffectNone)
+	}
+	type preserveResult struct {
+		result providerapi.PreserveDestinationResult
+		err    error
+	}
+	completed := make(chan preserveResult, 1)
+	go func() {
+		result, err := p.preserveDestinationBlocking(ctx, request)
+		<-p.preserveSlot
+		completed <- preserveResult{result: result, err: err}
+	}()
+	select {
+	case completedResult := <-completed:
+		return completedResult.result, completedResult.err
+	case <-ctx.Done():
+		// Closing the transport unblocks every pkg/sftp request in this single
+		// preservation transaction. The slot remains occupied until the worker
+		// actually exits, so repeated timeouts cannot accumulate goroutines.
+		_ = p.client.Close()
+		return providerapi.PreserveDestinationResult{EffectUnknown: true}, p.mapMutationError("preserve_destination", &request.Backup, ctx.Err(), domain.EffectUnknown)
+	}
+}
+
+func (p *Provider) preserveDestinationBlocking(ctx context.Context, request providerapi.PreserveDestinationRequest) (providerapi.PreserveDestinationResult, error) {
+	sourcePath := p.remotePath(request.Source)
+	backupPath := p.remotePath(request.Backup)
+	if backupInfo, backupErr := p.client.Lstat(backupPath); backupErr == nil {
+		if _, sourceErr := p.client.Lstat(sourcePath); sourceErr == nil {
+			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "source and preservation path both exist", errRetryConflict, nil)
+		} else if !isSFTPNotExist(sourceErr) {
+			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.mapMutationError("preserve_destination", &request.Source, sourceErr, domain.EffectNone)
+		}
+		if !equalFingerprint(request.ExpectedFingerprint, fingerprint(backupInfo)) {
+			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "preserved fingerprint does not match", errRetryConflict, nil)
+		}
+		contentSHA, hashErr := p.hashMutableFileBlocking(ctx, backupPath, request.Backup, request.ExpectedSize, request.MaxBytes)
+		if hashErr != nil || contentSHA != request.ExpectedSHA256 {
+			return providerapi.PreserveDestinationResult{BackupPresent: true}, errors.Join(p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "preserved content does not match", errRetryConflict, nil), hashErr)
+		}
+		return providerapi.PreserveDestinationResult{BackupPresent: true}, nil
+	} else if !isSFTPNotExist(backupErr) {
+		return providerapi.PreserveDestinationResult{}, p.mapMutationError("preserve_destination", &request.Backup, backupErr, domain.EffectNone)
+	}
+	sourceInfo, err := p.client.Lstat(sourcePath)
+	if err != nil {
+		return providerapi.PreserveDestinationResult{}, p.mapMutationError("preserve_destination", &request.Source, err, domain.EffectNone)
+	}
+	if !sourceInfo.Mode().IsRegular() || !equalFingerprint(request.ExpectedFingerprint, fingerprint(sourceInfo)) {
+		return providerapi.PreserveDestinationResult{}, p.opError(domain.CodeConflict, "preserve_destination", &request.Source, "source fingerprint does not match", errRetryConflict, nil)
+	}
+	if renameErr := p.client.Rename(sourcePath, backupPath); renameErr != nil {
+		_, backupErr := p.client.Lstat(backupPath)
+		_, sourceErr := p.client.Lstat(sourcePath)
+		if backupErr != nil || sourceErr == nil {
+			return providerapi.PreserveDestinationResult{EffectUnknown: true}, p.mapMutationError("preserve_destination", &request.Backup, renameErr, domain.EffectUnknown)
+		}
+	}
+	contentSHA, hashErr := p.hashMutableFileBlocking(ctx, backupPath, request.Backup, request.ExpectedSize, request.MaxBytes)
+	if hashErr == nil && contentSHA == request.ExpectedSHA256 {
+		return providerapi.PreserveDestinationResult{BackupPresent: true}, nil
+	}
+	var restoreErr error
+	_, sourceErr := p.client.Lstat(sourcePath)
+	if isSFTPNotExist(sourceErr) {
+		restoreErr = p.client.Rename(backupPath, sourcePath)
+		if restoreErr == nil {
+			return providerapi.PreserveDestinationResult{SourceRestored: true}, errors.Join(
+				p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "content changed while being preserved", errRetryConflict, nil),
+				hashErr,
+			)
+		}
+	} else if sourceErr != nil {
+		return providerapi.PreserveDestinationResult{EffectUnknown: true}, errors.Join(
+			p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "content changed and restore state is unknown", errRetryConflict, sourceErr),
+			hashErr,
+		)
+	}
+	_, backupProbeErr := p.client.Lstat(backupPath)
+	result := providerapi.PreserveDestinationResult{BackupPresent: backupProbeErr == nil, EffectUnknown: backupProbeErr != nil && !isSFTPNotExist(backupProbeErr)}
+	return result, errors.Join(
+		p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "content changed while being preserved", errRetryConflict, nil),
+		hashErr, restoreErr, backupProbeErr,
+	)
+}
+
+func (p *Provider) hashMutableFileBlocking(ctx context.Context, remotePath string, location domain.Location, expectedSize, maxBytes int64) (string, error) {
+	file, err := p.client.Open(remotePath)
+	if err != nil {
+		return "", p.mapMutationError("rename", &location, err, domain.EffectNone)
+	}
+	defer func() { _ = file.Close() }()
+	digest := sha256.New()
+	buffer := make([]byte, 256*1024)
+	var total int64
+	zeroReads := 0
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		remaining := maxBytes - total + 1
+		if remaining <= 0 {
+			return "", p.opError(domain.CodeResourceExhausted, "preserve_destination", &location, "preserved content exceeds byte limit", errRetryNever, nil)
+		}
+		chunk := buffer
+		if int64(len(chunk)) > remaining {
+			chunk = chunk[:remaining]
+		}
+		count, readErr := file.Read(chunk)
+		if count != 0 {
+			zeroReads = 0
+			total += int64(count)
+			_, _ = digest.Write(chunk[:count])
+		} else if readErr == nil {
+			zeroReads++
+			if zeroReads >= 100 {
+				return "", io.ErrNoProgress
+			}
+		}
+		if errors.Is(readErr, io.EOF) {
+			if total != expectedSize {
+				return "", p.opError(domain.CodeConflict, "preserve_destination", &location, "preserved content size does not match", errRetryConflict, nil)
+			}
+			return fmt.Sprintf("%x", digest.Sum(nil)), nil
+		}
+		if readErr != nil {
+			return "", p.mapMutationError("rename", &location, readErr, domain.EffectNone)
+		}
+	}
 }
 
 func (p *Provider) Remove(ctx context.Context, request providerapi.RemoveRequest) error {

@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–2 已完成；Stage 2 的 M2.1–M2.4 均由 exact-SHA Hosted evidence、完整本地门禁和独立冷启动审计闭环；Stage 3–6 保持 Not Started。
+Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 3 从 merge commit `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5` 交付 Preview/Edit/Cache、外部进程和 command/shell slice；Stage 4–6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -140,7 +140,55 @@ Stage 0–2 已完成；Stage 2 的 M2.1–M2.4 均由 exact-SHA Hosted evidence
 
 **Tests**: 预览截断与流式读取测试；缓存配额/租约/逐出测试；编辑上传并发冲突测试；异常退出恢复测试；macOS/Linux 编辑器、默认打开器和 shell 冒烟测试；命令参数与路径安全测试。
 
-**Status**: Not Started
+**Status**: Complete
+
+### M3.1: 抽屉与缓存基础
+
+**Goal**: 冻结 Preview/Jobs/Log 抽屉与 Preview generation 接口，并交付 owner-only 内容缓存、引用、配额、LRU、租约和崩溃重建基础。
+
+**Success Criteria**: `K/J/L` 的焦点、切换、窄屏和 resize 行为可解释；缓存按强身份内容寻址且 Location freshness 独立；pinned、dirty、活跃 lease、共享引用和 Stage 2 part 均不会被错误逐出；索引损坏只重建/诊断，不删除未知内容。
+
+**Tests**: reducer/layout/snapshot；manual-clock quota/LRU/lease；跨 workspace reference/dedup；owner/mode/ACL/no-follow；materialization/index kill-9、ENOSPC、all-protected、rebuild、race 与 secret scan。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: K/J/L、workspace v2、owner-only content-v1 filesystem、SQLite Version 2/3 catalog、serialized live quota、LRU/reference/lease、safe clear、immediate bounded dead-Preview reclaim、exact pinned-offline unknown freshness 和 fail-closed reconciliation 全部通过 normal/race/native gate。catalog 不可从信息不足的 manifest 不安全重建。
+
+### M3.2: 内建、图片与外部预览
+
+**Goal**: 交付有界文本、代码、JSON、元数据、二进制、range/head/tail、终端图片和外部预览器降级链。
+
+**Success Criteria**: 读取、解析、解码、像素、渲染和输出均有硬预算；快速导航不会串片；100 GiB fixture 的资源只随预算增长；失败仅影响 Preview drawer。
+
+**Tests**: golden/fuzz；恶意 ANSI/UTF-8/JSON/image；range/read 断言；100 GiB sparse/synthetic；generation/cancel；Kitty/iTerm2/Sixel/none snapshots；previewer argv/timeout/crash；race/resource curve。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: bounded text/code/JSON/metadata/binary/head/tail/range、generation/cancel、100 GiB fixture、Kitty/iTerm2/Sixel/none、真实 Kitty 0.47.4 与 bounded external previewer 降级链均完成；directory/symlink/weak metadata 以完整 identity 进入 reducer 且 0 content read/materialization。
+
+### M3.3: 编辑与默认打开
+
+**Goal**: 交付 `e`/`o` 的受限解析、absolute direct exec、cache lease、终端挂起恢复、变化矩阵、冲突和 Stage 2 Job 回传。
+
+**Success Criteria**: 无变化不上传，仅本地变化需确认，仅远端变化提示刷新，双方变化或无法判断进入冲突；上传只经 Planner→Job→part→verify→commit；失败/重启保留 dirty materialization；立即返回 opener 不过早释放 lease且不自动上传。
+
+**Tests**: lexer/argv/PATH/path injection；fake/real Vim/Neovim；macOS open/Ubuntu xdg-open；local/remote change matrix；四类 conflict；upload/restart/crash；PTY restore；race/secret scan。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: restricted editor/opener direct exec、完整 materialization/lease、Vim/Neovim/open/xdg-open、变化/冲突/恢复矩阵和 atomic edit-session→Stage 2 Job 均完成。expected-present sync-back 先 no-replace 保存 remote original，再 bounded 验证并 no-replace 发布 part；所有 error/event 显示实际 preservation effect，避免 silent overwrite。
+
+### M3.4: 命令、shell 与平台收尾
+
+**Goal**: 交付 `!` local/remote、`gs` local/remote、完整 TTY ownership/recovery，以及 Stage 4 Helper trust handoff。
+
+**Success Criteria**: remote `!` 严格 fresh argv、byte-safe cwd、byte-0 marker-before-input、32 KiB command 与双 1 MiB ring；remote `gs` home/current-cwd probe、`-tt`、显式 fallback；所有退出恢复 termios/raw/alternate/cursor/pgrp/SIGWINCH；完成 ADR-0010 public key/custody/revoke/rotation 门禁但不实现 Helper。
+
+**Tests**: exact argv/config conflict；cwd/Q/marker/banner/custom shell；dual-stream/cancel/detach；PTY/pgrp/SIGWINCH；background Job continuation；macOS/Linux native/oldstable；Helper key tabletop/fixture；full race。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: `!` local/remote single-flight、Esc cancel、15-minute timeout、marker/Q/32 KiB/dual 1 MiB rings 与 `gs` local/remote current/home/`-tt`/TTY ownership 全部通过 unit、race、real PTY/temporary-sshd 和 Hosted native gate。post-spawn cleanup 2 秒恢复上限且只允许一个 pending worker；真实 Helper custody 未建立，因此 production Helper distribution 按允许分支保持 **CLOSED**。
 
 ## Stage 4: Search & Optional Helper
 

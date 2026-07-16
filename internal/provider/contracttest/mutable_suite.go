@@ -3,7 +3,9 @@ package contracttest
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"io"
 	"testing"
 
@@ -85,7 +87,6 @@ func RunMutable(t *testing.T, factory Factory) {
 		other := normalizeChild(t, implementation, "mutable-other")
 		createMutableFile(t, mutable, source, []byte("source"))
 		createMutableFile(t, mutable, final, []byte("existing"))
-
 		_, err := mutable.Rename(context.Background(), provider.RenameRequest{
 			Source:      source,
 			Destination: final,
@@ -138,6 +139,34 @@ func RunMutable(t *testing.T, factory Factory) {
 		_, err = implementation.Stat(context.Background(), provider.StatRequest{Location: other})
 		if !domain.IsCode(err, domain.CodeNotFound) {
 			t.Fatalf("Stat(removed) error = %v, want not_found", err)
+		}
+	})
+
+	t.Run("preserve destination moves exact bytes to a no-replace backup", func(t *testing.T) {
+		implementation, mutable := mutableFixture(t, factory)
+		preserver, ok := mutable.(provider.DestinationPreserver)
+		if !ok {
+			t.Fatal("mutable provider has no destination preservation facet")
+		}
+		source := normalizeChild(t, implementation, "preserve-source")
+		backup := normalizeChild(t, implementation, "preserve-backup")
+		content := []byte("remote original")
+		createMutableFile(t, mutable, source, content)
+		entry := statMutable(t, implementation, source)
+		digest := sha256.Sum256(content)
+		request := provider.PreserveDestinationRequest{
+			Source: source, Backup: backup, ExpectedFingerprint: entry.Fingerprint,
+			ExpectedSHA256: fmt.Sprintf("%x", digest), ExpectedSize: int64(len(content)), MaxBytes: int64(len(content)),
+		}
+		if _, err := preserver.PreserveDestination(context.Background(), request); err != nil {
+			t.Fatalf("PreserveDestination: %v", err)
+		}
+		assertBytes(t, implementation, backup, content)
+		if _, err := implementation.Stat(context.Background(), provider.StatRequest{Location: source}); !domain.IsCode(err, domain.CodeNotFound) {
+			t.Fatalf("preserved source still exists: %v", err)
+		}
+		if _, err := preserver.PreserveDestination(context.Background(), request); err != nil {
+			t.Fatalf("PreserveDestination(idempotent): %v", err)
 		}
 	})
 

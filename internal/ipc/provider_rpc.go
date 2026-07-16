@@ -96,6 +96,18 @@ type ProviderReadResponse struct {
 	EOF  bool         `json:"eof"`
 }
 
+type ProviderHashRequest struct {
+	Location            WireLocation     `json:"location"`
+	MaxBytes            uint64           `json:"max_bytes"`
+	ExpectedFingerprint *WireFingerprint `json:"expected_fingerprint,omitempty"`
+}
+
+type ProviderHashResponse struct {
+	Info   ReadInfoWire `json:"info"`
+	SHA256 string       `json:"sha256"`
+	Size   uint64       `json:"size"`
+}
+
 type ReadInfoWire struct {
 	Entry       WireEntry       `json:"entry"`
 	Fingerprint WireFingerprint `json:"fingerprint"`

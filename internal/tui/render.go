@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
@@ -122,11 +123,8 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 		return RenderStats{}
 	}
 
-	previewRows := 0
-	if model.Preview.Generation != 0 {
-		previewRows = min(3, max(0, height-3))
-	}
-	listRows := max(0, height-2-previewRows)
+	drawerRows := drawerRows(model.Drawer, height)
+	listRows := max(0, height-2-drawerRows)
 	leftWidth := width / 2
 	rightX := leftWidth + 1
 	rightWidth := width - rightX
@@ -138,10 +136,10 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Left], 0, leftWidth, 1, listRows, options.Overscan)
 	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Right], rightX, rightWidth, 1, listRows, options.Overscan)
 
-	for y := 0; y < height-previewRows-1; y++ {
+	for y := 0; y < height-drawerRows-1; y++ {
 		surface.PutClipped(leftWidth, y, 1, "│", StylePlain)
 	}
-	statusY := height - previewRows - 1
+	statusY := height - drawerRows - 1
 	status := "READ-ONLY"
 	active := model.Panes[model.Active]
 	if active.Listing.Partial {
@@ -171,31 +169,18 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Count != 0 {
 		status += fmt.Sprintf(" | %d", model.Count)
 	}
+	if model.RecoverableEdits != 0 {
+		status += fmt.Sprintf(" | edits:recoverable(%d)", model.RecoverableEdits)
+	}
+	status += " | cache:" + string(model.CachePolicy)
 	status += " | " + string(model.Mode)
 	if model.Notice != "" {
 		status += " | " + SanitizeTerminalText(model.Notice)
 	}
 	surface.PutClipped(0, statusY, width, status, StyleStatus)
 
-	if previewRows != 0 {
-		previewY := statusY + 1
-		previewHeader := "Preview " + string(model.Preview.Location.Path)
-		if model.Preview.Loading {
-			previewHeader += " [loading]"
-		}
-		if model.Preview.Truncated {
-			previewHeader += " [truncated]"
-		}
-		surface.PutClipped(0, previewY, width, previewHeader, StyleHeader)
-		previewText := model.Preview.DisplayText()
-		style := StylePreview
-		if model.Preview.Message != "" {
-			style = StyleError
-		}
-		lines := strings.Split(previewText, "\n")
-		for row := 0; row < previewRows-1 && row < len(lines); row++ {
-			surface.PutClipped(0, previewY+1+row, width, lines[row], style)
-		}
+	if drawerRows != 0 {
+		renderDrawer(surface, model, statusY+1, width, drawerRows)
 	}
 	if model.Auth.Active {
 		renderAuthModal(surface, model.Auth, width, height)
@@ -218,55 +203,235 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeDeleteConfirm {
 		renderDeleteModal(surface, model.pendingDelete, model.DeleteConfirmation, width, height)
 	}
-	if model.ShowJobs {
-		renderJobsView(surface, model.Jobs, model.JobCursor, width, height)
+	if model.Mode == ModeCommand || model.Mode == ModeCommandConfirm {
+		renderCommandModal(surface, model, width, height)
+	}
+	if model.Mode == ModeEditDecision || model.Mode == ModeEditSaveAs {
+		renderEditDecisionModal(surface, model, width, height)
+	}
+	if model.Mode == ModeEditLaunchConfirm {
+		renderEditLaunchModal(surface, model, width, height)
+	}
+	if model.Mode == ModeEditRecovery {
+		renderEditRecoveryModal(surface, model, width, height)
+	}
+	if model.Mode == ModeCacheClearConfirm {
+		renderCacheClearModal(surface, model, width, height)
 	}
 	return stats
 }
 
-func renderJobsView(surface Surface, jobs []transfer.JobView, cursor, width, height int) {
-	drawerWidth := min(width-4, 88)
-	if drawerWidth < 30 || height < 7 {
+func renderCacheClearModal(surface Surface, model Model, width, height int) {
+	if width < 28 || height < 6 {
 		return
 	}
-	drawerHeight := min(height-2, max(5, 2+len(jobs)*3))
-	x := (width - drawerWidth) / 2
-	y := (height - drawerHeight) / 2
-	for row := 0; row < drawerHeight; row++ {
-		surface.PutClipped(x, y+row, drawerWidth, strings.Repeat(" ", drawerWidth), StyleStatus)
+	modalWidth := min(width-4, 82)
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, height/2-2)
+	scope := "current workspace"
+	if model.CacheClearScope == CacheClearAll {
+		scope = "all workspaces"
 	}
-	surface.PutClipped(x+1, y, drawerWidth-2, "JOBS — j/k select  P pause  U resume  C cancel  w/x/a resolve  W/X/A apply-all  J close", StyleStatus)
+	surface.PutClipped(x, y, modalWidth, " Clear eligible cache ", StyleActiveHeader)
+	surface.PutClipped(x, y+1, modalWidth, "Scope: "+scope, StylePlain)
+	surface.PutClipped(x, y+2, modalWidth, "Dirty, pinned, leased, referenced, edit-bound, and unknown content is preserved.", StyleError)
+	surface.PutClipped(x, y+3, modalWidth, "Enter clear · Esc cancel", StyleStatus)
+}
+
+func renderEditRecoveryModal(surface Surface, model Model, width, height int) {
+	items := model.EditRecovery.Items
+	if len(items) == 0 || width < 24 || height < 7 {
+		return
+	}
+	modalWidth := min(width-4, 96)
+	visibleRows := min(len(items), max(1, min(8, height-6)))
+	start := max(0, min(model.EditRecovery.Cursor-visibleRows/2, len(items)-visibleRows))
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, (height-(visibleRows+4))/2)
+	surface.PutClipped(x, y, modalWidth, fmt.Sprintf(" Recoverable edits (%d) ", len(items)), StyleActiveHeader)
+	for row := 0; row < visibleRows; row++ {
+		item := items[start+row]
+		marker := "  "
+		style := StylePlain
+		if start+row == model.EditRecovery.Cursor {
+			marker, style = "> ", StyleCursor
+		}
+		availability := "ready"
+		if !item.Usable {
+			availability = "retained: " + item.Diagnostic
+		}
+		line := fmt.Sprintf("%s%s %s %s · %s", marker, item.SessionID, item.Purpose, item.Location.Path, availability)
+		surface.PutClipped(x, y+1+row, modalWidth, line, style)
+	}
+	selected := items[model.EditRecovery.Cursor]
+	surface.PutClipped(x, y+1+visibleRows, modalWidth, fmt.Sprintf("state:%s durable:%s", selected.State, selected.Lifecycle), StyleStatus)
+	surface.PutClipped(x, y+2+visibleRows, modalWidth, "j/k select · Enter resume/check · K inspect remote · Esc retain", StylePlain)
+}
+
+func renderEditDecisionModal(surface Surface, model Model, width, height int) {
+	state := model.EditDecision
+	if !state.Active || width < 20 || height < 5 {
+		return
+	}
+	modalWidth := min(width-4, 76)
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, height/2-2)
+	surface.PutClipped(x, y, modalWidth, " Edit result ", StyleActiveHeader)
+	surface.PutClipped(x, y+1, modalWidth, SanitizeTerminalText(string(state.Location.Path)), StylePlain)
+	if model.Mode == ModeEditSaveAs {
+		surface.PutClipped(x, y+2, modalWidth, "Save as: "+SanitizeTerminalText(string(model.editSaveAs)), StyleStatus)
+		surface.PutClipped(x, y+3, modalWidth, "Enter confirm · Esc back", StylePlain)
+		return
+	}
+	var instruction string
+	switch state.State {
+	case "ready":
+		instruction = "Opener lease retained: Enter check changes · Esc keep for recovery"
+	case "awaiting_upload_confirmation":
+		instruction = "Enter upload · a save as · x skip · Esc retain"
+	case "remote_changed":
+		instruction = "Remote changed: Enter refresh · x skip · Esc retain"
+	case "conflict":
+		instruction = "Conflict: K inspect remote · w overwrite · a save as · x skip · Esc retain"
+	case "sync_back_frozen":
+		instruction = "Prepared sync-back: Enter queue exact plan · K inspect remote · Esc retain"
+	default:
+		instruction = "Observation uncertain: x abandon · Esc retain for recovery"
+	}
+	surface.PutClipped(x, y+2, modalWidth, instruction, StyleError)
+	if state.Message != "" {
+		surface.PutClipped(x, y+3, modalWidth, SanitizeTerminalText(state.Message), StylePlain)
+	}
+}
+
+func renderEditLaunchModal(surface Surface, model Model, width, height int) {
+	state := model.EditLaunch
+	if !state.Active || width < 20 || height < 5 {
+		return
+	}
+	modalWidth := min(width-4, 90)
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, height/2-2)
+	surface.PutClipped(x, y, modalWidth, " Confirm external direct execution ", StyleActiveHeader)
+	surface.PutClipped(x, y+1, modalWidth, SanitizeTerminalText(state.Command), StylePlain)
+	surface.PutClipped(x, y+2, modalWidth, "Enter run · Esc retain without launching", StyleStatus)
+}
+
+func drawerRows(drawer DrawerState, height int) int {
+	if drawer.Mode == DrawerClosed || height < 5 {
+		return 0
+	}
+	requested := drawer.Rows
+	if requested <= 0 {
+		requested = 6
+	}
+	return min(requested, max(2, height-3))
+}
+
+func renderDrawer(surface Surface, model Model, y, width, rows int) {
+	style := StyleHeader
+	if model.Drawer.Focus == FocusDrawer {
+		style = StyleActiveHeader
+	}
+	header := drawerTabLabel(model.Drawer.Mode)
+	surface.PutClipped(0, y, width, header, style)
+	if rows <= 1 {
+		return
+	}
+	switch model.Drawer.Mode {
+	case DrawerPreview:
+		renderPreviewDrawer(surface, model.Preview, y+1, width, rows-1)
+	case DrawerJobs:
+		renderJobsDrawer(surface, model.Jobs, model.JobCursor, y+1, width, rows-1)
+	case DrawerLog:
+		renderLogDrawer(surface, model.Diagnostics, y+1, width, rows-1)
+	}
+}
+
+func renderLogDrawer(surface Surface, records []diagnostic.Record, y, width, rows int) {
+	if len(records) == 0 {
+		surface.PutClipped(0, y, width, "No bounded log records", StylePreview)
+		return
+	}
+	start := max(0, len(records)-rows)
+	for row := 0; row < rows && start+row < len(records); row++ {
+		record := records[start+row]
+		line := fmt.Sprintf("%s  %-5s  %s/%s", record.Time.Format("15:04:05"), record.Level, record.Component, record.Event)
+		if record.JobID != "" {
+			line += "  job=" + string(record.JobID)
+		}
+		if record.EndpointID != "" {
+			line += "  endpoint=" + string(record.EndpointID)
+		}
+		if record.ErrorCode != "" {
+			line += "  code=" + string(record.ErrorCode)
+		}
+		surface.PutClipped(0, y+row, width, line, StylePreview)
+	}
+}
+
+func drawerTabLabel(active DrawerMode) string {
+	labels := []struct {
+		mode DrawerMode
+		name string
+	}{{DrawerPreview, "Preview"}, {DrawerJobs, "Jobs"}, {DrawerLog, "Log"}}
+	parts := make([]string, 0, len(labels))
+	for _, label := range labels {
+		if label.mode == active {
+			parts = append(parts, "["+label.name+"]")
+		} else {
+			parts = append(parts, label.name)
+		}
+	}
+	return strings.Join(parts, "  ") + "  — K/J/L switch; Esc pane"
+}
+
+func renderPreviewDrawer(surface Surface, preview PreviewState, y, width, rows int) {
+	header := string(preview.Location.Path)
+	if preview.Kind != "" {
+		header += " [" + preview.Kind + "]"
+	}
+	if preview.Loading {
+		header += " [loading]"
+	}
+	if preview.Truncated {
+		header += " [truncated]"
+	}
+	if preview.Summary != "" {
+		header += " " + SanitizeTerminalText(preview.Summary)
+	}
+	surface.PutClipped(0, y, width, header, StylePreview)
+	if rows <= 1 {
+		return
+	}
+	style := StylePreview
+	if preview.Message != "" {
+		style = StyleError
+	}
+	lines := strings.Split(preview.DisplayText(), "\n")
+	for row := 0; row < rows-1 && row < len(lines); row++ {
+		surface.PutClipped(0, y+1+row, width, lines[row], style)
+	}
+}
+
+func renderJobsDrawer(surface Surface, jobs []transfer.JobView, cursor, y, width, rows int) {
 	if len(jobs) == 0 {
-		surface.PutClipped(x+1, y+2, drawerWidth-2, "No durable Jobs", StyleStatus)
+		surface.PutClipped(0, y, width, "No durable Jobs", StylePreview)
 		return
 	}
-	rowsAvailable := drawerHeight - 2
-	visibleJobs := min(len(jobs), rowsAvailable/3)
-	for index := 0; index < visibleJobs; index++ {
-		view := jobs[index]
+	start := min(max(cursor, 0), len(jobs)-1)
+	for row := 0; row < rows && start+row < len(jobs); row++ {
+		view := jobs[start+row]
 		state := string(view.Snapshot.State)
 		if view.WaitingReason != "" {
 			state += " (" + view.WaitingReason + ")"
 		}
-		line := fmt.Sprintf("%s  %s  %d item(s)  %s", state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal))
-		row := y + 1 + index*3
-		style := StyleStatus
-		if index == cursor {
-			style = StyleCursor
+		line := fmt.Sprintf("%s  %s  %d item(s)  %s  %s → %s", state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal), view.Source.Path, view.Final.Path)
+		rowStyle := StylePreview
+		if start+row == cursor {
+			rowStyle = StyleCursor
 		}
-		surface.PutClipped(x+1, row, drawerWidth-2, line, style)
-		surface.PutClipped(x+1, row+1, drawerWidth-2, fmt.Sprintf("%s → %s", view.Source.Path, view.Final.Path), StyleStatus)
-		summary := string(view.Snapshot.JobID)
-		if view.Snapshot.TerminalSummary != nil {
-			summary += " — " + *view.Snapshot.TerminalSummary
-		}
-		if view.RecentError != "" {
-			summary += " — error: " + view.RecentError
-		}
-		if view.RecoveryResult != "" {
-			summary += " — recovered: " + view.RecoveryResult
-		}
-		surface.PutClipped(x+1, row+2, drawerWidth-2, summary, StyleStatus)
+		surface.PutClipped(0, y+row, width, line, rowStyle)
 	}
 }
 
@@ -387,6 +552,40 @@ func renderMoveModal(surface Surface, intents []Intent, width, height int) {
 		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(line), StyleStatus)
 	}
 	surface.PutClipped(x+1, y+4, modalWidth-2, "Source is deleted only after destination verification. [Enter] queue  [Esc] cancel", StyleStatus)
+}
+
+func renderCommandModal(surface Surface, model Model, width, height int) {
+	modalWidth := min(width-4, 76)
+	if modalWidth < 24 || height < 9 {
+		return
+	}
+	const modalHeight = 7
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	pane := model.Panes[model.Active]
+	title := "One-time command"
+	footer := "[Enter] review  [Esc] cancel"
+	if model.Mode == ModeCommandConfirm {
+		title = "Confirm one-time command"
+		footer = "[Enter] run  [Esc] cancel"
+	}
+	endpoint := pane.Endpoint.DisplayName
+	if endpoint == "" {
+		endpoint = string(pane.Endpoint.Kind)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Endpoint: "+SanitizeTerminalText(endpoint), StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "CWD: "+SanitizeTerminalText(string(pane.Location.Path)), StyleStatus)
+	execution := "Exec: local shell -c; cwd via process Dir"
+	if pane.Endpoint.Kind == domain.EndpointSSH {
+		execution = "Exec: fresh ssh -T; cwd marker; no fallback"
+	}
+	surface.PutClipped(x+1, y+3, modalWidth-2, execution, StyleStatus)
+	surface.PutClipped(x+1, y+4, modalWidth-2, "Command: "+SanitizeTerminalText(string(model.commandInput)), StyleStatus)
+	surface.PutClipped(x+1, y+5, modalWidth-2, footer, StyleStatus)
 }
 
 func renderAuthModal(surface Surface, state AuthState, width, height int) {

@@ -59,6 +59,171 @@ func TestCreateJobIsTransactionalAndRequestIdempotent(t *testing.T) {
 	}
 }
 
+func TestCreateSyncBackAtomicallyBindsEditSessionAndSurvivesRestart(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, database := newVersion2TestStore(t, ctx)
+	seedBoundEditSession(t, ctx, database)
+	request := createRequest(t, 13)
+	request.DestinationJSON = stringPointer(`{"version":2,"origin":"sync_back","edit_session_id":"44444444444444444444444444444444"}`)
+	request.EditSession = &EditSessionBinding{
+		SessionID: strings.Repeat("4", 32), ExpectedVersion: 1,
+		EventID: "sync-back-bound", EventKind: "sync_back_job_bound",
+	}
+	created, duplicate, err := store.Create(ctx, request)
+	if err != nil || duplicate {
+		t.Fatalf("create bound Job = (%#v, %t, %v)", created, duplicate, err)
+	}
+
+	restarted, err := New(ctx, database)
+	if err != nil {
+		t.Fatalf("restart Job store: %v", err)
+	}
+	reloaded, err := restarted.Get(ctx, created.JobID)
+	if err != nil || reloaded != created {
+		t.Fatalf("reloaded Job = (%#v, %v), want %#v", reloaded, err, created)
+	}
+	var boundJob domain.JobID
+	if err := database.QueryRowContext(ctx, "SELECT job_id FROM edit_session_jobs WHERE session_id=?", request.EditSession.SessionID).Scan(&boundJob); err != nil || boundJob != created.JobID {
+		t.Fatalf("durable binding = (%q, %v)", boundJob, err)
+	}
+	var state string
+	var version int64
+	if err := database.QueryRowContext(ctx, "SELECT state,state_version FROM edit_sessions WHERE session_id=?", request.EditSession.SessionID).Scan(&state, &version); err != nil || state != "uploading" || version != 2 {
+		t.Fatalf("bound session = (%q, %d, %v)", state, version, err)
+	}
+}
+
+func TestCompletedSyncBackAtomicallyFinalizesEditAndReleasesHandoff(t *testing.T) {
+	ctx := context.Background()
+	store, database := newVersion2TestStore(t, ctx)
+	seedBoundEditSession(t, ctx, database)
+	const (
+		sessionID       = "44444444444444444444444444444444"
+		materialization = "33333333333333333333333333333333"
+		referenceID     = "55555555555555555555555555555555"
+		leaseID         = "66666666666666666666666666666666"
+	)
+	if _, err := database.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,materialization_id,created_at_unix) VALUES(?,'edit',?,?,1)", referenceID, sessionID, materialization); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO cache_leases(lease_id,materialization_id,owner_kind,owner_id,daemon_instance_id,heartbeat_at_unix,expires_at_unix,grace_until_unix,state) VALUES(? ,?,'edit',?, ?,1,2,2,'active')", leaseID, materialization, sessionID, strings.Repeat("7", 32)); err != nil {
+		t.Fatal(err)
+	}
+	request := createRequest(t, 15)
+	request.DestinationJSON = stringPointer(`{"version":2,"origin":"sync_back","edit_session_id":"44444444444444444444444444444444"}`)
+	request.EditSession = &EditSessionBinding{SessionID: sessionID, ExpectedVersion: 1, EventID: "sync-back-bound-terminal", EventKind: "sync_back_job_bound"}
+	snapshot, _, err := store.Create(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, state := range []job.State{job.StateRunning, job.StateVerifying, job.StateCompleted} {
+		event := createRequest(t, byte(20+index)).EventID
+		transition := TransitionRequest{JobID: snapshot.JobID, ExpectedVersion: snapshot.StateVersion, To: state, EventID: event, EventKind: "job_advanced", PayloadJSON: `{}`, Now: time.Unix(int64(200+index), 0)}
+		if state.Terminal() {
+			summary := "verified sync-back completed"
+			transition.TerminalSummary = &summary
+		}
+		snapshot, _, err = store.Transition(ctx, transition)
+		if err != nil {
+			t.Fatalf("transition to %q: %v", state, err)
+		}
+	}
+	var editState, localState, leaseState, materializationState string
+	var editVersion int64
+	if err := database.QueryRowContext(ctx, "SELECT state,local_state,state_version FROM edit_sessions WHERE session_id=?", sessionID).Scan(&editState, &localState, &editVersion); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT state FROM cache_leases WHERE lease_id=?", leaseID).Scan(&leaseState); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT state FROM cache_materializations WHERE materialization_id=?", materialization).Scan(&materializationState); err != nil {
+		t.Fatal(err)
+	}
+	var references, completedEvents int
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM cache_references WHERE reference_id=?", referenceID).Scan(&references); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM edit_session_events WHERE session_id=? AND kind='sync_back_completed'", sessionID).Scan(&completedEvents); err != nil {
+		t.Fatal(err)
+	}
+	if editState != "completed" || localState != "clean" || editVersion != 3 || leaseState != "released" || materializationState != "clean" || references != 0 || completedEvents != 1 {
+		t.Fatalf("finalized edit = state:%s local:%s version:%d lease:%s materialization:%s refs:%d events:%d", editState, localState, editVersion, leaseState, materializationState, references, completedEvents)
+	}
+}
+
+func TestFailedSyncBackPreservesDirtyRecoveryHandoff(t *testing.T) {
+	ctx := context.Background()
+	store, database := newVersion2TestStore(t, ctx)
+	seedBoundEditSession(t, ctx, database)
+	const sessionID = "44444444444444444444444444444444"
+	const materialization = "33333333333333333333333333333333"
+	const referenceID = "55555555555555555555555555555555"
+	const leaseID = "66666666666666666666666666666666"
+	if _, err := database.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,materialization_id,created_at_unix) VALUES(?,'edit',?,?,1)", referenceID, sessionID, materialization); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO cache_leases(lease_id,materialization_id,owner_kind,owner_id,daemon_instance_id,heartbeat_at_unix,expires_at_unix,grace_until_unix,state) VALUES(? ,?,'edit',?, ?,1,2,2,'active')", leaseID, materialization, sessionID, strings.Repeat("7", 32)); err != nil {
+		t.Fatal(err)
+	}
+	request := createRequest(t, 16)
+	request.DestinationJSON = stringPointer(`{"version":2,"origin":"sync_back","edit_session_id":"44444444444444444444444444444444"}`)
+	request.EditSession = &EditSessionBinding{SessionID: sessionID, ExpectedVersion: 1, EventID: "sync-back-bound-failure", EventKind: "sync_back_job_bound"}
+	snapshot, _, err := store.Create(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index, state := range []job.State{job.StateRunning, job.StateFailed} {
+		summary := ""
+		transition := TransitionRequest{JobID: snapshot.JobID, ExpectedVersion: snapshot.StateVersion, To: state, EventID: createRequest(t, byte(30+index)).EventID, EventKind: "job_advanced", PayloadJSON: `{}`, Now: time.Unix(int64(300+index), 0)}
+		if state.Terminal() {
+			summary = "upload failed with dirty materialization retained"
+			transition.TerminalSummary = &summary
+		}
+		snapshot, _, err = store.Transition(ctx, transition)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	var editState, localState, leaseState, materializationState string
+	if err := database.QueryRowContext(ctx, "SELECT state,local_state FROM edit_sessions WHERE session_id=?", sessionID).Scan(&editState, &localState); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT state FROM cache_leases WHERE lease_id=?", leaseID).Scan(&leaseState); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT state FROM cache_materializations WHERE materialization_id=?", materialization).Scan(&materializationState); err != nil {
+		t.Fatal(err)
+	}
+	var references int
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM cache_references WHERE reference_id=?", referenceID).Scan(&references); err != nil {
+		t.Fatal(err)
+	}
+	if editState != "uploading" || localState != "dirty" || leaseState != "active" || materializationState != "dirty" || references != 1 {
+		t.Fatalf("failed sync-back lost recovery state: edit=%s local=%s lease=%s materialization=%s refs=%d", editState, localState, leaseState, materializationState, references)
+	}
+}
+
+func TestCreateSyncBackRollsBackPlanAndJobWhenBindingFails(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, database := newVersion2TestStore(t, ctx)
+	request := createRequest(t, 14)
+	request.DestinationJSON = stringPointer(`{"version":2,"origin":"sync_back","edit_session_id":"99999999999999999999999999999999"}`)
+	request.EditSession = &EditSessionBinding{
+		SessionID: strings.Repeat("9", 32), ExpectedVersion: 1,
+		EventID: "sync-back-bound", EventKind: "sync_back_job_bound",
+	}
+	if _, _, err := store.Create(ctx, request); err == nil {
+		t.Fatal("create with missing edit session succeeded")
+	}
+	for _, table := range []string{"operation_plans", "jobs", "job_steps", "job_events", "request_dedup", "edit_session_jobs"} {
+		assertCount(t, ctx, database, table, 0)
+	}
+}
+
 func TestCreateAndResolveConflictAtomicallyQueuesJob(t *testing.T) {
 	t.Parallel()
 
@@ -413,6 +578,42 @@ func newTestStore(t *testing.T, ctx context.Context) (*Store, *sql.DB) {
 		t.Fatalf("new guarded store: %v", err)
 	}
 	return store, database
+}
+
+func newVersion2TestStore(t *testing.T, ctx context.Context) (*Store, *sql.DB) {
+	t.Helper()
+	store, database := newTestStore(t, ctx)
+	for _, item := range []migration.Migration{migration.Version2(), migration.Version3()} {
+		for _, statement := range item.Statements {
+			if _, err := database.ExecContext(ctx, statement); err != nil {
+				t.Fatalf("apply Version %d statement: %v", item.Version, err)
+			}
+		}
+	}
+	return store, database
+}
+
+func seedBoundEditSession(t *testing.T, ctx context.Context, database *sql.DB) {
+	t.Helper()
+	created := int64(1)
+	blobID := strings.Repeat("1", 64)
+	entryID := strings.Repeat("2", 64)
+	materializationID := strings.Repeat("3", 32)
+	if _, err := database.ExecContext(ctx, "INSERT INTO cache_blobs(sha256,size_bytes,basename,state,created_at_unix,last_access_unix) VALUES(?,7,?,'published',?,?)", blobID, "blobs/sha256/11/"+blobID+".blob", created, created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO cache_entries(entry_id,endpoint_id,path_bytes,fingerprint_strength,freshness,policy,pinned,blob_sha256,complete,created_at_unix,last_access_unix) VALUES(?, 'remote', X'2f66696c65', 'strong', 'fresh', 'lru', 0, ?, 1, ?, ?)", entryID, blobID, created, created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO cache_materializations(materialization_id,entry_id,baseline_blob_sha256,basename,size_bytes,current_sha256,state,pinned,created_at_unix,updated_at_unix,last_access_unix) VALUES(?,?,?,?,7,?,'dirty',0,?,?,?)", materializationID, entryID, blobID, "materializations/"+materializationID+"/content", blobID, created, created, created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO edit_sessions(session_id,source_entry_id,materialization_id,local_state,remote_state,state,state_version,created_at_unix,updated_at_unix) VALUES(?,?,?,'dirty','unchanged','awaiting_decision',1,?,?)", strings.Repeat("4", 32), entryID, materializationID, created, created); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO edit_session_details(session_id,purpose,reference_id,lease_id,machine_json,target_endpoint_id,target_path_bytes,baseline_local_sha256,original_presence,original_kind,original_fingerprint_json,expected_presence,expected_kind,expected_fingerprint_json,created_at_unix,updated_at_unix) VALUES(?,'editor',?,?,X'7b7d','remote',X'2f66696c65',?,'present','file',X'7b7d','present','file',X'7b7d',?,?)", strings.Repeat("4", 32), strings.Repeat("5", 32), strings.Repeat("6", 32), blobID, created, created); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func createRequest(t *testing.T, seed byte) CreateRequest {

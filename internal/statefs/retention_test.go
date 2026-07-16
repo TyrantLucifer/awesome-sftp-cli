@@ -240,10 +240,10 @@ func retentionDatabase(t *testing.T) (context.Context, string, *sql.DB, *sql.Con
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("r", probeRandomBytes+16)), Now: time.Unix(900, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("Initialize(): %v", err)
 	}

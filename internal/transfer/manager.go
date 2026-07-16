@@ -9,11 +9,17 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 )
 
 const defaultQueuedJobs = 128
+
+type SyncBackIntent struct {
+	SyncBack edit.SyncBackRequest `json:"sync_back"`
+	Source   FileRef              `json:"source"`
+}
 
 type ManagerConfig struct {
 	Store         *jobstore.Store
@@ -189,6 +195,61 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 		}
 	} else if release != nil {
 		release()
+	}
+	return snapshot, nil
+}
+
+func (manager *Manager) CreateSyncBack(ctx context.Context, intent SyncBackIntent) (jobstore.Snapshot, error) {
+	if !manager.isStarted() {
+		return jobstore.Snapshot{}, errors.New("create sync-back Job: transfer manager is not started")
+	}
+	requestID, err := domain.NewRequestID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	jobID, err := domain.NewJobID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	eventID, err := domain.NewEventID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	bindingEventID, err := domain.NewEventID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	planID, err := manager.generator.New("plan_")
+	if err != nil {
+		return jobstore.Snapshot{}, fmt.Errorf("create sync-back Job: generate plan ID: %w", err)
+	}
+	plan, create, err := manager.planner.FreezeSyncBack(ctx, SyncBackFreezeRequest{
+		SyncBack: intent.SyncBack, Source: intent.Source, RequestID: requestID, PlanID: planID, JobID: jobID,
+		EventID: eventID, BindingEventID: string(bindingEventID), Now: manager.now(),
+	})
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	var release func()
+	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
+		release, err = acquirer.Acquire(ctx, plan)
+		if err != nil {
+			return jobstore.Snapshot{}, err
+		}
+	}
+	snapshot, _, err := manager.store.Create(ctx, create)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return jobstore.Snapshot{}, err
+	}
+	if release != nil {
+		manager.retainLease(snapshot.JobID, release)
+	}
+	if err := manager.enqueue(plan.JobID); err != nil {
+		manager.releaseLease(snapshot.JobID)
+		return jobstore.Snapshot{}, err
 	}
 	return snapshot, nil
 }
@@ -580,13 +641,20 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	case executeErr != nil:
 		manager.handleExecutionError(current, executeErr, result)
 	case result.Outcome == OutcomeWaitingConflict:
-		manager.openConflict(current, plan, result.Final, "destination_appeared")
+		reason := "destination_appeared"
+		if result.PreservedDestination.Path != "" {
+			reason = "destination changed after original was preserved at " + string(result.PreservedDestination.Path)
+		}
+		manager.openConflict(current, plan, result.Final, reason)
 	default:
 		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", map[string]any{"sha256": result.SHA256})
 		if transitionErr == nil {
 			terminalState := job.StateCompleted
 			eventKind := "job_completed"
 			summary := string(result.Outcome)
+			if result.PreservedDestination.Path != "" {
+				summary += "; original remote version preserved at " + string(result.PreservedDestination.Path)
+			}
 			moveReason := ""
 			if plan.Kind == OperationMove {
 				deleted := false
@@ -608,6 +676,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 				"bytes": result.Bytes, "items": result.Items, "succeeded": result.Succeeded, "skipped": result.Skipped,
 				"failed": result.Failed, "manifest": result.Manifest, "manifest_truncated": result.ManifestTruncated,
 				"final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome, "move_reason": moveReason,
+				"preserved_destination": result.PreservedDestination,
 			})
 		}
 	}
@@ -683,19 +752,28 @@ func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, execute
 		return
 	}
 	var operationError *domain.OpError
+	payload := errorPayload(executeErr)
+	if result.PreservedDestination.Path != "" {
+		payload["preserved_destination"] = string(result.PreservedDestination.Path)
+		payload["preservation_unknown"] = fmt.Sprintf("%t", result.PreservationUnknown)
+	}
 	if errors.As(executeErr, &operationError) {
 		switch operationError.Code {
 		case domain.CodeAuthRequired:
-			_, _ = manager.transition(snapshot, job.StateWaitingAuth, "job_waiting_auth", errorPayload(executeErr))
+			_, _ = manager.transition(snapshot, job.StateWaitingAuth, "job_waiting_auth", payload)
 			return
 		case domain.CodeConflict, domain.CodeAlreadyExists:
-			_, _ = manager.transition(snapshot, job.StateWaitingConflict, "job_waiting_conflict", errorPayload(executeErr))
+			_, _ = manager.transition(snapshot, job.StateWaitingConflict, "job_waiting_conflict", payload)
 			return
 		case domain.CodeTransportInterrupted, domain.CodeTimeout, domain.CodeResourceExhausted:
 			retryAt := manager.now().Add(time.Minute)
-			_, _ = manager.transitionRetry(snapshot, retryAt, errorPayload(executeErr))
+			_, _ = manager.transitionRetry(snapshot, retryAt, payload)
 			return
 		}
+	}
+	if result.PreservedDestination.Path != "" {
+		_, _ = manager.transitionTerminal(snapshot, job.StateFailed, "job_failed", safeErrorSummary(executeErr), payload)
+		return
 	}
 	manager.fail(snapshot, executeErr)
 }

@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +14,8 @@ import (
 	"sync/atomic"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachemanager"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
@@ -26,6 +30,7 @@ const (
 	ProviderList       = "provider.list"
 	ProviderStat       = "provider.stat"
 	ProviderRead       = "provider.read"
+	ProviderHash       = "provider.hash"
 	ProviderConnectSSH = "provider.connect_ssh"
 	ProviderRelease    = "provider.release"
 	AuthPrompt         = "auth.prompt"
@@ -34,6 +39,7 @@ const (
 	WorkspaceList      = "workspace.list"
 	WorkspaceLoad      = "workspace.load"
 	WorkspaceSave      = "workspace.save"
+	DiagnosticList     = "diagnostic.list"
 )
 
 type SSHConnector func(context.Context, string) (providerapi.Provider, error)
@@ -49,6 +55,9 @@ type ProviderSessions struct {
 	authBroker      *auth.Broker
 	workspace       *workspace.Store
 	transfer        TransferService
+	diagnostics     DiagnosticSource
+	cache           *cachemanager.Manager
+	editSessions    EditSessionStore
 	nextOwner       atomic.Uint64
 }
 
@@ -63,9 +72,12 @@ func (s *ProviderSessions) SetSSHConnector(connector SSHConnector) { s.connectSS
 func (s *ProviderSessions) SetEndpointConnector(connector EndpointConnector) {
 	s.connectEndpoint = connector
 }
-func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)          { s.authBroker = broker }
-func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store)   { s.workspace = store }
-func (s *ProviderSessions) SetTransferService(service TransferService) { s.transfer = service }
+func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)             { s.authBroker = broker }
+func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store)      { s.workspace = store }
+func (s *ProviderSessions) SetTransferService(service TransferService)    { s.transfer = service }
+func (s *ProviderSessions) SetDiagnosticSource(source DiagnosticSource)   { s.diagnostics = source }
+func (s *ProviderSessions) SetCacheManager(manager *cachemanager.Manager) { s.cache = manager }
+func (s *ProviderSessions) SetEditSessionStore(store EditSessionStore)    { s.editSessions = store }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	if len(providers) == 0 {
@@ -109,6 +121,9 @@ func (s *ProviderSessions) NewSession() Session {
 		cursors:      make(map[cursorKey]providerapi.Provider),
 		workspace:    s.workspace,
 		transfer:     s.transfer,
+		diagnostics:  s.diagnostics,
+		cache:        s.cache,
+		editSessions: s.editSessions,
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -140,6 +155,9 @@ type providerSession struct {
 	authOwner    auth.OwnerID
 	workspace    *workspace.Store
 	transfer     TransferService
+	diagnostics  DiagnosticSource
+	cache        *cachemanager.Manager
+	editSessions EditSessionStore
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -162,7 +180,23 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.loadWorkspace(payload)
 	case WorkspaceSave:
 		return s.saveWorkspace(payload)
-	case JobCapture, JobCaptureDelete, JobCreateCopy, JobCreateDelete, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:
+	case DiagnosticList:
+		return s.listDiagnostics(payload)
+	case CacheMaterialize:
+		return s.cacheMaterialize(ctx, payload)
+	case CacheMarkDirty:
+		return s.cacheMarkDirty(ctx, payload)
+	case CacheHeartbeat:
+		return s.cacheHeartbeat(ctx, payload)
+	case CacheReleaseHandoff:
+		return s.cacheReleaseHandoff(ctx, payload)
+	case CacheClear:
+		return s.cacheClear(ctx, payload)
+	case CacheLifecycle:
+		return s.cacheLifecycle(ctx, payload)
+	case EditSessionCreate, EditSessionGet, EditSessionTransition, EditSessionEvents, EditSessionRecoverable:
+		return s.handleEditSession(ctx, name, payload)
+	case JobCapture, JobCaptureDelete, JobCreateCopy, JobCreateSyncBack, JobCreateDelete, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:
 		return s.handleJob(ctx, name, payload)
 	case ProviderConnectSSH:
 		return s.connect(ctx, payload)
@@ -180,6 +214,8 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.stat(ctx, payload)
 	case ProviderRead:
 		return s.read(ctx, payload)
+	case ProviderHash:
+		return s.hash(ctx, payload)
 	default:
 		return nil, &domain.OpError{
 			Code:    domain.CodeUnsupported,
@@ -767,6 +803,87 @@ func (s *providerSession) read(ctx context.Context, payload json.RawMessage) (re
 		Data: ipc.EncodeWireBytes(data[:total]),
 		EOF:  eof,
 	}, nil
+}
+
+func (s *providerSession) hash(ctx context.Context, payload json.RawMessage) (response any, resultErr error) {
+	var request ipc.ProviderHashRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode provider hash request", err)
+	}
+	if request.MaxBytes == 0 || request.MaxBytes > uint64(cache.DefaultGlobalBytes) {
+		return nil, invalidArgument("hash byte budget is outside the allowed range", nil)
+	}
+	location, err := ipc.DecodeLocation(request.Location)
+	if err != nil {
+		return nil, invalidArgument("decode hash location", err)
+	}
+	implementation, err := s.provider(location.EndpointID)
+	if err != nil {
+		return nil, err
+	}
+	providerRequest := providerapi.OpenReadRequest{Location: location}
+	if request.ExpectedFingerprint != nil {
+		expected := ipc.DecodeFingerprint(*request.ExpectedFingerprint)
+		providerRequest.ExpectedFingerprint = &expected
+	}
+	handle, err := implementation.OpenRead(ctx, providerRequest)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		if closeErr := handle.Close(context.Background()); resultErr == nil && closeErr != nil {
+			resultErr = closeErr
+			response = nil
+		}
+	}()
+	info := handle.Info()
+	if info.Entry.Kind != domain.EntryFile {
+		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "only regular files have a content identity", EndpointID: location.EndpointID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	if info.Entry.Metadata.Size != nil && *info.Entry.Metadata.Size > request.MaxBytes {
+		return nil, hashBudgetExceeded(location)
+	}
+	hasher := sha256.New()
+	bufferBytes := min(s.maxReadBytes, uint32(256*1024))
+	buffer := make([]byte, bufferBytes)
+	var total uint64
+	for {
+		limit := uint64(len(buffer))
+		remaining := request.MaxBytes - total
+		if limit > remaining+1 {
+			limit = remaining + 1
+		}
+		chunk := buffer[:limit]
+		n, readErr := handle.Read(ctx, chunk)
+		if n < 0 || n > len(chunk) {
+			return nil, internalError("provider hash returned an invalid read count", nil)
+		}
+		readBytes := uint64(n) // #nosec G115 -- n is non-negative after the explicit check above.
+		if readBytes > remaining {
+			return nil, hashBudgetExceeded(location)
+		}
+		if n > 0 {
+			_, _ = hasher.Write(buffer[:n])
+			total += uint64(n)
+		}
+		if errors.Is(readErr, io.EOF) {
+			break
+		}
+		if readErr != nil {
+			return nil, readErr
+		}
+		if n == 0 {
+			return nil, internalError("provider hash made no progress", io.ErrNoProgress)
+		}
+	}
+	if info.Entry.Metadata.Size != nil && total != *info.Entry.Metadata.Size {
+		return nil, &domain.OpError{Code: domain.CodeConflict, Message: "file size changed while deriving content identity", EndpointID: location.EndpointID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterConflict}, Effect: domain.EffectNone}
+	}
+	return ipc.ProviderHashResponse{Info: ipc.ReadInfoWire{Entry: ipc.EncodeEntry(info.Entry), Fingerprint: ipc.EncodeFingerprint(info.Fingerprint)}, SHA256: hex.EncodeToString(hasher.Sum(nil)), Size: total}, nil
+}
+
+func hashBudgetExceeded(location domain.Location) error {
+	return &domain.OpError{Code: domain.CodeResourceExhausted, Message: "file exceeds the content identity byte budget", EndpointID: location.EndpointID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 }
 
 func (s *providerSession) providerByString(value string) (providerapi.Provider, error) {

@@ -2,8 +2,10 @@ package statefs
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -88,12 +90,19 @@ func UpgradeDatabase(ctx context.Context, config UpgradeConfig) (report UpgradeR
 	freshAttempt := false
 	var request migration.AttemptRequest
 	if errors.Is(loadErr, migration.ErrNoAttempt) {
+		attemptID := config.AttemptID
+		if attemptID == "" {
+			attemptID, err = newMigrationAttemptID()
+			if err != nil {
+				return report, fmt.Errorf("upgrade database: generate attempt ID: %w", err)
+			}
+		}
 		setDigest, err := migration.MigrationSetDigest(currentHead, targetHead, config.Migrations, contractDigests)
 		if err != nil {
 			return report, fmt.Errorf("upgrade database: freeze migration set: %w", err)
 		}
 		request = migration.AttemptRequest{
-			AttemptID: config.AttemptID, OriginalHead: currentHead, TargetHead: targetHead, MigrationSetDigest: setDigest,
+			AttemptID: attemptID, OriginalHead: currentHead, TargetHead: targetHead, MigrationSetDigest: setDigest,
 		}
 		pending := config.Migrations[currentHead:targetHead]
 		if _, err := ReconcileBackupRetentionAfterSchemaValidation(ctx, connection, config.Root, int64(currentHead)); err != nil { //nolint:gosec // currentHead is a validated SQLite signed head
@@ -184,6 +193,14 @@ func UpgradeDatabase(ctx context.Context, config UpgradeConfig) (report UpgradeR
 		return report, fmt.Errorf("upgrade database: final checks: %w", err)
 	}
 	return report, nil
+}
+
+func newMigrationAttemptID() (string, error) {
+	var value [16]byte
+	if _, err := io.ReadFull(rand.Reader, value[:]); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(value[:]), nil
 }
 
 func filepathDirectChild(root, path string) string {

@@ -81,10 +81,32 @@ func TestReducerEmitsOnlyReadOnlyNavigationIntents(t *testing.T) {
 	assertSingleIntent(t, intents, IntentList, "/left/dir")
 
 	model, _ = Reduce(model, KeyPress{Key: KeyDown})
-	_, intents = Reduce(model, KeyPress{Key: KeyOpen})
+	model, intents = Reduce(model, KeyPress{Key: KeyOpen})
 	intent := assertSingleIntent(t, intents, IntentPreview, "/left/file.txt")
 	if intent.Limit != PreviewByteLimit {
 		t.Fatalf("preview limit = %d, want %d", intent.Limit, PreviewByteLimit)
+	}
+	if model.Drawer.Mode != DrawerPreview || model.Drawer.Focus != FocusDrawer {
+		t.Fatalf("file open drawer = %#v", model.Drawer)
+	}
+}
+
+func TestReducerRoutesEditorAndOpenerOnlyForRegularFiles(t *testing.T) {
+	for _, test := range []struct {
+		key  Key
+		kind IntentKind
+	}{{KeyEdit, IntentEdit}, {KeyOpenExternal, IntentOpenExternal}} {
+		model := testModel(t)
+		model, intents := Reduce(model, KeyPress{Key: test.key})
+		if len(intents) != 0 || model.Notice == "" {
+			t.Fatalf("directory action = intents %#v notice %q", intents, model.Notice)
+		}
+		model, _ = Reduce(model, KeyPress{Key: KeyDown})
+		model, intents = Reduce(model, KeyPress{Key: test.key})
+		intent := assertSingleIntent(t, intents, test.kind, "/left/file.txt")
+		if intent.Pane != Left {
+			t.Fatalf("intent = %#v", intent)
+		}
 	}
 }
 
@@ -265,7 +287,7 @@ func TestReducerRenameUsesFrozenReferenceAndRejectsMultiSelection(t *testing.T) 
 func TestReducerOpensMinimalDurableJobsView(t *testing.T) {
 	model := testModel(t)
 	model, intents := Reduce(model, KeyPress{Key: KeyJobs})
-	if !model.ShowJobs || len(intents) != 1 || intents[0].Kind != IntentJobList {
+	if model.Drawer.Mode != DrawerJobs || model.Drawer.Focus != FocusDrawer || len(intents) != 1 || intents[0].Kind != IntentJobList {
 		t.Fatalf("open Jobs model=%#v intents=%#v", model, intents)
 	}
 	view := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth}, Phase: transfer.PhaseStreaming, Bytes: 42, Items: 1, WaitingReason: "waiting_auth"}
@@ -274,14 +296,14 @@ func TestReducerOpensMinimalDurableJobsView(t *testing.T) {
 		t.Fatalf("Jobs model = %#v", model.Jobs)
 	}
 	model, intents = Reduce(model, KeyPress{Key: KeyJobs})
-	if model.ShowJobs || len(intents) != 0 {
+	if model.Drawer.Mode != DrawerClosed || model.Drawer.Focus != FocusPane || len(intents) != 0 {
 		t.Fatalf("close Jobs model=%#v intents=%#v", model, intents)
 	}
 }
 
 func TestReducerControlsSelectedDurableJob(t *testing.T) {
 	model := testModel(t)
-	model.ShowJobs = true
+	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
 	first := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning}}
 	second := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaab", State: job.StateWaitingConflict}}
 	model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{first, second}})

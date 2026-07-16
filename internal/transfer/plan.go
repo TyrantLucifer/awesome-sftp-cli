@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"path"
 	"reflect"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
@@ -64,6 +66,26 @@ type Verification string
 
 const VerifySHA256 Verification = "stream_sha256"
 
+type Origin string
+
+const OriginSyncBack Origin = "sync_back"
+
+type DestinationPresence string
+
+const (
+	DestinationPresent DestinationPresence = "present"
+	DestinationAbsent  DestinationPresence = "absent"
+)
+
+// DestinationPrecondition is the edit baseline frozen before Plan creation.
+// Workers compare it at commit and never replace it with a fresh observation.
+type DestinationPrecondition struct {
+	Presence      DestinationPresence `json:"presence"`
+	Kind          domain.EntryKind    `json:"kind,omitempty"`
+	Fingerprint   domain.Fingerprint  `json:"fingerprint,omitempty"`
+	ContentSHA256 edit.SHA256         `json:"content_sha256,omitempty"`
+}
+
 type FileRef struct {
 	Location           domain.Location           `json:"location"`
 	Kind               domain.EntryKind          `json:"kind"`
@@ -93,32 +115,38 @@ type CapabilityBinding struct {
 }
 
 type Plan struct {
-	Version                uint16             `json:"version"`
-	PlanID                 string             `json:"plan_id"`
-	JobID                  domain.JobID       `json:"job_id"`
-	Kind                   OperationKind      `json:"kind"`
-	SourceEndpoint         domain.Endpoint    `json:"source_endpoint"`
-	DestinationEndpoint    domain.Endpoint    `json:"destination_endpoint"`
-	Source                 FileRef            `json:"source"`
-	DestinationDirectory   domain.Location    `json:"destination_directory"`
-	RequestedName          string             `json:"requested_name"`
-	Final                  domain.Location    `json:"final"`
-	Part                   domain.Location    `json:"part"`
-	SourceCapability       CapabilityBinding  `json:"source_capability"`
-	DestinationCapability  CapabilityBinding  `json:"destination_capability"`
-	Route                  Route              `json:"route"`
-	Verification           Verification       `json:"verification"`
-	ConflictPolicy         ConflictPolicy     `json:"conflict_policy"`
-	BufferBytes            uint32             `json:"buffer_bytes"`
-	Discovery              *DiscoveryBudget   `json:"discovery,omitempty"`
-	MoveStrategy           MoveStrategy       `json:"move_strategy,omitempty"`
-	MoveCapability         *CapabilityBinding `json:"move_capability,omitempty"`
-	SourceDeleteCapability *CapabilityBinding `json:"source_delete_capability,omitempty"`
-	DeleteRecursive        bool               `json:"delete_recursive,omitempty"`
-	DeleteIrreversible     bool               `json:"delete_irreversible,omitempty"`
-	DeleteTrash            bool               `json:"delete_trash,omitempty"`
-	DeleteCapability       *CapabilityBinding `json:"delete_capability,omitempty"`
-	FrozenAt               time.Time          `json:"frozen_at"`
+	Version                         uint16                   `json:"version"`
+	Origin                          Origin                   `json:"origin,omitempty"`
+	EditSessionID                   string                   `json:"edit_session_id,omitempty"`
+	ExpectedDestination             *DestinationPrecondition `json:"expected_destination,omitempty"`
+	OriginalDestinationPrecondition *DestinationPrecondition `json:"original_destination_precondition,omitempty"`
+	ExpectedSourceSHA256            string                   `json:"expected_source_sha256,omitempty"`
+	PlanID                          string                   `json:"plan_id"`
+	JobID                           domain.JobID             `json:"job_id"`
+	Kind                            OperationKind            `json:"kind"`
+	SourceEndpoint                  domain.Endpoint          `json:"source_endpoint"`
+	DestinationEndpoint             domain.Endpoint          `json:"destination_endpoint"`
+	Source                          FileRef                  `json:"source"`
+	DestinationDirectory            domain.Location          `json:"destination_directory"`
+	RequestedName                   string                   `json:"requested_name"`
+	Final                           domain.Location          `json:"final"`
+	Part                            domain.Location          `json:"part"`
+	PreservedDestination            domain.Location          `json:"preserved_destination,omitempty"`
+	SourceCapability                CapabilityBinding        `json:"source_capability"`
+	DestinationCapability           CapabilityBinding        `json:"destination_capability"`
+	Route                           Route                    `json:"route"`
+	Verification                    Verification             `json:"verification"`
+	ConflictPolicy                  ConflictPolicy           `json:"conflict_policy"`
+	BufferBytes                     uint32                   `json:"buffer_bytes"`
+	Discovery                       *DiscoveryBudget         `json:"discovery,omitempty"`
+	MoveStrategy                    MoveStrategy             `json:"move_strategy,omitempty"`
+	MoveCapability                  *CapabilityBinding       `json:"move_capability,omitempty"`
+	SourceDeleteCapability          *CapabilityBinding       `json:"source_delete_capability,omitempty"`
+	DeleteRecursive                 bool                     `json:"delete_recursive,omitempty"`
+	DeleteIrreversible              bool                     `json:"delete_irreversible,omitempty"`
+	DeleteTrash                     bool                     `json:"delete_trash,omitempty"`
+	DeleteCapability                *CapabilityBinding       `json:"delete_capability,omitempty"`
+	FrozenAt                        time.Time                `json:"frozen_at"`
 }
 
 type FreezeRequest struct {
@@ -137,6 +165,17 @@ type DeleteFreezeRequest struct {
 	JobID     domain.JobID
 	EventID   domain.EventID
 	Now       time.Time
+}
+
+type SyncBackFreezeRequest struct {
+	SyncBack       edit.SyncBackRequest
+	Source         FileRef
+	RequestID      domain.RequestID
+	PlanID         string
+	JobID          domain.JobID
+	EventID        domain.EventID
+	BindingEventID string
+	Now            time.Time
 }
 
 type Resolver interface {
@@ -334,6 +373,121 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		return Plan{}, jobstore.CreateRequest{}, err
 	}
 	return plan, create, nil
+}
+
+// FreezeSyncBack creates the only Plan Version 2 shape. The destination
+// precondition comes exclusively from the durable edit decision; current
+// destination state is deliberately not observed while freezing the plan.
+func (planner *Planner) FreezeSyncBack(ctx context.Context, request SyncBackFreezeRequest) (Plan, jobstore.CreateRequest, error) {
+	if request.SyncBack.PlanVersion != edit.SyncBackPlanVersion || request.SyncBack.Origin != edit.SyncBackOrigin {
+		return Plan{}, jobstore.CreateRequest{}, errors.New("freeze sync-back: invalid plan version or origin")
+	}
+	if _, err := edit.ParseSessionID(string(request.SyncBack.SessionID)); err != nil {
+		return Plan{}, jobstore.CreateRequest{}, fmt.Errorf("freeze sync-back: %w", err)
+	}
+	if request.SyncBack.SessionVersion < 1 || request.SyncBack.SessionVersion > edit.Version(math.MaxInt64) || request.SyncBack.Decision != edit.DecisionUpload && request.SyncBack.Decision != edit.DecisionOverwrite && request.SyncBack.Decision != edit.DecisionSaveAs {
+		return Plan{}, jobstore.CreateRequest{}, errors.New("freeze sync-back: invalid session version or decision")
+	}
+	if _, err := edit.ParseSHA256(string(request.SyncBack.LocalSHA256)); err != nil {
+		return Plan{}, jobstore.CreateRequest{}, fmt.Errorf("freeze sync-back: %w", err)
+	}
+	if err := validateFreezeRequest(FreezeRequest{Intent: Intent{Clipboard: ClipboardCopy, Source: request.Source, DestinationDirectory: domain.Location{EndpointID: request.SyncBack.Target.EndpointID, Path: domain.CanonicalPath(path.Dir(string(request.SyncBack.Target.Path)))}, Name: path.Base(string(request.SyncBack.Target.Path)), ConflictPolicy: ConflictOverwrite, ConflictConfirmed: true}, RequestID: request.RequestID, PlanID: request.PlanID, JobID: request.JobID, EventID: request.EventID, Now: request.Now}); err != nil {
+		return Plan{}, jobstore.CreateRequest{}, fmt.Errorf("freeze sync-back: %w", err)
+	}
+	if len(request.BindingEventID) < 1 || len(request.BindingEventID) > 128 || request.Source.Kind != domain.EntryFile || request.Source.Fingerprint.Strength() == domain.FingerprintWeak {
+		return Plan{}, jobstore.CreateRequest{}, errors.New("freeze sync-back: invalid binding event or source")
+	}
+	expected, err := destinationPreconditionFromEdit(request.SyncBack.DestinationPrecondition)
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	original, err := destinationPreconditionFromEdit(request.SyncBack.OriginalDestinationPrecondition)
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	sourceProvider, err := planner.resolve(request.Source.Location.EndpointID)
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	destinationProvider, err := planner.resolve(request.SyncBack.Target.EndpointID)
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	sourceSnapshot, sourceCapability, err := requireCapability(ctx, sourceProvider, "plan_sync_back", request.Source.Location, "read")
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	destinationDirectory := domain.Location{EndpointID: request.SyncBack.Target.EndpointID, Path: domain.CanonicalPath(path.Dir(string(request.SyncBack.Target.Path)))}
+	destinationSnapshot, destinationCapability, err := requireCapability(ctx, destinationProvider, "plan_sync_back", destinationDirectory, "write")
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	if _, ok := destinationProvider.(providerapi.MutableProvider); !ok {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeUnsupported, "plan_sync_back", request.SyncBack.Target, "destination has no mutation facet", domain.RetryAfterReplan)
+	}
+	currentSource, err := sourceProvider.Stat(ctx, providerapi.StatRequest{Location: request.Source.Location})
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	if currentSource.Kind != request.Source.Kind || !reflect.DeepEqual(currentSource.Fingerprint, request.Source.Fingerprint) || sourceSnapshot.Capabilities.Revision != request.Source.CapabilityRevision {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeConflict, "plan_sync_back", request.Source.Location, "materialization changed before planning", domain.RetryAfterConflict)
+	}
+	directory, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: destinationDirectory})
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	if directory.Kind != domain.EntryDirectory {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeInvalidArgument, "plan_sync_back", destinationDirectory, "destination parent is not a directory", domain.RetryNever)
+	}
+	part := childLocation(destinationDirectory, "."+path.Base(string(request.SyncBack.Target.Path))+".part-"+string(request.JobID))
+	if exists, err := locationExists(ctx, destinationProvider, part); err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	} else if exists {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeAlreadyExists, "plan_sync_back", part, "job part location already exists", domain.RetryAfterConflict)
+	}
+	var preserved domain.Location
+	if expected.Presence == DestinationPresent {
+		if _, ok := destinationProvider.(providerapi.DestinationPreserver); !ok {
+			return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeUnsupported, "plan_sync_back", request.SyncBack.Target, "destination cannot preserve the replaced remote version", domain.RetryAfterReplan)
+		}
+		preserved = childLocation(destinationDirectory, "."+path.Base(string(request.SyncBack.Target.Path))+".amsftp-original-"+string(request.JobID))
+		if exists, err := locationExists(ctx, destinationProvider, preserved); err != nil {
+			return Plan{}, jobstore.CreateRequest{}, err
+		} else if exists {
+			return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeAlreadyExists, "plan_sync_back", preserved, "job preservation location already exists", domain.RetryAfterConflict)
+		}
+	}
+	plan := Plan{
+		Version: 2, Origin: OriginSyncBack, EditSessionID: string(request.SyncBack.SessionID), ExpectedDestination: &expected, OriginalDestinationPrecondition: &original,
+		ExpectedSourceSHA256: string(request.SyncBack.LocalSHA256), PlanID: request.PlanID, JobID: request.JobID, Kind: OperationCopy,
+		SourceEndpoint: sourceProvider.Descriptor(), DestinationEndpoint: destinationProvider.Descriptor(), Source: cloneFileRef(request.Source),
+		DestinationDirectory: destinationDirectory, RequestedName: path.Base(string(request.SyncBack.Target.Path)), Final: request.SyncBack.Target, Part: part, PreservedDestination: preserved,
+		SourceCapability:      CapabilityBinding{Revision: sourceSnapshot.Capabilities.Revision, Capability: sourceCapability},
+		DestinationCapability: CapabilityBinding{Revision: destinationSnapshot.Capabilities.Revision, Capability: destinationCapability},
+		Route:                 chooseRoute(sourceProvider.Descriptor(), destinationProvider.Descriptor()), Verification: VerifySHA256,
+		ConflictPolicy: ConflictOverwrite, BufferBytes: DefaultBufferBytes, FrozenAt: request.Now.UTC().Truncate(time.Second),
+	}
+	create, err := createRequest(plan, FreezeRequest{RequestID: request.RequestID, JobID: request.JobID, EventID: request.EventID, Now: request.Now}, job.StateQueued)
+	if err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
+	create.EditSession = &jobstore.EditSessionBinding{SessionID: string(request.SyncBack.SessionID), ExpectedVersion: int64(request.SyncBack.SessionVersion), EventID: request.BindingEventID, EventKind: "sync_back_job_bound"}
+	return plan, create, nil
+}
+
+func destinationPreconditionFromEdit(value edit.RemotePrecondition) (DestinationPrecondition, error) {
+	switch value.Presence {
+	case edit.ExpectedAbsent:
+		return DestinationPrecondition{Presence: DestinationAbsent}, nil
+	case edit.ExpectedPresent:
+		result := DestinationPrecondition{Presence: DestinationPresent, Kind: value.Kind, Fingerprint: cloneFingerprint(value.Fingerprint), ContentSHA256: value.ContentSHA256}
+		if !validDestinationPrecondition(&result) {
+			return DestinationPrecondition{}, errors.New("freeze sync-back: invalid expected-present destination identity")
+		}
+		return result, nil
+	default:
+		return DestinationPrecondition{}, errors.New("freeze sync-back: invalid destination presence")
+	}
 }
 
 func (planner *Planner) FreezeDelete(ctx context.Context, request DeleteFreezeRequest) (Plan, jobstore.CreateRequest, error) {

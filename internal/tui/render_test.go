@@ -59,7 +59,7 @@ func TestRendererSnapshotShowsTwoPanesFocusReadOnlyAndPartialState(t *testing.T)
 
 func TestRendererShowsMinimalDurableJobsView(t *testing.T) {
 	model := testModel(t)
-	model.ShowJobs = true
+	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
 	model.Jobs = []transfer.JobView{{
 		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth},
 		Source:   domain.Location{Path: "/source"}, Final: domain.Location{Path: "/final"},
@@ -68,7 +68,7 @@ func TestRendererShowsMinimalDurableJobsView(t *testing.T) {
 	surface := newMemorySurface(100, 12)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"JOBS", "waiting_auth", "streaming", "42 B", "/source", "/final"} {
+	for _, want := range []string{"[Jobs]", "waiting_auth", "streaming", "42 B", "/source", "/final"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Jobs view missing %q:\n%s", want, got)
 		}
@@ -193,12 +193,13 @@ func TestRendererShowsCapabilityRevisionAndMultilinePreviewState(t *testing.T) {
 	left.Capabilities = snapshot
 	model.Panes[Left] = left
 	file := left.Entries[1].Location
+	model.Drawer = DrawerState{Mode: DrawerPreview, Focus: FocusDrawer, Rows: 6}
 	model.Preview = PreviewState{Generation: 1, Location: file, Data: []byte("first\nsecond"), Truncated: true}
 	surface := newMemorySurface(120, 12)
 
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"caps:2@4", "Preview /left/file.txt [truncated]", "first", "second"} {
+	for _, want := range []string{"caps:2@4", "[Preview]", "/left/file.txt [truncated]", "first", "second"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("preview/capability render missing %q:\n%s", want, got)
 		}

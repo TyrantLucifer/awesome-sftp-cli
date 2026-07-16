@@ -28,8 +28,9 @@ type Config struct {
 }
 
 type DaemonLog struct {
-	Logger *slog.Logger
-	Level  *slog.LevelVar
+	Logger  *slog.Logger
+	Level   *slog.LevelVar
+	Records *Ring
 
 	writer *rollingWriter
 }
@@ -61,10 +62,12 @@ func OpenDaemon(path string, config Config) (*DaemonLog, error) {
 	if level == nil {
 		level = &slog.LevelVar{}
 	}
+	records := NewRing(0)
 	return &DaemonLog{
-		Logger: slog.New(NewJSONHandler(writer, level)),
-		Level:  level,
-		writer: writer,
+		Logger:  slog.New(newFanoutHandler(NewJSONHandler(writer, level), NewRingHandler(records, level))),
+		Level:   level,
+		Records: records,
+		writer:  writer,
 	}, nil
 }
 

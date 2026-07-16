@@ -6,10 +6,12 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestPreparePrivateDirectoryCreatesAndValidatesPrivateRoot(t *testing.T) {
-	root := t.TempDir()
+	root := testkit.PersistentTempDir(t)
 	path := filepath.Join(root, "one", "two")
 	if err := PreparePrivateDirectory(path, ValidateRuntimeFallback); err != nil {
 		t.Fatal(err)
@@ -27,7 +29,7 @@ func TestPreparePrivateDirectoryCreatesAndValidatesPrivateRoot(t *testing.T) {
 }
 
 func TestPreparePrivateDirectoryRejectsSymlinkComponent(t *testing.T) {
-	root := t.TempDir()
+	root := testkit.PersistentTempDir(t)
 	target := filepath.Join(root, "target")
 	if err := os.Mkdir(target, 0o700); err != nil {
 		t.Fatal(err)
