@@ -74,6 +74,7 @@ func testWorkspaceDocument() workspace.Document {
 				Sort:     workspace.SortState{Key: workspace.SortName, Direction: workspace.SortAscending, DirectoriesFirst: true},
 			},
 		},
+		Layout:      workspace.LayoutState{Drawer: workspace.DrawerState{Mode: workspace.DrawerClosed, Focus: workspace.FocusPane}},
 		CachePolicy: workspace.CacheEphemeral,
 	}
 }

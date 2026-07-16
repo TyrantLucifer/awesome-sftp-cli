@@ -14,6 +14,12 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
+func TestSchemaVersionIsTwo(t *testing.T) {
+	if SchemaVersion != 2 {
+		t.Fatalf("SchemaVersion = %d, want 2", SchemaVersion)
+	}
+}
+
 func TestDocumentRoundTripIsStrictAndSecretFree(t *testing.T) {
 	want := testDocument()
 	var encoded strings.Builder
@@ -34,7 +40,7 @@ func TestDocumentRoundTripIsStrictAndSecretFree(t *testing.T) {
 	}
 
 	invalid := []string{
-		strings.Replace(encoded.String(), `"schema_version":1`, `"schema_version":2`, 1),
+		strings.Replace(encoded.String(), `"schema_version":2`, `"schema_version":3`, 1),
 		strings.Replace(encoded.String(), `"cache_policy":"ephemeral"`, `"cache_policy":"ephemeral","password":"secret"`, 1),
 		encoded.String() + `{}`,
 	}
@@ -221,7 +227,10 @@ func testDocument() Document {
 				Sort:     SortState{Key: SortModified, Direction: SortDescending, DirectoriesFirst: true},
 			},
 		},
-		Layout:      LayoutState{ActivePane: 1, PreviewRows: 3},
+		Layout: LayoutState{
+			ActivePane: 1,
+			Drawer:     DrawerState{Mode: DrawerPreview, Focus: FocusPane, Rows: 3},
+		},
 		CachePolicy: CacheEphemeral,
 	}
 }
