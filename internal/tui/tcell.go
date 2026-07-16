@@ -108,8 +108,12 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 				return KeyPress{Key: KeyRepeat}, true
 			case "p":
 				return KeyPress{Key: KeyPaste}, true
+			case "K":
+				return KeyPress{Key: KeyPreviewDrawer}, true
 			case "J":
 				return KeyPress{Key: KeyJobs}, true
+			case "L":
+				return KeyPress{Key: KeyLogDrawer}, true
 			case "P":
 				return KeyPress{Key: KeyJobPause}, true
 			case "U":

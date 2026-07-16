@@ -3,7 +3,7 @@
 - **Updated**: 2026-07-16
 - **Lifecycle**: Stage 3 preview, edit and cache In Progress
 - **Active stage**: Stage 3 — Preview, Edit & Cache
-- **Current milestone**: Stage 3 contract intake — managed cache and lease boundary
+- **Current milestone**: M3.1 — cache domain, quota, reference and lease foundation
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
@@ -17,7 +17,7 @@ M2.3 is complete. Frozen directory-root plans carry hard queue/page/depth budget
 
 M2.4 and Stage 2 are complete. Same-Endpoint rename is selected only by an explicit frozen `atomic_rename` capability and proved postconditions; all other moves use copy→verify→commit→source revalidation→conditional delete. Source change/capability loss/unproved directory verification/delete uncertainty ends as `completed_with_source_retained`. `D` has frozen-scope plus irreversible confirmation, `r` is a durable same-Endpoint move, reliable advertised trash is preferred, symlinks are never followed, and count/`.` cannot bypass move/delete confirmation. The native PTY drives copy, confirmed cut/paste move, rename, two-confirmation delete and Jobs reattach. Exact implementation SHA `54b0285d7278d58e67c35a280fa8b996a99a321d`, tree `3fe5af7767a61fd10c5608431ff81cf361634ce8`, passed complete [push run 29488697276](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29488697276) on attempt 2 and [PR run 29488700235](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29488700235). Stage 3 remains Not Started.
 
-Stage 3 contract intake found that immutable Version 1 has no cache, reference, materialization, lease or edit-session tables. [ADR-0014](docs/architecture/adr/0014-stage3-cache-preview-and-edit-session-contracts.md) freezes cache layout/metadata, quota/LRU/lease/reconciliation, Preview identity/budgets and edit-session→Job atomic binding. [ADR-0015](docs/architecture/adr/0015-stage3-external-process-shell-and-tty-contracts.md) freezes external executable/direct-exec, change handling, shell separation and TTY recovery. The first RED→GREEN contract slice adds immutable Version 2 with checksum `3e15e4350c117143015526452c9d5e517bed29940bbd8c17c7b5172e69c2d821` and 47,352-byte whole-schema digest `eaf67a323a84b198864ffd9e9ef44566b1e2d9758df5235bb969e6ce7406a739`; Version 1 bytes remain unchanged and the production default intentionally stays at V1 until attempt-ID/resume upgrade gates pass. No new runtime dependency is admitted; Preview/cache/external paths still cannot mutate.
+Stage 3 contract intake found that immutable Version 1 has no cache, reference, materialization, lease or edit-session tables. [ADR-0014](docs/architecture/adr/0014-stage3-cache-preview-and-edit-session-contracts.md) freezes cache layout/metadata, quota/LRU/lease/reconciliation, Preview identity/budgets and edit-session→Job atomic binding. [ADR-0015](docs/architecture/adr/0015-stage3-external-process-shell-and-tty-contracts.md) freezes external executable/direct-exec, change handling, shell separation and TTY recovery. The first RED→GREEN contract slice adds immutable Version 2 with checksum `3e15e4350c117143015526452c9d5e517bed29940bbd8c17c7b5172e69c2d821` and 47,352-byte whole-schema digest `eaf67a323a84b198864ffd9e9ef44566b1e2d9758df5235bb969e6ce7406a739`; Version 1 bytes remain unchanged and the production default intentionally stays at V1 until attempt-ID/resume upgrade gates pass. The K/J/L drawer reducer/layout is now green with bounded normal/narrow snapshots, pane/drawer focus, Preview cancellation and the existing durable Jobs snapshot. Log data/replay and workspace drawer restore remain open. No new runtime dependency is admitted; cache/external paths still cannot mutate.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -45,7 +45,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Write RED K/J/L drawer reducer/layout tests from ADR-0014 and implement the minimum green drawer model; keep Version 2 default-head activation isolated behind attempt-ID/resume upgrade tests.
+Write RED typed cache quota/LRU/reference/lease tests with a manual clock, then implement the daemon-owned cache domain while keeping Version 2 default-head activation isolated behind attempt-ID/resume upgrade tests.
 
 ## Current risks
 

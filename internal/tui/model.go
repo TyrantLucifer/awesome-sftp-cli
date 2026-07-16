@@ -330,6 +330,28 @@ type PreviewState struct {
 	Message    string
 }
 
+type DrawerMode string
+
+const (
+	DrawerClosed  DrawerMode = "closed"
+	DrawerPreview DrawerMode = "preview"
+	DrawerJobs    DrawerMode = "jobs"
+	DrawerLog     DrawerMode = "log"
+)
+
+type FocusTarget string
+
+const (
+	FocusPane   FocusTarget = "pane"
+	FocusDrawer FocusTarget = "drawer"
+)
+
+type DrawerState struct {
+	Mode  DrawerMode
+	Focus FocusTarget
+	Rows  int
+}
+
 type AuthState struct {
 	Active      bool
 	ChallengeID string
@@ -367,7 +389,7 @@ type Model struct {
 	Auth               AuthState
 	Clipboard          ClipboardState
 	Jobs               []transfer.JobView
-	ShowJobs           bool
+	Drawer             DrawerState
 	JobCursor          int
 	Notice             string
 	DeleteConfirmation int
@@ -404,7 +426,12 @@ func NewModel(left, right PaneState) Model {
 	right.visible = nil
 	left.rebuildVisible()
 	right.rebuildVisible()
-	return Model{Panes: [2]PaneState{left, right}, Active: Left, Mode: ModeNormal}
+	return Model{
+		Panes:  [2]PaneState{left, right},
+		Active: Left,
+		Mode:   ModeNormal,
+		Drawer: DrawerState{Mode: DrawerClosed, Focus: FocusPane, Rows: 6},
+	}
 }
 
 type IntentKind string
@@ -485,7 +512,9 @@ const (
 	KeyDelete                Key = "delete"
 	KeyRename                Key = "rename"
 	KeyRepeat                Key = "repeat"
+	KeyPreviewDrawer         Key = "preview_drawer"
 	KeyJobs                  Key = "jobs"
+	KeyLogDrawer             Key = "log_drawer"
 	KeyJobPause              Key = "job_pause"
 	KeyJobResume             Key = "job_resume"
 	KeyJobCancel             Key = "job_cancel"

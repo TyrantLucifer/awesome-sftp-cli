@@ -826,7 +826,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		case <-runCtx.Done():
 			return nil
 		case <-jobRefreshTicker.C:
-			if model.ShowJobs {
+			if model.Drawer.Mode == tui.DrawerJobs {
 				startIntent(tui.Intent{Kind: tui.IntentJobList})
 			}
 		case err := <-authErrors:

@@ -122,11 +122,8 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 		return RenderStats{}
 	}
 
-	previewRows := 0
-	if model.Preview.Generation != 0 {
-		previewRows = min(3, max(0, height-3))
-	}
-	listRows := max(0, height-2-previewRows)
+	drawerRows := drawerRows(model.Drawer, height)
+	listRows := max(0, height-2-drawerRows)
 	leftWidth := width / 2
 	rightX := leftWidth + 1
 	rightWidth := width - rightX
@@ -138,10 +135,10 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Left], 0, leftWidth, 1, listRows, options.Overscan)
 	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Right], rightX, rightWidth, 1, listRows, options.Overscan)
 
-	for y := 0; y < height-previewRows-1; y++ {
+	for y := 0; y < height-drawerRows-1; y++ {
 		surface.PutClipped(leftWidth, y, 1, "│", StylePlain)
 	}
-	statusY := height - previewRows - 1
+	statusY := height - drawerRows - 1
 	status := "READ-ONLY"
 	active := model.Panes[model.Active]
 	if active.Listing.Partial {
@@ -177,25 +174,8 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	}
 	surface.PutClipped(0, statusY, width, status, StyleStatus)
 
-	if previewRows != 0 {
-		previewY := statusY + 1
-		previewHeader := "Preview " + string(model.Preview.Location.Path)
-		if model.Preview.Loading {
-			previewHeader += " [loading]"
-		}
-		if model.Preview.Truncated {
-			previewHeader += " [truncated]"
-		}
-		surface.PutClipped(0, previewY, width, previewHeader, StyleHeader)
-		previewText := model.Preview.DisplayText()
-		style := StylePreview
-		if model.Preview.Message != "" {
-			style = StyleError
-		}
-		lines := strings.Split(previewText, "\n")
-		for row := 0; row < previewRows-1 && row < len(lines); row++ {
-			surface.PutClipped(0, previewY+1+row, width, lines[row], style)
-		}
+	if drawerRows != 0 {
+		renderDrawer(surface, model, statusY+1, width, drawerRows)
 	}
 	if model.Auth.Active {
 		renderAuthModal(surface, model.Auth, width, height)
@@ -218,55 +198,96 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeDeleteConfirm {
 		renderDeleteModal(surface, model.pendingDelete, model.DeleteConfirmation, width, height)
 	}
-	if model.ShowJobs {
-		renderJobsView(surface, model.Jobs, model.JobCursor, width, height)
-	}
 	return stats
 }
 
-func renderJobsView(surface Surface, jobs []transfer.JobView, cursor, width, height int) {
-	drawerWidth := min(width-4, 88)
-	if drawerWidth < 30 || height < 7 {
+func drawerRows(drawer DrawerState, height int) int {
+	if drawer.Mode == DrawerClosed || height < 5 {
+		return 0
+	}
+	requested := drawer.Rows
+	if requested <= 0 {
+		requested = 6
+	}
+	return min(requested, max(2, height-3))
+}
+
+func renderDrawer(surface Surface, model Model, y, width, rows int) {
+	style := StyleHeader
+	if model.Drawer.Focus == FocusDrawer {
+		style = StyleActiveHeader
+	}
+	header := drawerTabLabel(model.Drawer.Mode)
+	surface.PutClipped(0, y, width, header, style)
+	if rows <= 1 {
 		return
 	}
-	drawerHeight := min(height-2, max(5, 2+len(jobs)*3))
-	x := (width - drawerWidth) / 2
-	y := (height - drawerHeight) / 2
-	for row := 0; row < drawerHeight; row++ {
-		surface.PutClipped(x, y+row, drawerWidth, strings.Repeat(" ", drawerWidth), StyleStatus)
+	switch model.Drawer.Mode {
+	case DrawerPreview:
+		renderPreviewDrawer(surface, model.Preview, y+1, width, rows-1)
+	case DrawerJobs:
+		renderJobsDrawer(surface, model.Jobs, model.JobCursor, y+1, width, rows-1)
+	case DrawerLog:
+		surface.PutClipped(0, y+1, width, "No bounded log records", StylePreview)
 	}
-	surface.PutClipped(x+1, y, drawerWidth-2, "JOBS — j/k select  P pause  U resume  C cancel  w/x/a resolve  W/X/A apply-all  J close", StyleStatus)
+}
+
+func drawerTabLabel(active DrawerMode) string {
+	labels := []struct {
+		mode DrawerMode
+		name string
+	}{{DrawerPreview, "Preview"}, {DrawerJobs, "Jobs"}, {DrawerLog, "Log"}}
+	parts := make([]string, 0, len(labels))
+	for _, label := range labels {
+		if label.mode == active {
+			parts = append(parts, "["+label.name+"]")
+		} else {
+			parts = append(parts, label.name)
+		}
+	}
+	return strings.Join(parts, "  ") + "  — K/J/L switch; Esc pane"
+}
+
+func renderPreviewDrawer(surface Surface, preview PreviewState, y, width, rows int) {
+	header := string(preview.Location.Path)
+	if preview.Loading {
+		header += " [loading]"
+	}
+	if preview.Truncated {
+		header += " [truncated]"
+	}
+	surface.PutClipped(0, y, width, header, StylePreview)
+	if rows <= 1 {
+		return
+	}
+	style := StylePreview
+	if preview.Message != "" {
+		style = StyleError
+	}
+	lines := strings.Split(preview.DisplayText(), "\n")
+	for row := 0; row < rows-1 && row < len(lines); row++ {
+		surface.PutClipped(0, y+1+row, width, lines[row], style)
+	}
+}
+
+func renderJobsDrawer(surface Surface, jobs []transfer.JobView, cursor, y, width, rows int) {
 	if len(jobs) == 0 {
-		surface.PutClipped(x+1, y+2, drawerWidth-2, "No durable Jobs", StyleStatus)
+		surface.PutClipped(0, y, width, "No durable Jobs", StylePreview)
 		return
 	}
-	rowsAvailable := drawerHeight - 2
-	visibleJobs := min(len(jobs), rowsAvailable/3)
-	for index := 0; index < visibleJobs; index++ {
-		view := jobs[index]
+	start := min(max(cursor, 0), len(jobs)-1)
+	for row := 0; row < rows && start+row < len(jobs); row++ {
+		view := jobs[start+row]
 		state := string(view.Snapshot.State)
 		if view.WaitingReason != "" {
 			state += " (" + view.WaitingReason + ")"
 		}
-		line := fmt.Sprintf("%s  %s  %d item(s)  %s", state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal))
-		row := y + 1 + index*3
-		style := StyleStatus
-		if index == cursor {
-			style = StyleCursor
+		line := fmt.Sprintf("%s  %s  %d item(s)  %s  %s → %s", state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal), view.Source.Path, view.Final.Path)
+		rowStyle := StylePreview
+		if start+row == cursor {
+			rowStyle = StyleCursor
 		}
-		surface.PutClipped(x+1, row, drawerWidth-2, line, style)
-		surface.PutClipped(x+1, row+1, drawerWidth-2, fmt.Sprintf("%s → %s", view.Source.Path, view.Final.Path), StyleStatus)
-		summary := string(view.Snapshot.JobID)
-		if view.Snapshot.TerminalSummary != nil {
-			summary += " — " + *view.Snapshot.TerminalSummary
-		}
-		if view.RecentError != "" {
-			summary += " — error: " + view.RecentError
-		}
-		if view.RecoveryResult != "" {
-			summary += " — recovered: " + view.RecoveryResult
-		}
-		surface.PutClipped(x+1, row+2, drawerWidth-2, summary, StyleStatus)
+		surface.PutClipped(0, y+row, width, line, rowStyle)
 	}
 }
 

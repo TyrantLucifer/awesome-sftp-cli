@@ -6,7 +6,7 @@
 - **Branch**: `codex/stage3-preview-edit-cache`
 - **Stage 2 merge baseline**: commit `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5`, tree `ee1ebdf11b61f1ac05fa0b2a4f23800ab9ba934a`
 - **Baseline Hosted run**: [29490490339](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29490490339) — exact merge commit, successful
-- **Current milestone**: M3.1 contract and dependency intake
+- **Current milestone**: M3.1 drawer foundation green; cache domain/lease RED tests next
 
 Stage 3 delivers Preview/Jobs/Log drawers, bounded preview, managed cache/lease/edit sessions, editor/opener workflows, explicit `!`/`gs`, and terminal recovery. It must preserve the Stage 1 read-only/auth/workspace baseline and the Stage 2 Planner→Job→part→verify→commit mutation path. Cache, preview, external process, Provider and RPC paths do not gain a second write route.
 
@@ -48,8 +48,11 @@ Current evidence:
 
 - **Status**: In Progress
 - **Goal**: bounded Preview/Jobs/Log state plus owner-only content-addressed cache, references, quotas, LRU, leases and restart reconciliation.
-- **Last green command**: `go test ./internal/state/migration -count=1`; `make docs-check`.
-- **Next gate**: add RED K/J/L drawer reducer/layout tests and implement the minimum drawer model while the Version 2 default-head startup/resume work remains isolated.
+- **Drawer checkpoint**: RED compilation first proved the absence of `DrawerState`, K/L keys and focus modes. The green reducer now freezes `closed|preview|jobs|log` plus `pane|drawer` focus; K/J/L open/switch/refocus/close without changing active pane/Locations, Esc returns to pane while retaining the tab, and lowercase navigation remains independent. Switching or moving a visible Preview emits cancel before a new bounded Preview intent. Jobs continues to read the Stage 2 daemon snapshot rather than copying durable authority.
+- **Layout checkpoint**: the centered Jobs modal was replaced by a bounded bottom region. Normal `100x16` and narrow `32x7` snapshots retain both panes, status, tabs and waiting Job state; minimum-size behavior remains explicit. Log has a bounded empty state only—snapshot/replay/filter/redaction is not yet implemented and OBS-001 stays In Progress.
+- **Commands**: `go test ./internal/tui -run '^TestDrawer|^TestTranslateTCellDistinguishes' -count=1` PASS after the expected RED; focused drawer/legacy renderer tests pass 20 consecutive runs; `go test ./internal/tui ./internal/app -count=1` PASS; `go test -race ./internal/tui ./internal/app -count=1` PASS; complete `make check` PASS.
+- **Last green command**: `make check`.
+- **Next gate**: add RED typed cache/quota/LRU/reference/lease tests with a manual clock, then implement the daemon-owned cache domain without activating Version 2 as the production default.
 
 ### M3.2 — Built-in, image and external preview
 

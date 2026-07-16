@@ -557,8 +557,18 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			return model, nil
 		}
 	}
-	if model.ShowJobs {
-		return reduceJobsKey(model, key)
+	if drawerMode, ok := drawerModeForKey(key); ok {
+		return reduceDrawerToggle(model, drawerMode)
+	}
+	if model.Drawer.Focus == FocusDrawer {
+		if key == KeyEscape {
+			model.Drawer.Focus = FocusPane
+			return model, nil
+		}
+		if model.Drawer.Mode == DrawerJobs {
+			return reduceJobsKey(model, key)
+		}
+		return model, nil
 	}
 	count := model.Count
 	model.Count = 0
@@ -573,13 +583,6 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		model.Preview = PreviewState{}
 		return model, []Intent{{Kind: IntentPreviewCancel}}
 	}
-	if key == KeyJobs {
-		model.ShowJobs = !model.ShowJobs
-		if model.ShowJobs {
-			return model, []Intent{{Kind: IntentJobList}}
-		}
-		return model, nil
-	}
 	if key == KeyTab {
 		if model.Active == Left {
 			model.Active = Right
@@ -587,6 +590,9 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			model.Active = Left
 		}
 		model.Mode = ModeNormal
+		if model.Drawer.Mode == DrawerPreview {
+			return model, previewRefreshIntents(model)
+		}
 		return model, nil
 	}
 	pane := model.Panes[model.Active].clone()
@@ -610,6 +616,7 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		return model, nil
 	}
 
+	previousLocation, hadPreviousLocation := pane.currentLocation()
 	switch key {
 	case KeyCopy, KeyCut:
 		locations := selectedLocations(pane, count)
@@ -735,6 +742,8 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		if entry.Kind == domain.EntryDirectory {
 			return model, []Intent{{Kind: IntentList, Pane: model.Active, Location: entry.Location}}
 		}
+		model.Drawer.Mode = DrawerPreview
+		model.Drawer.Focus = FocusDrawer
 		return model, []Intent{{
 			Kind: IntentPreview, Pane: model.Active, Location: entry.Location, Limit: PreviewByteLimit,
 		}}
@@ -765,14 +774,16 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		model.Mode = ModeNormal
 	}
 	model.Panes[model.Active] = pane
+	if model.Drawer.Mode == DrawerPreview && (key == KeyDown || key == KeyUp) {
+		currentLocation, hasCurrentLocation := pane.currentLocation()
+		if hadPreviousLocation != hasCurrentLocation || currentLocation != previousLocation {
+			return model, previewRefreshIntents(model)
+		}
+	}
 	return model, nil
 }
 
 func reduceJobsKey(model Model, key Key) (Model, []Intent) {
-	if key == KeyJobs || key == KeyEscape {
-		model.ShowJobs = false
-		return model, nil
-	}
 	if key == KeyDown {
 		model.JobCursor = min(model.JobCursor+1, max(0, len(model.Jobs)-1))
 		return model, nil
@@ -809,6 +820,80 @@ func reduceJobsKey(model Model, key Key) (Model, []Intent) {
 		return model, nil
 	}
 	return model, []Intent{intent}
+}
+
+func drawerModeForKey(key Key) (DrawerMode, bool) {
+	switch key {
+	case KeyPreviewDrawer:
+		return DrawerPreview, true
+	case KeyJobs:
+		return DrawerJobs, true
+	case KeyLogDrawer:
+		return DrawerLog, true
+	default:
+		return DrawerClosed, false
+	}
+}
+
+func reduceDrawerToggle(model Model, mode DrawerMode) (Model, []Intent) {
+	model.Count = 0
+	wasPreview := model.Drawer.Mode == DrawerPreview
+	if model.Drawer.Mode == mode {
+		if model.Drawer.Focus == FocusDrawer {
+			model.Drawer.Mode = DrawerClosed
+			model.Drawer.Focus = FocusPane
+			if wasPreview {
+				model.Preview = PreviewState{}
+				return model, []Intent{{Kind: IntentPreviewCancel}}
+			}
+			return model, nil
+		}
+		model.Drawer.Focus = FocusDrawer
+		return model, drawerOpenIntents(model, mode, false)
+	}
+	model.Drawer.Mode = mode
+	model.Drawer.Focus = FocusDrawer
+	intents := make([]Intent, 0, 2)
+	if wasPreview {
+		model.Preview = PreviewState{}
+		intents = append(intents, Intent{Kind: IntentPreviewCancel})
+	}
+	intents = append(intents, drawerOpenIntents(model, mode, true)...)
+	return model, intents
+}
+
+func drawerOpenIntents(model Model, mode DrawerMode, switching bool) []Intent {
+	switch mode {
+	case DrawerPreview:
+		return previewOpenIntents(model, switching)
+	case DrawerJobs:
+		return []Intent{{Kind: IntentJobList}}
+	default:
+		return nil
+	}
+}
+
+func previewOpenIntents(model Model, switching bool) []Intent {
+	pane := model.Panes[model.Active]
+	entry := pane.visibleEntry(pane.Cursor)
+	if entry.Kind != domain.EntryFile || entry.Location.Path == "" {
+		return nil
+	}
+	intents := make([]Intent, 0, 2)
+	if !switching && model.Preview.Generation != 0 {
+		intents = append(intents, Intent{Kind: IntentPreviewCancel})
+	}
+	return append(intents, Intent{Kind: IntentPreview, Pane: model.Active, Location: entry.Location, Limit: PreviewByteLimit})
+}
+
+func previewRefreshIntents(model Model) []Intent {
+	intents := []Intent{{Kind: IntentPreviewCancel}}
+	pane := model.Panes[model.Active]
+	entry := pane.visibleEntry(pane.Cursor)
+	if entry.Kind == domain.EntryFile && entry.Location.Path != "" {
+		intents = append(intents, Intent{Kind: IntentPreview, Pane: model.Active, Location: entry.Location, Limit: PreviewByteLimit})
+	}
+	return intents
 }
 
 func validPane(pane PaneID) bool {
