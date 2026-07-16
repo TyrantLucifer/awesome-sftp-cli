@@ -152,6 +152,8 @@ Stage 0–2 已完成；Stage 2 的 M2.1–M2.4 均由 exact-SHA Hosted evidence
 
 **Milestone Status**: In Progress
 
+**Current checkpoint**: K/J/L + bounded Log replay/filtering + workspace v2 restore are green. Version 2 is the production default through the existing migration coordinator. The typed cache ID/quota/LRU/reference/lease domain is green; owner-only atomic filesystem publication and SQLite/restart reconciliation remain active gates.
+
 ### M3.2: 内建、图片与外部预览
 
 **Goal**: 交付有界文本、代码、JSON、元数据、二进制、range/head/tail、终端图片和外部预览器降级链。
@@ -160,7 +162,9 @@ Stage 0–2 已完成；Stage 2 的 M2.1–M2.4 均由 exact-SHA Hosted evidence
 
 **Tests**: golden/fuzz；恶意 ANSI/UTF-8/JSON/image；range/read 断言；100 GiB sparse/synthetic；generation/cancel；Kitty/iTerm2/Sixel/none snapshots；previewer argv/timeout/crash；race/resource curve。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
+
+**Current checkpoint**: dependency-free text/JSON/binary/image-metadata rendering is integrated into the initial 64 KiB Provider read with hard JSON/depth/line/output budgets and terminal-safe fallbacks. Syntax color, metadata view, continue/head/tail, image protocol negotiation and external previewer integration remain open.
 
 ### M3.3: 编辑与默认打开
 
@@ -170,7 +174,9 @@ Stage 0–2 已完成；Stage 2 的 M2.1–M2.4 均由 exact-SHA Hosted evidence
 
 **Tests**: lexer/argv/PATH/path injection；fake/real Vim/Neovim；macOS open/Ubuntu xdg-open；local/remote change matrix；四类 conflict；upload/restart/crash；PTY restore；race/secret scan。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
+
+**Current checkpoint**: the isolated external-process planner covers restricted argv lexing, editor precedence, canonical PATH discovery/revalidation, fixed platform opener resolution, scrubbed environment and direct-exec final file args. Materialization/lease, TUI suspend/resume, local/remote change decisions and Stage 2 Job sync-back remain open.
 
 ### M3.4: 命令、shell 与平台收尾
 

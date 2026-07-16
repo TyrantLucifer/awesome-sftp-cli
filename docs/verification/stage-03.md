@@ -6,7 +6,9 @@
 - **Branch**: `codex/stage3-preview-edit-cache`
 - **Stage 2 merge baseline**: commit `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5`, tree `ee1ebdf11b61f1ac05fa0b2a4f23800ab9ba934a`
 - **Baseline Hosted run**: [29490490339](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29490490339) — exact merge commit, successful
-- **Current milestone**: M3.1 drawer foundation green; cache domain/lease RED tests next
+- **Current milestone**: M3.1 cache domain/filesystem foundation in progress; bounded built-in Preview and external-process planning slices green
+- **First pushed implementation**: commit `1b3244b97c074ae8736ac59f0645a959415044fd`, tree `cd57ca301c97017a65e9d33687cd615bb8236cec`
+- **Draft PR**: [#3 — feat: deliver the Stage 3 preview edit and cache](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/3)
 
 Stage 3 delivers Preview/Jobs/Log drawers, bounded preview, managed cache/lease/edit sessions, editor/opener workflows, explicit `!`/`gs`, and terminal recovery. It must preserve the Stage 1 read-only/auth/workspace baseline and the Stage 2 Planner→Job→part→verify→commit mutation path. Cache, preview, external process, Provider and RPC paths do not gain a second write route.
 
@@ -25,6 +27,8 @@ Stage 3 delivers Preview/Jobs/Log drawers, bounded preview, managed cache/lease/
 
 No user change was overwritten. Existing ignored `.idea/`, `.superpowers/`, `coverage/` and `dist/` content remains outside the candidate tree.
 
+The first reviewable checkpoint was pushed with the branch exactly matching `origin/codex/stage3-preview-edit-cache`. Push run [29492926455](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29492926455) and PR run [29492939398](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29492939398) both completed successfully at exact SHA `1b3244b97c074ae8736ac59f0645a959415044fd`; they are checkpoint evidence only and do not replace the final exact-SHA Ready gate.
+
 ## Zero-gate contract and dependency intake
 
 **Status**: In Progress
@@ -40,7 +44,7 @@ Current evidence:
 - No new runtime dependency is admitted by either contract.
 - RED→GREEN Version 2 contract slice now exists without changing the default schema head: immutable `migration.Version2()` adds the eight typed Stage 3 ownership tables and seven LRU/reachability/recovery indexes with a 64 MiB migration WAL budget. Version 2 checksum is `3e15e4350c117143015526452c9d5e517bed29940bbd8c17c7b5172e69c2d821`; the 47,352-byte whole-schema contract digest is `eaf67a323a84b198864ffd9e9ef44566b1e2d9758df5235bb969e6ce7406a739`.
 - `go test ./internal/state/migration -run '^TestVersion2' -count=1` first failed to compile on the absent Version 2 APIs, then passed after the immutable migration/contract implementation. `go test ./internal/state/migration -count=1` also passes.
-- The compiled default remains Version 1 until production CSPRNG attempt-ID and explicit-resume paths plus V1→V2 upgrade/crash tests are green; fresh daemon startup behavior is therefore unchanged by this contract slice.
+- The production default is now exactly Version 1 plus Version 2 and both frozen contracts. A pristine V1 database upgrades through the existing backup/WAL/coordinator path; fresh attempts generate a CSPRNG 128-bit lower-hex attempt ID, while running/interrupted/failed attempts require explicit `daemon --resume-migration` and reuse the persisted attempt/backup. Reopen, no-second-backup, old-binary-on-V2, future-head-3, missing/changed-contract and explicit-resume failure tests pass.
 
 ## Milestone ledger
 
@@ -49,18 +53,26 @@ Current evidence:
 - **Status**: In Progress
 - **Goal**: bounded Preview/Jobs/Log state plus owner-only content-addressed cache, references, quotas, LRU, leases and restart reconciliation.
 - **Drawer checkpoint**: RED compilation first proved the absence of `DrawerState`, K/L keys and focus modes. The green reducer now freezes `closed|preview|jobs|log` plus `pane|drawer` focus; K/J/L open/switch/refocus/close without changing active pane/Locations, Esc returns to pane while retaining the tab, and lowercase navigation remains independent. Switching or moving a visible Preview emits cancel before a new bounded Preview intent. Jobs continues to read the Stage 2 daemon snapshot rather than copying durable authority.
-- **Layout checkpoint**: the centered Jobs modal was replaced by a bounded bottom region. Normal `100x16` and narrow `32x7` snapshots retain both panes, status, tabs and waiting Job state; minimum-size behavior remains explicit. Log has a bounded empty state only—snapshot/replay/filter/redaction is not yet implemented and OBS-001 stays In Progress.
-- **Commands**: `go test ./internal/tui -run '^TestDrawer|^TestTranslateTCellDistinguishes' -count=1` PASS after the expected RED; focused drawer/legacy renderer tests pass 20 consecutive runs; `go test ./internal/tui ./internal/app -count=1` PASS; `go test -race ./internal/tui ./internal/app -count=1` PASS; complete `make check` PASS.
-- **Last green command**: `make check`.
-- **Next gate**: add RED typed cache/quota/LRU/reference/lease tests with a manual clock, then implement the daemon-owned cache domain without activating Version 2 as the production default.
+- **Layout checkpoint**: the centered Jobs modal was replaced by a bounded bottom region. Normal `100x16` and narrow `32x7` snapshots retain both panes, status, tabs and waiting Job state; minimum-size behavior remains explicit. Workspace schema v2 strictly persists drawer tab/focus/rows and `lru|ephemeral|pinned_offline`, migrates v1 deterministically, restores only structural state, and never persists Preview/Jobs/Log bodies.
+- **Log checkpoint**: daemon logging now fans out to the existing rotating redacted JSON sink and a 1,000-record in-memory ring. `diagnostic.list` caps replay pages at 256, validates optional Job/Endpoint filters, and the Log drawer polls/renders sanitized structured records without reading unbounded history or duplicating Job authority.
+- **Cache-domain checkpoint**: typed content/entry/materialization/reference/lease IDs, golden Location+fingerprint entry identity, manual-clock heartbeat/release and PID+birth fail-closed classification, deduplicated global/workspace accounting, bounded deterministic LRU, and pinned/dirty/deleting/leased/shared/referenced/reachable protection pass unit, race, vet and lint checks. Filesystem publication/restart scanning remains in progress; SQLite catalog integration and native crash/ENOSPC evidence remain open.
+- **Commands**: drawer/log/workspace/cache focused tests and package race tests pass; `go test ./internal/diagnostic ./internal/daemon ./internal/tui ./internal/app -count=1`, `go test ./internal/statefs ./internal/state/migration ./internal/app -count=1`, and statefs/migration race tests pass.
+- **Last green command**: `go test -race ./internal/preview ./internal/tui -count=1`.
+- **Next gate**: finish owner-only atomic cache filesystem publication/restart scanning, then bind the cache catalog to Version 2 transactionally.
 
 ### M3.2 — Built-in, image and external preview
 
-- **Status**: Not Started
+- **Status**: In Progress
+
+- Dependency-free built-in rendering now caps retained input/output at 512 KiB, JSON at 256 KiB/depth 64, output at 10,000 lines, terminal-sanitizes text, pretty-prints complete bounded JSON, emits bounded hexadecimal binary summaries, identifies PNG/JPEG/GIF dimensions without embedding payload, and labels partial byte ranges. The current Provider read remains the initial 64 KiB range; continue/head/tail, syntax color and terminal image protocols remain open.
+- `go test ./internal/preview ./internal/tui ./internal/app -count=1` and `go test -race ./internal/preview ./internal/tui -count=1` pass.
 
 ### M3.3 — Editor and default opener
 
-- **Status**: Not Started
+- **Status**: In Progress
+
+- The isolated external-process planner implements the restricted no-expansion lexer, fail-closed editor precedence, canonical absolute PATH resolution plus identity revalidation, fixed macOS/Linux opener paths, scrubbed environment and direct-exec plans with the canonical materialization as the final separate argument. Cache materialization/lease, terminal suspend/resume, change matrix and Job sync-back remain open.
+- External-process unit tests pass 20 consecutive runs plus race, vet and Linux cross-compile checks.
 
 ### M3.4 — Command, shell and platform closeout
 
