@@ -100,7 +100,7 @@ func TestRunnerAdvancesAttemptHeadWithMigrationHistory(t *testing.T) {
 		t.Fatalf("MarkAttemptRunning(): %v", err)
 	}
 	v2 := Migration{Version: 2, Name: "second", Statements: []string{"CREATE TABLE second(id INTEGER PRIMARY KEY) STRICT"}, MaxMigrationWalBytes: 4096}
-	if err := (Runner{AttemptID: request.AttemptID}).Apply(ctx, connection, v2, "2026-07-16T00:00:01Z"); err != nil {
+	if err := (Runner{AttemptID: request.AttemptID, WALMonitor: noopMigrationWALMonitor{}}).Apply(ctx, connection, v2, "2026-07-16T00:00:01Z"); err != nil {
 		t.Fatalf("apply version 2: %v", err)
 	}
 	attempt, err := LoadAttempt(ctx, connection)
@@ -211,7 +211,7 @@ func TestAttemptInterruptionAndCompletionAreConservative(t *testing.T) {
 		t.Fatalf("MarkAttemptRunning(resumed): %v", err)
 	}
 	v2 := Migration{Version: 2, Name: "second", Statements: []string{"CREATE TABLE second_completion(id INTEGER PRIMARY KEY) STRICT"}, MaxMigrationWalBytes: 4096}
-	if err := (Runner{AttemptID: request.AttemptID}).Apply(ctx, connection, v2, "2026-07-16T00:00:02Z"); err != nil {
+	if err := (Runner{AttemptID: request.AttemptID, WALMonitor: noopMigrationWALMonitor{}}).Apply(ctx, connection, v2, "2026-07-16T00:00:02Z"); err != nil {
 		t.Fatalf("apply version 2: %v", err)
 	}
 	mismatch := request

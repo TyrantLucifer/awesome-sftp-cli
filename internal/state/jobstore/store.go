@@ -12,9 +12,18 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/wal"
 )
 
-const maxEncodedRowBytes = 256 * 1024
+const (
+	maxEncodedRowBytes = 256 * 1024
+	planWALBudget      = uint64(1024 * 1024)
+	jobWALBudget       = uint64(512 * 1024)
+	stepWALBudget      = uint64(1024 * 1024)
+	eventWALBudget     = uint64(512 * 1024)
+	dedupWALBudget     = uint64(512 * 1024)
+	maxJobSteps        = 5
+)
 
 var (
 	ErrInvalidTransition = errors.New("invalid Job transition")
@@ -25,6 +34,7 @@ var (
 
 type Store struct {
 	database *sql.DB
+	walGuard *wal.FileGuard
 }
 
 type Step struct {
@@ -76,8 +86,38 @@ type Snapshot struct {
 	UpdatedAt         time.Time
 }
 
-func New(database *sql.DB) *Store {
-	return &Store{database: database}
+func New(ctx context.Context, database *sql.DB) (*Store, error) {
+	if database == nil {
+		return nil, fmt.Errorf("new job store: nil database")
+	}
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("new job store: reserve WAL initializer: %w", err)
+	}
+	guard, guardErr := wal.OpenFileGuard(ctx, connection)
+	closeErr := connection.Close()
+	if err := errors.Join(guardErr, closeErr); err != nil {
+		return nil, fmt.Errorf("new job store: %w", err)
+	}
+	return &Store{database: database, walGuard: guard}, nil
+}
+
+// CheckpointIdle truncates the WAL while the store has no active write batch.
+func (store *Store) CheckpointIdle(ctx context.Context) (returnErr error) {
+	if store == nil || store.database == nil || store.walGuard == nil {
+		return fmt.Errorf("job store: nil database")
+	}
+	connection, err := store.database.Conn(ctx)
+	if err != nil {
+		return fmt.Errorf("job store: reserve checkpoint connection: %w", err)
+	}
+	defer func() {
+		returnErr = errors.Join(returnErr, connection.Close())
+	}()
+	if err := store.walGuard.TruncateIdle(ctx, connection); err != nil {
+		return fmt.Errorf("job store: truncate idle WAL: %w", err)
+	}
+	return nil
 }
 
 func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot, bool, error) {
@@ -86,7 +126,7 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 	}
 	var snapshot Snapshot
 	duplicate := false
-	err := store.immediate(ctx, func(connection *sql.Conn) error {
+	err := store.immediate(ctx, createWALBudgets(len(request.Steps)), func(connection *sql.Conn, writer *transactionWriter) error {
 		var operation, response string
 		err := connection.QueryRowContext(ctx, "SELECT operation, response_json FROM request_dedup WHERE request_id=?", request.RequestID).Scan(&operation, &response)
 		if err == nil {
@@ -108,25 +148,25 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 		}
 
 		destination := nullableValue(request.DestinationJSON)
-		if _, err := connection.ExecContext(ctx, "INSERT INTO operation_plans(plan_id, request_id, kind, source_json, destination_json, route, verification, conflict_policy, risk_class, frozen_at_unix) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", request.PlanID, request.RequestID, request.Kind, request.SourceJSON, destination, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass, request.Now.Unix()); err != nil {
+		if _, err := writer.ExecContext(ctx, "INSERT INTO operation_plans(plan_id, request_id, kind, source_json, destination_json, route, verification, conflict_policy, risk_class, frozen_at_unix) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", request.PlanID, request.RequestID, request.Kind, request.SourceJSON, destination, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass, request.Now.Unix()); err != nil {
 			return fmt.Errorf("create Job plan: %w", err)
 		}
-		if _, err := connection.ExecContext(ctx, "INSERT INTO jobs(job_id, plan_id, state, state_version, next_event_sequence, pause_requested, cancel_requested, retry_at_unix, created_at_unix, updated_at_unix, terminal_summary) VALUES(?, ?, ?, 1, 2, 0, 0, NULL, ?, ?, NULL)", request.JobID, request.PlanID, request.InitialState, request.Now.Unix(), request.Now.Unix()); err != nil {
+		if _, err := writer.ExecContext(ctx, "INSERT INTO jobs(job_id, plan_id, state, state_version, next_event_sequence, pause_requested, cancel_requested, retry_at_unix, created_at_unix, updated_at_unix, terminal_summary) VALUES(?, ?, ?, 1, 2, 0, 0, NULL, ?, ?, NULL)", request.JobID, request.PlanID, request.InitialState, request.Now.Unix(), request.Now.Unix()); err != nil {
 			return fmt.Errorf("create Job row: %w", err)
 		}
 		for index, step := range request.Steps {
-			if _, err := connection.ExecContext(ctx, "INSERT INTO job_steps(job_id, step_index, kind, state, attempt, source_json, destination_json, created_at_unix, updated_at_unix) VALUES(?, ?, ?, 'pending', 0, ?, ?, ?, ?)", request.JobID, index, step.Kind, nullableValue(step.SourceJSON), nullableValue(step.DestinationJSON), request.Now.Unix(), request.Now.Unix()); err != nil {
+			if _, err := writer.ExecContext(ctx, "INSERT INTO job_steps(job_id, step_index, kind, state, attempt, source_json, destination_json, created_at_unix, updated_at_unix) VALUES(?, ?, ?, 'pending', 0, ?, ?, ?, ?)", request.JobID, index, step.Kind, nullableValue(step.SourceJSON), nullableValue(step.DestinationJSON), request.Now.Unix(), request.Now.Unix()); err != nil {
 				return fmt.Errorf("create Job step %d: %w", index, err)
 			}
 		}
-		if _, err := connection.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, 1, ?, 'job_created', '{}', ?)", request.JobID, request.EventID, request.Now.Unix()); err != nil {
+		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, 1, ?, 'job_created', '{}', ?)", request.JobID, request.EventID, request.Now.Unix()); err != nil {
 			return fmt.Errorf("create Job event: %w", err)
 		}
 		response, err = marshalJobResponse(request.JobID)
 		if err != nil {
 			return err
 		}
-		if _, err := connection.ExecContext(ctx, "INSERT INTO request_dedup(request_id, operation, job_id, response_json, created_at_unix) VALUES(?, 'create_job', ?, ?, ?)", request.RequestID, request.JobID, response, request.Now.Unix()); err != nil {
+		if _, err := writer.ExecContext(ctx, "INSERT INTO request_dedup(request_id, operation, job_id, response_json, created_at_unix) VALUES(?, 'create_job', ?, ?, ?)", request.RequestID, request.JobID, response, request.Now.Unix()); err != nil {
 			return fmt.Errorf("create Job idempotency row: %w", err)
 		}
 		snapshot, err = getSnapshot(ctx, connection, request.JobID)
@@ -144,7 +184,7 @@ func (store *Store) Transition(ctx context.Context, request TransitionRequest) (
 	}
 	var snapshot Snapshot
 	duplicate := false
-	err := store.immediate(ctx, func(connection *sql.Conn) error {
+	err := store.immediate(ctx, []uint64{jobWALBudget, eventWALBudget}, func(connection *sql.Conn, writer *transactionWriter) error {
 		var eventJobID domain.JobID
 		var eventKind, payload string
 		err := connection.QueryRowContext(ctx, "SELECT job_id, kind, payload_json FROM job_events WHERE event_id=?", request.EventID).Scan(&eventJobID, &eventKind, &payload)
@@ -172,7 +212,7 @@ func (store *Store) Transition(ctx context.Context, request TransitionRequest) (
 		}
 		retryAt := nullableTimeUnix(request.RetryAt)
 		terminalSummary := nullableValue(request.TerminalSummary)
-		result, err := connection.ExecContext(ctx, "UPDATE jobs SET state=?, state_version=state_version+1, next_event_sequence=next_event_sequence+1, retry_at_unix=?, terminal_summary=?, updated_at_unix=? WHERE job_id=? AND state_version=?", request.To, retryAt, terminalSummary, request.Now.Unix(), request.JobID, request.ExpectedVersion)
+		result, err := writer.ExecContext(ctx, "UPDATE jobs SET state=?, state_version=state_version+1, next_event_sequence=next_event_sequence+1, retry_at_unix=?, terminal_summary=?, updated_at_unix=? WHERE job_id=? AND state_version=?", request.To, retryAt, terminalSummary, request.Now.Unix(), request.JobID, request.ExpectedVersion)
 		if err != nil {
 			return fmt.Errorf("transition Job row: %w", err)
 		}
@@ -183,7 +223,7 @@ func (store *Store) Transition(ctx context.Context, request TransitionRequest) (
 		if changed != 1 {
 			return fmt.Errorf("%w: Job %q changed concurrently", ErrVersionConflict, request.JobID)
 		}
-		if _, err := connection.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, ?, ?, ?, ?, ?)", request.JobID, current.NextEventSequence, request.EventID, request.EventKind, request.PayloadJSON, request.Now.Unix()); err != nil {
+		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, ?, ?, ?, ?, ?)", request.JobID, current.NextEventSequence, request.EventID, request.EventKind, request.PayloadJSON, request.Now.Unix()); err != nil {
 			return fmt.Errorf("transition Job event: %w", err)
 		}
 		snapshot, err = getSnapshot(ctx, connection, request.JobID)
@@ -202,7 +242,9 @@ func (store *Store) Get(ctx context.Context, jobID domain.JobID) (Snapshot, erro
 	if store == nil || store.database == nil {
 		return Snapshot{}, fmt.Errorf("get Job: nil store")
 	}
-	return getSnapshot(ctx, store.database, jobID)
+	readContext, cancel := wal.ReaderContext(ctx)
+	defer cancel()
+	return getSnapshot(readContext, store.database, jobID)
 }
 
 func (store *Store) RecoverInterrupted(ctx context.Context, generator domain.Generator, now time.Time) (int, error) {
@@ -213,60 +255,89 @@ func (store *Store) RecoverInterrupted(ctx context.Context, generator domain.Gen
 		return 0, fmt.Errorf("recover Jobs: invalid time")
 	}
 	recovered := 0
-	err := store.immediate(ctx, func(connection *sql.Conn) error {
-		rows, err := connection.QueryContext(ctx, "SELECT job_id, state, state_version, next_event_sequence FROM jobs WHERE state IN ('running', 'verifying') ORDER BY job_id")
+	for {
+		readContext, cancel := wal.ReaderContext(ctx)
+		var jobID domain.JobID
+		err := store.database.QueryRowContext(readContext, "SELECT job_id FROM jobs WHERE state IN ('running', 'verifying') ORDER BY job_id LIMIT 1").Scan(&jobID)
+		cancel()
+		if errors.Is(err, sql.ErrNoRows) {
+			return recovered, nil
+		}
 		if err != nil {
-			return fmt.Errorf("recover Jobs: list interrupted: %w", err)
+			return 0, fmt.Errorf("recover Jobs: select interrupted Job: %w", err)
 		}
-		type interrupted struct {
-			jobID        domain.JobID
-			state        job.State
-			stateVersion int64
-			nextSequence int64
+		eventID, err := domain.NewEventID(generator)
+		if err != nil {
+			return 0, fmt.Errorf("recover Job %q event ID: %w", jobID, err)
 		}
-		var jobs []interrupted
-		for rows.Next() {
-			var candidate interrupted
-			if err := rows.Scan(&candidate.jobID, &candidate.state, &candidate.stateVersion, &candidate.nextSequence); err != nil {
-				_ = rows.Close()
-				return fmt.Errorf("recover Jobs: scan interrupted: %w", err)
+		changed := false
+		budgets := []uint64{jobWALBudget, stepWALBudget, stepWALBudget, stepWALBudget, stepWALBudget, stepWALBudget, eventWALBudget}
+		err = store.immediate(ctx, budgets, func(connection *sql.Conn, writer *transactionWriter) error {
+			var state job.State
+			var stateVersion, nextSequence int64
+			if err := connection.QueryRowContext(ctx, "SELECT state, state_version, next_event_sequence FROM jobs WHERE job_id=?", jobID).Scan(&state, &stateVersion, &nextSequence); err != nil {
+				return fmt.Errorf("recover Job %q state: %w", jobID, err)
 			}
-			jobs = append(jobs, candidate)
-		}
-		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-			return fmt.Errorf("recover Jobs: finish interrupted list: %w", err)
-		}
-		for _, candidate := range jobs {
-			next, changed := job.ConservativeRestartState(candidate.state)
-			if !changed {
-				continue
+			next, recoverable := job.ConservativeRestartState(state)
+			if !recoverable {
+				return nil
 			}
-			eventID, err := domain.NewEventID(generator)
+			rows, err := connection.QueryContext(ctx, "SELECT step_index FROM job_steps WHERE job_id=? AND state IN ('running', 'verifying') ORDER BY step_index LIMIT 6", jobID)
 			if err != nil {
-				return fmt.Errorf("recover Job %q event ID: %w", candidate.jobID, err)
+				return fmt.Errorf("recover Job %q steps: %w", jobID, err)
 			}
-			result, err := connection.ExecContext(ctx, "UPDATE jobs SET state=?, state_version=state_version+1, next_event_sequence=next_event_sequence+1, updated_at_unix=? WHERE job_id=? AND state_version=? AND state=?", next, now.Unix(), candidate.jobID, candidate.stateVersion, candidate.state)
+			stepIndexes := make([]int64, 0, maxJobSteps)
+			for rows.Next() {
+				var stepIndex int64
+				if err := rows.Scan(&stepIndex); err != nil {
+					_ = rows.Close()
+					return fmt.Errorf("recover Job %q step index: %w", jobID, err)
+				}
+				stepIndexes = append(stepIndexes, stepIndex)
+			}
+			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+				return fmt.Errorf("recover Job %q finish steps: %w", jobID, err)
+			}
+			if len(stepIndexes) > maxJobSteps {
+				return fmt.Errorf("recover Job %q has more than %d active steps", jobID, maxJobSteps)
+			}
+			result, err := writer.ExecContext(ctx, "UPDATE jobs SET state=?, state_version=state_version+1, next_event_sequence=next_event_sequence+1, updated_at_unix=? WHERE job_id=? AND state_version=? AND state=?", next, now.Unix(), jobID, stateVersion, state)
 			if err != nil {
-				return fmt.Errorf("recover Job %q: %w", candidate.jobID, err)
+				return fmt.Errorf("recover Job %q: %w", jobID, err)
 			}
 			changedRows, err := result.RowsAffected()
-			if err != nil || changedRows != 1 {
-				return fmt.Errorf("recover Job %q: concurrent state change", candidate.jobID)
+			if err != nil {
+				return fmt.Errorf("recover Job %q row count: %w", jobID, err)
 			}
-			if _, err := connection.ExecContext(ctx, "UPDATE job_steps SET state='paused', updated_at_unix=? WHERE job_id=? AND state IN ('running', 'verifying')", now.Unix(), candidate.jobID); err != nil {
-				return fmt.Errorf("recover Job %q steps: %w", candidate.jobID, err)
+			if changedRows != 1 {
+				return fmt.Errorf("recover Job %q: concurrent state change", jobID)
 			}
-			if _, err := connection.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, ?, ?, 'job_recovered', '{\"reason\":\"daemon_restart\"}', ?)", candidate.jobID, candidate.nextSequence, eventID, now.Unix()); err != nil {
-				return fmt.Errorf("recover Job %q event: %w", candidate.jobID, err)
+			for _, stepIndex := range stepIndexes {
+				result, err := writer.ExecContext(ctx, "UPDATE job_steps SET state='paused', updated_at_unix=? WHERE job_id=? AND step_index=? AND state IN ('running', 'verifying')", now.Unix(), jobID, stepIndex)
+				if err != nil {
+					return fmt.Errorf("recover Job %q step %d: %w", jobID, stepIndex, err)
+				}
+				rows, err := result.RowsAffected()
+				if err != nil {
+					return fmt.Errorf("recover Job %q step %d row count: %w", jobID, stepIndex, err)
+				}
+				if rows != 1 {
+					return fmt.Errorf("recover Job %q step %d changed concurrently", jobID, stepIndex)
+				}
 			}
+			if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, ?, ?, 'job_recovered', '{\"reason\":\"daemon_restart\"}', ?)", jobID, nextSequence, eventID, now.Unix()); err != nil {
+				return fmt.Errorf("recover Job %q event: %w", jobID, err)
+			}
+			changed = true
+			return nil
+		})
+		if err != nil {
+			return 0, err
+		}
+		if changed {
 			recovered++
 		}
-		return nil
-	})
-	if err != nil {
-		return 0, err
 	}
-	return recovered, nil
 }
 
 type rowQueryer interface {
@@ -301,32 +372,76 @@ func getSnapshot(ctx context.Context, queryer rowQueryer, jobID domain.JobID) (S
 	return snapshot, nil
 }
 
-func (store *Store) immediate(ctx context.Context, operation func(*sql.Conn) error) error {
-	if store == nil || store.database == nil {
+type transactionWriter struct {
+	connection  *sql.Conn
+	transaction *wal.FileTransaction
+	nextBudget  int
+}
+
+func (writer *transactionWriter) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if writer == nil || writer.connection == nil || writer.transaction == nil {
+		return nil, fmt.Errorf("job store writer: nil transaction")
+	}
+	result, execErr := writer.connection.ExecContext(ctx, query, args...)
+	observeErr := writer.transaction.AfterStatement(writer.nextBudget)
+	writer.nextBudget++
+	if err := errors.Join(execErr, observeErr); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func (store *Store) immediate(ctx context.Context, budgets []uint64, operation func(*sql.Conn, *transactionWriter) error) (returnErr error) {
+	if store == nil || store.database == nil || store.walGuard == nil {
 		return fmt.Errorf("job store: nil database")
 	}
 	connection, err := store.database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("job store: reserve connection: %w", err)
 	}
-	defer connection.Close()
-	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return fmt.Errorf("job store: begin immediate: %w", err)
-	}
-	committed := false
 	defer func() {
-		if !committed {
-			_, _ = connection.ExecContext(context.Background(), "ROLLBACK")
-		}
+		returnErr = errors.Join(returnErr, connection.Close())
 	}()
-	if err := operation(connection); err != nil {
-		return err
+	walTransaction, err := store.walGuard.Begin(budgets)
+	if err != nil {
+		return fmt.Errorf("job store: WAL preflight: %w", err)
+	}
+	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		observeErr := walTransaction.AfterRollback()
+		return fmt.Errorf("job store: begin immediate: %w", errors.Join(err, observeErr))
+	}
+	writer := &transactionWriter{connection: connection, transaction: walTransaction}
+	if err := operation(connection, writer); err != nil {
+		_, rollbackErr := connection.ExecContext(context.Background(), "ROLLBACK")
+		observeErr := walTransaction.AfterRollback()
+		return errors.Join(err, rollbackErr, observeErr)
+	}
+	if err := walTransaction.BeforeCommit(); err != nil {
+		_, rollbackErr := connection.ExecContext(context.Background(), "ROLLBACK")
+		observeErr := walTransaction.AfterRollback()
+		return errors.Join(err, rollbackErr, observeErr)
 	}
 	if _, err := connection.ExecContext(ctx, "COMMIT"); err != nil {
-		return fmt.Errorf("job store: commit: %w", err)
+		_, rollbackErr := connection.ExecContext(context.Background(), "ROLLBACK")
+		observeErr := walTransaction.AfterRollback()
+		return fmt.Errorf("job store: commit: %w", errors.Join(err, rollbackErr, observeErr))
 	}
-	committed = true
+	if err := walTransaction.AfterCommit(); err != nil {
+		return fmt.Errorf("job store: committed WAL observation: %w", err)
+	}
+	if _, err := store.walGuard.PassiveCheckpoint(ctx, connection); err != nil {
+		return fmt.Errorf("job store: committed passive checkpoint: %w", err)
+	}
 	return nil
+}
+
+func createWALBudgets(stepCount int) []uint64 {
+	budgets := make([]uint64, 0, stepCount+4)
+	budgets = append(budgets, planWALBudget, jobWALBudget)
+	for range stepCount {
+		budgets = append(budgets, stepWALBudget)
+	}
+	return append(budgets, eventWALBudget, dedupWALBudget)
 }
 
 func validateCreate(request CreateRequest) error {
@@ -345,8 +460,11 @@ func validateCreate(request CreateRequest) error {
 	if request.InitialState != job.StateDraft && request.InitialState != job.StateAwaitingConfirmation && request.InitialState != job.StateQueued {
 		return fmt.Errorf("create Job: invalid initial state %q", request.InitialState)
 	}
-	if request.Now.Unix() <= 0 || len(request.Steps) == 0 {
-		return fmt.Errorf("create Job: invalid time or empty steps")
+	if request.Now.Unix() <= 0 || len(request.Steps) == 0 || len(request.Steps) > maxJobSteps {
+		return fmt.Errorf("create Job: invalid time or step count outside 1..%d", maxJobSteps)
+	}
+	if err := wal.ValidateTransactionBudgets(createWALBudgets(len(request.Steps))); err != nil {
+		return fmt.Errorf("create Job: %w", err)
 	}
 	values := []string{request.Kind, request.SourceJSON, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass}
 	if request.DestinationJSON != nil {

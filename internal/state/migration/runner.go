@@ -19,7 +19,25 @@ const (
 // Runner applies already-compiled migrations on one reserved connection. It
 // deliberately does not expose transaction controls to migration data.
 type Runner struct {
-	AttemptID string
+	AttemptID  string
+	WALMonitor MigrationWALMonitor
+}
+
+type MigrationWALMonitor interface {
+	Prepare(context.Context, *sql.Conn, Migration) error
+	AfterStatement(context.Context, int) error
+	BeforeCommit(context.Context) error
+	AfterCommit(context.Context) error
+	Checkpoint(context.Context) error
+}
+
+type CommittedMigrationWALViolation struct {
+	BudgetBytes uint64
+	ActualBytes uint64
+}
+
+func (violation *CommittedMigrationWALViolation) Error() string {
+	return fmt.Sprintf("committed migration WAL growth %d exceeds budget %d", violation.ActualBytes, violation.BudgetBytes)
 }
 
 func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration Migration, appliedAt string) error {
@@ -59,6 +77,15 @@ func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration 
 	if err := checkMigrationConnection(ctx, connection); err != nil {
 		return err
 	}
+	monitor := runner.WALMonitor
+	if migration.Version > 1 {
+		if monitor == nil {
+			monitor = &fileMigrationWALMonitor{}
+		}
+		if err := monitor.Prepare(ctx, connection, migration); err != nil {
+			return fmt.Errorf("apply migration version %d WAL prepare: %w", migration.Version, err)
+		}
+	}
 	if _, err := connection.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
 		return fmt.Errorf("apply migration version %d: begin immediate: %w", migration.Version, err)
 	}
@@ -91,6 +118,11 @@ func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration 
 		if err := checkMigrationConnection(ctx, connection); err != nil {
 			return fmt.Errorf("apply migration version %d statement %d postflight: %w", migration.Version, index, err)
 		}
+		if monitor != nil {
+			if err := monitor.AfterStatement(ctx, index); err != nil {
+				return fmt.Errorf("apply migration version %d statement %d WAL budget: %w", migration.Version, index, err)
+			}
+		}
 	}
 	if _, err := connection.ExecContext(
 		ctx,
@@ -112,10 +144,23 @@ func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration 
 			return fmt.Errorf("apply migration version %d attempt head: active attempt is not the required running prefix", migration.Version)
 		}
 	}
+	if monitor != nil {
+		if err := monitor.BeforeCommit(ctx); err != nil {
+			return fmt.Errorf("apply migration version %d pre-commit WAL budget: %w", migration.Version, err)
+		}
+	}
 	if _, err := connection.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("apply migration version %d commit: %w", migration.Version, err)
 	}
 	committed = true
+	if monitor != nil {
+		if err := monitor.AfterCommit(ctx); err != nil {
+			return fmt.Errorf("apply migration version %d committed WAL budget: %w", migration.Version, err)
+		}
+		if err := monitor.Checkpoint(ctx); err != nil {
+			return fmt.Errorf("apply migration version %d checkpoint: %w", migration.Version, err)
+		}
+	}
 	return nil
 }
 

@@ -87,7 +87,14 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 			Root: paths.StateDir, DatabasePath: databasePath,
 		})
 		if stateOpenErr == nil {
-			if _, err := jobstore.New(stateDatabase).RecoverInterrupted(ctx, generator, time.Now()); err != nil {
+			store, err := jobstore.New(ctx, stateDatabase)
+			if err == nil {
+				_, err = store.RecoverInterrupted(ctx, generator, time.Now())
+			}
+			if err == nil {
+				err = store.CheckpointIdle(ctx)
+			}
+			if err != nil {
 				stateOpenErr = fmt.Errorf("recover durable Jobs: %w", err)
 				_ = stateDatabase.Close()
 				stateDatabase = nil

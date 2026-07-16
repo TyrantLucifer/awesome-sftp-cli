@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not Started。当前只允许先执行 Stage 2 的 ADR-0008 精确 SQLite 依赖准入，不得在依赖与平台数据库门禁前创建 schema 或写路径。
+Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not Started。Stage 2 的 ADR-0008 精确 SQLite 依赖准入和 M2.1 schema/backup/retention/WAL 基础已完成；当前继续关闭 upgrade coordinator 与 native crash/recovery 门禁，M2.2 仍不得提前开始。
 
 ## Stage 0: Foundation & Knowledge
 

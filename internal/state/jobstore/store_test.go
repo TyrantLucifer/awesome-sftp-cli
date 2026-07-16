@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"net/url"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -47,6 +49,12 @@ func TestCreateJobIsTransactionalAndRequestIdempotent(t *testing.T) {
 	assertCount(t, ctx, database, "job_steps", 2)
 	assertCount(t, ctx, database, "job_events", 1)
 	assertCount(t, ctx, database, "request_dedup", 1)
+	if err := store.CheckpointIdle(ctx); err != nil {
+		t.Fatalf("checkpoint idle store: %v", err)
+	}
+	if size := store.walGuard.Snapshot().WALBytes; size != 0 {
+		t.Fatalf("idle checkpoint WAL bytes = %d, want 0", size)
+	}
 }
 
 func TestTransitionIsTransactionalMonotonicAndRejectsIllegalState(t *testing.T) {
@@ -161,7 +169,13 @@ func TestRecoverInterruptedJobsPausesEffectsExactlyOnce(t *testing.T) {
 
 func newTestStore(t *testing.T, ctx context.Context) (*Store, *sql.DB) {
 	t.Helper()
-	database, err := sql.Open("sqlite", "file:"+filepath.Join(t.TempDir(), "state.sqlite3"))
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // directory requires owner traversal
+		t.Fatalf("set private state root: %v", err)
+	}
+	path := filepath.Join(root, "state.sqlite3")
+	uri := &url.URL{Scheme: "file", Path: path, RawQuery: "_pragma=" + url.QueryEscape("wal_autocheckpoint(1000)")}
+	database, err := sql.Open("sqlite", uri.String())
 	if err != nil {
 		t.Fatalf("open database: %v", err)
 	}
@@ -179,10 +193,23 @@ func newTestStore(t *testing.T, ctx context.Context) (*Store, *sql.DB) {
 		_ = connection.Close()
 		t.Fatalf("apply version 1: %v", err)
 	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = connection.Close()
+		t.Fatalf("set private state database: %v", err)
+	}
+	var journalMode string
+	if err := connection.QueryRowContext(ctx, "PRAGMA journal_mode=WAL").Scan(&journalMode); err != nil || journalMode != "wal" {
+		_ = connection.Close()
+		t.Fatalf("enable WAL: mode=%q error=%v", journalMode, err)
+	}
 	if err := connection.Close(); err != nil {
 		t.Fatalf("close migration connection: %v", err)
 	}
-	return New(database), database
+	store, err := New(ctx, database)
+	if err != nil {
+		t.Fatalf("new guarded store: %v", err)
+	}
+	return store, database
 }
 
 func createRequest(t *testing.T, seed byte) CreateRequest {
