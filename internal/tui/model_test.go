@@ -3,9 +3,13 @@ package tui
 import (
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 const (
@@ -81,6 +85,217 @@ func TestReducerEmitsOnlyReadOnlyNavigationIntents(t *testing.T) {
 	intent := assertSingleIntent(t, intents, IntentPreview, "/left/file.txt")
 	if intent.Limit != PreviewByteLimit {
 		t.Fatalf("preview limit = %d, want %d", intent.Limit, PreviewByteLimit)
+	}
+}
+
+func TestReducerCapturesFrozenCopyOrCutAndPastesIntoCurrentPane(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		key       Key
+		clipboard transfer.ClipboardKind
+	}{
+		{name: "copy", key: KeyCopy, clipboard: transfer.ClipboardCopy},
+		{name: "cut", key: KeyCut, clipboard: transfer.ClipboardCut},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := testModel(t)
+			model, _ = Reduce(model, KeyPress{Key: KeyDown})
+			model, intents := Reduce(model, KeyPress{Key: test.key})
+			capture := assertSingleIntent(t, intents, IntentTransferCapture, "/left/file.txt")
+			if capture.Clipboard != test.clipboard {
+				t.Fatalf("capture clipboard = %q, want %q", capture.Clipboard, test.clipboard)
+			}
+			reference := transfer.FileRef{
+				Location: capture.Location, Kind: domain.EntryFile,
+				CapabilityRevision: domain.CapabilityRevision{SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Generation: 7},
+			}
+			model, _ = Reduce(model, ClipboardCaptured{Clipboard: test.clipboard, Reference: reference})
+			model, _ = Reduce(model, KeyPress{Key: KeyTab})
+			model, intents = Reduce(model, KeyPress{Key: KeyPaste})
+			if test.clipboard == transfer.ClipboardCut {
+				if len(intents) != 0 || model.Mode != ModeMoveConfirm {
+					t.Fatalf("cut paste bypassed confirmation: model=%#v intents=%#v", model, intents)
+				}
+				model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+			}
+			if len(intents) != 1 {
+				t.Fatalf("paste intents = %#v, want one", intents)
+			}
+			paste := intents[0]
+			if paste.Kind != IntentCreateCopyJob || paste.Pane != Right || paste.Location.Path != "/right" {
+				t.Fatalf("paste route = %#v", paste)
+			}
+			if paste.Clipboard != test.clipboard || paste.Source.Location != reference.Location || paste.Name != "file.txt" {
+				t.Fatalf("paste intent = %#v", paste)
+			}
+			model, _ = Reduce(model, CountDigit{Digit: 2})
+			model, intents = Reduce(model, KeyPress{Key: KeyPaste})
+			if test.clipboard == transfer.ClipboardCut {
+				if len(intents) != 0 || model.Mode != ModeMoveConfirm {
+					t.Fatalf("counted cut bypassed confirmation: model=%#v intents=%#v", model, intents)
+				}
+				model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+			}
+			if len(intents) != 2 || intents[0].Source != reference || intents[1].Source != reference {
+				t.Fatalf("counted paste intents = %#v", intents)
+			}
+			repeatedModel, repeated := Reduce(model, KeyPress{Key: KeyRepeat})
+			if test.clipboard == transfer.ClipboardCut {
+				if len(repeated) != 0 || repeatedModel.Mode != ModeMoveConfirm {
+					t.Fatalf("cut repeat bypassed confirmation: model=%#v intents=%#v", repeatedModel, repeated)
+				}
+				_, repeated = Reduce(repeatedModel, KeyPress{Key: KeySubmit})
+			}
+			if !reflect.DeepEqual(repeated, intents) {
+				t.Fatalf("repeat intents = %#v, want frozen %#v", repeated, intents)
+			}
+		})
+	}
+}
+
+func TestReducerCapturesDirectoriesAndMultiSelectionAsFrozenClipboard(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyMark})
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, _ = Reduce(model, KeyPress{Key: KeyMark})
+	model, intents := Reduce(model, KeyPress{Key: KeyCopy})
+	if len(intents) != 1 || intents[0].Kind != IntentTransferCapture || len(intents[0].Locations) != 2 {
+		t.Fatalf("capture intents = %#v, want one two-item capture", intents)
+	}
+	references := []transfer.FileRef{
+		{Location: intents[0].Locations[0], Kind: domain.EntryDirectory},
+		{Location: intents[0].Locations[1], Kind: domain.EntryFile},
+	}
+	model, _ = Reduce(model, ClipboardCaptured{Clipboard: transfer.ClipboardCopy, References: references})
+	model, _ = Reduce(model, KeyPress{Key: KeyTab})
+	_, intents = Reduce(model, KeyPress{Key: KeyPaste})
+	if len(intents) != 2 {
+		t.Fatalf("paste intents = %#v, want two", intents)
+	}
+	for index, intent := range intents {
+		if intent.Kind != IntentCreateCopyJob || intent.Source.Location != references[index].Location {
+			t.Fatalf("paste intent %d = %#v", index, intent)
+		}
+	}
+}
+
+func TestReducerDeleteRequiresPreparationAndTwoConfirmations(t *testing.T) {
+	model := testModel(t)
+	model, intents := Reduce(model, KeyPress{Key: KeyDelete})
+	prepare := assertSingleIntent(t, intents, IntentPrepareDelete, "/left/dir")
+	if len(prepare.Locations) != 1 {
+		t.Fatalf("delete locations = %#v", prepare.Locations)
+	}
+	reference := transfer.FileRef{Location: prepare.Location, Kind: domain.EntryDirectory}
+	model, intents = Reduce(model, DeletePrepared{References: []transfer.FileRef{reference}})
+	if model.Mode != ModeDeleteConfirm || model.DeleteConfirmation != 1 || len(intents) != 0 {
+		t.Fatalf("prepared delete model=%#v intents=%#v", model, intents)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	if model.DeleteConfirmation != 2 || len(intents) != 0 {
+		t.Fatalf("first confirmation model=%#v intents=%#v", model, intents)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	if model.Mode != ModeNormal || len(intents) != 1 || intents[0].Kind != IntentCreateDeleteJob {
+		t.Fatalf("second confirmation model=%#v intents=%#v", model, intents)
+	}
+	if intents[0].Target != reference || !intents[0].Recursive || !intents[0].Confirmed || !intents[0].IrreversibleConfirmed {
+		t.Fatalf("delete intent = %#v", intents[0])
+	}
+
+	model, intents = Reduce(model, KeyPress{Key: KeyRepeat})
+	if model.Mode != ModeDeleteConfirm || model.DeleteConfirmation != 1 || len(intents) != 0 {
+		t.Fatalf("repeat bypassed confirmation: model=%#v intents=%#v", model, intents)
+	}
+}
+
+func TestReducerCountFreezesBatchButCannotRepeatDestructiveConfirmation(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, CountDigit{Digit: 2})
+	model, intents := Reduce(model, KeyPress{Key: KeyDelete})
+	if len(intents) != 1 || len(intents[0].Locations) != 2 || model.Count != 0 {
+		t.Fatalf("counted delete model=%#v intents=%#v", model, intents)
+	}
+	references := []transfer.FileRef{
+		{Location: intents[0].Locations[0], Kind: domain.EntryDirectory},
+		{Location: intents[0].Locations[1], Kind: domain.EntryFile},
+	}
+	model, _ = Reduce(model, DeletePrepared{References: references})
+	model, _ = Reduce(model, KeyPress{Key: KeySubmit})
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	if len(intents) != 2 {
+		t.Fatalf("confirmed batch intents = %#v", intents)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeyRepeat})
+	if len(intents) != 0 || model.Mode != ModeDeleteConfirm || model.DeleteConfirmation != 1 {
+		t.Fatalf("repeat bypassed batch confirmation: model=%#v intents=%#v", model, intents)
+	}
+}
+
+func TestReducerRenameUsesFrozenReferenceAndRejectsMultiSelection(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, intents := Reduce(model, KeyPress{Key: KeyRename})
+	prepare := assertSingleIntent(t, intents, IntentPrepareRename, "/left/file.txt")
+	reference := transfer.FileRef{Location: prepare.Location, Kind: domain.EntryFile}
+	model, _ = Reduce(model, RenamePrepared{Reference: reference})
+	model, _ = Reduce(model, TextInput{Text: "renamed.txt"})
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	if model.Mode != ModeNormal || len(intents) != 1 || intents[0].Kind != IntentCreateCopyJob {
+		t.Fatalf("rename submit model=%#v intents=%#v", model, intents)
+	}
+	if intents[0].Clipboard != transfer.ClipboardCut || intents[0].Source != reference || intents[0].Name != "renamed.txt" || intents[0].Location.Path != "/left" {
+		t.Fatalf("rename intent = %#v", intents[0])
+	}
+	model, repeated := Reduce(model, KeyPress{Key: KeyRepeat})
+	if len(repeated) != 0 || model.Mode != ModeMoveConfirm {
+		t.Fatalf("rename repeat bypassed confirmation: model=%#v intents=%#v", model, repeated)
+	}
+
+	model = testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyMark})
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, _ = Reduce(model, KeyPress{Key: KeyMark})
+	model, intents = Reduce(model, KeyPress{Key: KeyRename})
+	if len(intents) != 0 || !strings.Contains(model.Notice, "one item") {
+		t.Fatalf("multi rename model=%#v intents=%#v", model, intents)
+	}
+}
+
+func TestReducerOpensMinimalDurableJobsView(t *testing.T) {
+	model := testModel(t)
+	model, intents := Reduce(model, KeyPress{Key: KeyJobs})
+	if !model.ShowJobs || len(intents) != 1 || intents[0].Kind != IntentJobList {
+		t.Fatalf("open Jobs model=%#v intents=%#v", model, intents)
+	}
+	view := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth}, Phase: transfer.PhaseStreaming, Bytes: 42, Items: 1, WaitingReason: "waiting_auth"}
+	model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}})
+	if len(model.Jobs) != 1 || model.Jobs[0].Snapshot.JobID != view.Snapshot.JobID {
+		t.Fatalf("Jobs model = %#v", model.Jobs)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeyJobs})
+	if model.ShowJobs || len(intents) != 0 {
+		t.Fatalf("close Jobs model=%#v intents=%#v", model, intents)
+	}
+}
+
+func TestReducerControlsSelectedDurableJob(t *testing.T) {
+	model := testModel(t)
+	model.ShowJobs = true
+	first := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning}}
+	second := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaab", State: job.StateWaitingConflict}}
+	model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{first, second}})
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	if model.JobCursor != 1 {
+		t.Fatalf("Job cursor = %d, want 1", model.JobCursor)
+	}
+	_, intents := Reduce(model, KeyPress{Key: KeyJobPause})
+	if len(intents) != 1 || intents[0].Kind != IntentJobPause || intents[0].JobID != second.Snapshot.JobID {
+		t.Fatalf("pause intents = %#v", intents)
+	}
+	_, intents = Reduce(model, KeyPress{Key: KeyConflictAutoRenameAll})
+	if len(intents) != 1 || intents[0].Kind != IntentJobResolveConflict || intents[0].Resolution != transfer.ConflictAutoRename || !intents[0].ApplyAll {
+		t.Fatalf("conflict intents = %#v", intents)
 	}
 }
 

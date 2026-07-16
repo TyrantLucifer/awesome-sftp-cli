@@ -2,14 +2,17 @@ package tui
 
 import (
 	"bytes"
+	"fmt"
 	"path"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 const navigationCountLimit = 1_000_000
+const maxBatchJobIntents = 1024
 
 func Reduce(model Model, action Action) (Model, []Intent) {
 	switch action := action.(type) {
@@ -58,6 +61,13 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 				return model, nil
 			}
 			model.endpointInput = append(append([]rune(nil), model.endpointInput...), []rune(action.Text)...)
+			return model, nil
+		}
+		if model.Mode == ModeRename {
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00/\r\n") || len(string(model.renameInput))+len(action.Text) > 255 {
+				return model, nil
+			}
+			model.renameInput = append(append([]rune(nil), model.renameInput...), []rune(action.Text)...)
 			return model, nil
 		}
 		if model.Mode != ModeFilter || action.Text == "" {
@@ -289,6 +299,74 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			model.Notice = "workspace saved: " + action.Name
 		}
 		return model, nil
+	case ClipboardCaptured:
+		if action.Message != "" {
+			model.Notice = action.Message
+			return model, nil
+		}
+		references := append([]transfer.FileRef(nil), action.References...)
+		if len(references) == 0 && action.Reference.Location.Path != "" {
+			references = []transfer.FileRef{action.Reference}
+		}
+		if len(references) == 0 {
+			model.Notice = "capture returned no source"
+			return model, nil
+		}
+		model.Clipboard = ClipboardState{Kind: action.Clipboard, Reference: references[0], References: references, Ready: true}
+		if len(references) == 1 {
+			model.Notice = string(action.Clipboard) + " source captured: " + string(references[0].Location.Path)
+		} else {
+			model.Notice = string(action.Clipboard) + " sources captured: " + fmt.Sprint(len(references))
+		}
+		return model, nil
+	case DeletePrepared:
+		if action.Message != "" {
+			model.Notice = action.Message
+			return model, nil
+		}
+		if len(action.References) == 0 {
+			model.Notice = "delete preparation returned no target"
+			return model, nil
+		}
+		model.pendingDelete = append([]transfer.FileRef(nil), action.References...)
+		model.DeleteConfirmation = 1
+		model.Mode = ModeDeleteConfirm
+		return model, nil
+	case RenamePrepared:
+		if action.Message != "" {
+			model.Notice = action.Message
+			return model, nil
+		}
+		if action.Reference.Location.Path == "" {
+			model.Notice = "rename preparation returned no source"
+			return model, nil
+		}
+		model.pendingRename = action.Reference
+		model.renameInput = nil
+		model.Mode = ModeRename
+		return model, nil
+	case JobCreated:
+		if action.Message != "" {
+			model.Notice = action.Message
+		} else {
+			model.Notice = "Job queued: " + string(action.JobID) + " (" + string(action.State) + ")"
+		}
+		return model, nil
+	case JobsLoaded:
+		model.Jobs = append([]transfer.JobView(nil), action.Jobs...)
+		model.JobCursor = min(model.JobCursor, max(0, len(model.Jobs)-1))
+		model.Notice = action.Message
+		return model, nil
+	case JobUpdated:
+		for index := range model.Jobs {
+			if model.Jobs[index].Snapshot.JobID == action.Snapshot.JobID {
+				model.Jobs = append([]transfer.JobView(nil), model.Jobs...)
+				model.Jobs[index].Snapshot = action.Snapshot
+				break
+			}
+		}
+		model.Notice = action.Message
+		return model, nil
 	default:
 		return model, nil
 	}
@@ -313,6 +391,93 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			}
 			model.Auth = AuthState{}
 			model.Mode = returnMode
+			return model, []Intent{intent}
+		default:
+			return model, nil
+		}
+	}
+	if model.Mode == ModeDeleteConfirm {
+		switch key {
+		case KeyEscape:
+			model.pendingDelete = nil
+			model.DeleteConfirmation = 0
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			if model.DeleteConfirmation == 1 {
+				model.DeleteConfirmation = 2
+				return model, nil
+			}
+			intents := make([]Intent, 0, len(model.pendingDelete))
+			for _, reference := range model.pendingDelete {
+				intents = append(intents, Intent{
+					Kind: IntentCreateDeleteJob, Target: reference,
+					Recursive: reference.Kind == domain.EntryDirectory,
+					Confirmed: true, IrreversibleConfirmed: true,
+				})
+			}
+			model.repeatDelete = append([]transfer.FileRef(nil), model.pendingDelete...)
+			model.repeatIntents = nil
+			model.pendingDelete = nil
+			model.DeleteConfirmation = 0
+			model.Mode = ModeNormal
+			return model, intents
+		default:
+			return model, nil
+		}
+	}
+	if model.Mode == ModeMoveConfirm {
+		switch key {
+		case KeyEscape:
+			model.pendingMove = nil
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			intents := append([]Intent(nil), model.pendingMove...)
+			model.repeatMove = append([]Intent(nil), intents...)
+			model.repeatDelete = nil
+			model.repeatIntents = nil
+			model.pendingMove = nil
+			model.Mode = ModeNormal
+			return model, intents
+		default:
+			return model, nil
+		}
+	}
+	if model.Mode == ModeRename {
+		switch key {
+		case KeyBackspace:
+			if len(model.renameInput) != 0 {
+				model.renameInput = append([]rune(nil), model.renameInput[:len(model.renameInput)-1]...)
+			}
+			return model, nil
+		case KeyEscape:
+			model.renameInput = nil
+			model.pendingRename = transfer.FileRef{}
+			model.Mode = ModeNormal
+			return model, nil
+		case KeySubmit:
+			name := string(model.renameInput)
+			if name == "" || name == "." || name == ".." || path.Base(name) != name {
+				model.Notice = "rename requires one plain entry name"
+				return model, nil
+			}
+			if name == path.Base(string(model.pendingRename.Location.Path)) {
+				model.Notice = "rename requires a different name"
+				return model, nil
+			}
+			parent, ok := parentLocation(model.pendingRename.Location)
+			if !ok {
+				model.Notice = "rename cannot target an endpoint root"
+				return model, nil
+			}
+			intent := Intent{Kind: IntentCreateCopyJob, Pane: model.Active, Location: parent, Clipboard: transfer.ClipboardCut, Source: model.pendingRename, Name: name}
+			model.repeatMove = []Intent{intent}
+			model.repeatIntents = nil
+			model.repeatDelete = nil
+			model.renameInput = nil
+			model.pendingRename = transfer.FileRef{}
+			model.Mode = ModeNormal
 			return model, []Intent{intent}
 		default:
 			return model, nil
@@ -392,9 +557,12 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			return model, nil
 		}
 	}
+	if model.ShowJobs {
+		return reduceJobsKey(model, key)
+	}
 	count := model.Count
 	model.Count = 0
-	if count != 0 && key != KeyDown && key != KeyUp {
+	if count != 0 && key != KeyDown && key != KeyUp && key != KeyCopy && key != KeyCut && key != KeyPaste && key != KeyDelete && key != KeyRename {
 		return model, nil
 	}
 	steps := 1
@@ -404,6 +572,13 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	if key == KeyEscape && model.Preview.Generation != 0 {
 		model.Preview = PreviewState{}
 		return model, []Intent{{Kind: IntentPreviewCancel}}
+	}
+	if key == KeyJobs {
+		model.ShowJobs = !model.ShowJobs
+		if model.ShowJobs {
+			return model, []Intent{{Kind: IntentJobList}}
+		}
+		return model, nil
 	}
 	if key == KeyTab {
 		if model.Active == Left {
@@ -436,6 +611,84 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	}
 
 	switch key {
+	case KeyCopy, KeyCut:
+		locations := selectedLocations(pane, count)
+		if len(locations) == 0 {
+			model.Notice = "copy/cut requires at least one file or directory"
+			return model, nil
+		}
+		clipboard := transfer.ClipboardCopy
+		if key == KeyCut {
+			clipboard = transfer.ClipboardCut
+		}
+		return model, []Intent{{Kind: IntentTransferCapture, Pane: model.Active, Location: locations[0], Locations: locations, Clipboard: clipboard}}
+	case KeyPaste:
+		if !model.Clipboard.Ready {
+			model.Notice = "copy/cut clipboard is empty"
+			return model, nil
+		}
+		references := model.Clipboard.References
+		if len(references) == 0 {
+			references = []transfer.FileRef{model.Clipboard.Reference}
+		}
+		repetitions := 1
+		if count > 0 {
+			repetitions = count
+		}
+		if len(references) == 0 || repetitions > maxBatchJobIntents/len(references) {
+			model.Notice = "paste count exceeds the bounded Job batch"
+			return model, nil
+		}
+		intents := make([]Intent, 0, len(references)*repetitions)
+		for range repetitions {
+			for _, reference := range references {
+				intents = append(intents, Intent{
+					Kind: IntentCreateCopyJob, Pane: model.Active, Location: pane.Location,
+					Clipboard: model.Clipboard.Kind, Source: reference,
+					Name: path.Base(string(reference.Location.Path)),
+				})
+			}
+		}
+		if model.Clipboard.Kind == transfer.ClipboardCut {
+			model.pendingMove = append([]Intent(nil), intents...)
+			model.Mode = ModeMoveConfirm
+			return model, nil
+		}
+		model.repeatIntents = append([]Intent(nil), intents...)
+		model.repeatMove = nil
+		model.repeatDelete = nil
+		return model, intents
+	case KeyDelete:
+		locations := selectedLocations(pane, count)
+		if len(locations) == 0 {
+			model.Notice = "delete requires at least one target"
+			return model, nil
+		}
+		return model, []Intent{{Kind: IntentPrepareDelete, Pane: model.Active, Location: locations[0], Locations: locations}}
+	case KeyRename:
+		locations := selectedLocations(pane, count)
+		if len(locations) != 1 {
+			model.Notice = "rename requires exactly one item"
+			return model, nil
+		}
+		return model, []Intent{{Kind: IntentPrepareRename, Pane: model.Active, Location: locations[0], Locations: locations}}
+	case KeyRepeat:
+		if len(model.repeatDelete) != 0 {
+			model.pendingDelete = append([]transfer.FileRef(nil), model.repeatDelete...)
+			model.DeleteConfirmation = 1
+			model.Mode = ModeDeleteConfirm
+			return model, nil
+		}
+		if len(model.repeatMove) != 0 {
+			model.pendingMove = append([]Intent(nil), model.repeatMove...)
+			model.Mode = ModeMoveConfirm
+			return model, nil
+		}
+		if len(model.repeatIntents) != 0 {
+			return model, append([]Intent(nil), model.repeatIntents...)
+		}
+		model.Notice = "no repeatable frozen operation"
+		return model, nil
 	case KeySave:
 		model.Mode = ModeWorkspace
 		model.workspaceName = nil
@@ -515,6 +768,71 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	return model, nil
 }
 
+func reduceJobsKey(model Model, key Key) (Model, []Intent) {
+	if key == KeyJobs || key == KeyEscape {
+		model.ShowJobs = false
+		return model, nil
+	}
+	if key == KeyDown {
+		model.JobCursor = min(model.JobCursor+1, max(0, len(model.Jobs)-1))
+		return model, nil
+	}
+	if key == KeyUp {
+		model.JobCursor = max(model.JobCursor-1, 0)
+		return model, nil
+	}
+	if len(model.Jobs) == 0 || model.JobCursor < 0 || model.JobCursor >= len(model.Jobs) {
+		return model, nil
+	}
+	jobID := model.Jobs[model.JobCursor].Snapshot.JobID
+	intent := Intent{JobID: jobID}
+	switch key {
+	case KeyJobPause:
+		intent.Kind = IntentJobPause
+	case KeyJobResume:
+		intent.Kind = IntentJobResume
+	case KeyJobCancel:
+		intent.Kind = IntentJobCancel
+	case KeyConflictOverwrite, KeyConflictOverwriteAll:
+		intent.Kind = IntentJobResolveConflict
+		intent.Resolution = transfer.ConflictOverwrite
+		intent.ApplyAll = key == KeyConflictOverwriteAll
+	case KeyConflictSkip, KeyConflictSkipAll:
+		intent.Kind = IntentJobResolveConflict
+		intent.Resolution = transfer.ConflictSkip
+		intent.ApplyAll = key == KeyConflictSkipAll
+	case KeyConflictAutoRename, KeyConflictAutoRenameAll:
+		intent.Kind = IntentJobResolveConflict
+		intent.Resolution = transfer.ConflictAutoRename
+		intent.ApplyAll = key == KeyConflictAutoRenameAll
+	default:
+		return model, nil
+	}
+	return model, []Intent{intent}
+}
+
 func validPane(pane PaneID) bool {
 	return pane == Left || pane == Right
+}
+
+func selectedLocations(pane PaneState, count int) []domain.Location {
+	if selected := pane.SelectedLocations(); len(selected) != 0 {
+		return selected
+	}
+	if len(pane.visible) == 0 || pane.Cursor < 0 || pane.Cursor >= len(pane.visible) {
+		return nil
+	}
+	length := 1
+	if count > 0 {
+		length = count
+	}
+	end := min(pane.Cursor+length, len(pane.visible))
+	locations := make([]domain.Location, 0, end-pane.Cursor)
+	for index := pane.Cursor; index < end; index++ {
+		entry := pane.visibleEntry(index)
+		if entry.Location.Path != "" {
+			locations = append(locations, entry.Location)
+		}
+	}
+	return locations
 }

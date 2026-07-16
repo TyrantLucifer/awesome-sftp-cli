@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 )
@@ -172,7 +173,7 @@ func cloneMetadata(metadata domain.Metadata) domain.Metadata {
 	cloned.Mode = clonePointer(metadata.Mode)
 	cloned.UID = clonePointer(metadata.UID)
 	cloned.GID = clonePointer(metadata.GID)
-	cloned.ModifiedAt = clonePointer(metadata.ModifiedAt)
+	cloned.ModifiedAt = cloneTimeUTC(metadata.ModifiedAt)
 	cloned.ModifiedPrecision = clonePointer(metadata.ModifiedPrecision)
 	cloned.FileID = clonePointer(metadata.FileID)
 	return cloned
@@ -181,13 +182,21 @@ func cloneMetadata(metadata domain.Metadata) domain.Metadata {
 func cloneFingerprint(fingerprint domain.Fingerprint) domain.Fingerprint {
 	cloned := fingerprint
 	cloned.Size = clonePointer(fingerprint.Size)
-	cloned.ModifiedAt = clonePointer(fingerprint.ModifiedAt)
+	cloned.ModifiedAt = cloneTimeUTC(fingerprint.ModifiedAt)
 	cloned.ModifiedPrecision = clonePointer(fingerprint.ModifiedPrecision)
 	cloned.FileID = clonePointer(fingerprint.FileID)
 	cloned.VersionID = clonePointer(fingerprint.VersionID)
 	cloned.HashAlgorithm = clonePointer(fingerprint.HashAlgorithm)
 	cloned.HashHex = clonePointer(fingerprint.HashHex)
 	return cloned
+}
+
+func cloneTimeUTC(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := value.UTC()
+	return &cloned
 }
 
 func clonePointer[T any](value *T) *T {

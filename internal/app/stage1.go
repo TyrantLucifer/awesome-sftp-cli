@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -24,6 +26,9 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/sshconfig"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
@@ -32,6 +37,7 @@ import (
 
 const daemonReadyTimeout = 5 * time.Second
 const authenticationTimeout = 2 * time.Minute
+const durableLocalEndpointID domain.EndpointID = "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func DefaultHandlers() Handlers {
 	unsupported := func(context.Context, []string, io.Writer, io.Writer) error {
@@ -69,13 +75,60 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	defer lock.Close()
-	daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
-	if err != nil {
-		return err
+	generator := &domain.RandomGenerator{}
+	var stateDatabase *sql.DB
+	var jobStore *jobstore.Store
+	var stateOpenErr error
+	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
+		stateOpenErr = fmt.Errorf("prepare persistent state: %w", err)
+	} else {
+		databasePath := paths.DatabaseFile
+		if databasePath == "" {
+			databasePath = filepath.Join(paths.StateDir, "amsftp.db")
+		}
+		stateDatabase, _, stateOpenErr = statefs.Initialize(ctx, statefs.InitializeConfig{
+			Root: paths.StateDir, DatabasePath: databasePath,
+		})
+		if stateOpenErr == nil {
+			store, err := jobstore.New(ctx, stateDatabase)
+			if err == nil {
+				_, err = store.RecoverInterrupted(ctx, generator, time.Now())
+			}
+			if err == nil {
+				err = store.CheckpointIdle(ctx)
+			}
+			if err == nil {
+				jobStore = store
+			}
+			if err != nil {
+				stateOpenErr = fmt.Errorf("recover durable Jobs: %w", err)
+				_ = stateDatabase.Close()
+				stateDatabase = nil
+			}
+		}
 	}
-	defer func() {
-		returnErr = errors.Join(returnErr, daemonLog.Close())
-	}()
+	if stateDatabase != nil {
+		defer func() {
+			returnErr = errors.Join(returnErr, stateDatabase.Close())
+		}()
+	}
+	var logger *slog.Logger
+	if stateOpenErr == nil {
+		daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
+		if err != nil {
+			return err
+		}
+		logger = daemonLog.Logger
+		defer func() {
+			returnErr = errors.Join(returnErr, daemonLog.Close())
+		}()
+	} else {
+		// A rejected/corrupt/newer state database must not trigger any further
+		// persistent writes. Stage 1 browsing remains available with an
+		// in-memory diagnostic logger and no mutation store.
+		logger = slog.New(diagnostic.NewJSONHandler(io.Discard, nil))
+		logger.Error("persistent state unavailable; mutation disabled", diagnostic.Component("state"), diagnostic.Event("read_only_degraded"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
+	}
 	if _, err := os.Lstat(paths.ControlSocket); err == nil {
 		probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		connection, probeErr := platform.DialControlSocket(probeCtx, paths.ControlSocket, purpose)
@@ -100,16 +153,11 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	defer func() { _ = listener.Close(); _ = os.Remove(paths.ControlSocket) }()
-	generator := &domain.RandomGenerator{}
-	endpointID, err := domain.NewEndpointID(generator)
-	if err != nil {
-		return err
-	}
 	sessionID, err := domain.NewSessionID(generator)
 	if err != nil {
 		return err
 	}
-	local, err := localfs.New(localfs.Config{Endpoint: domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal, DisplayName: "local"}, SessionID: sessionID, Root: "/"})
+	local, err := localfs.New(localfs.Config{Endpoint: domain.Endpoint{ID: durableLocalEndpointID, Kind: domain.EndpointLocal, DisplayName: "local"}, SessionID: sessionID, Root: "/"})
 	if err != nil {
 		return err
 	}
@@ -117,18 +165,23 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	if err != nil {
 		return err
 	}
-	workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
-	if err != nil {
-		return err
+	if stateOpenErr == nil {
+		workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
+		if err != nil {
+			return err
+		}
+		sessions.SetWorkspaceStore(workspaceStore)
 	}
-	sessions.SetWorkspaceStore(workspaceStore)
 	authBroker, err := auth.NewBroker(auth.Config{MaxPrompts: 8})
 	if err != nil {
 		return err
 	}
 	sessions.SetAuthBroker(authBroker)
-	sessions.SetSSHConnector(func(connectCtx context.Context, hostAlias string) (provider.Provider, error) {
-		attempt, err := authBroker.BeginAttempt(connectCtx, hostAlias, authenticationTimeout)
+	connectEndpoint := func(connectCtx context.Context, endpoint domain.Endpoint) (provider.Provider, error) {
+		if endpoint.Kind != domain.EndpointSSH || endpoint.ID == "" || endpoint.SSHHostAlias == "" {
+			return nil, sshConnectStageError("invalid frozen SSH endpoint", domain.CodeInvalidArgument, domain.RetryNever, nil)
+		}
+		attempt, err := authBroker.BeginAttempt(connectCtx, endpoint.SSHHostAlias, authenticationTimeout)
 		if err != nil {
 			return nil, sshConnectStageError("start authentication attempt", domain.CodeInternal, domain.RetryNever, err)
 		}
@@ -144,29 +197,46 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		if err != nil {
 			return nil, sshConnectStageError("prepare OpenSSH authentication", domain.CodeInternal, domain.RetryNever, err)
 		}
-		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: hostAlias, Environment: environment, Redact: []string{string(attempt.Token())}})
+		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: endpoint.SSHHostAlias, Environment: environment, Redact: []string{string(attempt.Token())}})
 		if err != nil {
 			code, retry := classifySSHConnectError(err)
 			return nil, sshConnectStageError(sshConnectMessage(code), code, retry, err)
-		}
-		remoteEndpointID, err := domain.NewEndpointID(generator)
-		if err != nil {
-			_ = transport.Close()
-			return nil, sshConnectStageError("create SSH endpoint", domain.CodeInternal, domain.RetryNever, err)
 		}
 		remoteSessionID, err := domain.NewSessionID(generator)
 		if err != nil {
 			_ = transport.Close()
 			return nil, sshConnectStageError("create SSH provider session", domain.CodeInternal, domain.RetryNever, err)
 		}
-		implementation, err := sftpprovider.New(sftpprovider.Config{Endpoint: domain.Endpoint{ID: remoteEndpointID, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias}, SessionID: remoteSessionID, Client: transport.Client(), Close: transport.Close})
+		implementation, err := sftpprovider.New(sftpprovider.Config{Endpoint: endpoint, SessionID: remoteSessionID, Client: transport.Client(), Close: transport.Close})
 		if err != nil {
 			_ = transport.Close()
 			return nil, sshConnectStageError("initialize SSH provider", domain.CodeInternal, domain.RetryNever, err)
 		}
 		return implementation, nil
+	}
+	sessions.SetSSHConnector(func(connectCtx context.Context, hostAlias string) (provider.Provider, error) {
+		remoteEndpointID, err := domain.NewEndpointID(generator)
+		if err != nil {
+			return nil, sshConnectStageError("create SSH endpoint", domain.CodeInternal, domain.RetryNever, err)
+		}
+		return connectEndpoint(connectCtx, domain.Endpoint{ID: remoteEndpointID, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias})
 	})
-	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: daemonLog.Logger, VerifyPeer: func(conn net.Conn) error {
+	sessions.SetEndpointConnector(connectEndpoint)
+	if jobStore != nil {
+		manager, err := transfer.NewManager(transfer.ManagerConfig{
+			Store: jobStore, Resolver: sessions, Generator: generator, MaxConcurrent: 4, MaxQueued: 128,
+		})
+		if err != nil {
+			return err
+		}
+		if err := manager.Start(ctx); err != nil {
+			manager.Close()
+			return err
+		}
+		defer manager.Close()
+		sessions.SetTransferService(manager)
+	}
+	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: logger, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {
 			return fmt.Errorf("unexpected peer connection %T", conn)
@@ -475,6 +545,127 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			case <-runCtx.Done():
 			}
 			return
+		case tui.IntentTransferCapture, tui.IntentPrepareDelete, tui.IntentPrepareRename:
+			activeClient := client
+			go func() {
+				locations := intent.Locations
+				if len(locations) == 0 {
+					locations = []domain.Location{intent.Location}
+				}
+				references := make([]transfer.FileRef, 0, len(locations))
+				route := daemon.JobCapture
+				if intent.Kind == tui.IntentPrepareDelete {
+					route = daemon.JobCaptureDelete
+				}
+				var captureErr error
+				for _, location := range locations {
+					var response daemon.JobCaptureResponse
+					captureErr = activeClient.Call(runCtx, route, daemon.JobCaptureRequest{Location: ipc.EncodeLocation(location)}, &response)
+					if captureErr != nil {
+						break
+					}
+					references = append(references, response.Reference)
+				}
+				message := ""
+				if captureErr != nil {
+					message = "capture failed: " + clientErrorMessage(captureErr)
+				}
+				var result tui.Action
+				switch intent.Kind {
+				case tui.IntentPrepareDelete:
+					result = tui.DeletePrepared{References: references, Message: message}
+				case tui.IntentPrepareRename:
+					var reference transfer.FileRef
+					if len(references) != 0 {
+						reference = references[0]
+					}
+					result = tui.RenamePrepared{Reference: reference, Message: message}
+				default:
+					result = tui.ClipboardCaptured{Clipboard: intent.Clipboard, References: references, Message: message}
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentCreateDeleteJob:
+			activeClient := client
+			go func() {
+				var response daemon.JobSnapshotResponse
+				createErr := activeClient.Call(runCtx, daemon.JobCreateDelete, daemon.JobCreateDeleteRequest{Intent: transfer.DeleteIntent{
+					Target: intent.Target, Recursive: intent.Recursive, Confirmed: intent.Confirmed,
+					IrreversibleConfirmed: intent.IrreversibleConfirmed,
+				}}, &response)
+				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
+				if createErr != nil {
+					result.Message = "create delete Job failed: " + clientErrorMessage(createErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentCreateCopyJob:
+			activeClient := client
+			go func() {
+				var response daemon.JobSnapshotResponse
+				createErr := activeClient.Call(runCtx, daemon.JobCreateCopy, daemon.JobCreateCopyRequest{Intent: transfer.Intent{
+					Clipboard: intent.Clipboard, Source: intent.Source, DestinationDirectory: intent.Location,
+					Name: intent.Name, ConflictPolicy: transfer.ConflictAsk,
+				}}, &response)
+				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
+				if createErr != nil {
+					result.Message = "create Job failed: " + clientErrorMessage(createErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentJobList:
+			activeClient := client
+			go func() {
+				var response daemon.JobListResponse
+				listErr := activeClient.Call(runCtx, daemon.JobList, daemon.JobListRequest{Limit: 100}, &response)
+				result := tui.JobsLoaded{Jobs: response.Jobs}
+				if listErr != nil {
+					result.Message = "list Jobs failed: " + clientErrorMessage(listErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentJobPause, tui.IntentJobResume, tui.IntentJobCancel, tui.IntentJobResolveConflict:
+			activeClient := client
+			go func() {
+				route := daemon.JobPause
+				request := any(daemon.JobControlRequest{JobID: intent.JobID})
+				switch intent.Kind {
+				case tui.IntentJobResume:
+					route = daemon.JobResume
+				case tui.IntentJobCancel:
+					route = daemon.JobCancel
+				case tui.IntentJobResolveConflict:
+					route = daemon.JobResolveConflict
+					request = daemon.JobResolveConflictRequest{JobID: intent.JobID, Resolution: intent.Resolution, ApplyAll: intent.ApplyAll}
+				}
+				var response daemon.JobSnapshotResponse
+				controlErr := activeClient.Call(runCtx, route, request, &response)
+				result := tui.JobUpdated{Snapshot: response.Snapshot}
+				if controlErr != nil {
+					result.Message = "Job control failed: " + clientErrorMessage(controlErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
 		case tui.IntentPreview:
 			if previewCancel != nil {
 				previewCancel()
@@ -626,12 +817,18 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		startConnection(pane, start, false, false, client)
 	}
+	jobRefreshTicker := time.NewTicker(500 * time.Millisecond)
+	defer jobRefreshTicker.Stop()
 	for {
 		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
 		screen.Show()
 		select {
 		case <-runCtx.Done():
 			return nil
+		case <-jobRefreshTicker.C:
+			if model.ShowJobs {
+				startIntent(tui.Intent{Kind: tui.IntentJobList})
+			}
 		case err := <-authErrors:
 			if authFailureLostDaemon(err, func() error {
 				probeCtx, cancel := context.WithTimeout(runCtx, daemonReadyTimeout)

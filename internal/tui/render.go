@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 type CellStyle uint8
@@ -208,7 +209,72 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeEndpoint {
 		renderEndpointModal(surface, string(model.endpointInput), width, height)
 	}
+	if model.Mode == ModeRename {
+		renderRenameModal(surface, model.pendingRename, string(model.renameInput), width, height)
+	}
+	if model.Mode == ModeMoveConfirm {
+		renderMoveModal(surface, model.pendingMove, width, height)
+	}
+	if model.Mode == ModeDeleteConfirm {
+		renderDeleteModal(surface, model.pendingDelete, model.DeleteConfirmation, width, height)
+	}
+	if model.ShowJobs {
+		renderJobsView(surface, model.Jobs, model.JobCursor, width, height)
+	}
 	return stats
+}
+
+func renderJobsView(surface Surface, jobs []transfer.JobView, cursor, width, height int) {
+	drawerWidth := min(width-4, 88)
+	if drawerWidth < 30 || height < 7 {
+		return
+	}
+	drawerHeight := min(height-2, max(5, 2+len(jobs)*3))
+	x := (width - drawerWidth) / 2
+	y := (height - drawerHeight) / 2
+	for row := 0; row < drawerHeight; row++ {
+		surface.PutClipped(x, y+row, drawerWidth, strings.Repeat(" ", drawerWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, drawerWidth-2, "JOBS — j/k select  P pause  U resume  C cancel  w/x/a resolve  W/X/A apply-all  J close", StyleStatus)
+	if len(jobs) == 0 {
+		surface.PutClipped(x+1, y+2, drawerWidth-2, "No durable Jobs", StyleStatus)
+		return
+	}
+	rowsAvailable := drawerHeight - 2
+	visibleJobs := min(len(jobs), rowsAvailable/3)
+	for index := 0; index < visibleJobs; index++ {
+		view := jobs[index]
+		state := string(view.Snapshot.State)
+		if view.WaitingReason != "" {
+			state += " (" + view.WaitingReason + ")"
+		}
+		line := fmt.Sprintf("%s  %s  %d item(s)  %s", state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal))
+		row := y + 1 + index*3
+		style := StyleStatus
+		if index == cursor {
+			style = StyleCursor
+		}
+		surface.PutClipped(x+1, row, drawerWidth-2, line, style)
+		surface.PutClipped(x+1, row+1, drawerWidth-2, fmt.Sprintf("%s → %s", view.Source.Path, view.Final.Path), StyleStatus)
+		summary := string(view.Snapshot.JobID)
+		if view.Snapshot.TerminalSummary != nil {
+			summary += " — " + *view.Snapshot.TerminalSummary
+		}
+		if view.RecentError != "" {
+			summary += " — error: " + view.RecentError
+		}
+		if view.RecoveryResult != "" {
+			summary += " — recovered: " + view.RecoveryResult
+		}
+		surface.PutClipped(x+1, row+2, drawerWidth-2, summary, StyleStatus)
+	}
+}
+
+func formatJobBytes(completed uint64, total *uint64) string {
+	if total == nil {
+		return fmt.Sprintf("%d B", completed)
+	}
+	return fmt.Sprintf("%d/%d B", completed, *total)
 }
 
 func renderWorkspaceModal(surface Surface, name string, width, height int) {
@@ -258,6 +324,69 @@ func renderEndpointModal(surface Surface, value string, width, height int) {
 	surface.PutClipped(x+1, y+2, modalWidth-2, "Host alias: "+SanitizeTerminalText(value), StyleStatus)
 	surface.PutClipped(x+1, y+3, modalWidth-2, "type local for LocalFS", StyleStatus)
 	surface.PutClipped(x+1, y+4, modalWidth-2, "[Enter] connect  [Esc] cancel", StyleStatus)
+}
+
+func renderRenameModal(surface Surface, reference transfer.FileRef, value string, width, height int) {
+	modalWidth := min(width-4, 64)
+	if modalWidth < 20 || height < 7 {
+		return
+	}
+	const modalHeight = 6
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, "Rename through durable Job", StyleStatus)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Source: "+SanitizeTerminalText(string(reference.Location.Path)), StyleStatus)
+	surface.PutClipped(x+1, y+3, modalWidth-2, "Name: "+SanitizeTerminalText(value), StyleStatus)
+	surface.PutClipped(x+1, y+4, modalWidth-2, "[Enter] queue  [Esc] cancel", StyleStatus)
+}
+
+func renderDeleteModal(surface Surface, references []transfer.FileRef, confirmation, width, height int) {
+	modalWidth := min(width-4, 72)
+	if modalWidth < 20 || height < 8 {
+		return
+	}
+	const modalHeight = 7
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	title := "Delete frozen selection"
+	message := "This action is irreversible when trash is unavailable."
+	if confirmation >= 2 {
+		title = "Confirm irreversible deletion"
+		message = "Second confirmation: queue deletion of the frozen identities."
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, fmt.Sprintf("Targets: %d", len(references)), StyleStatus)
+	if len(references) != 0 {
+		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(string(references[0].Location.Path)), StyleStatus)
+	}
+	surface.PutClipped(x+1, y+4, modalWidth-2, message, StyleError)
+	surface.PutClipped(x+1, y+5, modalWidth-2, "[Enter] confirm  [Esc] cancel", StyleStatus)
+}
+
+func renderMoveModal(surface Surface, intents []Intent, width, height int) {
+	modalWidth := min(width-4, 72)
+	if modalWidth < 20 || height < 7 {
+		return
+	}
+	const modalHeight = 6
+	x := (width - modalWidth) / 2
+	y := (height - modalHeight) / 2
+	for row := 0; row < modalHeight; row++ {
+		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, modalWidth-2, "Confirm durable move", StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, fmt.Sprintf("Frozen operations: %d", len(intents)), StyleStatus)
+	if len(intents) != 0 {
+		line := fmt.Sprintf("%s → %s", intents[0].Source.Location.Path, intents[0].Location.Path)
+		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(line), StyleStatus)
+	}
+	surface.PutClipped(x+1, y+4, modalWidth-2, "Source is deleted only after destination verification. [Enter] queue  [Esc] cancel", StyleStatus)
 }
 
 func renderAuthModal(surface Surface, state AuthState, width, height int) {

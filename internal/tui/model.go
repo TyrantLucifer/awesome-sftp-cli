@@ -6,6 +6,9 @@ import (
 	"strings"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 type PaneID uint8
@@ -18,14 +21,17 @@ const (
 type Mode string
 
 const (
-	ModeNormal     Mode = "normal"
-	ModeFilter     Mode = "filter"
-	ModeVisual     Mode = "visual"
-	ModeVisualLine Mode = "visual_line"
-	ModeAuth       Mode = "auth"
-	ModeWorkspace  Mode = "workspace_save"
-	ModePath       Mode = "path"
-	ModeEndpoint   Mode = "endpoint"
+	ModeNormal        Mode = "normal"
+	ModeFilter        Mode = "filter"
+	ModeVisual        Mode = "visual"
+	ModeVisualLine    Mode = "visual_line"
+	ModeAuth          Mode = "auth"
+	ModeWorkspace     Mode = "workspace_save"
+	ModePath          Mode = "path"
+	ModeEndpoint      Mode = "endpoint"
+	ModeRename        Mode = "rename"
+	ModeMoveConfirm   Mode = "move_confirm"
+	ModeDeleteConfirm Mode = "delete_confirm"
 )
 
 type SortKey string
@@ -353,19 +359,38 @@ func (p PreviewState) DisplayText() string {
 }
 
 type Model struct {
-	Panes   [2]PaneState
-	Active  PaneID
-	Mode    Mode
-	Count   int
-	Preview PreviewState
-	Auth    AuthState
-	Notice  string
+	Panes              [2]PaneState
+	Active             PaneID
+	Mode               Mode
+	Count              int
+	Preview            PreviewState
+	Auth               AuthState
+	Clipboard          ClipboardState
+	Jobs               []transfer.JobView
+	ShowJobs           bool
+	JobCursor          int
+	Notice             string
+	DeleteConfirmation int
 
 	workspaceName []rune
 	pathInput     []rune
 	endpointInput []rune
+	renameInput   []rune
+	pendingRename transfer.FileRef
+	pendingDelete []transfer.FileRef
+	pendingMove   []Intent
+	repeatDelete  []transfer.FileRef
+	repeatMove    []Intent
+	repeatIntents []Intent
 	Width         int
 	Height        int
+}
+
+type ClipboardState struct {
+	Kind       transfer.ClipboardKind
+	Reference  transfer.FileRef
+	References []transfer.FileRef
+	Ready      bool
 }
 
 func NewModel(left, right PaneState) Model {
@@ -385,55 +410,91 @@ func NewModel(left, right PaneState) Model {
 type IntentKind string
 
 const (
-	IntentList            IntentKind = "list"
-	IntentPreview         IntentKind = "preview"
-	IntentPreviewCancel   IntentKind = "preview_cancel"
-	IntentAuthResolve     IntentKind = "auth_resolve"
-	IntentWorkspaceSave   IntentKind = "workspace_save"
-	IntentConnectEndpoint IntentKind = "connect_endpoint"
-	IntentReleaseEndpoint IntentKind = "release_endpoint"
+	IntentList               IntentKind = "list"
+	IntentPreview            IntentKind = "preview"
+	IntentPreviewCancel      IntentKind = "preview_cancel"
+	IntentAuthResolve        IntentKind = "auth_resolve"
+	IntentWorkspaceSave      IntentKind = "workspace_save"
+	IntentConnectEndpoint    IntentKind = "connect_endpoint"
+	IntentReleaseEndpoint    IntentKind = "release_endpoint"
+	IntentTransferCapture    IntentKind = "transfer_capture"
+	IntentPrepareDelete      IntentKind = "prepare_delete"
+	IntentPrepareRename      IntentKind = "prepare_rename"
+	IntentCreateCopyJob      IntentKind = "create_copy_job"
+	IntentCreateDeleteJob    IntentKind = "create_delete_job"
+	IntentJobList            IntentKind = "job_list"
+	IntentJobPause           IntentKind = "job_pause"
+	IntentJobResume          IntentKind = "job_resume"
+	IntentJobCancel          IntentKind = "job_cancel"
+	IntentJobResolveConflict IntentKind = "job_resolve_conflict"
 )
 
 const PreviewByteLimit = 64 * 1024
 
 type Intent struct {
-	Kind                 IntentKind
-	Pane                 PaneID
-	Location             domain.Location
-	Limit                int
-	ChallengeID          string
-	Answer               []byte
-	Cancel               bool
-	Name                 string
-	Endpoint             domain.Endpoint
-	EndpointID           domain.EndpointID
-	Connection           domain.ConnectionState
-	CapabilityGeneration uint64
-	Capabilities         domain.CapabilitySnapshot
-	CommitEndpoint       bool
+	Kind                  IntentKind
+	Pane                  PaneID
+	Location              domain.Location
+	Locations             []domain.Location
+	Limit                 int
+	ChallengeID           string
+	Answer                []byte
+	Cancel                bool
+	Name                  string
+	Endpoint              domain.Endpoint
+	EndpointID            domain.EndpointID
+	Connection            domain.ConnectionState
+	CapabilityGeneration  uint64
+	Capabilities          domain.CapabilitySnapshot
+	CommitEndpoint        bool
+	Clipboard             transfer.ClipboardKind
+	Source                transfer.FileRef
+	Target                transfer.FileRef
+	Recursive             bool
+	Confirmed             bool
+	IrreversibleConfirmed bool
+	JobID                 domain.JobID
+	Resolution            transfer.ConflictPolicy
+	ApplyAll              bool
 }
 
 type Key string
 
 const (
-	KeyTab          Key = "tab"
-	KeyParent       Key = "parent"
-	KeyDown         Key = "down"
-	KeyUp           Key = "up"
-	KeyOpen         Key = "open"
-	KeyVisual       Key = "visual"
-	KeyVisualLine   Key = "visual_line"
-	KeyMark         Key = "mark"
-	KeyFilter       Key = "filter"
-	KeyBackspace    Key = "backspace"
-	KeyEscape       Key = "escape"
-	KeySubmit       Key = "submit"
-	KeySave         Key = "save"
-	KeySort         Key = "sort"
-	KeyToggleHidden Key = "toggle_hidden"
-	KeyRefresh      Key = "refresh"
-	KeyPath         Key = "path"
-	KeyEndpoint     Key = "endpoint"
+	KeyTab                   Key = "tab"
+	KeyParent                Key = "parent"
+	KeyDown                  Key = "down"
+	KeyUp                    Key = "up"
+	KeyOpen                  Key = "open"
+	KeyVisual                Key = "visual"
+	KeyVisualLine            Key = "visual_line"
+	KeyMark                  Key = "mark"
+	KeyFilter                Key = "filter"
+	KeyBackspace             Key = "backspace"
+	KeyEscape                Key = "escape"
+	KeySubmit                Key = "submit"
+	KeySave                  Key = "save"
+	KeySort                  Key = "sort"
+	KeyToggleHidden          Key = "toggle_hidden"
+	KeyRefresh               Key = "refresh"
+	KeyPath                  Key = "path"
+	KeyEndpoint              Key = "endpoint"
+	KeyCopy                  Key = "copy"
+	KeyCut                   Key = "cut"
+	KeyPaste                 Key = "paste"
+	KeyDelete                Key = "delete"
+	KeyRename                Key = "rename"
+	KeyRepeat                Key = "repeat"
+	KeyJobs                  Key = "jobs"
+	KeyJobPause              Key = "job_pause"
+	KeyJobResume             Key = "job_resume"
+	KeyJobCancel             Key = "job_cancel"
+	KeyConflictOverwrite     Key = "conflict_overwrite"
+	KeyConflictSkip          Key = "conflict_skip"
+	KeyConflictAutoRename    Key = "conflict_auto_rename"
+	KeyConflictOverwriteAll  Key = "conflict_overwrite_all"
+	KeyConflictSkipAll       Key = "conflict_skip_all"
+	KeyConflictAutoRenameAll Key = "conflict_auto_rename_all"
 )
 
 type Action interface{ isAction() }
@@ -507,6 +568,33 @@ type WorkspaceSaveResult struct {
 	Name    string
 	Message string
 }
+type ClipboardCaptured struct {
+	Clipboard  transfer.ClipboardKind
+	Reference  transfer.FileRef
+	References []transfer.FileRef
+	Message    string
+}
+type DeletePrepared struct {
+	References []transfer.FileRef
+	Message    string
+}
+type RenamePrepared struct {
+	Reference transfer.FileRef
+	Message   string
+}
+type JobCreated struct {
+	JobID   domain.JobID
+	State   job.State
+	Message string
+}
+type JobsLoaded struct {
+	Jobs    []transfer.JobView
+	Message string
+}
+type JobUpdated struct {
+	Snapshot jobstore.Snapshot
+	Message  string
+}
 
 func (KeyPress) isAction()              {}
 func (CountDigit) isAction()            {}
@@ -522,6 +610,12 @@ func (AuthChallengeReceived) isAction() {}
 func (PaneConnected) isAction()         {}
 func (PaneConnectionChanged) isAction() {}
 func (WorkspaceSaveResult) isAction()   {}
+func (ClipboardCaptured) isAction()     {}
+func (DeletePrepared) isAction()        {}
+func (RenamePrepared) isAction()        {}
+func (JobCreated) isAction()            {}
+func (JobsLoaded) isAction()            {}
+func (JobUpdated) isAction()            {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

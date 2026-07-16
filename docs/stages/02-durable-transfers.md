@@ -1,6 +1,6 @@
 # Stage 2 — Durable Transfers
 
-- **状态**：Not Started
+- **状态**：Complete
 - **阶段类型**：持久化写操作与数据安全
 - **前置条件**：[Stage 1 — Read-only Explorer](01-read-only-explorer.md) 已通过退出门禁
 - **完成后进入**：[Stage 3 — Preview, Edit & Cache](03-preview-edit-cache.md)
@@ -41,6 +41,7 @@
 - 写操作必须扩展共享 Provider 契约，不能通过临时 shell 命令绕开系统 OpenSSH、结构化错误和取消语义。
 - Stage 0/1 的 Fake Provider、临时 `sshd`、断线和认证夹具可直接用于写入与恢复测试。
 - SQLite driver、连接策略和迁移机制必须直接实现 [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md)，不得临时切换 CGO driver 或通用 migration framework。
+- Version 1 领域表、Job 状态转换、事务事件序列和 daemon restart pause 语义由 [ADR-0012](../architecture/adr/0012-durable-job-schema-and-restart-state-machine.md) 冻结；共享后只能用新的前向 migration 修改。
 
 ### 3.2 数据安全不变量
 
@@ -174,16 +175,16 @@
 
 ## 6. 可验证退出标准
 
-- [ ] `y`/`d`/`p` 对单项、多选和目录产生稳定、可预览的 Operation Intent。
-- [ ] 四类路径（本地↔本地、本地↔远端、同远端、远端 A↔B）复制通过。
-- [ ] 远端 A↔B 中继不把完整文件落本地，峰值缓冲受配置上限约束。
-- [ ] 最终目标只在验证和提交后出现；失败时临时文件不会被列为成功结果。
-- [ ] 覆盖、跳过、自动改名、应用全部和执行中竞态均有确定行为。
-- [ ] 暂停、继续、取消、认证等待、冲突等待和失败重试可跨守护进程重启恢复。
-- [ ] 跨 Endpoint 移动在目标验证/提交前绝不删除源。
-- [ ] 验证不足或源删除失败时状态为 `completed_with_source_retained`，且用户可定位两份文件。
-- [ ] `kill -9`、断网、短写、权限、磁盘满和陈旧 `stat` 故障矩阵通过。
-- [ ] SQLite中无认证秘密；filesystem/probe、final-absent intent bootstrap、wrong DB零目录写、sidecar recovery、checksum+SQL lexer、per-head whole-schema、exact runner tables、无/单/多pending attempt/backup sanitize/hold/显式resume、retention/space/fullsync/no-replace、最终清attempt→retention→checkpoint→immutable与4/8/264MiB online WAL预算均通过；损坏/历史不符/迁移失败保留原库/WAL/备份并安全停写。
+- [x] `y`/`d`/`p` 对单项、多选和目录产生稳定、可预览的 Operation Intent。
+- [x] 四类路径（本地↔本地、本地↔远端、同远端、远端 A↔B）复制通过。
+- [x] 远端 A↔B 中继不把完整文件落本地，峰值缓冲受配置上限约束。
+- [x] 最终目标只在验证和提交后出现；失败时临时文件不会被列为成功结果。
+- [x] 覆盖、跳过、自动改名、应用全部和执行中竞态均有确定行为。
+- [x] 暂停、继续、取消、认证等待、冲突等待和失败重试可跨守护进程重启恢复。
+- [x] 跨 Endpoint 移动在目标验证/提交前绝不删除源。
+- [x] 验证不足或源删除失败时状态为 `completed_with_source_retained`，且用户可定位两份文件。
+- [x] `kill -9`、断网、短写、权限、磁盘满和陈旧 `stat` 故障矩阵通过。
+- [x] SQLite中无认证秘密；filesystem/probe、final-absent intent bootstrap、wrong DB零目录写、sidecar recovery、checksum+SQL lexer、per-head whole-schema、exact runner tables、无/单/多pending attempt/backup sanitize/hold/显式resume、retention/space/fullsync/no-replace、最终清attempt→retention→checkpoint→immutable与4/8/264MiB online WAL预算均通过；损坏/历史不符/迁移失败保留原库/WAL/备份并安全停写。
 
 ## 7. 测试矩阵
 

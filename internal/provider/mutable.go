@@ -16,6 +16,17 @@ type MutableProvider interface {
 	Remove(context.Context, RemoveRequest) error
 }
 
+// TrashProvider is an optional mutation facet. Callers may use it only when
+// the same frozen capability snapshot explicitly advertises "trash".
+type TrashProvider interface {
+	Trash(context.Context, TrashRequest) error
+}
+
+type TrashRequest struct {
+	Location domain.Location
+	Expected *domain.Fingerprint
+}
+
 type WriteDisposition string
 
 const (

@@ -51,7 +51,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 	case *tcell.EventKey:
 		switch event.Key() {
 		case tcell.KeyEnter:
-			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint {
+			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm {
 				return KeyPress{Key: KeySubmit}, true
 			}
 		case tcell.KeyTab:
@@ -61,7 +61,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 		case tcell.KeyBackspace:
 			return KeyPress{Key: KeyBackspace}, true
 		case tcell.KeyRune:
-			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint {
+			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename {
 				return TextInput{Text: event.Str()}, true
 			}
 			if value := event.Str(); len(value) == 1 && value[0] >= '0' && value[0] <= '9' {
@@ -96,6 +96,38 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 				return KeyPress{Key: KeyPath}, true
 			case "c":
 				return KeyPress{Key: KeyEndpoint}, true
+			case "y":
+				return KeyPress{Key: KeyCopy}, true
+			case "d":
+				return KeyPress{Key: KeyCut}, true
+			case "D":
+				return KeyPress{Key: KeyDelete}, true
+			case "r":
+				return KeyPress{Key: KeyRename}, true
+			case ".":
+				return KeyPress{Key: KeyRepeat}, true
+			case "p":
+				return KeyPress{Key: KeyPaste}, true
+			case "J":
+				return KeyPress{Key: KeyJobs}, true
+			case "P":
+				return KeyPress{Key: KeyJobPause}, true
+			case "U":
+				return KeyPress{Key: KeyJobResume}, true
+			case "C":
+				return KeyPress{Key: KeyJobCancel}, true
+			case "w":
+				return KeyPress{Key: KeyConflictOverwrite}, true
+			case "x":
+				return KeyPress{Key: KeyConflictSkip}, true
+			case "a":
+				return KeyPress{Key: KeyConflictAutoRename}, true
+			case "W":
+				return KeyPress{Key: KeyConflictOverwriteAll}, true
+			case "X":
+				return KeyPress{Key: KeyConflictSkipAll}, true
+			case "A":
+				return KeyPress{Key: KeyConflictAutoRenameAll}, true
 			default:
 				return TextInput{Text: event.Str()}, true
 			}

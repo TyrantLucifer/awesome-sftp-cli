@@ -34,6 +34,7 @@ func (p *contractProvider) Snapshot(context.Context) (domain.EndpointSnapshot, e
 
 func TestProviderContract(t *testing.T) {
 	contracttest.Run(t, contractFactory{})
+	contracttest.RunMutable(t, contractFactory{})
 }
 
 func (contractFactory) New(t *testing.T) contracttest.Fixture {
@@ -217,6 +218,36 @@ func TestReadHonorsRangeFingerprintAndCancellation(t *testing.T) {
 	})
 	if !domain.IsCode(err, domain.CodeConflict) {
 		t.Fatalf("fingerprint mismatch error = %v, want conflict", err)
+	}
+}
+
+func TestMutationsCannotTraverseParentSymlinkOutsideRoot(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Fatal(err)
+	}
+	implementation := newTestProvider(t, root, 16)
+	location := normalize(t, implementation, "/escape/created")
+	handle, err := implementation.OpenWrite(context.Background(), providerapi.OpenWriteRequest{
+		Location:    location,
+		Disposition: providerapi.WriteCreateNew,
+	})
+	if handle != nil || err == nil {
+		t.Fatalf("OpenWrite through parent symlink = (%#v, %v), want rejection", handle, err)
+	}
+	var operationError *domain.OpError
+	if !errors.As(err, &operationError) || operationError.Effect != domain.EffectNone {
+		t.Fatalf("OpenWrite error = %v, want no-effect OpError", err)
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "created")); !os.IsNotExist(statErr) {
+		t.Fatalf("outside file exists after rejected mutation: %v", statErr)
+	}
+	if _, err := implementation.Mkdir(context.Background(), providerapi.MkdirRequest{Location: location, Exclusive: true}); err == nil {
+		t.Fatal("Mkdir through parent symlink succeeded")
+	}
+	if _, statErr := os.Stat(filepath.Join(outside, "created")); !os.IsNotExist(statErr) {
+		t.Fatalf("outside directory exists after rejected mutation: %v", statErr)
 	}
 }
 

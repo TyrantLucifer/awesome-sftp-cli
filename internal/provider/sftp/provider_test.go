@@ -75,7 +75,10 @@ func (contractFactory) New(t *testing.T) contracttest.Fixture {
 	}}
 }
 
-func TestProviderContract(t *testing.T) { contracttest.Run(t, contractFactory{}) }
+func TestProviderContract(t *testing.T) {
+	contracttest.Run(t, contractFactory{})
+	contracttest.RunMutable(t, contractFactory{})
+}
 
 func TestMapErrorClassifiesRemoteStatusAndConnectionLoss(t *testing.T) {
 	implementation := &Provider{endpoint: domain.Endpoint{ID: testEndpointID}}

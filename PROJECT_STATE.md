@@ -1,14 +1,21 @@
 # Project State
 
 - **Updated**: 2026-07-16
-- **Lifecycle**: Stage 2 durable transfers Not Started
-- **Active stage**: Stage 2 — Durable Transfers
+- **Lifecycle**: Stage 3 preview, edit and cache Not Started
+- **Active stage**: Stage 3 — Preview, Edit & Cache
+- **Current milestone**: Stage 3 contract intake — managed cache and lease boundary
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
 
-Stage 1 is complete. The final implementation candidate is commit `90cbfea81bd2d802bd3f7579a0b192c81ba3281b`, tree `53c7b1ac62e809b7046ea366701a21e6dc0bf757`; [Hosted run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) passed 24/24 jobs. Its auth job passed the real OpenSSH matrix, two-sshd recovery/daemon-restart scenarios and MIT Kerberos/GSSAPI valid, missing, expired and externally renewed ticket cases. M1.4 also closes packet-bounded remote directory enumeration through ADR-0011, all three Endpoint combinations, workspace reopen, nearest-parent recovery, capability replacement, and native macOS/Linux PTY/security evidence. Stage 2 is intentionally Not Started.
+Stage 1 is complete at merge commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) is green. Stage 2 is complete on `codex/stage2-durable-transfers`. M2.1's Version 1 state foundation covers the exact schema/contract, APFS/ext4/XFS gates, atomic bootstrap, migration/backup/retention/WAL budgets, transactional Job/events, deterministic restart recovery, process-death boundaries, and fail-closed Stage 1 browsing. Exact SHA `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` passed [Hosted run 29475833368](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475833368); both Linux native jobs for `f83aa45de9b83f42d6f64944401ddde0e1e92d01` passed ext4/XFS plus real XFS `ENOSPC` rollback in [run 29476167115](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29476167115).
+
+M2.2 is complete. It has shared Fake/LocalFS/SFTP mutation contracts, frozen single-file plans, a bounded SHA-256 part/verify/commit worker, real SQLite checkpoint resume, daemon-owned scheduling, pre-return endpoint leases, exact-descriptor restart rehydration, durable conflicts, controls, `y`/`d`/`p`, and a bounded polling `J` Jobs view. Short I/O, disconnect/resume, permission, resource exhaustion, commit-response loss, abrupt-handle recovery and secret-zero-persistence fixtures pass. Exact SHA `811ce6b90364446612721ba7cb809a284d633521` passed complete Hosted runs [29482708033](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29482708033) and [29482709588](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29482709588), including real local and bidirectional temporary-sshd PTY workflows plus Stage 1 auth/recovery.
+
+M2.3 is complete. Frozen directory-root plans carry hard queue/page/depth budgets; the million-entry synthetic discovery, 100 GiB synthetic bounded checkpoint, nested copy, conservative symlink handling, daemon restart, same-remote and two-independent-sshd remote A→B relay tests pass. The default discovery budgets are 64 queued items, 256 entries per Provider page and depth 128; fresh/recovery buffer ceilings are 256/512 KiB. Bounded results and selective retry are durable. Exact SHA `eb4f152f305812f30e7573a690e570e8ca41b96b` passed complete Hosted runs [29484442378](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29484442378) and [29484446997](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29484446997).
+
+M2.4 and Stage 2 are complete. Same-Endpoint rename is selected only by an explicit frozen `atomic_rename` capability and proved postconditions; all other moves use copy→verify→commit→source revalidation→conditional delete. Source change/capability loss/unproved directory verification/delete uncertainty ends as `completed_with_source_retained`. `D` has frozen-scope plus irreversible confirmation, `r` is a durable same-Endpoint move, reliable advertised trash is preferred, symlinks are never followed, and count/`.` cannot bypass move/delete confirmation. The native PTY drives copy, confirmed cut/paste move, rename, two-confirmation delete and Jobs reattach. Exact implementation SHA `54b0285d7278d58e67c35a280fa8b996a99a321d`, tree `3fe5af7767a61fd10c5608431ff81cf361634ce8`, passed complete [push run 29488697276](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29488697276) on attempt 2 and [PR run 29488700235](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29488700235). Stage 3 remains Not Started.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -36,19 +43,28 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Perform the ADR-0008 dependency intake for exact `modernc.org/sqlite v1.53.0` and `modernc.org/libc v1.73.4`, including license/module/vulnerability, dual-toolchain, four-target and native database checks, before creating the Stage 2 schema or migration runner.
+Freeze the Stage 3 managed cache/lease contract and write RED lease-lifecycle tests before external-edit wiring.
+
+## Current risks
+
+- Stage 3 must reuse Stage 2's Planner→Job→Worker→Verify→Commit path; preview, cache and external-edit flows must not introduce a second mutation path.
+- APFS can be exercised locally, but ext4/XFS database semantics require native Linux Hosted fixtures; cross-builds are not acceptance evidence.
+- GUI opener behavior and managed cache lease cleanup differ by platform; Stage 3 must validate both macOS and Linux adapters.
+- Stage 2's persistent state and destructive operations are complete but remain fail-closed to the verified Stage 1 read-only surface whenever their state/capability gates cannot be proved.
 
 ## Required reading for the next session
 
 1. [Documentation map](docs/README.md)
-2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 2
-3. [Feature matrix](docs/product/feature-matrix.md), Stage 2 rows
-4. [Stage 2 specification](docs/stages/02-durable-transfers.md)
-5. [Stage 1 verification](docs/verification/stage-01.md), as the completed explorer handoff
+2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 3
+3. [Feature matrix](docs/product/feature-matrix.md), Stage 3 rows
+4. [Stage 3 specification](docs/stages/03-preview-edit-cache.md)
+5. [Stage 2 verification](docs/verification/stage-02.md), as the completed durable-transfer handoff
 6. [Approved design](docs/superpowers/specs/2026-07-14-vim-first-sftp-commander-design.md)
-7. ADRs referenced by Stage 2, beginning with ADR-0008
+7. ADRs referenced by Stage 3, beginning with the Stage 2 mutation and postcondition handoff
 
 ## Validation record
+
+Stage 2 baseline checks on 2026-07-16: clean `main` exactly matched `origin/main` at `b99fca2f729a8445b20935c69eda52cfa6dbbd28` / tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; `git fetch --prune origin` succeeded; the fixed Stage 2 branch did not exist locally or remotely and was created from that baseline; exact-main Hosted run `29468930350` reports `success`. Stage 2 evidence is maintained in [Stage 2 verification](docs/verification/stage-02.md).
 
 The completed command/result ledger is [Stage 1 verification](docs/verification/stage-01.md); [Stage 0 verification](docs/verification/stage-00.md) remains the foundation handoff. On the final implementation tree, `GOTOOLCHAIN=go1.26.5 make ci`, exact `GOTOOLCHAIN=go1.25.12 make check`, focused current/oldstable integration tests, focused race, shell syntax and pollution checks passed. This covers docs, unit/Provider contracts, full race, lint, four fuzz smokes, supply chain, actionlint and four target builds. Hosted run [29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) then passed all 24 quality, auth, native, oldstable, build, reproducibility and comparison jobs.
 
@@ -66,7 +82,7 @@ The accepted final pre-Hosted local closeout checkpoint is tree `5d598eea00fac2b
 - GUI opener behavior differs by platform. Stage 3 must implement platform adapters and validate lease/change detection on both macOS and Linux.
 - Seven user-owned JetBrains files are present under ignored `.idea/`: `.gitignore`, `awesome-mac-sftp.iml`, `go.imports.xml`, `misc.xml`, `modules.xml`, `vcs.xml` and `workspace.xml`. They are preserved local IDE metadata and are not product-candidate content. Ignored `.superpowers/`, `coverage/` and `dist/` are respectively disposable coordination output and reproducible validation artifacts; none are tracked.
 - Final platform-security fixtures cover real Darwin deny/direct/inherited ACLs, Linux access/default ACL xattrs, cross-process locking and a root-gated hostile-other-UID socket peer. Local race, exact Go 1.25.12, docs and actionlint checks pass, and all four native Hosted jobs passed in run 29417470068; DAEM-002/SEC-001 are Verified.
-- Stage 1 is a production-grade read-only explorer slice, not a production-ready 1.0 release. Copy, move, upload, rename, delete, durable jobs and SQLite persistence remain Stage 2; external editing/cache remains Stage 3; recursive search/helper remains Stage 4; direct transfer and scale hardening remain Stage 5; release readiness remains Stage 6.
+- Stage 1 remains the fail-closed Explorer baseline. Stage 2 now adds copy, move, upload, rename, delete, durable Jobs and SQLite persistence but does not claim 1.0 production readiness; external editing/cache remains Stage 3, recursive search/helper Stage 4, direct transfer/scale hardening Stage 5, and release readiness Stage 6.
 
 ## Working-tree policy
 

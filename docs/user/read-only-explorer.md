@@ -1,6 +1,6 @@
-# Read-only Explorer Guide
+# Explorer Baseline Guide
 
-This guide covers the Stage 1 `amsftp` browser. The current interface is deliberately read-only: it can list directories and preview bounded file content, but it has no copy, move, upload, delete, rename, or shell operation.
+This guide covers the Stage 1 `amsftp` browsing baseline: directory listing, bounded preview, OpenSSH reuse, workspaces, recovery, and diagnostics remain available in Stage 2. Durable copy, move, rename, delete, conflict, and Jobs controls are documented in the [Durable Transfers guide](durable-transfers.md). Shell, external editing, and managed cache remain deferred to Stage 3.
 
 ## Prerequisites
 
@@ -36,12 +36,12 @@ With no arguments, the startup picker combines saved workspaces and selectable H
 | `c` | Switch only the active pane to `local` or an SSH Host alias. The old remote session is released after the replacement listing succeeds. |
 | `/` | Filter the entries already received for the active directory. |
 | `s`, `H`, `R` | Cycle sort, toggle hidden entries, or refresh. |
-| `v`, `V`, `Space` | Maintain visual or discrete selection state; Stage 1 never turns it into a write operation. |
+| `v`, `V`, `Space` | Maintain visual or discrete selection state. Stage 2 transfer commands can consume this selection through a frozen Job plan. |
 | `S` | Save the two-pane workspace under a validated name. |
 | `Esc` | Cancel the innermost prompt or in-flight preview. |
 | `q`, `Ctrl-C` | Exit the client and restore the terminal. |
 
-The status line always includes `READ-ONLY`. A preview reads at most 64 KiB, marks truncation, sanitizes terminal control characters, and can be canceled without allowing an older result to replace a newer one.
+The browsing surface remains read-only: it never mutates a Provider directly. Stage 2 mutations are separate durable Job RPCs. A preview reads at most 64 KiB, marks truncation, sanitizes terminal control characters, and can be canceled without allowing an older result to replace a newer one.
 
 ## Workspaces
 

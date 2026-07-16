@@ -114,6 +114,12 @@ func TestDialLifecycleRejectsEstablishmentAfterParentCancellation(t *testing.T) 
 	}
 }
 
+func TestCloseTreatsItsOwnedCommandCancellationAsExpected(t *testing.T) {
+	if !isExpectedExit(context.Canceled) {
+		t.Fatal("Close-owned command cancellation would be reported as an OpenSSH failure")
+	}
+}
+
 func TestDialParentCancellationAfterNegotiationKeepsSessionAlive(t *testing.T) {
 	executable, err := os.Executable()
 	if err != nil {

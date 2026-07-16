@@ -61,7 +61,7 @@ go test -run='^$' -fuzz='^FuzzNormalizePath$' -fuzztime=1s ./internal/provider/f
 
 ## 4. 可执行程序的角色边界
 
-`cmd/amsftp` 是一个具有 `client`、`daemon`、`askpass`、`helper` 四种 dispatch 角色的二进制；无参数时默认角色为 `client`。只有完全匹配的内部 role token 与 `--help`/`--version` meta token 会被 dispatch 层消费；其他单/双 Location、`--workspace <name>` 或未来 client 参数均原样交给默认 client handler。Stage 0 尚未配置具体角色 handler，所以直接启动角色会按设计失败。可执行 smoke 只运行成功的 `--help` 与 `--version` meta-path；具体角色分派/参数保留由 `internal/app` 测试证明，不能用空 handler 的进程调用替代。
+`cmd/amsftp` 是一个具有 `client`、`daemon`、`askpass`、`helper` 四种 dispatch 角色的二进制；无参数时默认角色为 `client`。只有完全匹配的内部 role token 与 `--help`/`--version` meta token 会被 dispatch 层消费；其他单/双 Location、`--workspace <name>` 或未来 client 参数均原样交给默认 client handler。Stage 1–2 已配置 client、daemon 与 askpass 角色，Helper 仍按 Stage 4 fail closed；可执行 smoke、PTY、真实 OpenSSH、daemon recovery 与 `internal/app` 测试共同证明角色分派和参数保留，不能用空 handler 的进程调用替代。
 
 ## 5. 并发重复门禁
 

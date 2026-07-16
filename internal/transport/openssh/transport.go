@@ -198,6 +198,9 @@ func (s *Session) Close() error {
 }
 
 func isExpectedExit(err error) bool {
+	if errors.Is(err, context.Canceled) {
+		return true
+	}
 	var exit *exec.ExitError
 	if !errors.As(err, &exit) {
 		return false

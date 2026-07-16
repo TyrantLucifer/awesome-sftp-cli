@@ -67,7 +67,17 @@ func New(config Config) (*Provider, error) {
 	if maximum < 1 {
 		return nil, errors.New("create SFTP provider: maximum cursors must be positive")
 	}
-	capabilities, err := domain.NewCapabilitySnapshot(domain.CapabilityRevision{SessionID: config.SessionID, Generation: 1}, true, []domain.Capability{{Name: "read", Version: 1}})
+	capabilityItems := []domain.Capability{{Name: "read", Version: 1}}
+	_, hasFsync := config.Client.HasExtension("fsync@openssh.com")
+	_, hasHardlink := config.Client.HasExtension("hardlink@openssh.com")
+	if hasFsync && hasHardlink {
+		capabilityItems = append(capabilityItems, domain.Capability{Name: "write", Version: 1})
+	}
+	capabilities, err := domain.NewCapabilitySnapshot(
+		domain.CapabilityRevision{SessionID: config.SessionID, Generation: 1},
+		true,
+		capabilityItems,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -322,13 +332,13 @@ func (p *Provider) entryFromInfo(location domain.Location, name string, info os.
 	}
 	size := uint64(max(info.Size(), 0))
 	mode := uint32(info.Mode())
-	modified := info.ModTime()
+	modified := info.ModTime().UTC()
 	precision := domain.TimePrecision("second")
 	return domain.Entry{Location: location, Name: name, Kind: kind, Metadata: domain.Metadata{Size: &size, Mode: &mode, ModifiedAt: &modified, ModifiedPrecision: &precision}, Fingerprint: fingerprint(info)}
 }
 func fingerprint(info os.FileInfo) domain.Fingerprint {
 	size := uint64(max(info.Size(), 0))
-	modified := info.ModTime()
+	modified := info.ModTime().UTC()
 	precision := domain.TimePrecision("second")
 	return domain.Fingerprint{Size: &size, ModifiedAt: &modified, ModifiedPrecision: &precision}
 }

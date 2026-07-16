@@ -2,14 +2,14 @@
 
 > - 产品：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
 > - 基线：已批准产品设计
-> - 实现状态：Stage 0–1 已完成；Stage 2–6 尚未开始
+> - 实现状态：Stage 0–2 已完成；Stage 3–6 尚未开始
 > - 最后更新：2026-07-16
 
 ## 1. 使用规则
 
 本矩阵是 1.0 交付范围的逐项事实源。每条能力使用稳定 ID；ID 一经进入矩阵不得复用，能力被取消时保留原行并将状态改为 `Removed`，同时链接对应 ADR。实现不得只在代码或聊天中增加能力而不更新本矩阵。
 
-Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在只完成 Stage 1 slice 时仍保持 `In Progress`，Stage 2–6 未开始行保持 `Planned`。Stage 1 最终实现树与真实 OpenSSH/Kerberos/recovery/native/reproducibility 证据见 [Stage 1 verification](../verification/stage-01.md)。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
+Stage 0–2 已完成且各阶段拥有完整验收范围的行已按证据标记为 `Verified`；验收仍由后续阶段共同拥有的行保持 `In Progress`，Stage 3–6 未开始行保持 `Planned`。Stage 1 最终实现树与真实 OpenSSH/Kerberos/recovery/native/reproducibility 证据见 [Stage 1 verification](../verification/stage-01.md)，Stage 2 证据见 [Stage 2 verification](../verification/stage-02.md)。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
 
 状态词义：
 
@@ -55,10 +55,10 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | AUTH-004 | OpenSSH 支持的 agent/密钥/交互认证 | 1 | Verified | SSH agent、文件密钥、硬件密钥、密码与多因素认证由已安装 OpenSSH 处理；产品只转交交互提示和结果。 | Real key, login-agent, password and key-passphrase+password MFA passed through the system OpenSSH/askpass path in Hosted job 87330882913; fixed argv does not replace OpenSSH credential providers. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
 | AUTH-005 | ProxyCommand/ProxyJump 链路 | 1 | Verified | 用户现有代理命令与跳板配置无需复制到产品即可用于浏览和任务连接。 | Real ProxyCommand and ProxyJump SFTP cases passed without application-side config parsing in Hosted job 87330882913. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
 | AUTH-006 | askpass broker | 1 | Verified | daemon 将 OpenSSH 交互提示发送到当前受信任 TUI，答案仅在内存和该次认证会话中存在；提示来源与目标端点清晰可见。 | Broker owner/race/detach/no-client/timeout/cancel/prompt-limit tests, same-binary askpass/TUI tests, focused race and real password/MFA/cancel fixtures pass. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
-| AUTH-007 | 无附着客户端时等待认证 | 2 | Planned | 任务需要交互认证且没有 TUI 时进入 `waiting_auth`；重新附着后可继续，不进行无限失败重试。 | 未实施；预期证据：后台任务认证过期、TUI 退出/重连状态机测试。 |
+| AUTH-007 | 无附着客户端时等待认证 | 2 | Verified | 任务需要交互认证且没有 TUI 时进入 `waiting_auth`；重新附着后可继续，不进行无限失败重试。 | Transfer Manager classifies `auth_required` separately as durable `waiting_auth`; Resume returns it to queued after system OpenSSH auth is repaired. Existing real auth/reattach Hosted jobs cover broker detach/renewal. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | AUTH-008 | Host key 语义不降级 | 1 | Verified | StrictHostKeyChecking、known_hosts 和主机密钥变更完全遵循系统 OpenSSH；产品不自动接受未知或变化密钥。 | Known-host cases, explicit first-use confirmation, and changed-key fail-closed with unchanged known_hosts passed in Hosted job 87330882913. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
 | AUTH-009 | 不持久化认证秘密 | 1 | Verified | SQLite、配置、缓存、日志和诊断包中均不出现密码、私钥内容、askpass 答案、agent 数据或 Kerberos ticket。 | Injected password/MFA/passphrase markers were absent from test-owned config/runtime/log/workspace artifacts; Kerberos cache path/content-copy scans and destruction passed in Hosted job 87330882913. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
-| AUTH-010 | 认证失败可恢复 | 2 | Planned | 认证失败保留任务与安全检查点，展示端点和 OpenSSH 原因；票据/agent 修复后可手动或策略化重试。 | 未实施；预期证据：过期 ticket、锁定 agent、错误密码修复后的恢复测试。 |
+| AUTH-010 | 认证失败可恢复 | 2 | Verified | 认证失败保留任务与安全检查点，展示端点和 OpenSSH 原因；票据/agent 修复后可手动或策略化重试。 | Auth errors do not discard JobJournal state or part; Jobs exposes waiting reason/recent stable error, and explicit Resume reuses frozen Plan after external credential renewal. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 
 ## 5. 连接与端点
 
@@ -87,7 +87,7 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | PANE-006 | 文件元数据与类型展示 | 1 | Verified | 名称、类型、大小、修改时间、权限和链接信息按端点可用数据展示；未知字段不伪造。 | Shared LocalFS/SFTP Provider contracts and renderer snapshots cover kind, size, second-precision mtime, permissions, link target and absent fields. See [Stage 1 verification](../verification/stage-01.md). |
 | PANE-007 | 排序、隐藏文件与刷新 | 1 | Verified | 每栏可独立选择排序、显示隐藏文件和手动刷新；刷新尽量保留规范化路径对应的光标/标记。 | Independent-pane sort/hidden/refresh reducer tests and canonical Location cursor/mark remapping pass. See [Stage 1 verification](../verification/stage-01.md). |
 | PANE-008 | 直接路径导航 | 1 | Verified | 用户可输入绝对路径或进入父/子目录；无权限、不存在和非目录路径保留原位置并显示原因。 | Location/path-mode, parent/child/root, failed transaction and nearest-accessible-parent tests pass without changing a pane before success. See [Stage 1 verification](../verification/stage-01.md). |
-| PANE-009 | 符号链接可见且递归保守 | 2 | Planned | 链接目标信息可见；递归复制/搜索默认不跟随目录链接，除非用户策略显式允许并有循环保护。 | 未实施；预期证据：链接文件、目录环和跨边界链接的行为测试。 |
+| PANE-009 | 符号链接可见且递归保守 | 2 | Verified | 链接目标信息可见；递归复制/搜索默认不跟随目录链接，除非用户策略显式允许并有循环保护。 | M2.3 discovery emits links without recursing/copying; M2.4 recursive delete removes only the link and preserves its target. Million-entry/depth and dedicated symlink tests pass on the exact candidate. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | PANE-010 | 部分结果状态 | 1 | Verified | 列表被取消、断线或权限错误截断时明确标为 partial，不把已显示条目误报为完整目录。 | Provider contract plus generation-safe reducer/render tests retain partial pages, reject stale completion and recover on refresh. See [Stage 1 verification](../verification/stage-01.md). |
 
 ## 7. 工作区与启动
@@ -110,16 +110,16 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | VIM-003 | `Tab` 切换活动栏 | 1 | Verified | `Tab` 只改变活动栏，两个 PaneState 均完整保留；视觉焦点清晰。 | Pane-state independence, tcell translation and focused renderer snapshots pass under full race/CI gates. See [Stage 1 verification](../verification/stage-01.md). |
 | VIM-004 | `v`/`V` 连续选择 | 1 | Verified | Visual 选择可扩展、收缩、确认或取消；刷新后按规范化条目身份重映射，无法重映射时明确移除。 | Visual selection reducer tests and canonical Location remapping across refresh pass. See [Stage 1 verification](../verification/stage-01.md). |
 | VIM-005 | `Space` 离散标记 | 1 | Verified | Normal 模式下 `Space` 独立增减当前条目标记，与连续 Visual 选择可合并为操作集合且不重复。 | Discrete mark toggling, selection identity and refresh remapping tests pass without producing mutation intents. See [Stage 1 verification](../verification/stage-01.md). |
-| VIM-006 | `y` 复制引用 | 2 | Planned | `y` 将选中 Location 引用写入内部剪贴板，不读取文件内容、不立即启动传输。 | 未实施；预期证据：跨端点 clipboard 序列化与源变化前计划测试。 |
-| VIM-007 | `d` 剪切引用 | 2 | Planned | `d` 只标记 cut intent，不删除或重命名任何源；状态栏清晰显示待移动项。 | 未实施；预期证据：按下 `d` 后 provider 零写操作断言及 UI 快照。 |
-| VIM-008 | `p` 创建操作意图 | 2 | Planned | `p` 以剪贴板和目标栏位置创建不可变 OperationIntent；普通复制直接排队，高风险项进入确认。 | 未实施；预期证据：copy/cut、多选、目标变化和风险分支测试。 |
-| VIM-009 | `D` 执行真实删除 | 2 | Planned | 只有大写 `D` 进入删除计划与确认；确认内容包含端点、数量、目录递归和可逆性。 | 未实施；预期证据：大小写键差异、确认取消和不可逆警示快照测试。 |
-| VIM-010 | 计数前缀 | 2 | Planned | 支持如 `5j`、`3k` 和适用操作的计数；计数越界有确定截断且不会泄漏到下一命令。 | 未实施；预期证据：键序列解析与边界表驱动测试。 |
-| VIM-011 | `.` 重复 | 2 | Planned | 重复最近一次可重复的高层动作，重新绑定当前 Location 并重新执行能力/风险检查，不复用过期确认。 | 未实施；预期证据：rename/transfer 等可重复动作及高风险重新确认测试。 |
+| VIM-006 | `y` 复制引用 | 2 | Verified | `y` 将选中 Location 引用写入内部剪贴板，不读取文件内容、不立即启动传输。 | Reducer and PTY tests capture single/multi/directory FileRefs through the daemon without a mutation; Planner revalidates before Job creation. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| VIM-007 | `d` 剪切引用 | 2 | Verified | `d` 只标记 cut intent，不删除或重命名任何源；状态栏清晰显示待移动项。 | Lowercase `d` shares capture only; source mutation occurs only after confirmed `p`, destination commit, SHA-256 proof and source revalidation. PTY proves the separation. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| VIM-008 | `p` 创建操作意图 | 2 | Verified | `p` 以剪贴板和目标栏位置创建不可变 OperationIntent；普通复制直接排队，高风险项进入确认。 | Copy queues one Job per frozen item; cut paste opens a bounded move confirmation. Counted paste caps at 1,024 and all Jobs re-enter Planner/conflict checks. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| VIM-009 | `D` 执行真实删除 | 2 | Verified | 只有大写 `D` 进入删除计划与确认；确认内容包含端点、数量、目录递归和可逆性。 | Key/reducer tests distinguish `d`/`D`; `D` captures frozen identities then requires scope and irreversible confirmations. Native PTY proves both prompts and deletion. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| VIM-010 | 计数前缀 | 2 | Verified | 支持如 `5j`、`3k` 和适用操作的计数；计数越界有确定截断且不会泄漏到下一命令。 | Reducer bounds navigation at 1,000,000, freezes counted `y`/`d`/`D` runs, caps counted paste Jobs at 1,024 and clears counts after one command. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| VIM-011 | `.` 重复 | 2 | Verified | 重复最近一次可重复的高层动作，重新绑定当前 Location 并重新执行能力/风险检查，不复用过期确认。 | Copy repeats frozen intent; cut/rename reopens move confirmation; delete restarts both confirmations. Stale identities are revalidated by Planner. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | VIM-012 | 可取消的模式与弹层 | 1 | Verified | `Esc` 按层级退出输入、选择、预览或确认，不中断已经排队的后台任务。 | Auth, filter, path, endpoint, workspace, selection and preview cancellation tests prove layered Esc behavior; real auth cancel returns to TUI control. See [Stage 1 verification](../verification/stage-01.md). |
 | VIM-013 | 可配置键位且 Vim 默认不变 | 6 | Planned | 用户可重映射非保留动作并检测冲突；无配置时始终使用文档化 Vim 默认键位。 | 未实施；预期证据：默认 keymap 快照、冲突校验和自定义 round-trip 测试。 |
 | VIM-014 | 1.0 不实现宏与命名寄存器 | 6 | Planned | 帮助和配置 schema 不宣称完整宏/命名寄存器；相关键不会造成未定义破坏性行为。 | 未实施；预期证据：1.0 help 快照和保留键行为测试。 |
-| VIM-015 | `r` 重命名 | 2 | Planned | `r` 以当前或单个选中条目创建重命名意图，提交前验证同端点能力、目标冲突与源身份。 | 未实施；预期证据：文件/目录、目标存在、源变化和取消重命名测试。 |
+| VIM-015 | `r` 重命名 | 2 | Verified | `r` 以当前或单个选中条目创建重命名意图，提交前验证同端点能力、目标冲突与源身份。 | `r` rejects multi/root/same/invalid names, captures one frozen FileRef and creates a durable same-endpoint move. PTY rename and atomic/fallback tests pass. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | VIM-016 | `K`/`J`/`L` 抽屉快捷键 | 3 | Planned | 大写 `K` 打开 Preview、`J` 打开 Jobs、`L` 打开 Log；重复按键按定义收起或聚焦，不与小写导航串线。 | 未实施；预期证据：三个快捷键、重复按键和模式优先级 TUI 测试。 |
 | VIM-017 | `e`/`o` 文件动作 | 3 | Planned | `e` 始终进入 Vim-first 编辑流程，`o` 始终进入本机 opener 流程；目录或不支持对象给出明确反馈。 | 未实施；预期证据：本地/远端文件、目录和特殊对象的键位路由测试。 |
 | VIM-018 | `/`、`f`、`g/` 搜索键序列 | 4 | Planned | `/` 进入当前目录过滤，`f` 进入递归文件名搜索，`g/` 进入递归内容搜索；组合键超时/取消不触发其他写操作。 | 未实施；预期证据：键序列解析、Esc 取消和模式冲突测试。 |
@@ -132,11 +132,11 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | DAEM-001 | 按用户自动启动 daemon | 1 | Verified | 客户端连接不到 daemon 时可安全拉起一个当前用户实例；并发启动最终只有一个有效监听者。 | Ten-process lock convergence, stale socket, five reconnects, idle cancellation, PTY exit/re-entry and four Hosted native legs pass. See [Stage 1 verification](../verification/stage-01.md). |
 | DAEM-002 | 权限受限 Unix socket 与路径信任链 | 1 | Verified | config/state/cache/log/runtime应用根为euid-owned真实`0700`，文件/socket不宽于`0600`；ancestor/ssh用integrity-only，owner roots/files用owner-private。仅受测APFS/ext4/XFS（runtime可含受测tmpfs）明确no-ACL/unsupported可回到DAC；真实ACL查询/解析错误、NFSv4/CIFS/未知FS、不安全path/override均fail closed。runtime唯一宽松DAC回退是root-owned sticky`01777 /tmp`；peer非当前uid不可连接且无TCP。 | Path/ACL/lock/socket tests include Darwin kernel deny/direct/inherited allow profiles, Linux kernel access/default ACLs, cross-process lock exclusivity and a root-gated real hostile-other-UID socket peer. All four native security steps passed in exact-head Hosted run 29417470068. See [Stage 1 verification](../verification/stage-01.md). |
 | DAEM-003 | TUI 可附着/分离 | 1 | In Progress | TUI 退出只关闭客户端连接；重新启动可恢复 panes/workspace 并订阅现有任务。 | Stage 1 client detach/re-entry and workspace restoration pass locally and in native PTY smokes; subscription to durable Stage 2 tasks is intentionally not yet implemented. See [Stage 1 verification](../verification/stage-01.md). |
-| DAEM-004 | TUI 退出后任务继续 | 2 | Planned | 最后一个 TUI 退出后，非交互任务继续运行；需要交互时进入等待状态。 | 未实施；预期证据：大文件复制中退出 TUI 后完成及 waiting_auth/waiting_conflict 测试。 |
-| DAEM-005 | 事件流与重放游标 | 2 | Planned | 客户端按游标接收任务/连接事件；短暂断连后可补齐或用一致快照恢复，不重复执行命令。 | 未实施；预期证据：断连、事件缺口、重连重放与快照回退测试。 |
-| DAEM-006 | 单写者持久状态 | 2 | Planned | SQLite仅在本地APFS/ext4/XFS且跨进程WAL/full-durability probe通过。唯一pristine是final+sidecars全不存在；existing先raw identity，无sidecar才immutable，有合法sidecar先probe/recovery再验证whole-main schema/history。final-absent intent bootstrap、受测SQL lexer、original..target durable attempt、sanitized/hold backup、非ready状态显式恢复、retention/space/fullsync/no-replace及最终清attempt→retention→checkpoint→immutable均fail closed；online WAL为64MiB soft/256MiB stop/264MiB absolute。 | 未实施；预期证据：FS/probe、wrong DB零写、bootstrap、sidecar recovery、checksum/lexer/schema、attempt/backup/hold/retention、Darwin顺序、WAL预算/最终验证。 |
-| DAEM-007 | daemon 重启恢复 | 2 | Planned | 异常退出后重新启动可恢复未完成任务、缓存租约和连接需求，并先验证外部状态再继续。 | 未实施；预期证据：各任务阶段 kill -9 的恢复矩阵。 |
-| DAEM-008 | helper 不作为 daemon 前置 | 1 | In Progress | 本地 daemon 在所有远端均未安装 helper 时仍提供完整 Level 0 功能。 | The complete read-only Explorer runs only through LocalFS/system OpenSSH/SFTP with no helper binary or handshake; Level 0 transfer coverage belongs to Stage 2. See [Stage 1 verification](../verification/stage-01.md). |
+| DAEM-004 | TUI 退出后任务继续 | 2 | Verified | 最后一个 TUI 退出后，非交互任务继续运行；需要交互时进入等待状态。 | Manager owns a daemon context, not request context; client-cancellation test completes the Job, and PTY exits/reattaches to the same durable Jobs store. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DAEM-005 | 事件流与重放游标 | 2 | Verified | 客户端按游标接收任务/连接事件；短暂断连后可补齐或用一致快照恢复，不重复执行命令。 | Monotonic Job events are queried by after-sequence with bounded limits; request dedup and snapshot/Jobs reload tests prevent command replay across daemon restarts. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DAEM-006 | 单写者持久状态 | 2 | Verified | SQLite仅在本地APFS/ext4/XFS且跨进程WAL/full-durability probe通过。唯一pristine是final+sidecars全不存在；existing先raw identity，无sidecar才immutable，有合法sidecar先probe/recovery再验证whole-main schema/history。final-absent intent bootstrap、受测SQL lexer、original..target durable attempt、sanitized/hold backup、非ready状态显式恢复、retention/space/fullsync/no-replace及最终清attempt→retention→checkpoint→immutable均fail closed；online WAL为64MiB soft/256MiB stop/264MiB absolute。 | ADR-0008 的 filesystem/identity/bootstrap/probe/migration/backup/retention/WAL/crash 矩阵均通过；Hosted run 29476167115 的两个 Linux native 作业在 ext4 与私有 XFS 上通过完整状态套件和真实 ENOSPC 回滚。single-writer、busy、foreign DB 零写和 Stage 1 fail-closed degradation 同时覆盖。见 [M2.1 feature evidence](../verification/stage-02.md#m21-feature-evidence)。 See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DAEM-007 | daemon 重启恢复 | 2 | Verified | 异常退出后重新启动可恢复未完成任务、缓存租约和连接需求，并先验证外部状态再继续。 | M2.1 state recovery plus M2.2 part, M2.3 directory and M2.4 commit→delete restart fixtures prove conservative pause, external revalidation and explicit resume. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DAEM-008 | helper 不作为 daemon 前置 | 1 | Implemented | 本地 daemon 在所有远端均未安装 helper 时仍提供完整 Level 0 功能。 | Stage 1 Explorer and Stage 2 local/SFTP copy, same-remote and remote A→B relay all run without helper; exact M2.3 Hosted push/PR matrices prove the complete Level 0 baseline. See [Stage 2 verification](../verification/stage-02.md#m23--directory-copy-and-dual-remote-relay). |
 
 ## 10. 预览
 
@@ -195,14 +195,14 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| JOB-001 | 持久化 Job | 2 | Planned | 每个写操作在执行前生成稳定 Job ID，并将意图、冻结计划、阶段、进度、决策和检查点事务化写入 SQLite。 | 未实施；预期证据：Job round-trip、事务回滚和 daemon 重启测试。 |
-| JOB-002 | 主状态机 | 2 | Planned | 支持 `draft → awaiting_confirmation → queued → running → verifying → completed`，非法跃迁被拒绝。 | 未实施；预期证据：全状态跃迁表驱动测试。 |
-| JOB-003 | 等待与终止状态 | 2 | Planned | 支持 `paused`、`waiting_auth`、`waiting_conflict`、`retry_wait`、`failed`、`canceled` 和 `completed_with_source_retained`，每个状态记录原因和允许动作。 | 未实施；预期证据：各状态入口、恢复动作和 UI 快照测试。 |
-| JOB-004 | 不可变操作计划 | 2 | Planned | 执行开始后源集合、目标、冲突/完整性策略和初始路由被冻结；变更要求新建或显式修订计划并留痕。 | 未实施；预期证据：运行中修改 workspace/clipboard 不影响 Job 的测试。 |
-| JOB-005 | 普通复制立即排队 | 2 | Planned | 无覆盖、删除或直传风险的复制由 `p` 直接进入 queued，不要求冗余确认。 | 未实施；预期证据：安全复制的零确认交互测试。 |
-| JOB-006 | 高风险计划确认 | 2 | Planned | 覆盖、递归删除、不可逆删除、跨端点移动和直传在执行危险阶段前展示源/目标/数量/策略/可逆性。 | 未实施；预期证据：五类风险计划快照、取消和确认测试。 |
-| JOB-007 | 队列与有界并发 | 2 | Planned | daemon 在配置的全局/端点并发上限内调度，公平推进多个任务，不能无限创建 goroutine、文件句柄或 SSH 连接。 | 未实施；预期证据：多端点并发、公平性、句柄和 goroutine 上限压力测试。 |
-| JOB-008 | 暂停、继续与取消 | 2 | Planned | 用户可暂停、继续或取消支持的任务；动作在安全检查点生效并明确当前阶段是否可中断。 | 未实施；预期证据：每个传输阶段的 pause/resume/cancel 状态机测试。 |
+| JOB-001 | 持久化 Job | 2 | Verified | 每个写操作在执行前生成稳定 Job ID，并将意图、冻结计划、阶段、进度、决策和检查点事务化写入 SQLite。 | Copy, move, rename and delete all call Manager create APIs that atomically persist V1 Plan/Job/steps/event before scheduler enqueue; no raw mutation RPC exists. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| JOB-002 | 主状态机 | 2 | Verified | 支持 `draft → awaiting_confirmation → queued → running → verifying → completed`，非法跃迁被拒绝。 | `TestStateTransitions` 穷举全部状态对，`TestTransitionIsTransactionalMonotonicAndRejectsIllegalState` 验证事务、事件序号、重复 request 与非法跃迁；current/Go 1.25.12 及 Hosted quality 均通过。见 [M2.1 feature evidence](../verification/stage-02.md#m21-feature-evidence)。 See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| JOB-003 | 等待与终止状态 | 2 | Verified | 支持 `paused`、`waiting_auth`、`waiting_conflict`、`retry_wait`、`failed`、`canceled` 和 `completed_with_source_retained`，每个状态记录原因和允许动作。 | Real transfer errors/actions enter each state; Jobs renders waiting/terminal/recovery/error summaries, and restart tests cover legal resume/cancel paths. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| JOB-004 | 不可变操作计划 | 2 | Verified | 执行开始后源集合、目标、冲突/完整性策略和初始路由被冻结；变更要求新建或显式修订计划并留痕。 | FileRef, descriptors, capability revisions, route, SHA-256, conflict, part and all memory/discovery budgets are persisted and cross-checked on DecodePlan. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| JOB-005 | 普通复制立即排队 | 2 | Verified | 无覆盖、删除或直传风险的复制由 `p` 直接进入 queued，不要求冗余确认。 | Copy PTY presses `y`, Tab, `p` and observes queued/completed without redundant confirmation; racing final still opens a durable conflict. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| JOB-006 | 高风险计划确认 | 2 | Verified | 覆盖、递归删除、不可逆删除、跨端点移动和直传在执行危险阶段前展示源/目标/数量/策略/可逆性。 | Cut paste shows frozen move confirmation; overwrite waits on conflict; delete shows scope plus irreversible confirmation. Direct is not a Stage 2 route and cannot be selected. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| JOB-007 | 队列与有界并发 | 2 | Verified | daemon 在配置的全局/端点并发上限内调度，公平推进多个任务，不能无限创建 goroutine、文件句柄或 SSH 连接。 | Manager uses fixed worker and queue caps (runtime 4/128; tests 1), acquires frozen endpoint leases before enqueue and bounded directory streams; saturation/control tests pass. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| JOB-008 | 暂停、继续与取消 | 2 | Verified | 用户可暂停、继续或取消支持的任务；动作在安全检查点生效并明确当前阶段是否可中断。 | Durable controls, post-close checkpoint refresh, cancel-part retention, event replay and `J` P/U/C reducer/IPC tests pass. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | JOB-009 | 任务级速度与带宽策略 | 5 | Planned | 可配置全局或任务级带宽上限；限速改变吞吐但不破坏校验、暂停和公平调度。 | 未实施；预期证据：确定性 token-bucket 单元测试和多任务吞吐基准。 |
 | JOB-010 | 任务历史与保留 | 6 | Planned | 成功/失败任务按配置保留摘要和验证证据，清理不删除仍被恢复/审计引用的数据。 | 未实施；预期证据：历史保留、清理边界和数据库迁移测试。 |
 
@@ -210,67 +210,67 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| XFER-001 | 内部 clipboard 保存 Location 引用 | 2 | Planned | `y`/`d` 保存 Endpoint ID、规范化路径、当时元数据与意图；粘贴时重新验证源，不持有完整内容。 | 未实施；预期证据：源修改/删除/重命名后的计划测试。 |
-| XFER-002 | 本地与远端任意方向复制 | 2 | Planned | local→local、local→remote、remote→local、同 remote 和 remote A→remote B 都通过同一 Job 模型完成。 | 未实施；预期证据：五种方向的文件/目录端到端矩阵。 |
-| XFER-003 | remote A→B 默认本机中继 | 2 | Planned | 不满足服务端路径时，daemon 使用固定大小缓冲从 A 读向 B 写，默认不把完整文件落本地磁盘。 | 未实施；预期证据：两 sshd 传输、进程 RSS 上限和缓存目录无完整落盘断言。 |
-| XFER-004 | 有界内存与背压 | 2 | Planned | 读取速度受目标写入背压约束；缓冲总量与并发配置成比例，不随文件大小增长。 | 未实施；预期证据：慢目标/快源的内存曲线和短写压力测试。 |
-| XFER-005 | 目标临时 part | 2 | Planned | 新内容先写目标目录中的唯一 `.part-<job-id>`；未验证完成前最终目标路径不出现新内容。 | 未实施；预期证据：写入任意偏移 kill -9 后目标/part 状态矩阵。 |
-| XFER-006 | 验证后原子提交 | 2 | Planned | 完成大小与策略要求的完整性验证后，使用端点支持的安全 rename 提交；无法保证原子时计划明确标示并采用保守流程。 | 未实施；预期证据：支持/不支持原子 rename provider 的提交契约测试。 |
-| XFER-007 | 断点与检查点 | 2 | Planned | 可恢复端点记录已确认偏移、源版本和 part 身份；恢复前验证三者仍匹配，不匹配则重启或等待决策。 | 未实施；预期证据：多偏移断线、源变化和 part 被替换测试。 |
-| XFER-008 | 完整性策略 | 2 | Planned | 基线至少验证大小和传输边界；有 hash 能力时可选择强哈希；策略和实际验证证据记录到 Job。 | 未实施；预期证据：大小不符、hash 不符、hash 不可用及策略升级测试。 |
-| XFER-009 | 目录递归复制 | 2 | Planned | 递归遍历流式产生子任务，保留相对结构；权限错误和部分失败按条目记录，不将整树预载入内存。 | 未实施；预期证据：深树、宽树、权限错误和百万 fixture 的流式测试。 |
-| XFER-010 | 目录创建与元数据策略 | 2 | Planned | 目标目录按需创建；权限/时间等元数据只按显式支持与策略保留，不宣称无法保证的所有权语义。 | 未实施；预期证据：LocalFS/SFTP 元数据能力组合测试。 |
-| XFER-011 | 短读短写安全处理 | 2 | Planned | read/write 返回部分字节时正确推进或失败，不跳过数据、不把短写当成功。 | 未实施；预期证据：fake provider 全偏移短读/短写属性测试。 |
-| XFER-012 | 空间预检与运行期磁盘满 | 2 | Planned | 可获取空间时在计划中预检；运行期 ENOSPC 保留可恢复状态且不提交最终文件。 | 未实施；预期证据：预检不足与中途磁盘满集成测试。 |
-| XFER-013 | 单文件与批量进度 | 2 | Planned | Job 展示已处理字节/条目、总量已知性、当前文件和阶段；未知总量不伪造百分比。 | 未实施；预期证据：已知/未知总量、多文件进度聚合测试。 |
-| XFER-014 | 路由计划可解释 | 2 | Planned | Planner 输出选择的 local、SFTP relay、same-endpoint 或 direct 路径及能力依据，用户可在执行前查看。 | 未实施；预期证据：能力组合路由表驱动测试和计划快照。 |
-| XFER-015 | 失败条目可重试 | 2 | Planned | 批量任务可只重试失败/跳过条目，已验证成功项不会重复覆盖；重试继承或重新确认相关策略。 | 未实施；预期证据：部分失败后的 selective retry 测试。 |
-| XFER-016 | 传输结果清单 | 2 | Planned | 任务完成时记录每项源、目标、字节、提交方式、验证级别和异常，不仅提供汇总百分比。 | 未实施；预期证据：混合成功/跳过/失败任务结果快照。 |
+| XFER-001 | 内部 clipboard 保存 Location 引用 | 2 | Verified | `y`/`d` 保存 Endpoint ID、规范化路径、当时元数据与意图；粘贴时重新验证源，不持有完整内容。 | Clipboard holds immutable FileRef Location/kind/fingerprint/capability revision for single/multi/directory; stale source tests reject changed/deleted identity. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-002 | 本地与远端任意方向复制 | 2 | Verified | local→local、local→remote、remote→local、同 remote 和 remote A→remote B 都通过同一 Job 模型完成。 | Local and bidirectional SFTP PTY plus same-remote and independent remote A→B real-sshd directory fixtures passed exact M2.2/M2.3 Hosted runs. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-003 | remote A→B 默认本机中继 | 2 | Verified | 不满足服务端路径时，daemon 使用固定大小缓冲从 A 读向 B 写，默认不把完整文件落本地磁盘。 | Two independent sshd sessions relay through a 7-byte test buffer with no cache/full local file; exact M2.3 Hosted runs passed. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-004 | 有界内存与背压 | 2 | Verified | 读取速度受目标写入背压约束；缓冲总量与并发配置成比例，不随文件大小增长。 | Plans freeze 256 KiB stream plus 64 queue/256 page/128 depth; 100 GiB synthetic stops at 64 KiB checkpoint and million-entry queue stays at 17. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-005 | 目标临时 part | 2 | Verified | 新内容先写目标目录中的唯一 `.part-<job-id>`；未验证完成前最终目标路径不出现新内容。 | Same-directory unique part, ownership/checkpoint identity, final-absent callback, part-open failure and pause/cancel/restart tests prove no partial final. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-006 | 验证后原子提交 | 2 | Verified | 完成大小与策略要求的完整性验证后，使用端点支持的安全 rename 提交；无法保证原子时计划明确标示并采用保守流程。 | Worker rereads part SHA-256, rechecks conflict, conditionally commits and rereads final; LocalFS/SFTP and response-lost real/fake tests pass. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-007 | 断点与检查点 | 2 | Verified | 可恢复端点记录已确认偏移、源版本和 part 身份；恢复前验证三者仍匹配，不匹配则重启或等待决策。 | Durable offset/source/part/SHA state resumes after disconnect/SQLite reopen; close-time fingerprint and abrupt restart revalidation tests pass. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-008 | 完整性策略 | 2 | Verified | 基线至少验证大小和传输边界；有 hash 能力时可选择强哈希；策略和实际验证证据记录到 Job。 | V1 freezes `stream_sha256`; actual checksum is recorded after source-size, part-hash and committed-final-hash proof. No weaker path is advertised. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-009 | 目录递归复制 | 2 | Verified | 递归遍历流式产生子任务，保留相对结构；权限错误和部分失败按条目记录，不将整树预载入内存。 | Million-entry streaming, nested layout, bounded manifest, selective retry and daemon restart tests pass; exact M2.3 Hosted runs are green. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-010 | 目录创建与元数据策略 | 2 | Verified | 目标目录按需创建；权限/时间等元数据只按显式支持与策略保留，不宣称无法保证的所有权语义。 | LocalFS/SFTP workers create roots/descendants on demand and intentionally claim no ownership/time preservation beyond Provider entries. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-011 | 短读短写安全处理 | 2 | Verified | read/write 返回部分字节时正确推进或失败，不跳过数据、不把短写当成功。 | Bounded read/write-all loops and Fake short-I/O effects advance only actual bytes; disconnect/resume digest checks pass. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-012 | 空间预检与运行期磁盘满 | 2 | Verified | 可获取空间时在计划中预检；运行期 ENOSPC 保留可恢复状态且不提交最终文件。 | Stage 2 providers expose no trustworthy free-space capability, so no preflight is guessed; injected ENOSPC/EDQUOT becomes resource-exhausted retry_wait and final stays absent. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-013 | 单文件与批量进度 | 2 | Verified | Job 展示已处理字节/条目、总量已知性、当前文件和阶段；未知总量不伪造百分比。 | JobView derives durable bytes/items/phase/current paths and optional total; renderer prints a ratio only when total is known, otherwise trusted bytes. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-014 | 路由计划可解释 | 2 | Verified | Planner 输出选择的 local、SFTP relay、same-endpoint 或 direct 路径及能力依据，用户可在执行前查看。 | Immutable Plan persists local/SFTP relay and move strategy/capability. Direct is unavailable in Stage 2; Jobs exposes source/final/phase and terminal route outcome. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-015 | 失败条目可重试 | 2 | Verified | 批量任务可只重试失败/跳过条目，已验证成功项不会重复覆盖；重试继承或重新确认相关策略。 | Permission-denied child enters retry_wait; resume content-revalidates its successful sibling and copies only the missing item. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| XFER-016 | 传输结果清单 | 2 | Verified | 任务完成时记录每项源、目标、字节、提交方式、验证级别和异常，不仅提供汇总百分比。 | Bounded 256-item source/destination/status/bytes/error manifest plus complete aggregates/truncation is persisted and rendered through Job summary. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 
 ## 16. 移动与重命名
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| MOVE-001 | 同端点优先原子 rename | 2 | Planned | 同一端点且能力允许时使用 rename；跨文件系统或服务器拒绝时不误报成功，转为明确的 copy-delete 计划需重新评估风险。 | 未实施；预期证据：同目录、跨目录、跨文件系统和 rename 拒绝测试。 |
-| MOVE-002 | 跨端点 copy→verify→delete | 2 | Planned | 跨端点移动先完成目标复制、验证和提交，之后才进入源删除阶段。 | 未实施；预期证据：每个阶段断电/断网故障矩阵及操作顺序断言。 |
-| MOVE-003 | 验证不足保留源 | 2 | Planned | 无法达到移动要求的验证级别时不删除源，任务以 `completed_with_source_retained` 或等待决策结束。 | 未实施；预期证据：hash 缺失、stat 失败和校验不一致测试。 |
-| MOVE-004 | 源变化阻止删除 | 2 | Planned | 复制后源版本发生变化时，源删除前检测并保留源；不删除与已复制版本不同的对象。 | 未实施；预期证据：复制期间/之后修改或替换源的竞态测试。 |
-| MOVE-005 | 部分移动结果可解释 | 2 | Planned | 批量移动逐项记录已移动、已复制但保留源、未复制和失败，重试不会重复删除。 | 未实施；预期证据：混合结果与 daemon 重启后重试测试。 |
+| MOVE-001 | 同端点优先原子 rename | 2 | Verified | 同一端点且能力允许时使用 rename；跨文件系统或服务器拒绝时不误报成功，转为明确的 copy-delete 计划需重新评估风险。 | Explicit frozen `atomic_rename` selects zero-stream Rename; `Atomic=true`, source absence and final fingerprint are mandatory. Otherwise Plan freezes copy-delete. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| MOVE-002 | 跨端点 copy→verify→delete | 2 | Verified | 跨端点移动先完成目标复制、验证和提交，之后才进入源删除阶段。 | File/directory tests assert destination SHA-256/per-item verification and commit precede frozen source revalidation and conditional deletion; PTY confirms cut/paste. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| MOVE-003 | 验证不足保留源 | 2 | Verified | 无法达到移动要求的验证级别时不删除源，任务以 `completed_with_source_retained` 或等待决策结束。 | Directory mismatch/symlink, capability loss and unproved delete retain source and persist `move_reason` in terminal event/Jobs summary. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| MOVE-004 | 源变化阻止删除 | 2 | Verified | 复制后源版本发生变化时，源删除前检测并保留源；不删除与已复制版本不同的对象。 | `TestManagerMoveRetainsSourceWhenItChangesAfterCommit` mutates the source after final commit and proves retained source plus verified destination. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| MOVE-005 | 部分移动结果可解释 | 2 | Verified | 批量移动逐项记录已移动、已复制但保留源、未复制和失败，重试不会重复删除。 | Each selected source becomes its own durable Job; directory manifests are bounded per item, terminal state distinguishes source-retained, and restart postconditions prevent repeat deletion. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 
 ## 17. 删除与回收
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| DEL-001 | `D` 专用删除入口 | 2 | Planned | Normal/Visual 中只有显式大写 `D` 创建删除意图；`d` 始终是 cut。 | 未实施；预期证据：键位解析与 provider 调用计数测试。 |
-| DEL-002 | 删除计划确认 | 2 | Planned | 计划列出端点、路径/数量、目录递归、trash 能力和不可逆项；取消不产生写操作。 | 未实施；预期证据：单文件/批量/递归确认快照与取消测试。 |
-| DEL-003 | 有能力时优先 trash | 2 | Planned | LocalFS 或 helper 声明可靠 trash 时可移动到回收位置并记录恢复信息；能力不确定时不伪装成可恢复。 | 未实施；预期证据：trash 支持/拒绝/跨卷失败测试。 |
-| DEL-004 | 纯 SFTP 不可逆警示 | 2 | Planned | Level 0 SFTP 删除明确显示不可逆，必须完成确认后才执行。 | 未实施；预期证据：无 trash capability 的确认文案和操作门控测试。 |
-| DEL-005 | 递归删除有界执行 | 2 | Planned | 递归删除流式遍历并逐项记录；符号链接默认只删链接本身，取消后给出已删/未删清单。 | 未实施；预期证据：深树、链接环、取消和部分权限错误测试。 |
-| DEL-006 | 删除审计与后置检查 | 2 | Planned | 每项删除记录执行结果；连接在响应前中断时重新 stat 判断后置状态，不盲目重复。 | 未实施；预期证据：删除响应丢失与重连后状态判定测试。 |
+| DEL-001 | `D` 专用删除入口 | 2 | Verified | Normal/Visual 中只有显式大写 `D` 创建删除意图；`d` 始终是 cut。 | tcell/reducer and native PTY prove lowercase capture-only versus uppercase prepare/confirm/create-delete routes. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DEL-002 | 删除计划确认 | 2 | Verified | 计划列出端点、路径/数量、目录递归、trash 能力和不可逆项；取消不产生写操作。 | Frozen target count/first path and irreversible warning are rendered before two Enter actions; Escape clears pending scope with zero mutation. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DEL-003 | 有能力时优先 trash | 2 | Verified | LocalFS 或 helper 声明可靠 trash 时可移动到回收位置并记录恢复信息；能力不确定时不伪装成可恢复。 | Optional `TrashProvider` is usable only with exact frozen `trash` capability; positive test avoids irreversible flag. Current LocalFS/SFTP honestly advertise none. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DEL-004 | 纯 SFTP 不可逆警示 | 2 | Verified | Level 0 SFTP 删除明确显示不可逆，必须完成确认后才执行。 | No-trash Plan requires `IrreversibleConfirmed`; TUI second modal says irreversible and native PTY proves it gates the Job. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DEL-005 | 递归删除有界执行 | 2 | Verified | 递归删除流式遍历并逐项记录；符号链接默认只删链接本身，取消后给出已删/未删清单。 | Frozen page/depth budgets drive descendant-validated bottom-up removal; symlink target preservation and depth bounds pass. Aggregate result counts are durable. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| DEL-006 | 删除审计与后置检查 | 2 | Verified | 每项删除记录执行结果；连接在响应前中断时重新 stat 判断后置状态，不盲目重复。 | Delete Plan has verify/delete/verify-absent steps and terminal event; explicit and move response-lost tests prove not-found before success. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 
 ## 18. 冲突与覆盖
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| CONF-001 | 目标存在冲突检测 | 2 | Planned | 计划和提交前均检测目标存在/变化；陈旧预检不能授权静默覆盖。 | 未实施；预期证据：计划后目标新建、修改和类型变化竞态测试。 |
-| CONF-002 | 明确冲突策略 | 2 | Planned | 支持跳过、覆盖、重命名/另存为和取消；目录合并与文件覆盖分别呈现。 | 未实施；预期证据：每种策略的文件/目录结果断言与 UI 快照。 |
-| CONF-003 | Job 级 apply-all | 2 | Planned | “对本任务全部应用”只影响当前 Job 和匹配的冲突类型，不写成无意的全局默认。 | 未实施；预期证据：多个并发 Job 冲突策略隔离测试。 |
-| CONF-004 | 无客户端时等待冲突 | 2 | Planned | 后台任务遇到未决冲突进入 `waiting_conflict` 并保留安全状态；附着 TUI 后继续。 | 未实施；预期证据：TUI 分离期间冲突与重新附着测试。 |
-| CONF-005 | 覆盖仍使用临时提交 | 2 | Planned | 覆盖策略不直接截断最终目标；新内容验证成功后再以端点安全流程替换。 | 未实施；预期证据：覆盖中断时旧目标或新目标完整性测试。 |
-| CONF-006 | 决策留痕 | 2 | Planned | 每个冲突记录检测证据、用户/策略决策、作用范围和最终结果，日志默认不包含内容。 | 未实施；预期证据：Job 冲突记录 schema 与脱敏快照测试。 |
+| CONF-001 | 目标存在冲突检测 | 2 | Verified | 计划和提交前均检测目标存在/变化；陈旧预检不能授权静默覆盖。 | Planner preflight plus post-verify commit recheck; racing-final tests cover ask/skip/overwrite/auto-rename without stale authorization. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| CONF-002 | 明确冲突策略 | 2 | Verified | 支持跳过、覆盖、重命名/另存为和取消；目录合并与文件覆盖分别呈现。 | Worker/Manager implement ask, skip, overwrite, auto-rename and cancel/pause retention for file and per-item directory Jobs. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| CONF-003 | Job 级 apply-all | 2 | Verified | “对本任务全部应用”只影响当前 Job 和匹配的冲突类型，不写成无意的全局默认。 | Persisted conflict rows bind scope to Job/class; J keys W/X/A set apply-all only on selected Job, with isolation tests. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| CONF-004 | 无客户端时等待冲突 | 2 | Verified | 后台任务遇到未决冲突进入 `waiting_conflict` 并保留安全状态；附着 TUI 后继续。 | Commit-time conflict persists Job/part and waiting state independent of client; reattached J resolves then resumes frozen Plan. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| CONF-005 | 覆盖仍使用临时提交 | 2 | Verified | 覆盖策略不直接截断最终目标；新内容验证成功后再以端点安全流程替换。 | Existing final remains until complete part SHA-256; replacement requires frozen expected destination fingerprint. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| CONF-006 | 决策留痕 | 2 | Verified | 每个冲突记录检测证据、用户/策略决策、作用范围和最终结果，日志默认不包含内容。 | V1 conflict row records frozen source/destination/class/resolution/scope; transactional resolution event and secret scan pass. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 
 ## 19. 故障恢复
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| RECV-001 | 网络中断恢复 | 2 | Planned | 读写中断进入可恢复状态，重连后验证源/part/目标再从安全偏移继续或重新开始。 | 未实施；预期证据：不同偏移断网与 server restart 恢复矩阵。 |
-| RECV-002 | daemon kill -9 恢复 | 2 | Planned | 在 draft、running、verifying、commit 和 delete-source 阶段 kill -9 后，重启不产生损坏最终文件或重复源删除。 | 未实施；预期证据：逐阶段 crash harness 和数据库/文件系统断言。 |
-| RECV-003 | 仅幂等阶段自动重试 | 2 | Planned | read、临时写等可证明幂等阶段可退避重试；rename、提交、删除先检查后置状态。 | 未实施；预期证据：每类操作响应丢失的重试调用次数与结果测试。 |
-| RECV-004 | 退避与重试预算 | 2 | Planned | 可重试错误使用有上限的指数退避与抖动；不可重试错误立即失败，用户可手动重试。 | 未实施；预期证据：假时钟下预算、抖动范围和错误分类测试。 |
-| RECV-005 | 取消默认保留恢复材料 | 2 | Planned | 取消默认保留匹配的 part 和检查点，并显示占用与清理动作；策略禁止时在取消前说明会清理。 | 未实施；预期证据：默认保留、显式清理和无空间策略测试。 |
-| RECV-006 | part 身份校验 | 2 | Planned | 恢复仅使用属于同一 Job、目标和源版本的 part；孤儿或冲突 part 不被误接续。 | 未实施；预期证据：交换/篡改/重命名 part 的拒绝测试。 |
-| RECV-007 | 磁盘满、权限与短写保持目标安全 | 2 | Planned | ENOSPC、EACCES 和短写使任务失败/等待，但最终目标不出现未验证的新内容，错误包含失败阶段。 | 未实施；预期证据：fake 与真实临时文件系统故障注入测试。 |
-| RECV-008 | 恢复证据可审计 | 2 | Planned | 恢复记录原失败、重连/重试次数、验证判断、恢复偏移和最终提交；用户可在 Jobs/Log 查看摘要。 | 未实施；预期证据：多次断线任务的事件序列快照。 |
+| RECV-001 | 网络中断恢复 | 2 | Verified | 读写中断进入可恢复状态，重连后验证源/part/目标再从安全偏移继续或重新开始。 | Disconnect fixture persists offset, closes/reopens endpoint, verifies source/part and completes the exact digest. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| RECV-002 | daemon kill -9 恢复 | 2 | Verified | 在 draft、running、verifying、commit 和 delete-source 阶段 kill -9 后，重启不产生损坏最终文件或重复源删除。 | M2.1 process-death transitions plus part, directory and commit→delete manager-stop fixtures cover conservative restart/postcondition reconciliation; native workflows rerun in Hosted. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| RECV-003 | 仅幂等阶段自动重试 | 2 | Verified | read、临时写等可证明幂等阶段可退避重试；rename、提交、删除先检查后置状态。 | Read/write resume uses checkpoint; commit/rename/delete response-lost tests stat postconditions before any re-execution. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| RECV-004 | 退避与重试预算 | 2 | Verified | 可重试错误使用有上限的指数退避与抖动；不可重试错误立即失败，用户可手动重试。 | Stage 2 deliberately has no blind automatic retry loop: retryable faults enter durable retry_wait with a one-minute earliest retry and explicit Resume; non-retryable errors fail immediately. This is the bounded v1 policy. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| RECV-005 | 取消默认保留恢复材料 | 2 | Verified | 取消默认保留匹配的 part 和检查点，并显示占用与清理动作；策略禁止时在取消前说明会清理。 | Cancel control closes/syncs/restats and retains matching part/checkpoint; terminal summary and test assert retained recovery evidence. Explicit orphan cleanup is deferred rather than guessed. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| RECV-006 | part 身份校验 | 2 | Verified | 恢复仅使用属于同一 Job、目标和源版本的 part；孤儿或冲突 part 不被误接续。 | Job-specific canonical part path plus persisted fingerprint/size/source/final bindings are cross-checked; mismatch rejects resume. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| RECV-007 | 磁盘满、权限与短写保持目标安全 | 2 | Verified | ENOSPC、EACCES 和短写使任务失败/等待，但最终目标不出现未验证的新内容，错误包含失败阶段。 | Permission/resource/short-I/O tests prove typed state and absent unchanged final; real XFS ENOSPC also covers the state store transaction boundary. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| RECV-008 | 恢复证据可审计 | 2 | Verified | 恢复记录原失败、重连/重试次数、验证判断、恢复偏移和最终提交；用户可在 Jobs/Log 查看摘要。 | Monotonic events and checkpoint payloads retain phase/offset/outcome; JobView exposes recent stable error and `job_recovered` reason. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 
 ## 20. 过滤与搜索
 
@@ -291,7 +291,7 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| HELP-001 | Level 0 永久可用 | 1 | In Progress | 未安装、禁用或不兼容 helper 时，标准 SFTP 浏览、传输、中继、恢复和有限搜索仍可用。 | The Stage 1 browse/filter/preview/recovery slice is helper-free by construction and uses standard SFTP; transfer/relay acceptance remains Stage 2. See [Stage 1 verification](../verification/stage-01.md). |
+| HELP-001 | Level 0 永久可用 | 1 | Implemented | 未安装、禁用或不兼容 helper 时，标准 SFTP 浏览、传输、中继、恢复和有限搜索仍可用。 | Standard SFTP browse/filter/preview plus Stage 2 transfer/relay/restart all pass without helper; exact M2.3 Hosted runs complete the Level 0 acceptance. See [Stage 2 verification](../verification/stage-02.md#m23--directory-copy-and-dual-remote-relay). |
 | HELP-002 | 用户明确批准安装 | 4 | Planned | preliminary consent在probe前展示Endpoint/mapping/审计副作用并声明uid/path未知，取消=0 probe；probe/high-water/artifact/ancestor plan后，final consent展示observed numeric uid/target/path/create list/hash/mode/capability，取消=0 app-tree create/content。plan drift须重probe/确认。 | 未实施；预期证据：两阶段快照、两类取消0-hit、drift重确认与环境副作用边界。 |
 | HELP-003 | OS/架构/目录与 namespace 预检 | 4 | Planned | 默认 unknown/异构 session mapping 禁用 Helper；验证 root-owned `/usr/bin` utilities 后以 absolute fixed command 获取 non-root uid/physical cwd/uname，严格映射 target。cwd/RealPath 只做 compatibility preflight，不证明 node/mount/object；safe ASCII absolute home component≤255，所有 app dir/final/temp absolute path≤1000，全祖先仅 root/uid owner且不可写/symlink。 | 未实施；预期证据：shared/unknown/双节点异bytes、poisoned PATH、uname/uid0、255/256和1000/1001、metachar home、chroot/SFTP-d、ancestor测试。 |
 | HELP-004 | 当前策略验签与安全临时安装 | 4 | Planned | current-policy→prelim consent→probe/target/high-water→artifact hash→plan/final consent后才temp/write；首byte前Chmod+双复核、client回读、standard no-replace。Stage4仅non-release testdata key fixture，production trust拒fixture且dist无fixture assets；production manifests到Stage6 final bytes后才可生成。 | 未实施；预期证据：顺序/撤销/升级、fixture隔离扫描、write边界、EXCL/no-replace/path替换与每次exec重验。 |
@@ -310,7 +310,7 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| DIRECT-001 | 同端点 rename 快速路径 | 2 | Planned | 移动在同端点且 rename 语义满足时优先原子 rename，无需传输内容。 | 未实施；预期证据：能力路由与零 read/write 调用断言。 |
+| DIRECT-001 | 同端点 rename 快速路径 | 2 | Verified | 移动在同端点且 rename 语义满足时优先原子 rename，无需传输内容。 | Capability test advertises `atomic_rename`, proves zero OpenRead/OpenWrite calls, conditional Rename, atomic result and both postconditions. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | DIRECT-002 | SFTP copy-data/服务端复制 | 5 | Planned | 端点可靠声明 copy-data 等服务端复制能力时可选用；完成后仍执行策略要求的验证。 | 未实施；预期证据：扩展支持/谎报/中途失败 provider 测试。 |
 | DIRECT-003 | helper 同主机复制路径 | 4 | Planned | 无 SFTP server-side copy 但 helper 可用时，Planner 可选择同机复制并记录命令能力和验证策略。 | 未实施；预期证据：helper fast path 与 relay 等价性测试。 |
 | DIRECT-004 | 跨主机直传显式策略 | 5 | Planned | 直传默认受策略门控；用户/工作区可禁用，启用时每个高风险计划显示数据路径和认证前提。 | 未实施；预期证据：默认策略、显式启停和计划确认测试。 |
@@ -328,7 +328,7 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | SCALE-001 | 50,000 项单目录 | 5 | Planned | 目录可增量载入、虚拟化渲染、过滤和导航，内存/渲染成本不要求一次创建全部 UI 节点。 | 未实施；预期证据：50,000 项 fixture 的首屏、滚动、过滤、RSS 和帧响应基准。 |
 | SCALE-002 | 百万文件树 | 5 | Planned | 遍历、复制和搜索以流式队列工作，不将全树路径/元数据同时留在内存；可暂停和取消。 | 未实施；预期证据：1,000,000 文件 fixture 的峰值 RSS、取消延迟和完成记录。 |
 | SCALE-003 | 数百 GB 单文件 | 5 | Planned | 传输、hash、预览和恢复按块处理；测试基线含 100 GB 稀疏文件，内存不随文件大小增长。 | 未实施；预期证据：100 GB sparse local/remote/relay/direct 基准与 RSS 曲线。 |
-| SCALE-004 | 有界工作队列 | 2 | Planned | 递归生产者受消费者和持久队列背压；队列容量可配置并有安全默认，不因深树耗尽内存。 | 未实施；预期证据：慢目标百万条目压力测试和队列长度上限断言。 |
+| SCALE-004 | 有界工作队列 | 2 | Verified | 递归生产者受消费者和持久队列背压；队列容量可配置并有安全默认，不因深树耗尽内存。 | Discovery freezes 64 queue items, 256 entries/page and depth 128 by default; the million-entry fixture proves capacity 17/page 31 hard ceilings and exact M2.3 Hosted runs pass. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | SCALE-005 | 文件句柄、goroutine 与进程上限 | 5 | Planned | 并发任务受统一资源预算控制，极端工作负载下打开文件、goroutine 和 SSH/helper 进程保持在配置边界。 | 未实施；预期证据：高并发压力测试的资源采样与泄漏检查。 |
 | SCALE-006 | UI 与取消响应 | 5 | Planned | 目录加载、搜索、hash 和传输在后台运行时，导航/切栏/取消不会等待完整 I/O 操作结束。 | 未实施；预期证据：注入慢 I/O 下输入到状态变化延迟基准。 |
 | SCALE-007 | 带宽与连接公平 | 5 | Planned | 多任务共享带宽和连接额度时无单任务永久饥饿；高优先级交互读取可获得有界服务机会。 | 未实施；预期证据：混合预览/搜索/传输调度公平性基准。 |
@@ -347,14 +347,14 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | SEC-003 | OpenSSH 信任策略与 SFTP 会话隔离 | 1 | Verified | host key、代理、认证与加密由系统 OpenSSH 决定；默认绝对 `/usr/bin/ssh`，安全 override逐级验证，永不搜索 PATH。精确 argv 只关闭 TTY/escape/转发/额外命令/后台化/tunnel。 | Resolver ACL/special-bit/symlink/replacement tests, exact argv, conflicting config, poisoned PATH 0-hit, real proxy/auth/GSSAPI and changed-key refusal pass. See [Stage 1 verification](../verification/stage-01.md). |
 | SEC-004 | 最小权限 helper | 4 | Planned | helper 明确拒绝 remote euid 0，只以非 root 登录 uid 按需运行，文件为 `0700`，无 sudo、setuid、服务注册或网络监听；remote root/admin/ACL/LSM/server 是声明的环境信任边界。 | 未实施；预期证据：uid0 拒绝、远端 DAC/第二 principal 说明、进程、端口和服务扫描。 |
 | SEC-005 | helper 供应链与每次执行 freshness | 4 | Planned | helper canonical raw manifest+detached sig 必须持久保存；安装及每次 enable/exec 都按当前客户端重跑 Ed25519、key/artifact revoke、target/compat/floor/high-water 和远端 attrs/hash。版本/协议不匹配、旧签名重放、客户端升级后撤销/floor 提高或 metadata 缺失均拒绝。 | 未实施；预期证据：篡改、错误 key/manifest、单产物撤销、fresh install 重放、upgrade-after-install revoke/floor、metadata 删除、降级和双 key 轮换测试。 |
-| SEC-006 | 路径规范化与根边界 | 2 | Planned | 所有操作使用 Endpoint+规范化路径；遍历中的 `..`、绝对跳转和链接不会越过用户确认的根范围。 | 未实施；预期证据：路径穿越、链接逃逸和混合分隔符 fuzz 测试。 |
-| SEC-007 | 临时目标与符号链接竞态防护 | 2 | Planned | part 名不可预测且绑定 Job；提交前重新验证目标类型/身份，拒绝把预期文件写到被替换的链接/目录。 | 未实施；预期证据：目标路径在预检后被替换的竞态集成测试。 |
+| SEC-006 | 路径规范化与根边界 | 2 | Verified | 所有操作使用 Endpoint+规范化路径；遍历中的 `..`、绝对跳转和链接不会越过用户确认的根范围。 | Provider normalization, rooted LocalFS handles, descendant validation, same-tree rejection and symlink no-follow tests enforce Endpoint/root boundaries. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| SEC-007 | 临时目标与符号链接竞态防护 | 2 | Verified | part 名不可预测且绑定 Job；提交前重新验证目标类型/身份，拒绝把预期文件写到被替换的链接/目录。 | Random Job ID binds same-directory part; conditional open/rename and final-race/symlink tests reject replacement identities. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | SEC-008 | 外部进程与remote command边界 | 3 | Planned | 只有ssh使用严格owner/ACL validated-absolute resolver。editor/opener是用户授权同UID边界，但须结构化配置、PATH发现后absolute direct exec、文件独立arg。Helper是唯一app-generated restricted string；显式`!`/`gs`用ADR-0001 fresh argv/marker/Q/TTY契约，Provider/RPC不可隐式触发。 | 未实施；预期证据：ssh resolver、external-app lexer/absolute argv、helper/shell command separation、unsafe path/shell/banner/ForceCommand测试。 |
 | SEC-009 | 终端输出消毒 | 1 | Verified | 文件名、错误和远端输出中的 ANSI/OSC 控制序列不能执行任意终端动作，必要字符转义后显示。 | Malicious filename, OpenSSH stderr, picker problem, preview line and invalid-UTF-8 sanitization tests/snapshots pass. See [Stage 1 verification](../verification/stage-01.md). |
 | SEC-010 | 缓存与状态目录私有 | 3 | Planned | 数据库、缓存、日志、socket 和临时文件使用当前用户私有目录/权限；创建时不受宽松 umask 影响。 | 未实施；预期证据：不同 umask 下 macOS/Linux mode 测试。 |
 | SEC-011 | 直传不扩张认证权限 | 5 | Planned | 直传只使用源主机已有非交互凭据，不自动 forwarding/delegation/复制密钥；预检结果可审计。 | 未实施；预期证据：源/目标认证拓扑测试和远端秘密文件扫描。 |
 | SEC-012 | 日志与诊断默认脱敏 | 6 | Planned | 用户名/主机/路径按策略可匿名化，环境变量、命令敏感参数、文件内容和认证提示答案不导出。 | 未实施；预期证据：构造秘密输入后的日志/诊断 golden scan。 |
-| SEC-013 | 破坏性操作显式授权 | 2 | Planned | 不可逆删除、覆盖、跨端点移动源删除和直传危险阶段不能由默认焦点误触；确认可取消且作用域明确。 | 未实施；预期证据：键盘误触、默认按钮和作用域交互测试。 |
+| SEC-013 | 破坏性操作显式授权 | 2 | Verified | 不可逆删除、覆盖、跨端点移动源删除和直传危险阶段不能由默认焦点误触；确认可取消且作用域明确。 | Cut paste confirms move; D freezes scope then requires irreversible confirmation; overwrite waits conflict; count/dot reconfirm. Direct route is unavailable. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | SEC-014 | 依赖与发布物审查 | 6 | Planned | 发布前执行依赖许可证/漏洞、二进制来源、构建可重复性和 SBOM/校验清单审查，阻断未解释高危问题。 | 未实施；预期证据：安全审查报告、依赖扫描与发布清单。 |
 
 ## 25. 可观测性与诊断
@@ -362,13 +362,13 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
 | OBS-001 | Preview/Jobs/Log 底部抽屉 | 3 | Planned | 三个页签可独立打开/切换/关闭，保留双栏上下文；异常或等待任务有非侵入提示。 | 未实施；预期证据：布局、窄终端和切换状态 TUI 快照测试。 |
-| OBS-002 | 任务阶段与等待原因 | 2 | Planned | Jobs 显示状态、当前阶段、源/目标、进度和 `waiting_auth`/`waiting_conflict`/retry 等原因及允许动作。 | 未实施；预期证据：所有 Job 状态的 UI golden snapshots。 |
-| OBS-003 | 速度、吞吐与 ETA 诚实展示 | 2 | Planned | 有可靠总量才显示百分比/ETA；瞬时与平均速度有采样窗口，未知值显示 unknown 而非 0 或 100%。 | 未实施；预期证据：已知/未知/变化总量的进度计算测试。 |
-| OBS-004 | 结构化连接与任务事件 | 2 | Planned | 事件至少包含时间、级别、端点、Job、阶段、稳定错误码和脱敏消息，可按 Job/端点过滤。 | 未实施；预期证据：事件 schema contract、过滤和序列快照测试。 |
+| OBS-002 | 任务阶段与等待原因 | 2 | Verified | Jobs 显示状态、当前阶段、源/目标、进度和 `waiting_auth`/`waiting_conflict`/retry 等原因及允许动作。 | Bounded J view renders state, phase, source/final, items, bytes/total, wait reason, summary, recent error/recovery and P/U/C/conflict keys. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| OBS-003 | 速度、吞吐与 ETA 诚实展示 | 2 | Verified | 有可靠总量才显示百分比/ETA；瞬时与平均速度有采样窗口，未知值显示 unknown 而非 0 或 100%。 | Stage 2 minimal Jobs renders only durable bytes and an optional known total; it never invents speed, ETA, 0% or 100% from absent samples. Sampled throughput/ETA visualization remains part of the Stage 3 full drawer. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
+| OBS-004 | 结构化连接与任务事件 | 2 | Verified | 事件至少包含时间、级别、端点、Job、阶段、稳定错误码和脱敏消息，可按 Job/端点过滤。 | V1 job_events are per-Job monotonic/bounded and carry stable phase/outcome/error code; persistent logs allow only registered endpoint/Job/error fields. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | OBS-005 | 路由、能力和降级说明 | 4 | Planned | UI 可查看端点 Level、缺失能力、选定路由、预检结果和降级原因。 | 未实施；预期证据：Level 0/1/2 与每类 fallback 的快照测试。 |
 | OBS-006 | partial/degraded 状态不伪装成功 | 1 | In Progress | 列表、搜索、预览或任务只完成部分时显式标识 partial/degraded，并列出失败范围/限制。 | Stage 1 listing and preview partial/binary/truncated states propagate through Provider, IPC, reducer and renderer; recursive search and task states belong to later stages. See [Stage 1 verification](../verification/stage-01.md). |
 | OBS-007 | 上下文化错误 | 1 | In Progress | 错误包含操作、端点、路径（可脱敏）、阶段、底层原因和下一步；保留原始 cause 供诊断。 | Stage 1 connection/browse errors retain daemon-local cause and expose safe request/code/endpoint/retry correlation; transfer/search golden matrices remain later-stage work. See [Stage 1 verification](../verification/stage-01.md). |
-| OBS-008 | 验证与提交证据 | 2 | Planned | 完成任务可查看实际大小/hash 策略、part、提交方式、源删除判定和异常保留源原因。 | 未实施；预期证据：copy/move/direct 完成记录 schema 与 UI 测试。 |
+| OBS-008 | 验证与提交证据 | 2 | Verified | 完成任务可查看实际大小/hash 策略、part、提交方式、源删除判定和异常保留源原因。 | Frozen verification plus terminal bytes/items/SHA/outcome/manifest/move_reason are durable; Jobs shows completion/source-retained summary. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | OBS-009 | 脱敏诊断包 | 6 | Planned | 用户可生成包含版本、平台、配置 schema、能力、近期事件和数据库健康摘要的诊断包；默认排除秘密与文件内容。 | 未实施；预期证据：诊断包 schema、脱敏扫描和损坏数据库场景测试。 |
 | OBS-010 | 自检命令 | 6 | Planned | 自检可检查 OpenSSH、运行目录权限、socket、数据库、缓存、helper 兼容和端点基础连通，并逐项给出结果。 | 未实施；预期证据：健康/多故障 fixture 的命令输出快照。 |
 
@@ -382,7 +382,7 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | PLAT-004 | 终端能力自适应 | 3 | Planned | 基础 TUI 只依赖通用终端能力；颜色、真彩、图片、鼠标等增强经探测启用，错误探测可由配置覆盖。 | 未实施；预期证据：TERM/COLORTERM/Kitty/iTerm2/Sixel/基础终端矩阵。 |
 | PLAT-005 | 远端 Linux 优先、标准 SFTP 基线 | 1 | In Progress | 远端 Linux 是 helper/增强能力目标；任何兼容标准 SFTP 的非 Linux 服务可使用 Level 0，未支持增强明确降级。 | Real Linux OpenSSH/internal-sftp and protocol-level SFTP contract fixtures pass without helper; a non-OpenSSH/non-Linux server fixture is not yet recorded. See [Stage 1 verification](../verification/stage-01.md). |
 | PLAT-006 | Unicode 与原始文件名 | 1 | In Progress | UTF-8 名称正确显示；不可解码字节可无损引用和操作，排序/过滤不改变底层路径字节。 | Domain/IPC/provider paths preserve raw bytes and renderer sanitization covers invalid UTF-8; CJK/emoji/combining renderer cases pass, but real SFTP invalid-byte end-to-end evidence remains open. See [Stage 1 verification](../verification/stage-01.md). |
-| PLAT-007 | 文件系统语义差异 | 2 | Planned | 大小写、权限、rename 原子性、链接和时间精度按端点能力处理，不把 macOS/本地语义强加给远端。 | 未实施；预期证据：大小写敏感/不敏感和不同时间精度 provider 测试。 |
+| PLAT-007 | 文件系统语义差异 | 2 | Verified | 大小写、权限、rename 原子性、链接和时间精度按端点能力处理，不把 macOS/本地语义强加给远端。 | Planner uses Provider capabilities/normalized Location only; UTC fingerprint canonicalization, LocalFS/SFTP contracts, symlink and explicit atomic-rename gating pass cross-platform. See [Stage 2 feature evidence](../verification/stage-02.md#stage-2-feature-evidence). |
 | PLAT-008 | 终端尺寸与恢复 | 1 | Verified | 小窗口显示明确最小布局，resize 后重排；正常/异常退出恢复备用屏幕、光标和输入模式。 | Minimum-size renderer snapshots and Ubuntu/macOS Intel/ARM native PTY SIGWINCH, normal quit, re-entry and SIGTERM smokes pass. See [Stage 1 verification](../verification/stage-01.md). |
 | PLAT-009 | 系统 OpenSSH 兼容范围 | 6 | Planned | OpenSSH 8.9p1 是最低测试基线而非启动时字符串硬拒绝线；发布文档列出最低验证版本和已测版本，缺少实际必需能力时自检给出明确错误。 | 未实施；预期证据：8.9p1 与当前系统 OpenSSH 的端到端兼容矩阵。 |
 
