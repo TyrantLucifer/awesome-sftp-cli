@@ -102,7 +102,7 @@ func PlanEvictions(snapshot Snapshot, limits Limits, leases *LeaseManager) (Evic
 	plan := EvictionPlan{Before: before, After: before}
 	for !withinLimits(plan.After, limits) && plan.Considered < limits.MaxCandidates {
 		protections := inspectProtections(working, leases)
-		candidates := enumerateCandidates(working, protections)
+		candidates := enumerateCandidates(working, protections, withinByteLimits(plan.After, limits))
 		if len(candidates) == 0 {
 			break
 		}
@@ -260,14 +260,14 @@ type evictionCandidate struct {
 	target     EvictionTarget
 }
 
-func enumerateCandidates(snapshot Snapshot, protections protectionIndex) []evictionCandidate {
+func enumerateCandidates(snapshot Snapshot, protections protectionIndex, allowSharedEntries bool) []evictionCandidate {
 	candidates := make([]evictionCandidate, 0, len(snapshot.Entries)+len(snapshot.Materializations)+len(snapshot.Blobs))
 	blobsByID := make(map[BlobID]Blob, len(snapshot.Blobs))
 	for _, blob := range snapshot.Blobs {
 		blobsByID[blob.ID] = blob
 	}
 	for _, entry := range snapshot.Entries {
-		if entry.Pinned || protections.entriesByBlob[entry.BlobID] > 1 {
+		if entry.Pinned || protections.entriesByBlob[entry.BlobID] > 1 && !allowSharedEntries {
 			continue
 		}
 		if _, exists := protections.materializationsByEntry[entry.ID]; exists {
@@ -393,6 +393,18 @@ func withinLimits(usage Usage, limits Limits) bool {
 	return true
 }
 
+func withinByteLimits(usage Usage, limits Limits) bool {
+	if usage.Global.Bytes > limits.GlobalBytes {
+		return false
+	}
+	for _, bytes := range usage.Workspaces {
+		if bytes > limits.WorkspaceBytes {
+			return false
+		}
+	}
+	return true
+}
+
 func improvesViolation(before Usage, after Usage, limits Limits) bool {
 	if before.Global.Bytes > limits.GlobalBytes && after.Global.Bytes < before.Global.Bytes {
 		return true
@@ -461,7 +473,7 @@ func buildDiagnostic(snapshot Snapshot, usage Usage, limits Limits, protections 
 			diagnostic.Shared.Entries += count
 		}
 	}
-	for _, candidate := range enumerateCandidates(snapshot, protections) {
+	for _, candidate := range enumerateCandidates(snapshot, protections, false) {
 		switch {
 		case candidate.target.EntryID != "":
 			diagnostic.Releasable.Entries++

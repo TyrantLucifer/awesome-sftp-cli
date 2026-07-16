@@ -325,6 +325,31 @@ func TestEntryEvictionClaimRejectsConcurrentReferenceAndFinalizesEntryBlob(t *te
 	}
 }
 
+func TestPrepareHandoffCannotReachBlobAfterEvictionClaim(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t, ctx, newVersion2Database(t, ctx))
+	blob, entry, materialization, reference, lease := validGraph()
+	reference.OwnerKind = cache.ReferenceOwnerEdit
+	reference.OwnerID = lease.OwnerID
+	reference.Target = cache.MaterializationTarget(materialization.ID)
+	must(t, store.Publish(ctx, blob, entry))
+	shared := entry
+	shared.ID = cache.EntryID(strings.Repeat("9", 64))
+	shared.CanonicalPath = []byte("/shared-raw-path")
+	shared.Fingerprint = cache.Fingerprint{Strength: cache.FingerprintStrong, Canonical: []byte("shared-strong-fingerprint")}
+	must(t, store.Publish(ctx, blob, shared))
+	if _, err := store.BeginEviction(ctx, cache.EntryEviction(entry.ID), time.Unix(20, 0).UTC()); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.PrepareHandoff(ctx, materialization, reference, lease); !errors.Is(err, ErrEvictionProtected) {
+		t.Fatalf("PrepareHandoff after claim = %v", err)
+	}
+	snapshot, err := store.LoadSnapshot(ctx)
+	if err != nil || len(snapshot.Materializations) != 0 || len(snapshot.Leases) != 0 || len(snapshot.References) != 1 || snapshot.References[0].OwnerID != evictionEntryOwnerPrefix+string(entry.ID) {
+		t.Fatalf("failed handoff snapshot = %#v, %v", snapshot, err)
+	}
+}
+
 func TestConcurrentDuplicateReferenceLeavesOneRow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

@@ -180,6 +180,8 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.listDiagnostics(payload)
 	case CacheMaterialize:
 		return s.cacheMaterialize(ctx, payload)
+	case CacheMarkDirty:
+		return s.cacheMarkDirty(ctx, payload)
 	case CacheReleaseHandoff:
 		return s.cacheReleaseHandoff(ctx, payload)
 	case EditSessionCreate, EditSessionGet, EditSessionTransition, EditSessionEvents, EditSessionRecoverable:

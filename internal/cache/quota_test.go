@@ -76,6 +76,26 @@ func TestAccountIncludesMaterializationBytesInGlobalAndWorkspaceUsage(t *testing
 	}
 }
 
+func TestPlanEvictionsCanDropOneSharedEntryWithoutSchedulingSharedBlob(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 7, 16, 10, 0, 0, 0, time.UTC)
+	blob := testBlob('a', 100, now)
+	oldEntry := testEntry('b', blob.ID, "workspace-a", now.Add(-time.Hour))
+	newEntry := testEntry('c', blob.ID, "workspace-a", now)
+	plan, err := PlanEvictions(Snapshot{Blobs: []Blob{blob}, Entries: []Entry{oldEntry, newEntry}}, Limits{
+		GlobalBytes: 100, GlobalEntries: 1, WorkspaceBytes: 100, MaxCandidates: 4,
+	}, testLeaseManager(t, now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !plan.Satisfied || !equalEvictions(plan.Targets, []EvictionTarget{EntryEviction(oldEntry.ID)}) {
+		t.Fatalf("shared entry plan = %#v", plan)
+	}
+	if plan.After.Global != (Quantity{Bytes: 100, Entries: 1}) {
+		t.Fatalf("shared entry after usage = %#v", plan.After.Global)
+	}
+}
+
 func TestPlanEvictionsCanReclaimCleanUnreferencedMaterialization(t *testing.T) {
 	t.Parallel()
 

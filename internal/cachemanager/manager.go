@@ -15,6 +15,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cacheprocess"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
@@ -27,6 +28,7 @@ type Manager struct {
 	daemonID   string
 	limits     cache.Limits
 	leaseState *cache.LeaseManager
+	processes  cache.ProcessClassifier
 }
 
 func New(files *cachefs.Store, catalog *cachestore.Store, clock cache.Clock, daemonID string, limits cache.Limits) (*Manager, error) {
@@ -45,11 +47,12 @@ func New(files *cachefs.Store, catalog *cachestore.Store, clock cache.Clock, dae
 	if _, err := cache.PlanEvictions(cache.Snapshot{}, limits, nil); err != nil {
 		return nil, fmt.Errorf("create cache manager: %w", err)
 	}
-	leases, err := cache.NewLeaseManager(clock, nil, cache.DefaultLeaseExpiry, cache.DefaultOpenerGrace)
+	processes := cacheprocess.NewClassifier()
+	leases, err := cache.NewLeaseManager(clock, processes, cache.DefaultLeaseExpiry, cache.DefaultOpenerGrace)
 	if err != nil {
 		return nil, err
 	}
-	return &Manager{files: files, catalog: catalog, clock: clock, daemonID: daemonID, limits: limits, leaseState: leases}, nil
+	return &Manager{files: files, catalog: catalog, clock: clock, daemonID: daemonID, limits: limits, leaseState: leases, processes: processes}, nil
 }
 
 type PublishRequest struct {
@@ -160,6 +163,11 @@ func (manager *Manager) PrepareHandoff(ctx context.Context, request HandoffReque
 	}
 	if ctx == nil {
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff: nil context")
+	}
+	if request.Process != nil {
+		if err := request.Process.Validate(); err != nil || manager.processes == nil || manager.processes.Classify(*request.Process) != cache.ProcessMatches {
+			return HandoffResult{}, fmt.Errorf("prepare cache handoff: supplied process identity is not live and classifiable")
+		}
 	}
 	entry, err := manager.catalog.GetEntry(ctx, request.EntryID)
 	if err != nil {

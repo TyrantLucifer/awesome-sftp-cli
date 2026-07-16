@@ -15,6 +15,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cacheprocess"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
@@ -105,10 +106,14 @@ func TestPrepareHandoffPublishesMaterializationBeforeAtomicReachabilityAndLease(
 	if err != nil {
 		t.Fatal(err)
 	}
+	identity, err := cacheprocess.CurrentIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
 	result, err := manager.PrepareHandoff(ctx, HandoffRequest{
 		EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("a", 32)),
 		ReferenceID: cache.ReferenceID(strings.Repeat("b", 32)), LeaseID: cache.LeaseID(strings.Repeat("c", 32)),
-		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session", Process: &cache.ProcessIdentity{PID: 123, BirthID: "birth"},
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session", Process: &identity,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -135,6 +140,32 @@ func TestPrepareHandoffPublishesMaterializationBeforeAtomicReachabilityAndLease(
 	}
 	if len(reconcile.DirtyCandidates) != 1 || reconcile.DirtyCandidates[0] != result.Materialization.ID || !reconcile.NeedsAttention {
 		t.Fatalf("dirty reconcile = %#v", reconcile)
+	}
+}
+
+func TestPrepareHandoffRejectsUnclassifiableSuppliedProcessIdentity(t *testing.T) {
+	manager, _, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("identity")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/identity"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := cache.ProcessIdentity{PID: os.Getpid(), BirthID: "not-a-native-birth-identity"}
+	_, err = manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("1", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("2", 32)), LeaseID: cache.LeaseID(strings.Repeat("3", 32)),
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session", Process: &identity,
+	})
+	if err == nil {
+		t.Fatal("PrepareHandoff accepted an unclassifiable process identity")
+	}
+	snapshot, loadErr := manager.catalog.LoadSnapshot(ctx)
+	if loadErr != nil || len(snapshot.Materializations)+len(snapshot.References)+len(snapshot.Leases) != 0 {
+		t.Fatalf("rejected identity published handoff rows: %#v, %v", snapshot, loadErr)
 	}
 }
 
@@ -334,6 +365,112 @@ func TestEnforceQuotaReturnsResourceExhaustionWithoutMutatingProtectedContent(t 
 	snapshot, err := manager.catalog.LoadSnapshot(ctx)
 	if err != nil || len(snapshot.Blobs) != 1 || len(snapshot.Entries) != 1 || len(snapshot.References) != 1 {
 		t.Fatalf("protected snapshot = %#v, %v", snapshot, err)
+	}
+}
+
+func TestEnforceQuotaEvictsOneSharedEntryWithoutDeletingDeduplicatedBlob(t *testing.T) {
+	manager, files, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("shared quota bytes")
+	first, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/shared-a"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/shared-b"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil || first.Blob.ID != second.Blob.ID {
+		t.Fatalf("shared publish = %#v %#v, %v", first, second, err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: 1 << 20, GlobalEntries: 1, WorkspaceBytes: 1 << 20, MaxCandidates: 8}
+	result, err := manager.EnforceQuota(ctx, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Deleted) != 1 || result.Deleted[0].SharedEntryReferenceID == "" {
+		t.Fatalf("shared quota result = %#v", result)
+	}
+	if _, err := files.InspectBlob(first.Blob.ID); err != nil {
+		t.Fatalf("shared blob was deleted: %v", err)
+	}
+	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	if err != nil || len(snapshot.Blobs) != 1 || len(snapshot.Entries) != 1 || len(snapshot.References) != 0 {
+		t.Fatalf("shared snapshot = %#v, %v", snapshot, err)
+	}
+}
+
+func TestRecoverPendingEvictionPreservesPostClaimBlobReplacement(t *testing.T) {
+	manager, files, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("claimed identity")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/replacement"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.catalog.BeginEviction(ctx, cache.EntryEviction(published.Entry.ID), manager.now()); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte("post-claim replacement must survive")
+	if err := os.WriteFile(published.Path, replacement, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RecoverPendingEvictions(ctx, 8); err == nil {
+		t.Fatal("RecoverPendingEvictions deleted changed identity")
+	}
+	got, err := os.ReadFile(published.Path)
+	if err != nil || !bytes.Equal(got, replacement) {
+		t.Fatalf("replacement content = %q, %v", got, err)
+	}
+	if _, err := files.InspectBlob(published.Blob.ID); err == nil {
+		t.Fatal("replacement unexpectedly validates as claimed blob")
+	}
+}
+
+func TestRecoverPendingEvictionPreservesPostClaimMaterializationChange(t *testing.T) {
+	manager, _, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("clean materialization")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/materialization-replacement"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("6", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("7", 32)), LeaseID: cache.LeaseID(strings.Repeat("8", 32)),
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.ReleaseHandoff(ctx, ReleaseHandoffRequest{
+		MaterializationID: handoff.Materialization.ID, ReferenceID: handoff.Reference.ID, LeaseID: handoff.Lease.ID,
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.catalog.BeginEviction(ctx, cache.MaterializationEviction(handoff.Materialization.ID), manager.now()); err != nil {
+		t.Fatal(err)
+	}
+	replacement := []byte("changed after materialization claim")
+	if err := os.WriteFile(handoff.Path, replacement, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.RecoverPendingEvictions(ctx, 8); err == nil {
+		t.Fatal("RecoverPendingEvictions deleted changed materialization")
+	}
+	got, err := os.ReadFile(handoff.Path)
+	if err != nil || !bytes.Equal(got, replacement) {
+		t.Fatalf("replacement materialization = %q, %v", got, err)
 	}
 }
 

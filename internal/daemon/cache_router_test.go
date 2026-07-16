@@ -11,6 +11,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachemanager"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cacheprocess"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
@@ -47,9 +48,13 @@ func TestCacheMaterializeReadsCompleteProviderFileAndReturnsLeasedPrivatePath(t 
 	if err != nil {
 		t.Fatal(err)
 	}
+	identity, err := cacheprocess.CurrentIdentity()
+	if err != nil {
+		t.Fatal(err)
+	}
 	payload, err := json.Marshal(CacheMaterializeRequest{
 		Location: ipc.EncodeLocation(location), WorkspaceID: "workspace", Policy: cache.PolicyLRU,
-		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session", Process: &identity,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -78,6 +83,29 @@ func TestCacheMaterializeReadsCompleteProviderFileAndReturnsLeasedPrivatePath(t 
 	}
 	if _, err := cache.ParseLeaseID(string(response.LeaseID)); err != nil {
 		t.Fatal(err)
+	}
+	reconcile, err := manager.Reconcile(ctx, 100)
+	if err != nil || len(reconcile.Snapshot.Leases) != 1 || reconcile.Snapshot.Leases[0].Process == nil || *reconcile.Snapshot.Leases[0].Process != identity {
+		t.Fatalf("caller process identity was not persisted: %#v, %v", reconcile.Snapshot.Leases, err)
+	}
+	changed := []byte("edited through external process")
+	if err := os.WriteFile(response.Path, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	markPayload, err := json.Marshal(CacheMarkDirtyRequest{
+		MaterializationID: response.MaterializationID, ReferenceID: response.ReferenceID, LeaseID: response.LeaseID,
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	value, err = session.Handle(ctx, CacheMarkDirty, markPayload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	marked, ok := value.(CacheMarkDirtyResponse)
+	if !ok || !marked.Dirty || marked.Size != int64(len(changed)) {
+		t.Fatalf("mark dirty response = %#v", value)
 	}
 	releasePayload, err := json.Marshal(CacheReleaseHandoffRequest{
 		MaterializationID: response.MaterializationID, ReferenceID: response.ReferenceID, LeaseID: response.LeaseID,

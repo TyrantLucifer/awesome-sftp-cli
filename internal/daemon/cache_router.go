@@ -19,16 +19,18 @@ import (
 
 const (
 	CacheMaterialize    = "cache.materialize"
+	CacheMarkDirty      = "cache.mark_dirty"
 	CacheReleaseHandoff = "cache.release_handoff"
 )
 
 type CacheMaterializeRequest struct {
-	Location    ipc.WireLocation     `json:"location"`
-	WorkspaceID cache.WorkspaceID    `json:"workspace_id"`
-	Policy      cache.Policy         `json:"policy"`
-	Pinned      bool                 `json:"pinned"`
-	OwnerKind   cache.LeaseOwnerKind `json:"owner_kind"`
-	OwnerID     string               `json:"owner_id"`
+	Location    ipc.WireLocation       `json:"location"`
+	WorkspaceID cache.WorkspaceID      `json:"workspace_id"`
+	Policy      cache.Policy           `json:"policy"`
+	Pinned      bool                   `json:"pinned"`
+	OwnerKind   cache.LeaseOwnerKind   `json:"owner_kind"`
+	OwnerID     string                 `json:"owner_id"`
+	Process     *cache.ProcessIdentity `json:"process,omitempty"`
 }
 
 type CacheMaterializeResponse struct {
@@ -50,6 +52,41 @@ type CacheReleaseHandoffRequest struct {
 
 type CacheReleaseHandoffResponse struct {
 	Released bool `json:"released"`
+}
+
+type CacheMarkDirtyRequest struct {
+	MaterializationID cache.MaterializationID `json:"materialization_id"`
+	ReferenceID       cache.ReferenceID       `json:"reference_id"`
+	LeaseID           cache.LeaseID           `json:"lease_id"`
+	OwnerKind         cache.LeaseOwnerKind    `json:"owner_kind"`
+	OwnerID           string                  `json:"owner_id"`
+}
+
+type CacheMarkDirtyResponse struct {
+	Dirty         bool         `json:"dirty"`
+	CurrentSHA256 cache.BlobID `json:"current_sha256"`
+	Size          int64        `json:"size"`
+}
+
+func (s *providerSession) cacheMarkDirty(ctx context.Context, payload json.RawMessage) (any, error) {
+	if s.cache == nil {
+		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	var request CacheMarkDirtyRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode cache mark-dirty request", err)
+	}
+	result, err := s.cache.MarkDirty(ctx, cachemanager.MarkDirtyRequest{
+		MaterializationID: request.MaterializationID,
+		ReferenceID:       request.ReferenceID,
+		LeaseID:           request.LeaseID,
+		OwnerKind:         request.OwnerKind,
+		OwnerID:           request.OwnerID,
+	})
+	if err != nil {
+		return nil, internalError("mark cache materialization dirty", err)
+	}
+	return CacheMarkDirtyResponse{Dirty: true, CurrentSHA256: result.Materialization.CurrentBlobID, Size: result.Materialization.Size}, nil
 }
 
 func (s *providerSession) cacheReleaseHandoff(ctx context.Context, payload json.RawMessage) (any, error) {
@@ -93,6 +130,11 @@ func (s *providerSession) cacheMaterialize(ctx context.Context, payload json.Raw
 	default:
 		return nil, invalidArgument("validate cache materialization owner kind", nil)
 	}
+	if request.Process != nil {
+		if err := request.Process.Validate(); err != nil {
+			return nil, invalidArgument("validate cache materialization process identity", err)
+		}
+	}
 	location, err := ipc.DecodeLocation(request.Location)
 	if err != nil {
 		return nil, invalidArgument("decode cache materialization location", err)
@@ -135,7 +177,7 @@ func (s *providerSession) cacheMaterialize(ctx context.Context, payload json.Raw
 	}
 	handoff, err := s.cache.PrepareHandoff(ctx, cachemanager.HandoffRequest{
 		EntryID: published.Entry.ID, MaterializationID: materializationID, ReferenceID: referenceID, LeaseID: leaseID,
-		OwnerKind: request.OwnerKind, OwnerID: request.OwnerID, Pinned: request.Pinned,
+		OwnerKind: request.OwnerKind, OwnerID: request.OwnerID, Pinned: request.Pinned, Process: request.Process,
 	})
 	if err != nil {
 		return nil, internalError("prepare cache handoff", err)

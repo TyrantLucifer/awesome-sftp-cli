@@ -212,8 +212,9 @@ func (store *Store) PrepareHandoff(ctx context.Context, item cache.Materializati
 	}
 	pid, birth := processValues(lease.Process)
 	return store.write(ctx, 3, func(_ *sql.Conn, writer *transactionWriter) error {
-		if _, err := writer.ExecContext(ctx, "INSERT INTO cache_materializations(materialization_id,entry_id,baseline_blob_sha256,basename,size_bytes,current_sha256,state,pinned,created_at_unix,updated_at_unix,last_access_unix) VALUES(?,?,?,?,?,?,?,?,?,?,?)", item.ID, item.EntryID, item.BaselineBlobID, materializationBasename(item.ID), item.Size, item.CurrentBlobID, item.State, boolInt(item.Pinned), unix(item.CreatedAt), unix(item.LastAccessAt), unix(item.LastAccessAt)); err != nil {
-			return fmt.Errorf("prepare cache handoff materialization %q: %w", item.ID, err)
+		result, err := writer.ExecContext(ctx, "INSERT INTO cache_materializations(materialization_id,entry_id,baseline_blob_sha256,basename,size_bytes,current_sha256,state,pinned,created_at_unix,updated_at_unix,last_access_unix) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM cache_entries AS e JOIN cache_blobs AS b ON b.sha256=e.blob_sha256 WHERE e.entry_id=? AND e.blob_sha256=? AND b.state='published' AND NOT EXISTS(SELECT 1 FROM cache_references AS r WHERE r.owner_kind='workspace' AND r.owner_id=?||e.entry_id AND r.blob_sha256=e.blob_sha256))", item.ID, item.EntryID, item.BaselineBlobID, materializationBasename(item.ID), item.Size, item.CurrentBlobID, item.State, boolInt(item.Pinned), unix(item.CreatedAt), unix(item.LastAccessAt), unix(item.LastAccessAt), item.EntryID, item.BaselineBlobID, evictionEntryOwnerPrefix)
+		if err := requireOne("prepare cache handoff materialization", result, err); err != nil {
+			return errors.Join(ErrEvictionProtected, fmt.Errorf("prepare cache handoff materialization %q: %w", item.ID, err))
 		}
 		if _, err := writer.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,blob_sha256,materialization_id,created_at_unix) VALUES(?,?,?,NULL,?,?)", reference.ID, reference.OwnerKind, reference.OwnerID, item.ID, unix(reference.CreatedAt)); err != nil {
 			return fmt.Errorf("prepare cache handoff reference %q: %w", reference.ID, err)
