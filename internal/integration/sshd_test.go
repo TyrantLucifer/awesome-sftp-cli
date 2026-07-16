@@ -20,7 +20,9 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 )
 
@@ -87,6 +89,7 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 	defer second.Close()
 	assertContainsEntry(t, ctx, first, "endpoint-first.txt")
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
+	assertBidirectionalDurableTransfer(t, ctx, first, firstServer.root)
 	if _, err := os.Stat(poisonMarker); !os.IsNotExist(err) {
 		t.Fatalf("poisoned PATH ssh executed: %v", err)
 	}
@@ -110,6 +113,147 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
+}
+
+func assertBidirectionalDurableTransfer(t *testing.T, ctx context.Context, remote *sftpprovider.Provider, remoteRoot string) {
+	t.Helper()
+	snapshot, err := remote.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.Capabilities.Lookup("write"); !ok {
+		t.Fatalf("real OpenSSH SFTP capability snapshot = %#v, want write", snapshot.Capabilities)
+	}
+
+	uploadRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(uploadRoot, "upload-source.txt"), []byte("local-to-remote"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uploadSource, err := localfs.New(localfs.Config{
+		Endpoint:  domain.Endpoint{ID: "ep_cccccccccccccccccccccccccc", Kind: domain.EndpointLocal, DisplayName: "upload-source"},
+		SessionID: "sess_cccccccccccccccccccccccccc",
+		Root:      uploadRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uploadSource.Close()
+	resolver := transfer.MapResolver{uploadSource.Descriptor().ID: uploadSource, remote.Descriptor().ID: remote}
+	uploadPlanner := transfer.NewPlanner(resolver)
+	uploadLocation := normalizeIntegration(t, ctx, uploadSource, "/upload-source.txt")
+	uploadReference, err := uploadPlanner.Capture(ctx, uploadLocation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadPlan, _, err := uploadPlanner.FreezeCopy(ctx, integrationFreezeRequest(t, 'c', uploadReference, normalizeIntegration(t, ctx, remote, "/"), "uploaded.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := transfer.NewWorker(resolver, newIntegrationJournal()).Execute(ctx, uploadPlan, nil); err != nil || result.Outcome != transfer.OutcomeCompleted {
+		t.Fatalf("local -> SFTP transfer = (%#v, %v)", result, err)
+	}
+	// #nosec G304 -- remoteRoot is this test's private sshd root.
+	uploaded, err := os.ReadFile(filepath.Join(remoteRoot, "uploaded.txt"))
+	if err != nil || string(uploaded) != "local-to-remote" {
+		t.Fatalf("remote upload = %q, %v", uploaded, err)
+	}
+
+	downloadRoot := t.TempDir()
+	downloadDestination, err := localfs.New(localfs.Config{
+		Endpoint:  domain.Endpoint{ID: "ep_dddddddddddddddddddddddddd", Kind: domain.EndpointLocal, DisplayName: "download-destination"},
+		SessionID: "sess_dddddddddddddddddddddddddd",
+		Root:      downloadRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer downloadDestination.Close()
+	resolver = transfer.MapResolver{remote.Descriptor().ID: remote, downloadDestination.Descriptor().ID: downloadDestination}
+	downloadPlanner := transfer.NewPlanner(resolver)
+	downloadReference, err := downloadPlanner.Capture(ctx, normalizeIntegration(t, ctx, remote, "/uploaded.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloadPlan, _, err := downloadPlanner.FreezeCopy(ctx, integrationFreezeRequest(t, 'd', downloadReference, normalizeIntegration(t, ctx, downloadDestination, "/"), "downloaded.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := transfer.NewWorker(resolver, newIntegrationJournal()).Execute(ctx, downloadPlan, nil); err != nil || result.Outcome != transfer.OutcomeCompleted {
+		t.Fatalf("SFTP -> local transfer = (%#v, %v)", result, err)
+	}
+	// #nosec G304 -- downloadRoot is this test's private local provider root.
+	downloaded, err := os.ReadFile(filepath.Join(downloadRoot, "downloaded.txt"))
+	if err != nil || string(downloaded) != "local-to-remote" {
+		t.Fatalf("local download = %q, %v", downloaded, err)
+	}
+}
+
+func integrationFreezeRequest(t *testing.T, seed byte, source transfer.FileRef, destination domain.Location, name string) transfer.FreezeRequest {
+	t.Helper()
+	generator := &domain.RandomGenerator{Reader: strings.NewReader(strings.Repeat(string([]byte{seed}), 64))}
+	requestID, err := domain.NewRequestID(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID, err := domain.NewJobID(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID, err := domain.NewEventID(generator)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return transfer.FreezeRequest{
+		Intent: transfer.Intent{
+			Clipboard:            transfer.ClipboardCopy,
+			Source:               source,
+			DestinationDirectory: destination,
+			Name:                 name,
+			ConflictPolicy:       transfer.ConflictAsk,
+		},
+		RequestID: requestID,
+		PlanID:    "plan_" + string(jobID)[4:],
+		JobID:     jobID,
+		EventID:   eventID,
+		Now:       time.Now(),
+	}
+}
+
+func normalizeIntegration(t *testing.T, ctx context.Context, implementation provider.Provider, input string) domain.Location {
+	t.Helper()
+	location, err := implementation.Normalize(ctx, domain.NormalizeRequest{EndpointID: implementation.Descriptor().ID, Input: input})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return location
+}
+
+type integrationJournal struct {
+	mu          sync.Mutex
+	checkpoints map[domain.JobID]transfer.Checkpoint
+}
+
+func newIntegrationJournal() *integrationJournal {
+	return &integrationJournal{checkpoints: make(map[domain.JobID]transfer.Checkpoint)}
+}
+
+func (journal *integrationJournal) Load(_ context.Context, jobID domain.JobID) (*transfer.Checkpoint, error) {
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+	checkpoint, ok := journal.checkpoints[jobID]
+	if !ok {
+		return nil, nil
+	}
+	checkpoint.ChecksumState = append([]byte(nil), checkpoint.ChecksumState...)
+	return &checkpoint, nil
+}
+
+func (journal *integrationJournal) Save(_ context.Context, checkpoint transfer.Checkpoint) error {
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+	checkpoint.ChecksumState = append([]byte(nil), checkpoint.ChecksumState...)
+	journal.checkpoints[checkpoint.JobID] = checkpoint
+	return nil
 }
 
 type testSSHD struct {

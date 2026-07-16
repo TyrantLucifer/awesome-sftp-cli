@@ -30,6 +30,7 @@ type contractFactory struct{}
 
 func TestProviderContract(t *testing.T) {
 	contracttest.Run(t, contractFactory{})
+	contracttest.RunMutable(t, contractFactory{})
 }
 
 func (contractFactory) New(t *testing.T) contracttest.Fixture {

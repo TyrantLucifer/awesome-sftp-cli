@@ -41,6 +41,7 @@ type Provider struct {
 	endpoint   domain.Endpoint
 	snapshot   domain.EndpointSnapshot
 	root       string
+	rootHandle *os.Root
 	maxCursors int
 	nextCursor uint64
 	cursors    map[providerapi.PageCursor]*cursorState
@@ -72,7 +73,10 @@ func New(config Config) (*Provider, error) {
 	capabilities, err := domain.NewCapabilitySnapshot(domain.CapabilityRevision{
 		SessionID:  config.SessionID,
 		Generation: 1,
-	}, true, []domain.Capability{{Name: "read", Version: 1}})
+	}, true, []domain.Capability{
+		{Name: "read", Version: 1},
+		{Name: "write", Version: 1},
+	})
 	if err != nil {
 		return nil, fmt.Errorf("create local provider: capabilities: %w", err)
 	}
@@ -87,6 +91,10 @@ func New(config Config) (*Provider, error) {
 	if maxCursors < 1 {
 		return nil, errors.New("create local provider: maximum cursors must be positive")
 	}
+	rootHandle, err := os.OpenRoot(config.Root)
+	if err != nil {
+		return nil, fmt.Errorf("create local provider: open rooted filesystem handle: %w", err)
+	}
 	return &Provider{
 		endpoint: config.Endpoint,
 		snapshot: domain.EndpointSnapshot{
@@ -97,6 +105,7 @@ func New(config Config) (*Provider, error) {
 			ObservedAt:   now(),
 		},
 		root:       config.Root,
+		rootHandle: rootHandle,
 		maxCursors: maxCursors,
 		cursors:    make(map[providerapi.PageCursor]*cursorState),
 	}, nil
@@ -324,6 +333,9 @@ func (p *Provider) Close() error {
 	var result error
 	for _, state := range states {
 		result = errors.Join(result, state.directory.Close())
+	}
+	if p.rootHandle != nil {
+		result = errors.Join(result, p.rootHandle.Close())
 	}
 	return result
 }

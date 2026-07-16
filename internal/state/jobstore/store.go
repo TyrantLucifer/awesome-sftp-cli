@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"regexp"
 	"time"
 
@@ -16,13 +17,14 @@ import (
 )
 
 const (
-	maxEncodedRowBytes = 256 * 1024
-	planWALBudget      = uint64(1024 * 1024)
-	jobWALBudget       = uint64(512 * 1024)
-	stepWALBudget      = uint64(1024 * 1024)
-	eventWALBudget     = uint64(512 * 1024)
-	dedupWALBudget     = uint64(512 * 1024)
-	maxJobSteps        = 5
+	maxEncodedRowBytes  = 256 * 1024
+	planWALBudget       = uint64(1024 * 1024)
+	jobWALBudget        = uint64(512 * 1024)
+	stepWALBudget       = uint64(1024 * 1024)
+	checkpointWALBudget = uint64(512 * 1024)
+	eventWALBudget      = uint64(512 * 1024)
+	dedupWALBudget      = uint64(512 * 1024)
+	maxJobSteps         = 5
 )
 
 var (
@@ -70,6 +72,28 @@ type TransitionRequest struct {
 	RetryAt         *time.Time
 	TerminalSummary *string
 	Now             time.Time
+}
+
+type CheckpointRequest struct {
+	JobID             domain.JobID
+	StepIndex         int
+	Phase             string
+	VerifiedOffset    uint64
+	SourceFingerprint string
+	PartLocationJSON  string
+	ChecksumState     []byte
+	Now               time.Time
+}
+
+type CheckpointRecord struct {
+	JobID             domain.JobID
+	StepIndex         int
+	Phase             string
+	VerifiedOffset    uint64
+	SourceFingerprint string
+	PartLocationJSON  string
+	ChecksumState     []byte
+	UpdatedAt         time.Time
 }
 
 type Snapshot struct {
@@ -245,6 +269,91 @@ func (store *Store) Get(ctx context.Context, jobID domain.JobID) (Snapshot, erro
 	readContext, cancel := wal.ReaderContext(ctx)
 	defer cancel()
 	return getSnapshot(readContext, store.database, jobID)
+}
+
+func (store *Store) SaveCheckpoint(ctx context.Context, request CheckpointRequest) error {
+	if err := validateCheckpoint(request); err != nil {
+		return err
+	}
+	return store.immediate(ctx, []uint64{checkpointWALBudget}, func(_ *sql.Conn, writer *transactionWriter) error {
+		result, err := writer.ExecContext(ctx, `INSERT INTO job_checkpoints(
+			job_id, step_index, phase, verified_offset, source_fingerprint,
+			part_location_json, checksum_state, updated_at_unix
+		) VALUES(?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(job_id, step_index) DO UPDATE SET
+			phase=excluded.phase,
+			verified_offset=excluded.verified_offset,
+			source_fingerprint=excluded.source_fingerprint,
+			part_location_json=excluded.part_location_json,
+			checksum_state=excluded.checksum_state,
+			updated_at_unix=excluded.updated_at_unix
+		WHERE excluded.verified_offset >= job_checkpoints.verified_offset
+			AND excluded.updated_at_unix >= job_checkpoints.updated_at_unix
+			AND excluded.source_fingerprint IS job_checkpoints.source_fingerprint`,
+			request.JobID,
+			request.StepIndex,
+			request.Phase,
+			request.VerifiedOffset,
+			nullableString(request.SourceFingerprint),
+			nullableString(request.PartLocationJSON),
+			nullableBytes(request.ChecksumState),
+			request.Now.Unix(),
+		)
+		if err != nil {
+			return fmt.Errorf("save Job checkpoint: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("save Job checkpoint row count: %w", err)
+		}
+		if changed != 1 {
+			return errors.New("save Job checkpoint: stale offset, time, or source identity")
+		}
+		return nil
+	})
+}
+
+func (store *Store) GetCheckpoint(ctx context.Context, jobID domain.JobID, stepIndex int) (CheckpointRecord, error) {
+	if _, err := domain.ParseJobID(string(jobID)); err != nil {
+		return CheckpointRecord{}, fmt.Errorf("get Job checkpoint: %w", err)
+	}
+	if stepIndex < 0 || stepIndex >= maxJobSteps {
+		return CheckpointRecord{}, errors.New("get Job checkpoint: step index is outside the supported range")
+	}
+	if store == nil || store.database == nil {
+		return CheckpointRecord{}, errors.New("get Job checkpoint: nil store")
+	}
+	readContext, cancel := wal.ReaderContext(ctx)
+	defer cancel()
+	var record CheckpointRecord
+	var sourceFingerprint, partLocation sql.NullString
+	var checksumState []byte
+	var updatedAt int64
+	err := store.database.QueryRowContext(readContext, `SELECT
+		job_id, step_index, phase, verified_offset, source_fingerprint,
+		part_location_json, checksum_state, updated_at_unix
+		FROM job_checkpoints WHERE job_id=? AND step_index=?`, jobID, stepIndex).Scan(
+		&record.JobID,
+		&record.StepIndex,
+		&record.Phase,
+		&record.VerifiedOffset,
+		&sourceFingerprint,
+		&partLocation,
+		&checksumState,
+		&updatedAt,
+	)
+	if err != nil {
+		return CheckpointRecord{}, fmt.Errorf("get Job checkpoint: %w", err)
+	}
+	if sourceFingerprint.Valid {
+		record.SourceFingerprint = sourceFingerprint.String
+	}
+	if partLocation.Valid {
+		record.PartLocationJSON = partLocation.String
+	}
+	record.ChecksumState = append([]byte(nil), checksumState...)
+	record.UpdatedAt = time.Unix(updatedAt, 0)
+	return record, nil
 }
 
 func (store *Store) RecoverInterrupted(ctx context.Context, generator domain.Generator, now time.Time) (int, error) {
@@ -531,6 +640,36 @@ func validateTransitionRequest(request TransitionRequest) error {
 	return validateEncodedValues(values...)
 }
 
+func validateCheckpoint(request CheckpointRequest) error {
+	if _, err := domain.ParseJobID(string(request.JobID)); err != nil {
+		return fmt.Errorf("save Job checkpoint: %w", err)
+	}
+	if request.StepIndex < 0 || request.StepIndex >= maxJobSteps || !eventKindPattern.MatchString(request.Phase) ||
+		request.Now.Unix() <= 0 || request.VerifiedOffset > math.MaxInt64 {
+		return errors.New("save Job checkpoint: invalid step, phase, offset, or time")
+	}
+	if len(request.ChecksumState) > 64*1024 {
+		return errors.New("save Job checkpoint: checksum state exceeds 64 KiB")
+	}
+	values := []string{request.Phase}
+	if request.SourceFingerprint != "" {
+		if !json.Valid([]byte(request.SourceFingerprint)) {
+			return errors.New("save Job checkpoint: source fingerprint is invalid JSON")
+		}
+		values = append(values, request.SourceFingerprint)
+	}
+	if request.PartLocationJSON != "" {
+		if !json.Valid([]byte(request.PartLocationJSON)) {
+			return errors.New("save Job checkpoint: part location is invalid JSON")
+		}
+		values = append(values, request.PartLocationJSON)
+	}
+	if err := validateEncodedValues(values...); err != nil {
+		return fmt.Errorf("save Job checkpoint: %w", err)
+	}
+	return nil
+}
+
 func validateEncodedValues(values ...string) error {
 	total := 0
 	for _, value := range values {
@@ -554,6 +693,20 @@ func nullableTimeUnix(value *time.Time) any {
 		return nil
 	}
 	return value.Unix()
+}
+
+func nullableString(value string) any {
+	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullableBytes(value []byte) any {
+	if len(value) == 0 {
+		return nil
+	}
+	return value
 }
 
 func marshalJobResponse(jobID domain.JobID) (string, error) {

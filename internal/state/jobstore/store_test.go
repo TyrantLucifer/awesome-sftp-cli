@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -166,6 +167,72 @@ func TestRecoverInterruptedJobsPausesEffectsExactlyOnce(t *testing.T) {
 		t.Fatalf("repeat recovered jobs = %d, want 0", recovered)
 	}
 	assertCount(t, ctx, database, "job_events", 3)
+}
+
+func TestCheckpointUpsertIsDurableBoundedAndJobStepScoped(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, database := newTestStore(t, ctx)
+	created, _, err := store.Create(ctx, createRequest(t, 4))
+	if err != nil {
+		t.Fatalf("create job: %v", err)
+	}
+	request := CheckpointRequest{
+		JobID:             created.JobID,
+		StepIndex:         0,
+		Phase:             "streaming",
+		VerifiedOffset:    4096,
+		SourceFingerprint: `{"size":8192}`,
+		PartLocationJSON:  `{"path":"/target.part"}`,
+		ChecksumState:     []byte{1, 2, 3, 4},
+		Now:               time.Unix(400, 0),
+	}
+	if err := store.SaveCheckpoint(ctx, request); err != nil {
+		t.Fatalf("save checkpoint: %v", err)
+	}
+	checkpoint, err := store.GetCheckpoint(ctx, created.JobID, 0)
+	if err != nil {
+		t.Fatalf("get checkpoint: %v", err)
+	}
+	if checkpoint.Phase != request.Phase || checkpoint.VerifiedOffset != request.VerifiedOffset ||
+		checkpoint.SourceFingerprint != request.SourceFingerprint || checkpoint.PartLocationJSON != request.PartLocationJSON ||
+		!reflect.DeepEqual(checkpoint.ChecksumState, request.ChecksumState) {
+		t.Fatalf("checkpoint = %#v, want %#v", checkpoint, request)
+	}
+
+	request.Phase = "verified"
+	request.VerifiedOffset = 8192
+	request.ChecksumState[0] = 9
+	request.Now = time.Unix(401, 0)
+	if err := store.SaveCheckpoint(ctx, request); err != nil {
+		t.Fatalf("replace checkpoint: %v", err)
+	}
+	checkpoint, err = store.GetCheckpoint(ctx, created.JobID, 0)
+	if err != nil {
+		t.Fatalf("get replaced checkpoint: %v", err)
+	}
+	if checkpoint.Phase != "verified" || checkpoint.VerifiedOffset != 8192 || checkpoint.UpdatedAt.Unix() != 401 || checkpoint.ChecksumState[0] != 9 {
+		t.Fatalf("replaced checkpoint = %#v", checkpoint)
+	}
+	assertCount(t, ctx, database, "job_checkpoints", 1)
+	request.VerifiedOffset = 1
+	request.Now = time.Unix(402, 0)
+	if err := store.SaveCheckpoint(ctx, request); err == nil {
+		t.Fatal("regressing a checkpoint offset succeeded")
+	}
+	checkpoint, err = store.GetCheckpoint(ctx, created.JobID, 0)
+	if err != nil || checkpoint.VerifiedOffset != 8192 {
+		t.Fatalf("checkpoint after rejected regression = (%#v, %v)", checkpoint, err)
+	}
+
+	request.StepIndex = 99
+	if err := store.SaveCheckpoint(ctx, request); err == nil {
+		t.Fatal("save checkpoint for unknown step succeeded")
+	}
+	if _, err := store.GetCheckpoint(ctx, created.JobID, 1); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing checkpoint error = %v, want sql.ErrNoRows", err)
+	}
 }
 
 func newTestStore(t *testing.T, ctx context.Context) (*Store, *sql.DB) {

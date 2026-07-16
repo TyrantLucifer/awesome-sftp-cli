@@ -106,7 +106,7 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Milestone Status**: In Progress
 
-**Current checkpoint**: M2.1 gate satisfied. First action is to freeze the existing Provider/IPC/domain seams and add RED contract tests for Operation Intent/Plan plus same-directory part creation, without exposing a UI/RPC mutation bypass.
+**Current checkpoint**: Shared Fake/LocalFS/SFTP mutation contracts, rooted LocalFS writes, capability-honest SFTP writes, immutable single-file Intent/Plan, a bounded SHA-256 part/verify/commit worker, four commit-time conflict policies and SQLite checkpoint resume across database/worker restart pass focused race and lint. The guarded real-OpenSSH test now runs local→SFTP and SFTP→local copies when Hosted enables the fixture. Next action is daemon-owned Job scheduling/control and endpoint lifetime, without exposing a direct mutation RPC.
 
 ### M2.3: 目录复制与双远端中继
 
