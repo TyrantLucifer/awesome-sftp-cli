@@ -64,6 +64,14 @@ func TestInitializeRejectsForeignFinalBeforeProbeWrites(t *testing.T) {
 		t.Fatalf("write foreign final: %v", err)
 	}
 	before := directoryEntries(t, root)
+	beforeRootInfo, err := os.Lstat(root)
+	if err != nil {
+		t.Fatalf("stat foreign database parent: %v", err)
+	}
+	beforeFileInfo, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("stat foreign database: %v", err)
+	}
 	if _, _, err := Initialize(context.Background(), InitializeConfig{Root: root, DatabasePath: path, Random: strings.NewReader(strings.Repeat("x", 64))}); err == nil {
 		t.Fatal("Initialize(foreign) error = nil")
 	}
@@ -77,6 +85,20 @@ func TestInitializeRejectsForeignFinalBeforeProbeWrites(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, content) {
 		t.Fatalf("foreign content changed: %q", got)
+	}
+	afterRootInfo, err := os.Lstat(root)
+	if err != nil {
+		t.Fatalf("stat foreign database parent after rejection: %v", err)
+	}
+	afterFileInfo, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("stat foreign database after rejection: %v", err)
+	}
+	if afterRootInfo.Mode() != beforeRootInfo.Mode() || afterRootInfo.Size() != beforeRootInfo.Size() || !afterRootInfo.ModTime().Equal(beforeRootInfo.ModTime()) {
+		t.Fatalf("foreign database parent metadata changed: before=%v after=%v", beforeRootInfo, afterRootInfo)
+	}
+	if afterFileInfo.Mode() != beforeFileInfo.Mode() || afterFileInfo.Size() != beforeFileInfo.Size() || !afterFileInfo.ModTime().Equal(beforeFileInfo.ModTime()) {
+		t.Fatalf("foreign database attrs changed: before=%v after=%v", beforeFileInfo, afterFileInfo)
 	}
 }
 

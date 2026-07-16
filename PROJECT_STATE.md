@@ -3,13 +3,13 @@
 - **Updated**: 2026-07-16
 - **Lifecycle**: Stage 2 durable transfers In Progress
 - **Active stage**: Stage 2 — Durable Transfers
-- **Current milestone**: M2.1 — Persistent state-machine foundation; crash/probe closeout
+- **Current milestone**: M2.2 — Single-file copy, conflict and commit
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
 
-Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; the M2.1 Version 1 foundation now includes the frozen schema/contract, safe APFS/ext4/XFS state boundary, atomic bootstrap/runtime validation, transactional Job/events, conservative pre-bind restart recovery, frozen migration-set attempts, per-head online backup sanitization/restore hold, crash adoption, overflow-safe free-space calculation, deterministic crash-resumable retention of the newest two verified backups, physical migration/runtime WAL enforcement, a bounded same-binary cross-process WAL/locking/full-sync probe, and an integrated multi-version coordinator that completes immutable target validation before reopening the runtime pool. Real child-process death now covers seven bootstrap durability boundaries, consecutive pre-publication crashes, committed runtime WAL recovery, and migration statement/history/attempt/pre-commit/post-commit prefixes. The daemon now has direct tests proving corrupt, newer and non-owner-writable state disables persistence without losing Stage 1 browsing or modifying the unsafe database. Exact SHA `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` passed full Hosted run [29475833368](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475833368), including explicit ext4 and loop-mounted XFS state/crash suites on both Linux native legs; the next candidate adds real XFS ENOSPC rollback evidence.
+Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; M2.1 is complete. Its Version 1 foundation includes the frozen schema/contract, safe APFS/ext4/XFS state boundary, atomic bootstrap/runtime validation, transactional Job/events, conservative pre-bind restart recovery, frozen migration-set attempts, per-head online backup sanitization/restore hold, crash adoption, overflow-safe free-space calculation, deterministic crash-resumable retention of the newest two verified backups, physical migration/runtime WAL enforcement, a bounded same-binary cross-process WAL/locking/full-sync probe, and an integrated multi-version coordinator that completes immutable target validation before reopening the runtime pool. Real child-process death covers seven bootstrap durability boundaries, consecutive pre-publication crashes, committed runtime WAL recovery, and migration statement/history/attempt/pre-commit/post-commit prefixes. Corrupt, newer and non-owner-writable state disables persistence without losing Stage 1 browsing or modifying the unsafe database; every nonterminal Job startup state now has direct deterministic daemon recovery evidence. Exact SHA `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` passed full Hosted run [29475833368](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475833368). Both Linux native jobs for exact SHA `f83aa45de9b83f42d6f64944401ddde0e1e92d01` then passed the complete ext4/XFS state matrix plus real XFS `ENOSPC` rollback in [run 29476167115](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29476167115). M2.2 has begun with Provider/IPC/domain contract discovery and RED tests for frozen single-file copy intent and safe same-directory part commit.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -37,12 +37,13 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Run the native XFS ENOSPC transaction fixture, close the final M2.1 evidence audit, then begin M2.2 only after the exact candidate is green.
+Freeze the existing Provider/IPC/domain seams, then add the first M2.2 RED contract tests for frozen single-file copy intent and same-directory part creation/commit.
 
 ## Current risks
 
-- The exact modernc intake and Version 1 schema/identity/bootstrap/Job/attempt/backup/retention/WAL/coordinator/cross-process-probe foundation, local process-death matrices, native ext4/XFS runs and daemon fail-closed modes are implemented; M2.1 remains incomplete until real XFS ENOSPC and the exact full Hosted candidate pass.
+- M2.1 is complete; M2.2 must preserve its single-writer, bounded-WAL and fail-closed guarantees while adding Provider mutation contracts and transfer execution.
 - APFS can be exercised locally, but ext4/XFS database semantics require native Linux Hosted fixtures; cross-builds are not acceptance evidence.
+- Hosted run 29476167115's state-relevant quality and both Linux native jobs passed; its unrelated auth job hit a pre-existing asynchronous host-key diagnostic timing race, so the current closeout candidate must rerun the complete matrix before its evidence is promoted.
 - Stage 2 touches persistent user state and destructive file operations, so every milestone remains fail-closed to the verified Stage 1 read-only surface until its evidence is complete.
 
 ## Required reading for the next session

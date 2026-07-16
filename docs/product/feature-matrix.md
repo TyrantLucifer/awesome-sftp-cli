@@ -2,14 +2,14 @@
 
 > - 产品：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
 > - 基线：已批准产品设计
-> - 实现状态：Stage 0–1 已完成；Stage 2–6 尚未开始
+> - 实现状态：Stage 0–1 已完成；Stage 2 In Progress；Stage 3–6 尚未开始
 > - 最后更新：2026-07-16
 
 ## 1. 使用规则
 
 本矩阵是 1.0 交付范围的逐项事实源。每条能力使用稳定 ID；ID 一经进入矩阵不得复用，能力被取消时保留原行并将状态改为 `Removed`，同时链接对应 ADR。实现不得只在代码或聊天中增加能力而不更新本矩阵。
 
-Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在只完成 Stage 1 slice 时仍保持 `In Progress`，Stage 2–6 未开始行保持 `Planned`。Stage 1 最终实现树与真实 OpenSSH/Kerberos/recovery/native/reproducibility 证据见 [Stage 1 verification](../verification/stage-01.md)。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
+Stage 0–1 的独立完成行已按证据标记为 `Verified`；Stage 2 正在按 M2.1–M2.4 推进，已完成的独立能力按证据更新，跨里程碑能力保持 `In Progress`；Stage 3–6 未开始行保持 `Planned`。Stage 1 最终实现树与真实 OpenSSH/Kerberos/recovery/native/reproducibility 证据见 [Stage 1 verification](../verification/stage-01.md)，Stage 2 证据见 [Stage 2 verification](../verification/stage-02.md)。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
 
 状态词义：
 
@@ -134,8 +134,8 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 | DAEM-003 | TUI 可附着/分离 | 1 | In Progress | TUI 退出只关闭客户端连接；重新启动可恢复 panes/workspace 并订阅现有任务。 | Stage 1 client detach/re-entry and workspace restoration pass locally and in native PTY smokes; subscription to durable Stage 2 tasks is intentionally not yet implemented. See [Stage 1 verification](../verification/stage-01.md). |
 | DAEM-004 | TUI 退出后任务继续 | 2 | Planned | 最后一个 TUI 退出后，非交互任务继续运行；需要交互时进入等待状态。 | 未实施；预期证据：大文件复制中退出 TUI 后完成及 waiting_auth/waiting_conflict 测试。 |
 | DAEM-005 | 事件流与重放游标 | 2 | Planned | 客户端按游标接收任务/连接事件；短暂断连后可补齐或用一致快照恢复，不重复执行命令。 | 未实施；预期证据：断连、事件缺口、重连重放与快照回退测试。 |
-| DAEM-006 | 单写者持久状态 | 2 | Planned | SQLite仅在本地APFS/ext4/XFS且跨进程WAL/full-durability probe通过。唯一pristine是final+sidecars全不存在；existing先raw identity，无sidecar才immutable，有合法sidecar先probe/recovery再验证whole-main schema/history。final-absent intent bootstrap、受测SQL lexer、original..target durable attempt、sanitized/hold backup、非ready状态显式恢复、retention/space/fullsync/no-replace及最终清attempt→retention→checkpoint→immutable均fail closed；online WAL为64MiB soft/256MiB stop/264MiB absolute。 | 未实施；预期证据：FS/probe、wrong DB零写、bootstrap、sidecar recovery、checksum/lexer/schema、attempt/backup/hold/retention、Darwin顺序、WAL预算/最终验证。 |
-| DAEM-007 | daemon 重启恢复 | 2 | Planned | 异常退出后重新启动可恢复未完成任务、缓存租约和连接需求，并先验证外部状态再继续。 | 未实施；预期证据：各任务阶段 kill -9 的恢复矩阵。 |
+| DAEM-006 | 单写者持久状态 | 2 | Verified | SQLite仅在本地APFS/ext4/XFS且跨进程WAL/full-durability probe通过。唯一pristine是final+sidecars全不存在；existing先raw identity，无sidecar才immutable，有合法sidecar先probe/recovery再验证whole-main schema/history。final-absent intent bootstrap、受测SQL lexer、original..target durable attempt、sanitized/hold backup、非ready状态显式恢复、retention/space/fullsync/no-replace及最终清attempt→retention→checkpoint→immutable均fail closed；online WAL为64MiB soft/256MiB stop/264MiB absolute。 | ADR-0008 的 filesystem/identity/bootstrap/probe/migration/backup/retention/WAL/crash 矩阵均通过；Hosted run 29476167115 的两个 Linux native 作业在 ext4 与私有 XFS 上通过完整状态套件和真实 ENOSPC 回滚。single-writer、busy、foreign DB 零写和 Stage 1 fail-closed degradation 同时覆盖。见 [M2.1 feature evidence](../verification/stage-02.md#m21-feature-evidence)。 |
+| DAEM-007 | daemon 重启恢复 | 2 | In Progress | 异常退出后重新启动可恢复未完成任务、缓存租约和连接需求，并先验证外部状态再继续。 | M2.1 已证明 bootstrap/migration/runtime-WAL 进程死亡恢复，以及所有非终态 Job 启动时确定性保持或保守降为 `paused`；传输外部状态重验证与各执行阶段 kill -9 矩阵随 M2.2–M2.4 完成。见 [Stage 2 verification](../verification/stage-02.md#m21--persistent-state-machine-foundation)。 |
 | DAEM-008 | helper 不作为 daemon 前置 | 1 | In Progress | 本地 daemon 在所有远端均未安装 helper 时仍提供完整 Level 0 功能。 | The complete read-only Explorer runs only through LocalFS/system OpenSSH/SFTP with no helper binary or handshake; Level 0 transfer coverage belongs to Stage 2. See [Stage 1 verification](../verification/stage-01.md). |
 
 ## 10. 预览
@@ -195,9 +195,9 @@ Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| JOB-001 | 持久化 Job | 2 | Planned | 每个写操作在执行前生成稳定 Job ID，并将意图、冻结计划、阶段、进度、决策和检查点事务化写入 SQLite。 | 未实施；预期证据：Job round-trip、事务回滚和 daemon 重启测试。 |
-| JOB-002 | 主状态机 | 2 | Planned | 支持 `draft → awaiting_confirmation → queued → running → verifying → completed`，非法跃迁被拒绝。 | 未实施；预期证据：全状态跃迁表驱动测试。 |
-| JOB-003 | 等待与终止状态 | 2 | Planned | 支持 `paused`、`waiting_auth`、`waiting_conflict`、`retry_wait`、`failed`、`canceled` 和 `completed_with_source_retained`，每个状态记录原因和允许动作。 | 未实施；预期证据：各状态入口、恢复动作和 UI 快照测试。 |
+| JOB-001 | 持久化 Job | 2 | In Progress | 每个写操作在执行前生成稳定 Job ID，并将意图、冻结计划、阶段、进度、决策和检查点事务化写入 SQLite。 | M2.1 已交付 exact V1 Job/plan/step/checkpoint/conflict/event schema、稳定 ID、事务化幂等创建与重启 round-trip；M2.2 起仍需将每个实际写操作接入此唯一路径。见 [Stage 2 verification](../verification/stage-02.md#m21--persistent-state-machine-foundation)。 |
+| JOB-002 | 主状态机 | 2 | Verified | 支持 `draft → awaiting_confirmation → queued → running → verifying → completed`，非法跃迁被拒绝。 | `TestStateTransitions` 穷举全部状态对，`TestTransitionIsTransactionalMonotonicAndRejectsIllegalState` 验证事务、事件序号、重复 request 与非法跃迁；current/Go 1.25.12 及 Hosted quality 均通过。见 [M2.1 feature evidence](../verification/stage-02.md#m21-feature-evidence)。 |
+| JOB-003 | 等待与终止状态 | 2 | In Progress | 支持 `paused`、`waiting_auth`、`waiting_conflict`、`retry_wait`、`failed`、`canceled` 和 `completed_with_source_retained`，每个状态记录原因和允许动作。 | 状态、schema 不变量、reason/summary 字段、允许转换与 restart 行为已覆盖；真实传输入口、恢复动作和 Jobs UI snapshot/event replay 留在 M2.2–M2.4。见 [Stage 2 verification](../verification/stage-02.md#m21--persistent-state-machine-foundation)。 |
 | JOB-004 | 不可变操作计划 | 2 | Planned | 执行开始后源集合、目标、冲突/完整性策略和初始路由被冻结；变更要求新建或显式修订计划并留痕。 | 未实施；预期证据：运行中修改 workspace/clipboard 不影响 Job 的测试。 |
 | JOB-005 | 普通复制立即排队 | 2 | Planned | 无覆盖、删除或直传风险的复制由 `p` 直接进入 queued，不要求冗余确认。 | 未实施；预期证据：安全复制的零确认交互测试。 |
 | JOB-006 | 高风险计划确认 | 2 | Planned | 覆盖、递归删除、不可逆删除、跨端点移动和直传在执行危险阶段前展示源/目标/数量/策略/可逆性。 | 未实施；预期证据：五类风险计划快照、取消和确认测试。 |

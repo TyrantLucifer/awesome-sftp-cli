@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not Started。Stage 2 的 ADR-0008 精确 SQLite 依赖准入和 M2.1 schema/backup/retention/WAL/upgrade coordinator/same-binary probe 基础已完成；当前继续关闭 native crash/recovery 与 ext4/XFS 门禁，M2.2 仍不得提前开始。
+Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not Started。Stage 2 的 ADR-0008 精确 SQLite 依赖准入与 M2.1 持久状态机骨架已通过本地及 Hosted ext4/XFS/ENOSPC 门禁；当前按顺序进入 M2.2 单文件复制、冲突与提交。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -92,9 +92,9 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Tests**: exact modernc intake；checksum/lexer/schema contract；filesystem/probe/identity/bootstrap/sidecar/attempt/backup/hold/retention/space/WAL；Fake Job 状态机、单 writer、busy/disk-full/corrupt/newer-schema 与 crash injection。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: same-binary cross-process WAL/locking/full-sync probing, bounded WAL enforcement, integrated multi-version upgrade coordination, and process-death recovery at seven bootstrap plus five migration transaction boundaries pass locally, including focused race. Hosted run [29475259444](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475259444) is green on exact SHA `1ec9097448d0ec40d32f0a87aeeb822e5651d381`; both Linux native legs of `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` then passed explicit ext4 identity and loop-mounted XFS execution of the complete persistent-state suite. Corrupt/newer/read-only daemon degradation passes locally, and the next candidate adds real XFS ENOSPC rollback before the final M2.1 audit.
+**Current checkpoint**: same-binary cross-process WAL/locking/full-sync probing, bounded WAL enforcement, integrated multi-version upgrade coordination, and process-death recovery at seven bootstrap plus five migration transaction boundaries pass locally, including focused race. Hosted run [29475259444](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475259444) is green on exact SHA `1ec9097448d0ec40d32f0a87aeeb822e5651d381`; both Linux native legs of `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` passed explicit ext4 identity and loop-mounted XFS execution of the complete persistent-state suite. Exact SHA `f83aa45de9b83f42d6f64944401ddde0e1e92d01` then passed both Linux native legs in [run 29476167115](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29476167115), including real XFS `ENOSPC` rollback and clean restart. Corrupt/newer/read-only daemon degradation, foreign-file/parent metadata preservation, and deterministic recovery for every nonterminal Job state pass locally. M2.1 is complete.
 
 ### M2.2: 单文件复制、冲突与提交
 
@@ -104,7 +104,9 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Tests**: Planner/intent 表驱动；LocalFS/SFTP mutation contract；真实 sshd 双向 copy；短写/断网/final race/kill-9；pause/resume/cancel/retry；IPC event replay、secret scan 与有界内存。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
+
+**Current checkpoint**: M2.1 gate satisfied. First action is to freeze the existing Provider/IPC/domain seams and add RED contract tests for Operation Intent/Plan plus same-directory part creation, without exposing a UI/RPC mutation bypass.
 
 ### M2.3: 目录复制与双远端中继
 
