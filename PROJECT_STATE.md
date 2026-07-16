@@ -9,7 +9,7 @@
 
 ## Current outcome
 
-Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; M2.1 is at the required ADR-0008 dependency-intake gate, before schema or production database-open code.
+Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; M2.1's exact modernc intake is locally complete before schema or production database-open code, with exact-SHA Linux native Hosted evidence pending.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -37,11 +37,11 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Perform the ADR-0008 dependency intake for exact `modernc.org/sqlite v1.53.0` and `modernc.org/libc v1.73.4`, including license/module/vulnerability, dual-toolchain, four-target and native database checks, before creating the Stage 2 schema or migration runner.
+Commit and push the isolated ADR-0008 dependency intake, open the Draft Stage 2 PR, and require its exact-SHA native Linux database smoke to pass before creating the Stage 2 schema or migration runner.
 
 ## Current risks
 
-- The modernc module graph and narrow `NewBackup`/URI pragma source contract have not yet been admitted; schema work remains blocked.
+- The modernc module graph and narrow `NewBackup`/URI pragma source contract are admitted locally, but schema work remains blocked until native Linux Hosted evidence passes on the exact intake SHA.
 - APFS can be exercised locally, but ext4/XFS database semantics require native Linux Hosted fixtures; cross-builds are not acceptance evidence.
 - Stage 2 touches persistent user state and destructive file operations, so every milestone remains fail-closed to the verified Stage 1 read-only surface until its evidence is complete.
 

@@ -26,22 +26,44 @@ No user change was overwritten. Existing ignored IDE and validation artifacts re
 
 ## Zero-gate dependency intake
 
-**Status**: In Progress
+**Status**: Local Complete; Hosted Native Pending
 
-Required exact pins:
+Admitted exact pins:
 
-- `modernc.org/sqlite v1.53.0`
-- upstream-resolved `modernc.org/libc v1.73.4`
+- `modernc.org/sqlite v1.53.0`: tag `v1.53.0`, commit `6b32d1ee965dfe59bf2e50baeb6f451b67d6a71e`, module sum `h1:20WG8N9q4ji/dEqGk4uiI0c6OPjSeLTNYGFCc3+7c1M=`, `go.mod` sum `h1:xoEpOIpGrgT48H5iiyt/YXPCZPEzlfmfFwtk8Lklw8s=`.
+- Upstream-resolved `modernc.org/libc v1.73.4`: tag `v1.73.4`, commit `70624da7facfac5a8d2f9b70cba0288b68b5ad01`, module sum `h1:+ra4Ui8ngyt8HDcO1FTDPWlkAh6yOdaO2yAoh8MddQA=`, `go.mod` sum `h1:DXZ3eO8qMCNn2SnmTNCiC71nJ9Rcq3PsnpU6Vc4rWK8=`.
 
-Evidence to record before any schema or production database open path:
+Both candidates are unretracted exact tags, require Go 1.25, and are BSD-3-Clause licensed. The SQLite tag embeds SQLite 3.53.2. The libc distribution also carries the upstream Go BSD and musl MIT notices. Release/tag metadata and the upstream SQLite `go.mod` were reviewed; the latter selects this exact libc version. No `replace`, `latest`, second SQLite driver, or loose modernc upgrade was introduced.
 
-- [ ] Exact tag/commit, license, changelog, retraction, complete selected module graph and reviewed `go.sum` diff.
-- [ ] No replace, `latest`, second SQLite driver or loose upgrade; libc remains the upstream resolution.
-- [ ] `govulncheck` reachable/imported/required-module findings and applicability disposition.
-- [ ] Go 1.26.5 and exact Go 1.25.12 compile/test/tidy/verify gates.
-- [ ] darwin/linux × amd64/arm64 `CGO_ENABLED=0` builds.
-- [ ] Native macOS and Linux open/transaction/WAL/online-backup smoke.
-- [ ] modernc v1.53.0 `NewBackup`, URI pragma ordering and narrow API source-contract check.
+The selected additions are `github.com/dustin/go-humanize v1.0.1`, `github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e`, `github.com/google/uuid v1.6.0`, `github.com/hashicorp/golang-lru/v2 v2.0.7`, `github.com/mattn/go-isatty v0.0.20`, `github.com/ncruces/go-strftime v1.0.0`, `github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec`, `modernc.org/cc/v4 v4.28.4`, `modernc.org/ccgo/v4 v4.34.4`, `modernc.org/fileutil v1.4.0`, `modernc.org/gc/v2 v2.6.5`, `modernc.org/gc/v3 v3.1.3`, `modernc.org/goabi0 v0.2.0`, `modernc.org/libc v1.73.4`, `modernc.org/mathutil v1.7.1`, `modernc.org/memory v1.11.0`, `modernc.org/opt v0.2.0`, `modernc.org/sortutil v1.2.1`, `modernc.org/sqlite v1.53.0`, `modernc.org/strutil v1.2.1`, and `modernc.org/token v1.1.0`. The reviewed `go.sum` delta is 49 additive lines. License obligations are compatible with the project: MIT/BSD/Apache-2.0 notices must be retained; HashiCorp LRU's MPL-2.0 file-level source and notice obligations apply if distributed; modernc libc/memory third-party notices must be preserved.
+
+The source-contract test freezes the narrow behavior used by the future backup path: `NewBackup` creates the destination through `newConn`, URI `_pragma` values are applied before `sqlite3_backup_init`, repeated pragmas execute in encoded order, multi-statement `Exec` consumes SQL tails, and the upstream module continues to select libc v1.73.4. The native smoke proves SQLite 3.53.2 open, rollback, commit, a non-empty WAL frame, `Step(-1)`/`Commit` online backup, destination `checkpoint_fullfsync=1`, `fullfsync=1`, `synchronous=FULL`, and the committed row in the backup. It runs only against a temporary generic intake database; production state opening remains absent.
+
+Evidence before any schema or production database open path:
+
+- [x] Exact tag/commit, license, changelog/tag metadata, retraction, complete selected module graph and reviewed `go.sum` diff.
+- [x] No replace, `latest`, second SQLite driver or loose upgrade; libc remains the upstream resolution.
+- [x] `govulncheck`: zero reachable and zero imported-package findings. The only required-module-only finding is pre-existing GO-2026-5932 in uncalled/unimported `golang.org/x/crypto/openpgp`; it is not introduced or made applicable by this intake.
+- [x] Go 1.26.5 and exact Go 1.25.12 compile/test/tidy/verify gates.
+- [x] darwin/linux × amd64/arm64 `CGO_ENABLED=0` package and product builds.
+- [x] Native macOS APFS open/transaction/WAL/online-backup smoke on Darwin arm64 with 58 GiB free.
+- [ ] Native Linux open/transaction/WAL/online-backup smoke on the exact pushed SHA.
+- [x] modernc v1.53.0 `NewBackup`, URI pragma ordering and narrow API source-contract check.
+
+Local command ledger:
+
+| Command | Result |
+|---|---|
+| `go test ./internal/state/sqlite` | PASS on Go 1.26.5, Darwin arm64/APFS |
+| `GOTOOLCHAIN=go1.25.12 go test ./internal/state/sqlite` | PASS |
+| `go test -race ./internal/state/sqlite` | PASS |
+| four `CGO_ENABLED=0 GOOS={darwin,linux} GOARCH={arm64,amd64} go test -c ./internal/state/sqlite` commands | PASS |
+| current and Go 1.25.12 root/tools `go mod tidy -diff` and `go mod verify` | PASS; all modules verified |
+| `go list -m -retracted modernc.org/sqlite@v1.53.0 modernc.org/libc@v1.73.4` | PASS; neither version retracted |
+| `go tool -modfile=tools/go.mod govulncheck -show=verbose ./...` | PASS; zero reachable/imported findings; one pre-existing required-module-only finding |
+| `GOTOOLCHAIN=go1.25.12 make check` | PASS |
+| `make lint` | PASS; zero issues |
+| external-output `make ci` | PASS, including race, fuzz smoke, supply chain, actionlint and four product targets |
 
 ## Milestone ledger
 
@@ -49,8 +71,8 @@ Evidence to record before any schema or production database open path:
 
 - **Status**: In Progress
 - **Goal**: ADR-0008 state store, Version 1 schema, Job/step state machine, transactional events and deterministic restart recovery.
-- **Current action**: close the exact dependency intake gate.
-- **Last green command**: Stage 1 baseline Hosted run 29468930350; Stage 2 commands not yet recorded.
+- **Current action**: push the isolated intake commit and close the native Linux Hosted gate before schema work.
+- **Last green command**: external-output `make ci` on Go 1.26.5; exact Go 1.25.12 `make check` also passed.
 
 ### M2.2 — Single-file copy, conflict and commit
 
@@ -70,7 +92,14 @@ Evidence to record before any schema or production database open path:
 
 ## Failure and repair ledger
 
-No Stage 2 implementation failure has been recorded yet. Each issue is limited to three evidence-driven attempts as required by the repository instructions.
+| Issue | Attempt and evidence | Repair | Result |
+|---|---|---|---|
+| Test-first dependency intake | Focused test failed because `modernc.org/sqlite` was not yet required. | Added only the two exact pins and the registration seam. | Expected RED then GREEN. |
+| Intake lint | First run reported an unwrapped EOF comparison and untrusted file/tool paths. | Used `errors.Is` and documented trusted module-cache reads. | Advanced to one remaining issue. |
+| Intake lint | Second run reported deprecated `runtime.GOROOT`. | Resolved the active Go binary with `exec.LookPath`. | Third run passed with zero issues. |
+| Tools module check | A root-level `-modfile=tools/go.mod` tidy attempt incorrectly tried to resolve repository-internal imports. | Used the Makefile's correct `go -C tools` form; no file was changed by the failed command. | Both toolchains' tools tidy/verify checks passed. |
+
+No issue exceeded three attempts.
 
 ## Final gate ledger
 
