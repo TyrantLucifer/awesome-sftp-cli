@@ -94,6 +94,8 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Milestone Status**: In Progress
 
+**Current checkpoint**: same-binary cross-process WAL/locking/full-sync probing, bounded WAL enforcement, integrated multi-version upgrade coordination, and process-death recovery at seven bootstrap plus five migration transaction boundaries pass locally, including focused race. Hosted run [29475259444](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475259444) is green on exact SHA `1ec9097448d0ec40d32f0a87aeeb822e5651d381`; the next candidate adds explicit ext4 identity and loop-mounted XFS execution of the complete persistent-state suite before the final M2.1 fail-closed audit.
+
 ### M2.2: 单文件复制、冲突与提交
 
 **Goal**: 交付冻结的 Operation Intent/Plan，以及本地↔本地、本地↔远端双向单文件 copy 的安全 part、验证、提交、控制和冲突处理。

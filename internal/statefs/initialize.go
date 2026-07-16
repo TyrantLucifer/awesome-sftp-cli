@@ -35,6 +35,7 @@ type InitializeConfig struct {
 	SchemaContracts         map[uint64][]byte
 	MigrationAttemptID      string
 	ExplicitMigrationResume bool
+	bootstrapFault          func(string)
 }
 
 type InitializeReport struct {
@@ -174,6 +175,7 @@ func bootstrapVersion1(ctx context.Context, config InitializeConfig) (returnErr 
 	if err := syncDirectory(config.Root); err != nil {
 		return fmt.Errorf("bootstrap state: persist intent: %w", err)
 	}
+	config.bootstrapCheckpoint("intent_persisted")
 	temp, err := os.OpenFile(tempPath, os.O_CREATE|os.O_EXCL|os.O_RDWR, 0o600) //nolint:gosec // exact owner-private temporary DB mode
 	if err != nil {
 		return fmt.Errorf("bootstrap state: create temporary database: %w", err)
@@ -185,6 +187,7 @@ func bootstrapVersion1(ctx context.Context, config InitializeConfig) (returnErr 
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("bootstrap state: close initial temporary database: %w", err)
 	}
+	config.bootstrapCheckpoint("temp_created")
 
 	database, err := sql.Open("sqlite", durabilityURI(tempPath, false))
 	if err != nil {
@@ -210,6 +213,7 @@ func bootstrapVersion1(ctx context.Context, config InitializeConfig) (returnErr 
 		_ = database.Close()
 		return fmt.Errorf("bootstrap state: apply Version 1: %w", err)
 	}
+	config.bootstrapCheckpoint("version_committed")
 	if err := validateConnectionVersion1(ctx, connection, true); err != nil {
 		_ = connection.Close()
 		_ = database.Close()
@@ -239,6 +243,7 @@ func bootstrapVersion1(ctx context.Context, config InitializeConfig) (returnErr 
 	if err := temp.Close(); err != nil {
 		return fmt.Errorf("bootstrap state: close synced temporary database: %w", err)
 	}
+	config.bootstrapCheckpoint("temp_synced")
 	if _, err := PreflightIdentity(tempPath); err != nil {
 		return fmt.Errorf("bootstrap state: validate temporary identity: %w", err)
 	}
@@ -246,12 +251,15 @@ func bootstrapVersion1(ctx context.Context, config InitializeConfig) (returnErr 
 		return fmt.Errorf("bootstrap state: publish without replacement: %w", err)
 	}
 	published = true
+	config.bootstrapCheckpoint("final_published")
 	if err := syncDirectory(config.Root); err != nil {
 		return fmt.Errorf("bootstrap state: persist published database: %w", err)
 	}
+	config.bootstrapCheckpoint("final_persisted")
 	if err := os.Remove(intentPath); err != nil {
 		return fmt.Errorf("bootstrap state: remove intent: %w", err)
 	}
+	config.bootstrapCheckpoint("intent_removed")
 	if err := syncDirectory(config.Root); err != nil {
 		return fmt.Errorf("bootstrap state: persist intent removal: %w", err)
 	}
@@ -262,6 +270,12 @@ func bootstrapVersion1(ctx context.Context, config InitializeConfig) (returnErr 
 		return fmt.Errorf("bootstrap state: published identity is invalid: %w", err)
 	}
 	return nil
+}
+
+func (config InitializeConfig) bootstrapCheckpoint(point string) {
+	if config.bootstrapFault != nil {
+		config.bootstrapFault(point)
+	}
 }
 
 func recoverBootstrapIntent(ctx context.Context, root, finalPath string) (bool, error) {

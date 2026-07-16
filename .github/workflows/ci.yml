@@ -225,6 +225,32 @@ jobs:
       - run: go build -trimpath -o "${{ runner.temp }}/native/bin/amsftp" ./cmd/amsftp
       - run: '"${{ runner.temp }}/native/bin/amsftp" --help'
       - run: '"${{ runner.temp }}/native/bin/amsftp" --version'
+      - name: Run native ext4 and XFS state durability fixtures
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          trusted_root="/var/lib/amsftp-tests/$(id -u)"
+          test "$(findmnt -n -o FSTYPE -T "${trusted_root}")" = ext4
+          if ! command -v mkfs.xfs >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y xfsprogs
+          fi
+          xfs_image="${RUNNER_TEMP}/amsftp-state.xfs"
+          xfs_root="/mnt/amsftp-state-xfs-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          truncate -s 512M "${xfs_image}"
+          sudo mkfs.xfs -f -q "${xfs_image}"
+          sudo install -d -o root -g root -m 0700 "${xfs_root}"
+          sudo mount -o loop,nosuid,nodev,noexec "${xfs_image}" "${xfs_root}"
+          cleanup_xfs() {
+            sudo umount "${xfs_root}"
+            sudo rmdir "${xfs_root}"
+          }
+          trap cleanup_xfs EXIT
+          sudo chown "$(id -u):$(id -g)" "${xfs_root}"
+          chmod 0700 "${xfs_root}"
+          test "$(findmnt -n -o FSTYPE -T "${xfs_root}")" = xfs
+          AMSFTP_TEST_PERSISTENT_ROOT="${xfs_root}" \
+            go test -count=1 ./internal/state/... ./internal/statefs
       - name: Run native platform kernel security fixtures
         run: |
           set -euo pipefail

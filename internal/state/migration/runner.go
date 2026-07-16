@@ -21,6 +21,7 @@ const (
 type Runner struct {
 	AttemptID  string
 	WALMonitor MigrationWALMonitor
+	fault      func(string)
 }
 
 type MigrationWALMonitor interface {
@@ -123,6 +124,7 @@ func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration 
 				return fmt.Errorf("apply migration version %d statement %d WAL budget: %w", migration.Version, index, err)
 			}
 		}
+		runner.checkpoint("statement_applied")
 	}
 	if _, err := connection.ExecContext(
 		ctx,
@@ -134,6 +136,7 @@ func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration 
 	); err != nil {
 		return fmt.Errorf("apply migration version %d history: %w", migration.Version, err)
 	}
+	runner.checkpoint("history_inserted")
 	if migration.Version > 1 {
 		updated, err := connection.ExecContext(ctx, "UPDATE migration_attempts SET current_head=? WHERE singleton=1 AND attempt_id=? AND current_head=? AND target_head>=? AND status='running' AND backup_sha256 IS NOT NULL", migration.Version, runner.AttemptID, migration.Version-1, migration.Version)
 		if err != nil {
@@ -143,16 +146,19 @@ func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration 
 		if err != nil || rows != 1 {
 			return fmt.Errorf("apply migration version %d attempt head: active attempt is not the required running prefix", migration.Version)
 		}
+		runner.checkpoint("attempt_advanced")
 	}
 	if monitor != nil {
 		if err := monitor.BeforeCommit(ctx); err != nil {
 			return fmt.Errorf("apply migration version %d pre-commit WAL budget: %w", migration.Version, err)
 		}
 	}
+	runner.checkpoint("before_commit")
 	if _, err := connection.ExecContext(ctx, "COMMIT"); err != nil {
 		return fmt.Errorf("apply migration version %d commit: %w", migration.Version, err)
 	}
 	committed = true
+	runner.checkpoint("commit_returned")
 	if monitor != nil {
 		if err := monitor.AfterCommit(ctx); err != nil {
 			return fmt.Errorf("apply migration version %d committed WAL budget: %w", migration.Version, err)
@@ -162,6 +168,12 @@ func (runner Runner) Apply(ctx context.Context, connection *sql.Conn, migration 
 		}
 	}
 	return nil
+}
+
+func (runner Runner) checkpoint(point string) {
+	if runner.fault != nil {
+		runner.fault(point)
+	}
 }
 
 func configureVersion1Bootstrap(ctx context.Context, connection *sql.Conn) error {
