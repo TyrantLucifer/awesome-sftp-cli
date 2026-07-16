@@ -150,6 +150,25 @@ proc record_observation {observation} {
   close $diagnostic
 }
 
+proc wait_for_failed_request {} {
+  global env
+  for {set attempt 0} {$attempt < 200} {incr attempt} {
+    set count 0
+    if {[file exists $env(AMSFTP_DAEMON_LOG)]} {
+      set handle [open $env(AMSFTP_DAEMON_LOG) r]
+      set contents [read $handle]
+      close $handle
+      set count [regexp -all {"event":"rpc_request_failed"} $contents]
+    }
+    if {$count > $env(AMSFTP_FAILURES_BEFORE)} {
+      return
+    }
+    after 100
+  }
+  record_timeout failed_request_log
+  exit 96
+}
+
 if {[catch {
   spawn -noecho /bin/sh -c {exec "$AMSFTP_INSTALLED" "$AMSFTP_LOCATION" /tmp 2>"$AMSFTP_STDERR"}
 }]} {
@@ -222,7 +241,7 @@ switch -- $env(AMSFTP_CASE_MODE) {
     exit 0
   }
   failure {
-    expect_prompt {(?i)connect .* failed:}
+    wait_for_failed_request
     send -- "q"
     expect_process_exit
     record_observation bounded_failure
@@ -332,6 +351,8 @@ run_case() {
     AMSFTP_PASSWORD="${password}" \
     AMSFTP_MFA_PASSWORD="${mfa_password}" \
     AMSFTP_KEY_PASSPHRASE="${key_passphrase}" \
+    AMSFTP_DAEMON_LOG="${state_home}/amsftp/log/daemon.jsonl" \
+    AMSFTP_FAILURES_BEFORE="${host_key_failures_before:-0}" \
     SSH_AUTH_SOCK="${SSH_AUTH_SOCK:-}" \
     /usr/bin/expect -f "${expect_script}"
   expect_exit=$?
