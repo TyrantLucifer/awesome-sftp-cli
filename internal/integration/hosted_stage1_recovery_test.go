@@ -59,7 +59,7 @@ func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
 		`"error_code":"auth_required"`,
 		`(failed)`,
 		`-exact "failed" {}`,
-		`stty rows 30 columns 200`,
+		`set stty_init "rows 30 columns 200"`,
 		`log_file -a -noappend $env(AMSFTP_OUTPUT)`,
 		`vt-observer`,
 	} {
