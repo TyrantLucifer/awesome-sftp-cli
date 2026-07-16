@@ -34,8 +34,7 @@ def screen_observed(observer, output, wanted):
     raise RuntimeError("VT observer failed with exit %d: %s" % (result.returncode, result.stderr.decode(errors="replace")))
 
 
-def read_until(fd, observer, wanted, timeout=15):
-    output = bytearray()
+def read_until(fd, observer, output, wanted, timeout=15):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], 0.1)
@@ -92,16 +91,17 @@ def wait_for_path(path, timeout=15):
 
 def run_copy(binary, observer, source, destination, environment, filename, expected_path):
     pid, fd = launch(binary, source, destination, environment)
+    output = bytearray()
     try:
-        read_until(fd, observer, filename.encode("utf-8"))
+        read_until(fd, observer, output, filename.encode("utf-8"))
         os.write(fd, b"y")
-        read_until(fd, observer, b"source captured")
+        read_until(fd, observer, output, b"source captured")
         os.write(fd, b"\t")
         os.write(fd, b"p")
-        read_until(fd, observer, b"(queued)")
+        read_until(fd, observer, output, b"Job queued:")
         wait_for_path(expected_path)
         os.write(fd, b"J")
-        read_until(fd, observer, b"completed")
+        read_until(fd, observer, output, b"completed")
         os.write(fd, b"q")
         wait_child(pid, fd)
     except Exception:
@@ -117,10 +117,11 @@ def run_copy(binary, observer, source, destination, environment, filename, expec
 
 def prove_reattach(binary, observer, source, destination, environment):
     pid, fd = launch(binary, source, destination, environment)
+    output = bytearray()
     try:
-        read_until(fd, observer, b"READ-ONLY")
+        read_until(fd, observer, output, b"READ-ONLY")
         os.write(fd, b"J")
-        read_until(fd, observer, b"completed")
+        read_until(fd, observer, output, b"completed")
         os.write(fd, b"q")
         wait_child(pid, fd)
     except Exception:
