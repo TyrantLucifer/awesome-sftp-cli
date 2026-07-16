@@ -10,6 +10,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestResolveExternalRuntimeConfigFreezesStructuredCommandsAndOrderedPreviewers(t *testing.T) {
@@ -61,7 +62,7 @@ func TestResolveExternalRuntimeConfigLeavesUnavailableDefaultsAsActionErrors(t *
 }
 
 func TestLoadApplicationConfigUsesDefaultsWhenMissingAndValidatesPrivateFiles(t *testing.T) {
-	directory, err := filepath.EvalSymlinks(t.TempDir())
+	directory, err := filepath.EvalSymlinks(testkit.PersistentTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

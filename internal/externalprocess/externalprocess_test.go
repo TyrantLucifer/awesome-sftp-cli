@@ -215,6 +215,7 @@ func TestResolvedCommandRejectsSpecialNonExecutableAndReplacement(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	holdExecutableInode(t, executable)
 	if err := os.Remove(executable); err != nil {
 		t.Fatal(err)
 	}
@@ -345,6 +346,7 @@ func TestPlanRejectsNonRegularMaterializationAndExecutableReplacement(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	holdExecutableInode(t, executable)
 	if err := os.Remove(executable); err != nil {
 		t.Fatal(err)
 	}
@@ -388,4 +390,14 @@ func writeExecutable(t *testing.T, dir, name string) string {
 		t.Fatal(err)
 	}
 	return canonical
+}
+
+func holdExecutableInode(t *testing.T, path string) {
+	t.Helper()
+	// Keep the original inode allocated after unlink. Some Linux filesystems can
+	// otherwise reuse both the inode and timestamp in the same clock tick, which
+	// makes a remove-and-recreate fixture indistinguishable from the original.
+	if err := os.Link(path, path+".held"); err != nil {
+		t.Fatalf("hold executable inode: %v", err)
+	}
 }
