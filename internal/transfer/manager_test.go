@@ -64,6 +64,62 @@ func TestManagerContinuesCreatedJobAfterClientContextCancellation(t *testing.T) 
 	}
 }
 
+func TestManagerRunsDurableDirectoryJobAndReportsItemProgress(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree", "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "first"), []byte("first"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "nested", "second"), []byte("second"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	resolver := MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(1_800_000_150, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: reference, DestinationDirectory: normalizePlanTest(t, destination, "/"),
+		Name: "copied", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("directory Job state = %q", completed.State)
+	}
+	views, err := manager.JobViews(context.Background(), 10)
+	if err != nil || len(views) != 1 || views[0].Items != 3 || views[0].Bytes != 11 || views[0].BytesTotal != nil || views[0].Phase != PhaseCommitted {
+		t.Fatalf("directory Job view = (%#v, %v)", views, err)
+	}
+	for relative, want := range map[string]string{"first": "first", "nested/second": "second"} {
+		// #nosec G304 -- the relative names are fixed test literals below a private destination root.
+		data, err := os.ReadFile(filepath.Join(destinationRoot, "copied", filepath.FromSlash(relative)))
+		if err != nil || string(data) != want {
+			t.Fatalf("directory output %s = %q, %v", relative, data, err)
+		}
+	}
+}
+
 func TestManagerReloadsQueuedFrozenPlanFromDurableStore(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("durable-plan"), ConflictAsk)
 	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
@@ -611,6 +667,79 @@ func TestManagerRestartRevalidatesPartAfterAbruptHandleClose(t *testing.T) {
 		t.Fatalf("recovered Job view = (%#v, %v)", views, err)
 	}
 	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("daemon-restart"))
+}
+
+func TestManagerRestartResumesDirectoryFromOwnedRoot(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "payload"), []byte("directory-restart"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	gated := &gatedReadProvider{Provider: source, started: started, release: release}
+	resolver := MapResolver{source.Descriptor().ID: gated, destination.Descriptor().ID: destination}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	generator := &testkit.SequenceGenerator{}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_910, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: reference, DestinationDirectory: normalizePlanTest(t, destination, "/"),
+		Name: "copied", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("directory Job did not reach file read")
+	}
+	manager.Close()
+
+	restartedResolver := MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination}
+	restarted, err := NewManager(ManagerConfig{
+		Store: store, Resolver: restartedResolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_911, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(restarted.Close)
+	if err := restarted.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	paused := waitForState(t, restarted, created.JobID, job.StatePaused)
+	if _, err := restarted.Resume(context.Background(), paused.JobID); err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, restarted, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("restarted directory state = %q", completed.State)
+	}
+	// #nosec G304 -- path is fixed below this test's private destination root.
+	data, err := os.ReadFile(filepath.Join(destinationRoot, "copied", "payload"))
+	if err != nil || string(data) != "directory-restart" {
+		t.Fatalf("restarted directory output = %q, %v", data, err)
+	}
 }
 
 func TestManagerNeverPersistsProviderErrorDetails(t *testing.T) {

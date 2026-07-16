@@ -90,6 +90,8 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 	assertContainsEntry(t, ctx, first, "endpoint-first.txt")
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
 	assertBidirectionalDurableTransfer(t, ctx, first, firstServer.root)
+	assertDualRemoteDirectoryRelay(t, ctx, first, second, firstServer.root, secondServer.root)
+	assertDualRemoteDirectoryRelay(t, ctx, first, first, firstServer.root, firstServer.root)
 	if _, err := os.Stat(poisonMarker); !os.IsNotExist(err) {
 		t.Fatalf("poisoned PATH ssh executed: %v", err)
 	}
@@ -113,6 +115,52 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
+}
+
+func assertDualRemoteDirectoryRelay(
+	t *testing.T,
+	ctx context.Context,
+	source *sftpprovider.Provider,
+	destination *sftpprovider.Provider,
+	sourceRoot string,
+	destinationRoot string,
+) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "relay-tree", "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "relay-tree", "root.txt"), []byte("remote-a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "relay-tree", "nested", "child.txt"), []byte("remote-b"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	resolver := transfer.MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination}
+	planner := transfer.NewPlanner(resolver)
+	reference, err := planner.Capture(ctx, normalizeIntegration(t, ctx, source, "/relay-tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := planner.FreezeCopy(ctx, integrationFreezeRequest(t, 'c', reference, normalizeIntegration(t, ctx, destination, "/"), "relayed-tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.BufferBytes = 7
+	journal := newIntegrationJournal()
+	result, err := transfer.NewWorker(resolver, journal).Execute(ctx, plan, nil)
+	if err != nil || result.Outcome != transfer.OutcomeCompleted || result.Items != 3 || result.Bytes != 16 {
+		t.Fatalf("remote A -> B directory relay = (%#v, %v)", result, err)
+	}
+	if journal.maxBuffer > 2*int(plan.BufferBytes) {
+		t.Fatalf("remote directory relay buffer = %d, ceiling = %d", journal.maxBuffer, 2*plan.BufferBytes)
+	}
+	for relative, want := range map[string]string{"root.txt": "remote-a", "nested/child.txt": "remote-b"} {
+		// #nosec G304 -- destinationRoot is the private root of this test's second sshd.
+		data, err := os.ReadFile(filepath.Join(destinationRoot, "relayed-tree", filepath.FromSlash(relative)))
+		if err != nil || string(data) != want {
+			t.Fatalf("relayed %s = %q, %v", relative, data, err)
+		}
+	}
 }
 
 func TestStage2TemporarySSHDPTYUploadDownloadMVP(t *testing.T) {
@@ -282,6 +330,15 @@ func normalizeIntegration(t *testing.T, ctx context.Context, implementation prov
 type integrationJournal struct {
 	mu          sync.Mutex
 	checkpoints map[domain.JobID]transfer.Checkpoint
+	maxBuffer   int
+}
+
+func (journal *integrationJournal) ObserveBuffer(bytes int) {
+	journal.mu.Lock()
+	defer journal.mu.Unlock()
+	if bytes > journal.maxBuffer {
+		journal.maxBuffer = bytes
+	}
 }
 
 func newIntegrationJournal() *integrationJournal {

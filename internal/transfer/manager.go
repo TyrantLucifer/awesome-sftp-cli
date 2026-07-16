@@ -348,6 +348,10 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			Snapshot: snapshot, Kind: plan.Kind, Source: plan.Source.Location, Final: plan.Final,
 			BytesTotal: plan.Source.Fingerprint.Size, Items: 1,
 		}
+		if plan.Source.Kind == domain.EntryDirectory {
+			view.Items = 0
+			view.BytesTotal = nil
+		}
 		checkpoint, err := (JobJournal{Store: manager.store, StepIndex: 0}).Load(ctx, snapshot.JobID)
 		if err != nil {
 			return nil, err
@@ -356,6 +360,9 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			view.Phase = checkpoint.Phase
 			view.Bytes = checkpoint.Offset
 			view.Final = checkpoint.Final
+			if plan.Source.Kind == domain.EntryDirectory {
+				view.Items = checkpoint.Items
+			}
 		}
 		afterSequence := snapshot.NextEventSequence - 8
 		if afterSequence < 0 {
@@ -524,7 +531,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 				summary = "destination completed and source retained; delete step not executed"
 			}
 			_, _ = manager.transitionTerminal(verifying, terminalState, eventKind, summary, map[string]any{
-				"bytes": result.Bytes, "final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome,
+				"bytes": result.Bytes, "items": result.Items, "final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome,
 			})
 		}
 	}

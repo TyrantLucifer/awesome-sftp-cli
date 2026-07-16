@@ -95,6 +95,7 @@ type Plan struct {
 	Verification          Verification      `json:"verification"`
 	ConflictPolicy        ConflictPolicy    `json:"conflict_policy"`
 	BufferBytes           uint32            `json:"buffer_bytes"`
+	Discovery             *DiscoveryBudget  `json:"discovery,omitempty"`
 	FrozenAt              time.Time         `json:"frozen_at"`
 }
 
@@ -149,8 +150,8 @@ func (planner *Planner) Capture(ctx context.Context, location domain.Location) (
 	if err != nil {
 		return FileRef{}, err
 	}
-	if entry.Kind != domain.EntryFile {
-		return FileRef{}, planError(domain.CodeInvalidArgument, "capture", location, "Stage 2 single-file copy requires a regular file", domain.RetryNever)
+	if entry.Kind != domain.EntryFile && entry.Kind != domain.EntryDirectory {
+		return FileRef{}, planError(domain.CodeInvalidArgument, "capture", location, "copy requires a regular file or directory", domain.RetryNever)
 	}
 	if entry.Fingerprint.Strength() == domain.FingerprintWeak {
 		return FileRef{}, planError(domain.CodeUnsupported, "capture", location, "source has no stable fingerprint", domain.RetryAfterReplan)
@@ -192,7 +193,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 	if err != nil {
 		return Plan{}, jobstore.CreateRequest{}, err
 	}
-	if currentSource.Kind != domain.EntryFile || !reflect.DeepEqual(currentSource.Fingerprint, request.Intent.Source.Fingerprint) ||
+	if currentSource.Kind != request.Intent.Source.Kind || !reflect.DeepEqual(currentSource.Fingerprint, request.Intent.Source.Fingerprint) ||
 		sourceSnapshot.Capabilities.Revision != request.Intent.Source.CapabilityRevision {
 		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeConflict, "plan_copy", request.Intent.Source.Location, "captured source changed before planning", domain.RetryAfterConflict)
 	}
@@ -214,6 +215,10 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		if err != nil {
 			return Plan{}, jobstore.CreateRequest{}, err
 		}
+	}
+	if request.Intent.Source.Kind == domain.EntryDirectory && final.EndpointID == request.Intent.Source.Location.EndpointID &&
+		pathWithin(request.Intent.Source.Location.Path, final.Path) {
+		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeInvalidArgument, "plan_copy", final, "directory destination is inside the frozen source tree", domain.RetryNever)
 	}
 	part := childLocation(request.Intent.DestinationDirectory, "."+path.Base(string(final.Path))+".part-"+string(request.JobID))
 	if exists, err := locationExists(ctx, destinationProvider, part); err != nil {
@@ -251,6 +256,10 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		ConflictPolicy: request.Intent.ConflictPolicy,
 		BufferBytes:    DefaultBufferBytes,
 		FrozenAt:       request.Now.UTC().Truncate(time.Second),
+	}
+	if plan.Source.Kind == domain.EntryDirectory {
+		budget := DefaultDiscoveryBudget
+		plan.Discovery = &budget
 	}
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {
@@ -304,7 +313,7 @@ func validateFreezeRequest(request FreezeRequest) error {
 	if request.Intent.Clipboard != ClipboardCopy && request.Intent.Clipboard != ClipboardCut {
 		return errors.New("freeze copy: invalid clipboard kind")
 	}
-	if request.Intent.Source.Kind != domain.EntryFile || request.Intent.Source.Location.EndpointID == "" || request.Intent.Source.Location.Path == "" {
+	if (request.Intent.Source.Kind != domain.EntryFile && request.Intent.Source.Kind != domain.EntryDirectory) || request.Intent.Source.Location.EndpointID == "" || request.Intent.Source.Location.Path == "" {
 		return errors.New("freeze copy: invalid source reference")
 	}
 	if request.Intent.DestinationDirectory.EndpointID == "" || request.Intent.DestinationDirectory.Path == "" {
@@ -346,6 +355,15 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		{Kind: "transfer", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 		{Kind: "verify", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 		{Kind: "commit", DestinationJSON: &destinationString},
+	}
+	if plan.Source.Kind == domain.EntryDirectory {
+		steps = []jobstore.Step{
+			{Kind: "discover", SourceJSON: &sourceString},
+			{Kind: "mkdir", DestinationJSON: &destinationString},
+			{Kind: "transfer", SourceJSON: &sourceString, DestinationJSON: &destinationString},
+			{Kind: "verify", SourceJSON: &sourceString, DestinationJSON: &destinationString},
+			{Kind: "commit", DestinationJSON: &destinationString},
+		}
 	}
 	create := jobstore.CreateRequest{
 		PlanID:          plan.PlanID,
@@ -406,6 +424,15 @@ func chooseRoute(source, destination domain.Endpoint) Route {
 
 func childLocation(directory domain.Location, name string) domain.Location {
 	return domain.Location{EndpointID: directory.EndpointID, Path: domain.CanonicalPath(path.Join(string(directory.Path), name))}
+}
+
+func pathWithin(root, candidate domain.CanonicalPath) bool {
+	rootPath := strings.TrimSuffix(string(root), "/")
+	candidatePath := string(candidate)
+	if rootPath == "" {
+		return strings.HasPrefix(candidatePath, "/")
+	}
+	return candidatePath == rootPath || strings.HasPrefix(candidatePath, rootPath+"/")
 }
 
 func locationExists(ctx context.Context, implementation providerapi.Provider, location domain.Location) (bool, error) {

@@ -88,12 +88,12 @@ Local command ledger:
 
 ### M2.2 — Single-file copy, conflict and commit
 
-- **Status**: In Progress
+- **Status**: Complete
 - **Gate**: satisfied by the M2.1 local and exact-SHA Hosted native evidence above.
 - **Required MVP**: user-visible local and temporary-sshd single-file copy steps plus real execution evidence.
 - **Current implementation checkpoint**: the shared `MutableProvider` contract now runs against Fake, LocalFS and protocol SFTP. LocalFS mutations use Go's rooted filesystem handle so parent symlinks cannot escape the configured root; final no-replace publication uses an atomic hard-link appearance followed by separately observable part cleanup. SFTP exposes `write` only when the current server session advertises both `fsync@openssh.com` and `hardlink@openssh.com`; weak servers retain read-only capability instead of receiving an unsafe fallback. Frozen `FileRef`/Intent/Plan tests cover source identity, capability revisions, local/SFTP relay routes, conflict policy and caller mutation after freeze. The complete immutable Plan, including its original requested name and endpoint descriptors, is persisted and cross-checked before daemon restart execution. The bounded worker writes only the same-directory Job part, persists SHA-256/checkpoint state, rereads for verification, rechecks the final at commit, and proves postconditions after an indeterminate rename response. A bounded daemon-owned manager owns client-independent contexts, reloads queued work, retains frozen endpoint leases before returning a queued Job, rehydrates exact descriptors after restart, and releases leases after execution. Initial and commit-time conflicts are durable rows; opening or resolving a conflict atomically changes Job state and emits the matching event. Overwrite, skip, auto-rename and Job-local apply-all resolutions resume the immutable plan, while pause, cancel, auth resume and retry-wait resume remain durable controls. `y` and `d` capture immutable source refs, `p` creates the Job against the current destination, and `J` opens a bounded Jobs view with state, phase, source/final, items, bytes, waiting reason, terminal summary and controls. Cut currently completes honestly as `completed_with_source_retained` because the M2.4 source-delete step is not yet implemented.
 - **Focused evidence**: `make check`, `make lint`, `go test ./internal/state/jobstore ./internal/transfer ./internal/daemon ./internal/tui ./internal/app`, and `go test -race ./internal/state/jobstore ./internal/transfer ./internal/daemon` pass. Exact SHA `e5b5cd287b1519b235d8444262cc83fdfa76ed51` passed both complete Hosted runs [29479576412](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29479576412) and [29479579080](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29479579080), closing the cross-platform checkpoint fingerprint repair. The user-visible TUI checkpoint `274b0ecd69cdc8a8117718997add18c4760c9080` then passed both complete Hosted runs [29480204995](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29480204995) and [29480207927](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29480207927). The guarded real-OpenSSH fixture performs both local→SFTP and SFTP→local worker copies and requires the real server's durable write capability.
-- **Open gate**: exact-candidate Hosted execution remains required before M2.2 can be marked complete.
+- **Hosted completion gate**: exact SHA `811ce6b90364446612721ba7cb809a284d633521` passed both complete runs [29482708033](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29482708033) and [29482709588](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29482709588), including quality's real sshd PTY proof, auth/recovery, native, oldstable, race, reproducibility and provenance comparison.
 
 The focused fault matrix now proves short reads and short writes within the frozen buffer budget, transport interruption with resume from the durable offset, permission and resource-exhaustion classification without final publication, abrupt manager close with part-fingerprint revalidation, and a rename that applies before its response is lost. The Jobs view exposes bounded recent error and recovery summaries. Provider error details carrying a secret canary are reduced to structured code/operation data before persistence; the terminal summary, event payloads and SQLite/WAL/SHM artifacts remain canary-free.
 
@@ -114,8 +114,23 @@ The first Hosted MVP candidate `286528c` exposed two test-fixture defects: raw P
 
 ### M2.3 — Directory copy and dual-remote relay
 
-- **Status**: Not Started
-- **Gate**: M2.2 complete with final-name safety and recovery evidence.
+- **Status**: In Progress
+- **Gate**: satisfied by exact SHA `811ce6b90364446612721ba7cb809a284d633521` and both complete Hosted runs above.
+- **Next action**: freeze a directory-root plan, then prove bounded streaming discovery before adding recursive mutation.
+
+**Implementation checkpoint**: directory `FileRef` capture freezes the root identity and a `64`-item queue, `256`-entry page and `128`-level recursion budget without enumerating the tree. Discovery streams through a bounded channel, validates every child remains a direct descendant of the listed directory, emits symlinks without following them, rejects depth exhaustion and same-endpoint destinations inside the source root, and cancels the producer on early consumer exit. The directory worker creates directories on demand and runs every regular file through the existing same-directory part→SHA-256 verify→commit worker. Its restart checkpoint records the owned root, current item, aggregate bytes/items and phase; restart revalidates already published children by content, cleans only the Job-owned incomplete part and continues. The same code path covers local, same-remote and remote A→B through Provider streams; no complete local relay file exists.
+
+Resource and route evidence:
+
+| Fixture | Result |
+|---|---|
+| `TestDiscoverDirectoryStreamsMillionEntriesWithinFrozenBudgets` | PASS: 1,000,000 generated entries; channel capacity 17; Provider page limit never exceeded 31; no tree materialization. |
+| `TestWorkerHundredGiBSyntheticSourceStopsAtBoundedCheckpoint` | PASS: advertised 100 GiB source; first durable cancel checkpoint at 64 KiB; observed transfer buffer exactly 64 KiB. |
+| `TestWorkerCopiesDirectoryTreeWithBoundedRelayAndNoSymlinkTraversal` | PASS: nested tree preserved, symlink visible to discovery but not copied/followed, 3-byte stream buffer and no successful part residue. |
+| `TestManagerRestartResumesDirectoryFromOwnedRoot` | PASS: daemon-owned Job interrupted during a file read, restart recovers paused, root/part postconditions revalidate, resume completes. |
+| `AMSFTP_REAL_SSHD=1 go test ./internal/integration -run TestRealOpenSSHSFTPHostAliasAndNonDefaultPort -count=10` | PASS: local↔SFTP, same remote directory copy and two-independent-sshd remote A→B directory relay; a 7-byte stream budget applies backpressure and no local content cache is created. |
+
+The expanded real-sshd loop also exposed a close race where Go may report the session's own command cancellation as `context.Canceled`; a focused RED test now classifies only Close-owned cancellation as expected, and the complete real fixture passed ten consecutive runs.
 
 ### M2.4 — Move, rename, delete and recovery closeout
 

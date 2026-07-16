@@ -42,16 +42,19 @@ const (
 )
 
 type Checkpoint struct {
-	JobID             domain.JobID       `json:"job_id"`
-	Phase             Phase              `json:"phase"`
-	Offset            uint64             `json:"offset"`
-	SourceFingerprint domain.Fingerprint `json:"source_fingerprint"`
-	Part              domain.Location    `json:"part"`
-	PartFingerprint   domain.Fingerprint `json:"part_fingerprint"`
-	ChecksumState     []byte             `json:"checksum_state,omitempty"`
-	ChecksumHex       string             `json:"checksum_hex,omitempty"`
-	Final             domain.Location    `json:"final"`
-	Outcome           Outcome            `json:"outcome,omitempty"`
+	JobID              domain.JobID       `json:"job_id"`
+	Phase              Phase              `json:"phase"`
+	Offset             uint64             `json:"offset"`
+	SourceFingerprint  domain.Fingerprint `json:"source_fingerprint"`
+	Part               domain.Location    `json:"part"`
+	PartFingerprint    domain.Fingerprint `json:"part_fingerprint"`
+	ChecksumState      []byte             `json:"checksum_state,omitempty"`
+	ChecksumHex        string             `json:"checksum_hex,omitempty"`
+	Final              domain.Location    `json:"final"`
+	Outcome            Outcome            `json:"outcome,omitempty"`
+	Items              uint64             `json:"items,omitempty"`
+	CurrentPath        string             `json:"current_path,omitempty"`
+	DirectoryRootOwned bool               `json:"directory_root_owned,omitempty"`
 }
 
 type Journal interface {
@@ -85,6 +88,7 @@ type Result struct {
 	Bytes        uint64
 	SHA256       string
 	PartRetained bool
+	Items        uint64
 }
 
 type Worker struct {
@@ -102,6 +106,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	if worker == nil || worker.resolver == nil || worker.journal == nil {
 		return Result{}, errors.New("execute transfer: resolver and durable journal are required")
+	}
+	if plan.Source.Kind == domain.EntryDirectory {
+		return worker.executeDirectory(ctx, plan, control)
 	}
 	source, err := worker.resolver.Resolve(plan.Source.Location.EndpointID)
 	if err != nil {
@@ -453,7 +460,7 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 }
 
 func validateExecution(plan Plan) error {
-	if plan.Version != 1 || plan.JobID == "" || plan.Source.Kind != domain.EntryFile ||
+	if plan.Version != 1 || plan.JobID == "" || (plan.Source.Kind != domain.EntryFile && plan.Source.Kind != domain.EntryDirectory) ||
 		plan.SourceEndpoint.ID != plan.Source.Location.EndpointID || plan.DestinationEndpoint.ID != plan.Part.EndpointID ||
 		plan.Part.EndpointID == "" || plan.Final.EndpointID != plan.Part.EndpointID || plan.Part.Path == plan.Final.Path {
 		return errors.New("execute transfer: invalid frozen plan")
@@ -463,6 +470,16 @@ func validateExecution(plan Plan) error {
 	}
 	if plan.Verification != VerifySHA256 {
 		return errors.New("execute transfer: unsupported verification")
+	}
+	if plan.Source.Kind == domain.EntryFile && plan.Discovery != nil {
+		return errors.New("execute transfer: file plan has a directory discovery budget")
+	}
+	if plan.Source.Kind == domain.EntryDirectory {
+		if plan.Discovery == nil || plan.Discovery.QueueItems < 1 || plan.Discovery.QueueItems > 4096 ||
+			plan.Discovery.PageItems < 1 || plan.Discovery.PageItems > 4096 ||
+			plan.Discovery.MaxDepth < 1 || plan.Discovery.MaxDepth > 256 {
+			return errors.New("execute transfer: directory discovery budget is invalid")
+		}
 	}
 	return nil
 }

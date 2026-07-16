@@ -104,19 +104,21 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Tests**: Planner/intent 表驱动；LocalFS/SFTP mutation contract；真实 sshd 双向 copy；短写/断网/final race/kill-9；pause/resume/cancel/retry；IPC event replay、secret scan 与有界内存。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: Shared Fake/LocalFS/SFTP mutation contracts, immutable single-file Intent/Plan, bounded part/verify/commit execution and SQLite checkpoint resume run under daemon-owned scheduling. Frozen endpoint leases are retained before a queued Job is returned and exact endpoint descriptors can be rehydrated after restart. Initial and commit-time conflicts are durable and atomically resolved as overwrite/skip/auto-rename with Job-local apply-all; pause/resume/cancel/auth-resume/retry-wait controls are high-level daemon routes. `y`/`d`/`p` create frozen Jobs and the polling `J` view shows bounded durable state/progress with controls plus recent error/recovery summaries. The fault matrix covers short I/O, disconnect/resume, permission/resource exhaustion, commit-response loss, abrupt manager close and secret-zero persistence. Real VT-observed PTY evidence passes local→local and bidirectional temporary-sshd transfers, exact final bytes, no successful part residue and client reattach. Focused package/race/check/lint/supply-chain gates pass. Next action is exact-candidate Hosted PTY/sshd and Stage 1 recovery evidence.
+**Current checkpoint**: Exact SHA `811ce6b90364446612721ba7cb809a284d633521` passed both complete Hosted runs `29482708033` and `29482709588`, closing real PTY/sshd, fault, recovery, auth, native/oldstable, race and provenance gates.
 
 ### M2.3: 目录复制与双远端中继
 
-**Goal**: 交付流式目录发现、有界队列、同远端 copy 和远端 A↔B 的双会话背压内存中继。
+**Goal**: 流式发现目录，使用硬预算队列与缓冲执行同远端及远端 A↔B 复制，并持久解释每项结果。
 
-**Success Criteria**: 队列、worker、并发和缓冲有硬上限；符号链接递归保守；双远端不落完整本地副本；单 Endpoint 故障只暂停相关步骤；逐项结果可解释。
+**Success Criteria**: 目录树不全量入内存；队列、深度、并发和缓冲有固定上限；双远端通过两个独立 session 背压中继且不落完整本地文件；冲突与部分结果可解释。
 
-**Tests**: 两台临时 sshd、ProxyCommand、单边故障、慢读/慢写、backpressure、百万项 synthetic queue、100GB sparse、race、取消与 daemon restart。
+**Tests**: 大树 synthetic queue、100GB sparse、双临时 sshd、单边断线、慢读/慢写、取消、restart、race 与峰值资源记录。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
+
+**Current checkpoint**: Frozen directory plans, bounded million-entry streaming discovery, 100 GiB synthetic bounded checkpoint, conservative symlink/depth/root boundaries, durable daemon restart, same-remote and real two-sshd remote A→B directory relay pass locally. Default queue/page/depth are 64/256/128; fresh/resume buffer ceilings are 256/512 KiB per directory Job. Next gate is exact-candidate Hosted native and real-sshd evidence.
 
 ### M2.4: Move、rename、删除与恢复闭环
 

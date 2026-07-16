@@ -104,6 +104,61 @@ func TestCaptureAndFreezeCopyOwnImmutableFileReferenceAndPolicy(t *testing.T) {
 	}
 }
 
+func TestCaptureAndFreezeDirectoryRootWithoutEnumeratingTree(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree", "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "nested", "payload"), []byte("data"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	planner := NewPlanner(MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination})
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatalf("Capture(directory): %v", err)
+	}
+	if reference.Kind != domain.EntryDirectory {
+		t.Fatalf("directory reference = %#v", reference)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request.Intent.Name = "copied-tree"
+	plan, create, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatalf("FreezeCopy(directory): %v", err)
+	}
+	if plan.Discovery == nil || *plan.Discovery != DefaultDiscoveryBudget {
+		t.Fatalf("directory discovery budget = %#v, want %#v", plan.Discovery, DefaultDiscoveryBudget)
+	}
+	if len(create.Steps) != 5 || create.Steps[0].Kind != "discover" || create.Steps[1].Kind != "mkdir" {
+		t.Fatalf("directory steps = %#v", create.Steps)
+	}
+	if plan.Final.Path != "/copied-tree" || plan.Part.Path == plan.Final.Path {
+		t.Fatalf("directory final/part = %q/%q", plan.Final.Path, plan.Part.Path)
+	}
+}
+
+func TestFreezeDirectoryRejectsDestinationInsideSourceTree(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	implementation := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointLocal)
+	planner := NewPlanner(MapResolver{implementation.Descriptor().ID: implementation})
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, implementation, "/tree"))
+	request.Intent.Name = "recursive-copy"
+	_, _, err = planner.FreezeCopy(context.Background(), request)
+	if !domain.IsCode(err, domain.CodeInvalidArgument) {
+		t.Fatalf("recursive directory destination error = %v, want invalid_argument", err)
+	}
+}
+
 func TestDecodePlanRejectsIndexedColumnMismatch(t *testing.T) {
 	encoded := `{"version":1,"plan_id":"plan_aaaaaaaaaaaaaaaaaaaaaaaaaa","job_id":"job_aaaaaaaaaaaaaaaaaaaaaaaaaa"}`
 	_, err := DecodePlan(jobstore.PlanRecord{DestinationJSON: &encoded}, planTestJobID)

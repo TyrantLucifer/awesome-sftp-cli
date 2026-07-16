@@ -21,11 +21,14 @@ type JobJournal struct {
 }
 
 type checkpointLocationPayload struct {
-	Part            domain.Location    `json:"part"`
-	PartFingerprint domain.Fingerprint `json:"part_fingerprint"`
-	Final           domain.Location    `json:"final"`
-	ChecksumHex     string             `json:"checksum_hex,omitempty"`
-	Outcome         Outcome            `json:"outcome,omitempty"`
+	Part               domain.Location    `json:"part"`
+	PartFingerprint    domain.Fingerprint `json:"part_fingerprint"`
+	Final              domain.Location    `json:"final"`
+	ChecksumHex        string             `json:"checksum_hex,omitempty"`
+	Outcome            Outcome            `json:"outcome,omitempty"`
+	Items              uint64             `json:"items,omitempty"`
+	CurrentPath        string             `json:"current_path,omitempty"`
+	DirectoryRootOwned bool               `json:"directory_root_owned,omitempty"`
 }
 
 func (journal JobJournal) Load(ctx context.Context, jobID domain.JobID) (*Checkpoint, error) {
@@ -48,16 +51,19 @@ func (journal JobJournal) Load(ctx context.Context, jobID domain.JobID) (*Checkp
 		return nil, fmt.Errorf("load transfer checkpoint: decode part identity: %w", err)
 	}
 	return &Checkpoint{
-		JobID:             record.JobID,
-		Phase:             Phase(record.Phase),
-		Offset:            record.VerifiedOffset,
-		SourceFingerprint: sourceFingerprint,
-		Part:              location.Part,
-		PartFingerprint:   location.PartFingerprint,
-		ChecksumState:     append([]byte(nil), record.ChecksumState...),
-		ChecksumHex:       location.ChecksumHex,
-		Final:             location.Final,
-		Outcome:           location.Outcome,
+		JobID:              record.JobID,
+		Phase:              Phase(record.Phase),
+		Offset:             record.VerifiedOffset,
+		SourceFingerprint:  sourceFingerprint,
+		Part:               location.Part,
+		PartFingerprint:    location.PartFingerprint,
+		ChecksumState:      append([]byte(nil), record.ChecksumState...),
+		ChecksumHex:        location.ChecksumHex,
+		Final:              location.Final,
+		Outcome:            location.Outcome,
+		Items:              location.Items,
+		CurrentPath:        location.CurrentPath,
+		DirectoryRootOwned: location.DirectoryRootOwned,
 	}, nil
 }
 
@@ -70,11 +76,14 @@ func (journal JobJournal) Save(ctx context.Context, checkpoint Checkpoint) error
 		return fmt.Errorf("save transfer checkpoint: encode source fingerprint: %w", err)
 	}
 	location, err := json.Marshal(checkpointLocationPayload{
-		Part:            checkpoint.Part,
-		PartFingerprint: checkpoint.PartFingerprint,
-		Final:           checkpoint.Final,
-		ChecksumHex:     checkpoint.ChecksumHex,
-		Outcome:         checkpoint.Outcome,
+		Part:               checkpoint.Part,
+		PartFingerprint:    checkpoint.PartFingerprint,
+		Final:              checkpoint.Final,
+		ChecksumHex:        checkpoint.ChecksumHex,
+		Outcome:            checkpoint.Outcome,
+		Items:              checkpoint.Items,
+		CurrentPath:        checkpoint.CurrentPath,
+		DirectoryRootOwned: checkpoint.DirectoryRootOwned,
 	})
 	if err != nil {
 		return fmt.Errorf("save transfer checkpoint: encode part identity: %w", err)

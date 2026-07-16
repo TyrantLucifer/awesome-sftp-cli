@@ -50,6 +50,119 @@ func TestWorkerPublishesOnlyAfterDestinationVerification(t *testing.T) {
 	}
 }
 
+func TestWorkerCopiesDirectoryTreeWithBoundedRelayAndNoSymlinkTraversal(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree", "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "root.txt"), []byte("root"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "nested", "child.txt"), []byte("child"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../root.txt", filepath.Join(sourceRoot, "tree", "nested", "link")); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointSSH)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointSSH)
+	resolver := MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination}
+	planner := NewPlanner(resolver)
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request.Intent.Name = "copied"
+	plan, _, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.BufferBytes = 3
+	journal := newMemoryJournal()
+	result, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("Execute(directory): %v", err)
+	}
+	if result.Outcome != OutcomeCompleted || result.Items != 4 || result.Bytes != 9 {
+		t.Fatalf("directory result = %#v", result)
+	}
+	for relative, want := range map[string]string{"root.txt": "root", "nested/child.txt": "child"} {
+		// #nosec G304 -- the relative names are fixed test literals below a private destination root.
+		data, err := os.ReadFile(filepath.Join(destinationRoot, "copied", filepath.FromSlash(relative)))
+		if err != nil || string(data) != want {
+			t.Fatalf("copied %s = %q, %v", relative, data, err)
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(destinationRoot, "copied", "nested", "link")); !os.IsNotExist(err) {
+		t.Fatalf("symlink was copied or followed: %v", err)
+	}
+	if journal.maxBufferBytes > 2*int(plan.BufferBytes) {
+		t.Fatalf("observed directory relay buffer = %d, ceiling = %d", journal.maxBufferBytes, 2*plan.BufferBytes)
+	}
+	if matches, err := filepath.Glob(filepath.Join(destinationRoot, "copied", "**", "*.part-*")); err != nil || len(matches) != 0 {
+		t.Fatalf("part residue = %v, %v", matches, err)
+	}
+}
+
+func TestWorkerResumesDirectoryAfterAbruptStopWithoutConflictingWithOwnedRoot(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "payload"), []byte("restart-safe"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	resolver := MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination}
+	planner := NewPlanner(resolver)
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request.Intent.Name = "copied"
+	plan, _, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	resolver[source.Descriptor().ID] = &gatedReadProvider{Provider: source, started: started, release: release}
+	journal := newMemoryJournal()
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, executeErr := NewWorker(resolver, journal).Execute(ctx, plan, nil)
+		done <- executeErr
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("directory worker did not reach file read")
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("abrupt directory stop error = %v, want canceled", err)
+	}
+	resolver[source.Descriptor().ID] = source
+	result, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("resume directory: %v", err)
+	}
+	if result.Outcome != OutcomeCompleted || result.Items != 1 || result.Bytes != uint64(len("restart-safe")) {
+		t.Fatalf("resumed directory result = %#v", result)
+	}
+	// #nosec G304 -- path is fixed below this test's private destination root.
+	data, err := os.ReadFile(filepath.Join(destinationRoot, "copied", "payload"))
+	if err != nil || string(data) != "restart-safe" {
+		t.Fatalf("resumed destination = %q, %v", data, err)
+	}
+}
+
 func TestWorkerRefreshesCheckpointAfterPauseClosesWriteHandle(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("close-finalizes-mtime"), ConflictAsk)
 	fixture.plan.BufferBytes = 4
@@ -223,6 +336,41 @@ func TestWorkerHandlesShortWritesWithinFixedBufferBudget(t *testing.T) {
 		t.Fatalf("observed buffer = %d, budget = %d", journal.maxBufferBytes, fixture.plan.BufferBytes)
 	}
 	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("short-write-payload"))
+}
+
+func TestWorkerHundredGiBSyntheticSourceStopsAtBoundedCheckpoint(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("placeholder"), ConflictAsk)
+	const size = uint64(100 * 1024 * 1024 * 1024)
+	fileID := "synthetic-100g"
+	fixture.plan.Source.Fingerprint = domain.Fingerprint{Size: uint64Pointer(size), FileID: &fileID}
+	fixture.plan.BufferBytes = 64 * 1024
+	fixture.resolver[fixture.source.Descriptor().ID] = &syntheticSparseProvider{
+		Provider: fixture.source,
+		entry: domain.Entry{
+			Location:    fixture.plan.Source.Location,
+			Name:        "source",
+			Kind:        domain.EntryFile,
+			Metadata:    domain.Metadata{Size: uint64Pointer(size), FileID: &fileID},
+			Fingerprint: cloneFingerprint(fixture.plan.Source.Fingerprint),
+		},
+	}
+	journal := newMemoryJournal()
+	control := ControlFunc(func(checkpoint Checkpoint) ControlAction {
+		if checkpoint.Offset >= uint64(fixture.plan.BufferBytes) {
+			return ControlCancel
+		}
+		return ControlContinue
+	})
+	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, control)
+	if !errors.Is(err, ErrCanceled) {
+		t.Fatalf("100GiB synthetic Execute() error = %v, want canceled", err)
+	}
+	if result.Bytes != uint64(fixture.plan.BufferBytes) || !result.PartRetained {
+		t.Fatalf("100GiB synthetic result = %#v", result)
+	}
+	if journal.maxBufferBytes != int(fixture.plan.BufferBytes) {
+		t.Fatalf("100GiB synthetic max buffer = %d, want %d", journal.maxBufferBytes, fixture.plan.BufferBytes)
+	}
 }
 
 func TestWorkerResumesAfterTransportInterruptAtDurableOffset(t *testing.T) {
@@ -540,5 +688,40 @@ func writeWorkerAll(t *testing.T, handle providerapi.WriteHandle, data []byte) {
 		data = data[n:]
 	}
 }
+
+type syntheticSparseProvider struct {
+	providerapi.Provider
+	entry domain.Entry
+}
+
+func (provider *syntheticSparseProvider) Stat(ctx context.Context, request providerapi.StatRequest) (domain.Entry, error) {
+	if request.Location == provider.entry.Location {
+		return provider.entry, nil
+	}
+	return provider.Provider.Stat(ctx, request)
+}
+
+func (provider *syntheticSparseProvider) OpenRead(ctx context.Context, request providerapi.OpenReadRequest) (providerapi.ReadHandle, error) {
+	if request.Location == provider.entry.Location {
+		return &syntheticSparseReadHandle{info: providerapi.ReadInfo{Entry: provider.entry, Fingerprint: provider.entry.Fingerprint}}, nil
+	}
+	return provider.Provider.OpenRead(ctx, request)
+}
+
+type syntheticSparseReadHandle struct{ info providerapi.ReadInfo }
+
+func (handle *syntheticSparseReadHandle) Info() providerapi.ReadInfo { return handle.info }
+
+func (handle *syntheticSparseReadHandle) Read(ctx context.Context, buffer []byte) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+	clear(buffer)
+	return len(buffer), nil
+}
+
+func (handle *syntheticSparseReadHandle) Close(context.Context) error { return nil }
+
+func uint64Pointer(value uint64) *uint64 { return &value }
 
 var _ = time.Time{}
