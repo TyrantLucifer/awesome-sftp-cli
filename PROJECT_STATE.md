@@ -11,7 +11,7 @@
 
 Stage 1 is complete at merge commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) is green. Stage 2 is In Progress on `codex/stage2-durable-transfers`, and M2.1 is complete. Its Version 1 state foundation covers the exact schema/contract, APFS/ext4/XFS gates, atomic bootstrap, migration/backup/retention/WAL budgets, transactional Job/events, deterministic restart recovery, process-death boundaries, and fail-closed Stage 1 browsing. Exact SHA `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` passed [Hosted run 29475833368](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475833368); both Linux native jobs for `f83aa45de9b83f42d6f64944401ddde0e1e92d01` passed ext4/XFS plus real XFS `ENOSPC` rollback in [run 29476167115](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29476167115).
 
-M2.2 now has shared Fake/LocalFS/SFTP mutation contracts, rooted LocalFS writes, capability-honest SFTP mutation, frozen single-file plans, a fixed-buffer SHA-256 worker, commit-time conflict policies, and real SQLite checkpoint resume across database/worker restart. Focused provider/transfer/jobstore race tests and lint pass; the real OpenSSH bidirectional transfer fixture awaits Hosted execution.
+M2.2 now has shared Fake/LocalFS/SFTP mutation contracts, frozen single-file plans, a bounded SHA-256 part/verify/commit worker, real SQLite checkpoint resume, daemon-owned scheduling, pre-return endpoint leases, exact-descriptor restart rehydration, durable conflict rows and resolutions, pause/resume/cancel/retry controls, `y`/`d`/`p`, and a bounded `J` Jobs view. Exact SHA `e5b5cd287b1519b235d8444262cc83fdfa76ed51` passed both complete Hosted runs [29479576412](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29479576412) and [29479579080](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29479579080); TUI checkpoint `274b0ecd69cdc8a8117718997add18c4760c9080` passed [29480204995](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29480204995) and [29480207927](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29480207927). Focused state/jobstore/transfer/daemon race tests and lint pass; real local and temporary-sshd MVP transcripts and the remaining M2.2 fault matrix are still open.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -39,7 +39,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Connect the frozen transfer plan and SQLite journal to daemon-owned Job scheduling/control and endpoint lifetime, without adding a direct mutation RPC.
+Run and record the real local and temporary-sshd user-visible single-file MVP, then close the remaining disconnect, disk-full, permission, commit-response and daemon-crash M2.2 matrix.
 
 ## Current risks
 

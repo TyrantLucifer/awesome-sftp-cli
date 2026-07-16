@@ -593,6 +593,32 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				}
 			}()
 			return
+		case tui.IntentJobPause, tui.IntentJobResume, tui.IntentJobCancel, tui.IntentJobResolveConflict:
+			activeClient := client
+			go func() {
+				route := daemon.JobPause
+				request := any(daemon.JobControlRequest{JobID: intent.JobID})
+				switch intent.Kind {
+				case tui.IntentJobResume:
+					route = daemon.JobResume
+				case tui.IntentJobCancel:
+					route = daemon.JobCancel
+				case tui.IntentJobResolveConflict:
+					route = daemon.JobResolveConflict
+					request = daemon.JobResolveConflictRequest{JobID: intent.JobID, Resolution: intent.Resolution, ApplyAll: intent.ApplyAll}
+				}
+				var response daemon.JobSnapshotResponse
+				controlErr := activeClient.Call(runCtx, route, request, &response)
+				result := tui.JobUpdated{Snapshot: response.Snapshot}
+				if controlErr != nil {
+					result.Message = "Job control failed: " + clientErrorMessage(controlErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
 		case tui.IntentPreview:
 			if previewCancel != nil {
 				previewCancel()

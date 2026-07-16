@@ -11,13 +11,14 @@ import (
 )
 
 const (
-	JobCapture    = "transfer.capture"
-	JobCreateCopy = "job.create_copy"
-	JobList       = "job.list"
-	JobEvents     = "job.events"
-	JobPause      = "job.pause"
-	JobResume     = "job.resume"
-	JobCancel     = "job.cancel"
+	JobCapture         = "transfer.capture"
+	JobCreateCopy      = "job.create_copy"
+	JobList            = "job.list"
+	JobEvents          = "job.events"
+	JobPause           = "job.pause"
+	JobResume          = "job.resume"
+	JobCancel          = "job.cancel"
+	JobResolveConflict = "job.resolve_conflict"
 )
 
 type TransferService interface {
@@ -28,6 +29,7 @@ type TransferService interface {
 	Pause(context.Context, domain.JobID) (jobstore.Snapshot, error)
 	Resume(context.Context, domain.JobID) (jobstore.Snapshot, error)
 	Cancel(context.Context, domain.JobID) (jobstore.Snapshot, error)
+	ResolveConflict(context.Context, domain.JobID, transfer.ConflictPolicy, bool) (jobstore.Snapshot, error)
 }
 
 type JobCaptureRequest struct {
@@ -66,6 +68,12 @@ type JobEventsResponse struct {
 
 type JobControlRequest struct {
 	JobID domain.JobID `json:"job_id"`
+}
+
+type JobResolveConflictRequest struct {
+	JobID      domain.JobID            `json:"job_id"`
+	Resolution transfer.ConflictPolicy `json:"resolution"`
+	ApplyAll   bool                    `json:"apply_all"`
 }
 
 func (session *providerSession) handleJob(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -120,6 +128,13 @@ func (session *providerSession) handleJob(ctx context.Context, name string, payl
 		case JobCancel:
 			snapshot, err = session.transfer.Cancel(ctx, request.JobID)
 		}
+		return JobSnapshotResponse{Snapshot: snapshot}, err
+	case JobResolveConflict:
+		var request JobResolveConflictRequest
+		if err := decodePayload(payload, &request); err != nil {
+			return nil, invalidArgument("decode Job conflict resolution request", err)
+		}
+		snapshot, err := session.transfer.ResolveConflict(ctx, request.JobID, request.Resolution, request.ApplyAll)
 		return JobSnapshotResponse{Snapshot: snapshot}, err
 	default:
 		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "unsupported Job request", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}

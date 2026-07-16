@@ -22,6 +22,7 @@ const (
 	jobWALBudget        = uint64(512 * 1024)
 	stepWALBudget       = uint64(1024 * 1024)
 	checkpointWALBudget = uint64(512 * 1024)
+	conflictWALBudget   = uint64(512 * 1024)
 	eventWALBudget      = uint64(512 * 1024)
 	dedupWALBudget      = uint64(512 * 1024)
 	maxJobSteps         = 5
@@ -60,6 +61,49 @@ type CreateRequest struct {
 	EventID         domain.EventID
 	Now             time.Time
 	Steps           []Step
+	InitialConflict *ConflictSeed
+}
+
+type ConflictSeed struct {
+	StepIndex       int
+	Class           string
+	SourceJSON      string
+	DestinationJSON string
+}
+
+type ConflictRecord struct {
+	JobID           domain.JobID
+	ConflictIndex   int
+	StepIndex       int
+	Class           string
+	State           string
+	SourceJSON      string
+	DestinationJSON string
+	Resolution      string
+	ApplyScope      string
+	CreatedAt       time.Time
+	ResolvedAt      *time.Time
+}
+
+type ResolveConflictRequest struct {
+	JobID           domain.JobID
+	ConflictIndex   int
+	ExpectedVersion int64
+	Resolution      string
+	ApplyScope      string
+	EventID         domain.EventID
+	Now             time.Time
+}
+
+type OpenConflictRequest struct {
+	JobID           domain.JobID
+	ExpectedVersion int64
+	StepIndex       int
+	Class           string
+	SourceJSON      string
+	DestinationJSON string
+	EventID         domain.EventID
+	Now             time.Time
 }
 
 type TransitionRequest struct {
@@ -183,7 +227,7 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 	}
 	var snapshot Snapshot
 	duplicate := false
-	err := store.immediate(ctx, createWALBudgets(len(request.Steps)), func(connection *sql.Conn, writer *transactionWriter) error {
+	err := store.immediate(ctx, createWALBudgets(len(request.Steps), request.InitialConflict != nil), func(connection *sql.Conn, writer *transactionWriter) error {
 		var operation, response string
 		err := connection.QueryRowContext(ctx, "SELECT operation, response_json FROM request_dedup WHERE request_id=?", request.RequestID).Scan(&operation, &response)
 		if err == nil {
@@ -216,6 +260,11 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 				return fmt.Errorf("create Job step %d: %w", index, err)
 			}
 		}
+		if conflict := request.InitialConflict; conflict != nil {
+			if _, err := writer.ExecContext(ctx, "INSERT INTO job_conflicts(job_id, conflict_index, step_index, class, state, source_json, destination_json, resolution, apply_scope, created_at_unix, resolved_at_unix) VALUES(?, 0, ?, ?, 'waiting', ?, ?, NULL, NULL, ?, NULL)", request.JobID, conflict.StepIndex, conflict.Class, conflict.SourceJSON, conflict.DestinationJSON, request.Now.Unix()); err != nil {
+				return fmt.Errorf("create Job conflict: %w", err)
+			}
+		}
 		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, 1, ?, 'job_created', '{}', ?)", request.JobID, request.EventID, request.Now.Unix()); err != nil {
 			return fmt.Errorf("create Job event: %w", err)
 		}
@@ -233,6 +282,154 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 		return Snapshot{}, false, err
 	}
 	return snapshot, duplicate, nil
+}
+
+func (store *Store) ListConflicts(ctx context.Context, jobID domain.JobID) ([]ConflictRecord, error) {
+	if _, err := domain.ParseJobID(string(jobID)); err != nil {
+		return nil, fmt.Errorf("list Job conflicts: %w", err)
+	}
+	if store == nil || store.database == nil {
+		return nil, errors.New("list Job conflicts: nil store")
+	}
+	readContext, cancel := wal.ReaderContext(ctx)
+	defer cancel()
+	rows, err := store.database.QueryContext(readContext, `SELECT job_id, conflict_index, step_index, class, state, source_json, destination_json,
+		resolution, apply_scope, created_at_unix, resolved_at_unix FROM job_conflicts WHERE job_id=? ORDER BY conflict_index`, jobID)
+	if err != nil {
+		return nil, fmt.Errorf("list Job conflicts: %w", err)
+	}
+	defer rows.Close()
+	records := make([]ConflictRecord, 0, 4)
+	for rows.Next() {
+		var record ConflictRecord
+		var resolution, applyScope sql.NullString
+		var createdAt int64
+		var resolvedAt sql.NullInt64
+		if err := rows.Scan(&record.JobID, &record.ConflictIndex, &record.StepIndex, &record.Class, &record.State,
+			&record.SourceJSON, &record.DestinationJSON, &resolution, &applyScope, &createdAt, &resolvedAt); err != nil {
+			return nil, fmt.Errorf("list Job conflicts: scan: %w", err)
+		}
+		record.Resolution = resolution.String
+		record.ApplyScope = applyScope.String
+		record.CreatedAt = time.Unix(createdAt, 0)
+		if resolvedAt.Valid {
+			value := time.Unix(resolvedAt.Int64, 0)
+			record.ResolvedAt = &value
+		}
+		records = append(records, record)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list Job conflicts: finish: %w", err)
+	}
+	return records, nil
+}
+
+func (store *Store) OpenConflict(ctx context.Context, request OpenConflictRequest) (Snapshot, ConflictRecord, error) {
+	if err := validateOpenConflict(request); err != nil {
+		return Snapshot{}, ConflictRecord{}, err
+	}
+	var snapshot Snapshot
+	var record ConflictRecord
+	err := store.immediate(ctx, []uint64{conflictWALBudget, jobWALBudget, eventWALBudget}, func(connection *sql.Conn, writer *transactionWriter) error {
+		current, err := getSnapshot(ctx, connection, request.JobID)
+		if err != nil {
+			return err
+		}
+		if current.StateVersion != request.ExpectedVersion {
+			return fmt.Errorf("%w: Job %q has version %d, expected %d", ErrVersionConflict, request.JobID, current.StateVersion, request.ExpectedVersion)
+		}
+		if current.State != job.StateRunning && current.State != job.StateVerifying {
+			return fmt.Errorf("%w: %q -> %q", ErrInvalidTransition, current.State, job.StateWaitingConflict)
+		}
+		var conflictIndex int
+		if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(conflict_index), -1)+1 FROM job_conflicts WHERE job_id=?", request.JobID).Scan(&conflictIndex); err != nil {
+			return fmt.Errorf("open Job conflict index: %w", err)
+		}
+		if _, err := writer.ExecContext(ctx, "INSERT INTO job_conflicts(job_id, conflict_index, step_index, class, state, source_json, destination_json, resolution, apply_scope, created_at_unix, resolved_at_unix) VALUES(?, ?, ?, ?, 'waiting', ?, ?, NULL, NULL, ?, NULL)", request.JobID, conflictIndex, request.StepIndex, request.Class, request.SourceJSON, request.DestinationJSON, request.Now.Unix()); err != nil {
+			return fmt.Errorf("open Job conflict row: %w", err)
+		}
+		result, err := writer.ExecContext(ctx, "UPDATE jobs SET state='waiting_conflict', state_version=state_version+1, next_event_sequence=next_event_sequence+1, updated_at_unix=? WHERE job_id=? AND state_version=?", request.Now.Unix(), request.JobID, request.ExpectedVersion)
+		if err != nil {
+			return fmt.Errorf("open Job conflict state: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil || changed != 1 {
+			return fmt.Errorf("%w: Job %q changed concurrently", ErrVersionConflict, request.JobID)
+		}
+		payload, err := json.Marshal(struct {
+			ConflictIndex int    `json:"conflict_index"`
+			Class         string `json:"class"`
+		}{conflictIndex, request.Class})
+		if err != nil {
+			return fmt.Errorf("open Job conflict payload: %w", err)
+		}
+		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, ?, ?, 'job_waiting_conflict', ?, ?)", request.JobID, current.NextEventSequence, request.EventID, string(payload), request.Now.Unix()); err != nil {
+			return fmt.Errorf("open Job conflict event: %w", err)
+		}
+		snapshot, err = getSnapshot(ctx, connection, request.JobID)
+		if err != nil {
+			return err
+		}
+		record = ConflictRecord{
+			JobID: request.JobID, ConflictIndex: conflictIndex, StepIndex: request.StepIndex,
+			Class: request.Class, State: "waiting", SourceJSON: request.SourceJSON,
+			DestinationJSON: request.DestinationJSON, CreatedAt: request.Now,
+		}
+		return nil
+	})
+	return snapshot, record, err
+}
+
+func (store *Store) ResolveConflict(ctx context.Context, request ResolveConflictRequest) (Snapshot, error) {
+	if err := validateResolveConflict(request); err != nil {
+		return Snapshot{}, err
+	}
+	payload, err := json.Marshal(struct {
+		ConflictIndex int    `json:"conflict_index"`
+		Resolution    string `json:"resolution"`
+		ApplyScope    string `json:"apply_scope"`
+	}{request.ConflictIndex, request.Resolution, request.ApplyScope})
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("resolve Job conflict: encode event: %w", err)
+	}
+	var snapshot Snapshot
+	err = store.immediate(ctx, []uint64{conflictWALBudget, jobWALBudget, eventWALBudget}, func(connection *sql.Conn, writer *transactionWriter) error {
+		current, err := getSnapshot(ctx, connection, request.JobID)
+		if err != nil {
+			return err
+		}
+		if current.StateVersion != request.ExpectedVersion {
+			return fmt.Errorf("%w: Job %q has version %d, expected %d", ErrVersionConflict, request.JobID, current.StateVersion, request.ExpectedVersion)
+		}
+		if current.State != job.StateAwaitingConfirmation && current.State != job.StateWaitingConflict {
+			return fmt.Errorf("%w: %q -> %q", ErrInvalidTransition, current.State, job.StateQueued)
+		}
+		result, err := writer.ExecContext(ctx, "UPDATE job_conflicts SET state='resolved', resolution=?, apply_scope=?, resolved_at_unix=? WHERE job_id=? AND conflict_index=? AND state='waiting'", request.Resolution, request.ApplyScope, request.Now.Unix(), request.JobID, request.ConflictIndex)
+		if err != nil {
+			return fmt.Errorf("resolve Job conflict row: %w", err)
+		}
+		changed, err := result.RowsAffected()
+		if err != nil {
+			return fmt.Errorf("resolve Job conflict row count: %w", err)
+		}
+		if changed != 1 {
+			return errors.New("resolve Job conflict: waiting conflict not found")
+		}
+		result, err = writer.ExecContext(ctx, "UPDATE jobs SET state='queued', state_version=state_version+1, next_event_sequence=next_event_sequence+1, updated_at_unix=? WHERE job_id=? AND state_version=?", request.Now.Unix(), request.JobID, request.ExpectedVersion)
+		if err != nil {
+			return fmt.Errorf("resolve Job conflict state: %w", err)
+		}
+		changed, err = result.RowsAffected()
+		if err != nil || changed != 1 {
+			return fmt.Errorf("%w: Job %q changed concurrently", ErrVersionConflict, request.JobID)
+		}
+		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, ?, ?, 'job_conflict_resolved', ?, ?)", request.JobID, current.NextEventSequence, request.EventID, string(payload), request.Now.Unix()); err != nil {
+			return fmt.Errorf("resolve Job conflict event: %w", err)
+		}
+		snapshot, err = getSnapshot(ctx, connection, request.JobID)
+		return err
+	})
+	return snapshot, err
 }
 
 func (store *Store) Transition(ctx context.Context, request TransitionRequest) (Snapshot, bool, error) {
@@ -756,11 +953,14 @@ func (store *Store) immediate(ctx context.Context, budgets []uint64, operation f
 	return nil
 }
 
-func createWALBudgets(stepCount int) []uint64 {
-	budgets := make([]uint64, 0, stepCount+4)
+func createWALBudgets(stepCount int, conflict bool) []uint64 {
+	budgets := make([]uint64, 0, stepCount+5)
 	budgets = append(budgets, planWALBudget, jobWALBudget)
 	for range stepCount {
 		budgets = append(budgets, stepWALBudget)
+	}
+	if conflict {
+		budgets = append(budgets, conflictWALBudget)
 	}
 	return append(budgets, eventWALBudget, dedupWALBudget)
 }
@@ -784,7 +984,7 @@ func validateCreate(request CreateRequest) error {
 	if request.Now.Unix() <= 0 || len(request.Steps) == 0 || len(request.Steps) > maxJobSteps {
 		return fmt.Errorf("create Job: invalid time or step count outside 1..%d", maxJobSteps)
 	}
-	if err := wal.ValidateTransactionBudgets(createWALBudgets(len(request.Steps))); err != nil {
+	if err := wal.ValidateTransactionBudgets(createWALBudgets(len(request.Steps), request.InitialConflict != nil)); err != nil {
 		return fmt.Errorf("create Job: %w", err)
 	}
 	values := []string{request.Kind, request.SourceJSON, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass}
@@ -815,7 +1015,50 @@ func validateCreate(request CreateRequest) error {
 	if !json.Valid([]byte(request.SourceJSON)) || request.DestinationJSON != nil && !json.Valid([]byte(*request.DestinationJSON)) {
 		return fmt.Errorf("create Job: invalid plan JSON")
 	}
+	if conflict := request.InitialConflict; conflict != nil {
+		if request.InitialState != job.StateAwaitingConfirmation || conflict.StepIndex < 0 || conflict.StepIndex >= len(request.Steps) ||
+			!eventKindPattern.MatchString(conflict.Class) || !json.Valid([]byte(conflict.SourceJSON)) || !json.Valid([]byte(conflict.DestinationJSON)) {
+			return errors.New("create Job: invalid initial conflict")
+		}
+		if err := validateEncodedValues(conflict.Class, conflict.SourceJSON, conflict.DestinationJSON); err != nil {
+			return fmt.Errorf("create Job: %w", err)
+		}
+	}
 	return nil
+}
+
+func validateResolveConflict(request ResolveConflictRequest) error {
+	if _, err := domain.ParseJobID(string(request.JobID)); err != nil {
+		return fmt.Errorf("resolve Job conflict: %w", err)
+	}
+	if _, err := domain.ParseEventID(string(request.EventID)); err != nil {
+		return fmt.Errorf("resolve Job conflict: %w", err)
+	}
+	if request.ConflictIndex < 0 || request.ExpectedVersion <= 0 || request.Now.Unix() <= 0 {
+		return errors.New("resolve Job conflict: invalid index, version, or time")
+	}
+	if request.Resolution != "overwrite" && request.Resolution != "skip" && request.Resolution != "auto_rename" {
+		return errors.New("resolve Job conflict: invalid resolution")
+	}
+	if request.ApplyScope != "item" && request.ApplyScope != "job" {
+		return errors.New("resolve Job conflict: invalid apply scope")
+	}
+	return nil
+}
+
+func validateOpenConflict(request OpenConflictRequest) error {
+	if _, err := domain.ParseJobID(string(request.JobID)); err != nil {
+		return fmt.Errorf("open Job conflict: %w", err)
+	}
+	if _, err := domain.ParseEventID(string(request.EventID)); err != nil {
+		return fmt.Errorf("open Job conflict: %w", err)
+	}
+	if request.ExpectedVersion <= 0 || request.StepIndex < 0 || request.StepIndex >= maxJobSteps ||
+		!eventKindPattern.MatchString(request.Class) || !json.Valid([]byte(request.SourceJSON)) ||
+		!json.Valid([]byte(request.DestinationJSON)) || request.Now.Unix() <= 0 {
+		return errors.New("open Job conflict: invalid version, step, class, payload, or time")
+	}
+	return validateEncodedValues(request.Class, request.SourceJSON, request.DestinationJSON)
 }
 
 func validateTransitionRequest(request TransitionRequest) error {

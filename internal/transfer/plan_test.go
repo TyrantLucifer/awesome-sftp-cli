@@ -203,6 +203,9 @@ func TestFreezeCopyRoutesAndConflictStates(t *testing.T) {
 			if plan.Route != test.route || create.InitialState != test.state {
 				t.Fatalf("route/state = %s/%s, want %s/%s", plan.Route, create.InitialState, test.route, test.state)
 			}
+			if (create.InitialConflict != nil) != (test.state == job.StateAwaitingConfirmation) {
+				t.Fatalf("initial conflict = %#v for state %q", create.InitialConflict, test.state)
+			}
 		})
 	}
 }

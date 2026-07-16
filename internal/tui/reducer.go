@@ -307,6 +307,17 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		return model, nil
 	case JobsLoaded:
 		model.Jobs = append([]transfer.JobView(nil), action.Jobs...)
+		model.JobCursor = min(model.JobCursor, max(0, len(model.Jobs)-1))
+		model.Notice = action.Message
+		return model, nil
+	case JobUpdated:
+		for index := range model.Jobs {
+			if model.Jobs[index].Snapshot.JobID == action.Snapshot.JobID {
+				model.Jobs = append([]transfer.JobView(nil), model.Jobs...)
+				model.Jobs[index].Snapshot = action.Snapshot
+				break
+			}
+		}
 		model.Notice = action.Message
 		return model, nil
 	default:
@@ -411,6 +422,9 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		default:
 			return model, nil
 		}
+	}
+	if model.ShowJobs {
+		return reduceJobsKey(model, key)
 	}
 	count := model.Count
 	model.Count = 0
@@ -561,6 +575,49 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	}
 	model.Panes[model.Active] = pane
 	return model, nil
+}
+
+func reduceJobsKey(model Model, key Key) (Model, []Intent) {
+	if key == KeyJobs || key == KeyEscape {
+		model.ShowJobs = false
+		return model, nil
+	}
+	if key == KeyDown {
+		model.JobCursor = min(model.JobCursor+1, max(0, len(model.Jobs)-1))
+		return model, nil
+	}
+	if key == KeyUp {
+		model.JobCursor = max(model.JobCursor-1, 0)
+		return model, nil
+	}
+	if len(model.Jobs) == 0 || model.JobCursor < 0 || model.JobCursor >= len(model.Jobs) {
+		return model, nil
+	}
+	jobID := model.Jobs[model.JobCursor].Snapshot.JobID
+	intent := Intent{JobID: jobID}
+	switch key {
+	case KeyJobPause:
+		intent.Kind = IntentJobPause
+	case KeyJobResume:
+		intent.Kind = IntentJobResume
+	case KeyJobCancel:
+		intent.Kind = IntentJobCancel
+	case KeyConflictOverwrite, KeyConflictOverwriteAll:
+		intent.Kind = IntentJobResolveConflict
+		intent.Resolution = transfer.ConflictOverwrite
+		intent.ApplyAll = key == KeyConflictOverwriteAll
+	case KeyConflictSkip, KeyConflictSkipAll:
+		intent.Kind = IntentJobResolveConflict
+		intent.Resolution = transfer.ConflictSkip
+		intent.ApplyAll = key == KeyConflictSkipAll
+	case KeyConflictAutoRename, KeyConflictAutoRenameAll:
+		intent.Kind = IntentJobResolveConflict
+		intent.Resolution = transfer.ConflictAutoRename
+		intent.ApplyAll = key == KeyConflictAutoRenameAll
+	default:
+		return model, nil
+	}
+	return model, []Intent{intent}
 }
 
 func validPane(pane PaneID) bool {

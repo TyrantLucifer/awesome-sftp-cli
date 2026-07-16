@@ -210,12 +210,12 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 		renderEndpointModal(surface, string(model.endpointInput), width, height)
 	}
 	if model.ShowJobs {
-		renderJobsView(surface, model.Jobs, width, height)
+		renderJobsView(surface, model.Jobs, model.JobCursor, width, height)
 	}
 	return stats
 }
 
-func renderJobsView(surface Surface, jobs []transfer.JobView, width, height int) {
+func renderJobsView(surface Surface, jobs []transfer.JobView, cursor, width, height int) {
 	drawerWidth := min(width-4, 88)
 	if drawerWidth < 30 || height < 7 {
 		return
@@ -226,7 +226,7 @@ func renderJobsView(surface Surface, jobs []transfer.JobView, width, height int)
 	for row := 0; row < drawerHeight; row++ {
 		surface.PutClipped(x, y+row, drawerWidth, strings.Repeat(" ", drawerWidth), StyleStatus)
 	}
-	surface.PutClipped(x+1, y, drawerWidth-2, "JOBS — J close", StyleStatus)
+	surface.PutClipped(x+1, y, drawerWidth-2, "JOBS — j/k select  P pause  U resume  C cancel  w/x/a resolve  W/X/A apply-all  J close", StyleStatus)
 	if len(jobs) == 0 {
 		surface.PutClipped(x+1, y+2, drawerWidth-2, "No durable Jobs", StyleStatus)
 		return
@@ -241,7 +241,11 @@ func renderJobsView(surface Surface, jobs []transfer.JobView, width, height int)
 		}
 		line := fmt.Sprintf("%s  %s  %d item(s)  %s", state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal))
 		row := y + 1 + index*3
-		surface.PutClipped(x+1, row, drawerWidth-2, line, StyleStatus)
+		style := StyleStatus
+		if index == cursor {
+			style = StyleCursor
+		}
+		surface.PutClipped(x+1, row, drawerWidth-2, line, style)
 		surface.PutClipped(x+1, row+1, drawerWidth-2, fmt.Sprintf("%s → %s", view.Source.Path, view.Final.Path), StyleStatus)
 		summary := string(view.Snapshot.JobID)
 		if view.Snapshot.TerminalSummary != nil {

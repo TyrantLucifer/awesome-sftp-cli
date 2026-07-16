@@ -142,6 +142,26 @@ func TestReducerOpensMinimalDurableJobsView(t *testing.T) {
 	}
 }
 
+func TestReducerControlsSelectedDurableJob(t *testing.T) {
+	model := testModel(t)
+	model.ShowJobs = true
+	first := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning}}
+	second := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaab", State: job.StateWaitingConflict}}
+	model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{first, second}})
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	if model.JobCursor != 1 {
+		t.Fatalf("Job cursor = %d, want 1", model.JobCursor)
+	}
+	_, intents := Reduce(model, KeyPress{Key: KeyJobPause})
+	if len(intents) != 1 || intents[0].Kind != IntentJobPause || intents[0].JobID != second.Snapshot.JobID {
+		t.Fatalf("pause intents = %#v", intents)
+	}
+	_, intents = Reduce(model, KeyPress{Key: KeyConflictAutoRenameAll})
+	if len(intents) != 1 || intents[0].Kind != IntentJobResolveConflict || intents[0].Resolution != transfer.ConflictAutoRename || !intents[0].ApplyAll {
+		t.Fatalf("conflict intents = %#v", intents)
+	}
+}
+
 func TestReducerTracksVisualAndDiscreteSelection(t *testing.T) {
 	model := testModel(t)
 

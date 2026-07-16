@@ -7,6 +7,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
@@ -364,6 +365,7 @@ type Model struct {
 	Clipboard ClipboardState
 	Jobs      []transfer.JobView
 	ShowJobs  bool
+	JobCursor int
 	Notice    string
 
 	workspaceName []rune
@@ -396,16 +398,20 @@ func NewModel(left, right PaneState) Model {
 type IntentKind string
 
 const (
-	IntentList            IntentKind = "list"
-	IntentPreview         IntentKind = "preview"
-	IntentPreviewCancel   IntentKind = "preview_cancel"
-	IntentAuthResolve     IntentKind = "auth_resolve"
-	IntentWorkspaceSave   IntentKind = "workspace_save"
-	IntentConnectEndpoint IntentKind = "connect_endpoint"
-	IntentReleaseEndpoint IntentKind = "release_endpoint"
-	IntentTransferCapture IntentKind = "transfer_capture"
-	IntentCreateCopyJob   IntentKind = "create_copy_job"
-	IntentJobList         IntentKind = "job_list"
+	IntentList               IntentKind = "list"
+	IntentPreview            IntentKind = "preview"
+	IntentPreviewCancel      IntentKind = "preview_cancel"
+	IntentAuthResolve        IntentKind = "auth_resolve"
+	IntentWorkspaceSave      IntentKind = "workspace_save"
+	IntentConnectEndpoint    IntentKind = "connect_endpoint"
+	IntentReleaseEndpoint    IntentKind = "release_endpoint"
+	IntentTransferCapture    IntentKind = "transfer_capture"
+	IntentCreateCopyJob      IntentKind = "create_copy_job"
+	IntentJobList            IntentKind = "job_list"
+	IntentJobPause           IntentKind = "job_pause"
+	IntentJobResume          IntentKind = "job_resume"
+	IntentJobCancel          IntentKind = "job_cancel"
+	IntentJobResolveConflict IntentKind = "job_resolve_conflict"
 )
 
 const PreviewByteLimit = 64 * 1024
@@ -427,33 +433,45 @@ type Intent struct {
 	CommitEndpoint       bool
 	Clipboard            transfer.ClipboardKind
 	Source               transfer.FileRef
+	JobID                domain.JobID
+	Resolution           transfer.ConflictPolicy
+	ApplyAll             bool
 }
 
 type Key string
 
 const (
-	KeyTab          Key = "tab"
-	KeyParent       Key = "parent"
-	KeyDown         Key = "down"
-	KeyUp           Key = "up"
-	KeyOpen         Key = "open"
-	KeyVisual       Key = "visual"
-	KeyVisualLine   Key = "visual_line"
-	KeyMark         Key = "mark"
-	KeyFilter       Key = "filter"
-	KeyBackspace    Key = "backspace"
-	KeyEscape       Key = "escape"
-	KeySubmit       Key = "submit"
-	KeySave         Key = "save"
-	KeySort         Key = "sort"
-	KeyToggleHidden Key = "toggle_hidden"
-	KeyRefresh      Key = "refresh"
-	KeyPath         Key = "path"
-	KeyEndpoint     Key = "endpoint"
-	KeyCopy         Key = "copy"
-	KeyCut          Key = "cut"
-	KeyPaste        Key = "paste"
-	KeyJobs         Key = "jobs"
+	KeyTab                   Key = "tab"
+	KeyParent                Key = "parent"
+	KeyDown                  Key = "down"
+	KeyUp                    Key = "up"
+	KeyOpen                  Key = "open"
+	KeyVisual                Key = "visual"
+	KeyVisualLine            Key = "visual_line"
+	KeyMark                  Key = "mark"
+	KeyFilter                Key = "filter"
+	KeyBackspace             Key = "backspace"
+	KeyEscape                Key = "escape"
+	KeySubmit                Key = "submit"
+	KeySave                  Key = "save"
+	KeySort                  Key = "sort"
+	KeyToggleHidden          Key = "toggle_hidden"
+	KeyRefresh               Key = "refresh"
+	KeyPath                  Key = "path"
+	KeyEndpoint              Key = "endpoint"
+	KeyCopy                  Key = "copy"
+	KeyCut                   Key = "cut"
+	KeyPaste                 Key = "paste"
+	KeyJobs                  Key = "jobs"
+	KeyJobPause              Key = "job_pause"
+	KeyJobResume             Key = "job_resume"
+	KeyJobCancel             Key = "job_cancel"
+	KeyConflictOverwrite     Key = "conflict_overwrite"
+	KeyConflictSkip          Key = "conflict_skip"
+	KeyConflictAutoRename    Key = "conflict_auto_rename"
+	KeyConflictOverwriteAll  Key = "conflict_overwrite_all"
+	KeyConflictSkipAll       Key = "conflict_skip_all"
+	KeyConflictAutoRenameAll Key = "conflict_auto_rename_all"
 )
 
 type Action interface{ isAction() }
@@ -541,6 +559,10 @@ type JobsLoaded struct {
 	Jobs    []transfer.JobView
 	Message string
 }
+type JobUpdated struct {
+	Snapshot jobstore.Snapshot
+	Message  string
+}
 
 func (KeyPress) isAction()              {}
 func (CountDigit) isAction()            {}
@@ -559,6 +581,7 @@ func (WorkspaceSaveResult) isAction()   {}
 func (ClipboardCaptured) isAction()     {}
 func (JobCreated) isAction()            {}
 func (JobsLoaded) isAction()            {}
+func (JobUpdated) isAction()            {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

@@ -106,7 +106,7 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Milestone Status**: In Progress
 
-**Current checkpoint**: Shared Fake/LocalFS/SFTP mutation contracts, rooted LocalFS writes, capability-honest SFTP writes, immutable single-file Intent/Plan, a bounded SHA-256 part/verify/commit worker, four commit-time conflict policies and SQLite checkpoint resume across database/worker restart pass focused race and lint. The guarded real-OpenSSH test now runs local→SFTP and SFTP→local copies when Hosted enables the fixture. Next action is daemon-owned Job scheduling/control and endpoint lifetime, without exposing a direct mutation RPC.
+**Current checkpoint**: Shared Fake/LocalFS/SFTP mutation contracts, immutable single-file Intent/Plan, bounded part/verify/commit execution and SQLite checkpoint resume now run under daemon-owned scheduling. Frozen endpoint leases are retained before a queued Job is returned and exact endpoint descriptors can be rehydrated after restart. Initial and commit-time conflicts are durable and atomically resolved as overwrite/skip/auto-rename with Job-local apply-all; pause/resume/cancel/auth-resume/retry-wait controls are high-level daemon routes. `y`/`d`/`p` create frozen Jobs and `J` shows bounded durable state/progress with controls. Focused package and race tests pass, and exact SHA `e5b5cd287b1519b235d8444262cc83fdfa76ed51` passed both full Hosted runs 29479576412 and 29479579080. Next action is the real local/temporary-sshd user-visible MVP plus the remaining M2.2 fault/crash matrix.
 
 ### M2.3: 目录复制与双远端中继
 

@@ -54,6 +54,12 @@ func TestProviderSessionExposesOnlyHighLevelTransferAndJobRoutes(t *testing.T) {
 			t.Fatalf("%s response = %#v", route, controlled)
 		}
 	}
+	resolved := handlePayload[JobSnapshotResponse](t, session, JobResolveConflict, JobResolveConflictRequest{
+		JobID: service.snapshot.JobID, Resolution: transfer.ConflictAutoRename, ApplyAll: true,
+	})
+	if resolved.Snapshot.JobID != service.snapshot.JobID || service.resolution != transfer.ConflictAutoRename || !service.applyAll {
+		t.Fatalf("conflict resolution = (%#v, %q, %t)", resolved, service.resolution, service.applyAll)
+	}
 	if service.pauseCalls != 1 || service.resumeCalls != 1 || service.cancelCalls != 1 {
 		t.Fatalf("control calls = pause:%d resume:%d cancel:%d", service.pauseCalls, service.resumeCalls, service.cancelCalls)
 	}
@@ -69,6 +75,8 @@ type recordingTransferService struct {
 	pauseCalls  int
 	resumeCalls int
 	cancelCalls int
+	resolution  transfer.ConflictPolicy
+	applyAll    bool
 }
 
 func (service *recordingTransferService) Capture(_ context.Context, location domain.Location) (transfer.FileRef, error) {
@@ -101,5 +109,11 @@ func (service *recordingTransferService) Resume(context.Context, domain.JobID) (
 
 func (service *recordingTransferService) Cancel(context.Context, domain.JobID) (jobstore.Snapshot, error) {
 	service.cancelCalls++
+	return service.snapshot, nil
+}
+
+func (service *recordingTransferService) ResolveConflict(_ context.Context, _ domain.JobID, resolution transfer.ConflictPolicy, applyAll bool) (jobstore.Snapshot, error) {
+	service.resolution = resolution
+	service.applyAll = applyAll
 	return service.snapshot, nil
 }

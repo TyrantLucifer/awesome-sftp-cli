@@ -347,7 +347,7 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		{Kind: "verify", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 		{Kind: "commit", DestinationJSON: &destinationString},
 	}
-	return jobstore.CreateRequest{
+	create := jobstore.CreateRequest{
 		PlanID:          plan.PlanID,
 		RequestID:       request.RequestID,
 		JobID:           plan.JobID,
@@ -362,7 +362,13 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		EventID:         request.EventID,
 		Now:             request.Now,
 		Steps:           steps,
-	}, nil
+	}
+	if initialState == job.StateAwaitingConfirmation {
+		create.InitialConflict = &jobstore.ConflictSeed{
+			StepIndex: 0, Class: "destination_exists", SourceJSON: sourceString, DestinationJSON: destinationString,
+		}
+	}
+	return create, nil
 }
 
 // DecodePlan reconstructs a frozen plan from its durable operation row and

@@ -52,6 +52,7 @@ type Manager struct {
 	mu      sync.Mutex
 	started bool
 	waiters map[domain.JobID][]chan struct{}
+	leases  map[domain.JobID]func()
 	workers int
 }
 
@@ -83,6 +84,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		ctx:       rootContext,
 		cancel:    cancel,
 		waiters:   make(map[domain.JobID][]chan struct{}),
+		leases:    make(map[domain.JobID]func()),
 		workers:   config.MaxConcurrent,
 	}, nil
 }
@@ -125,6 +127,7 @@ func (manager *Manager) Close() {
 	}
 	manager.cancel()
 	manager.wg.Wait()
+	manager.releaseAllLeases()
 }
 
 func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore.Snapshot, error) {
@@ -158,14 +161,32 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
+	var release func()
+	if create.InitialState == job.StateQueued {
+		if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
+			release, err = acquirer.Acquire(ctx, plan)
+			if err != nil {
+				return jobstore.Snapshot{}, err
+			}
+		}
+	}
 	snapshot, _, err := manager.store.Create(ctx, create)
 	if err != nil {
+		if release != nil {
+			release()
+		}
 		return jobstore.Snapshot{}, err
 	}
 	if snapshot.State == job.StateQueued {
+		if release != nil {
+			manager.retainLease(snapshot.JobID, release)
+		}
 		if err := manager.enqueue(plan.JobID); err != nil {
+			manager.releaseLease(snapshot.JobID)
 			return jobstore.Snapshot{}, err
 		}
+	} else if release != nil {
+		release()
 	}
 	return snapshot, nil
 }
@@ -194,7 +215,11 @@ func (manager *Manager) Pause(ctx context.Context, jobID domain.JobID) (jobstore
 		return snapshot, nil
 	}
 	if snapshot.State == job.StateQueued {
-		return manager.transition(snapshot, job.StatePaused, "job_paused", map[string]string{"reason": "user"})
+		paused, err := manager.transition(snapshot, job.StatePaused, "job_paused", map[string]string{"reason": "user"})
+		if err == nil {
+			manager.releaseLease(jobID)
+		}
+		return paused, err
 	}
 	if snapshot.State != job.StateRunning && snapshot.State != job.StateVerifying {
 		return jobstore.Snapshot{}, fmt.Errorf("pause Job: state %q cannot be paused", snapshot.State)
@@ -208,7 +233,7 @@ func (manager *Manager) Resume(ctx context.Context, jobID domain.JobID) (jobstor
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
-	if snapshot.State != job.StatePaused {
+	if snapshot.State != job.StatePaused && snapshot.State != job.StateWaitingAuth && snapshot.State != job.StateRetryWait {
 		return jobstore.Snapshot{}, fmt.Errorf("resume Job: state %q cannot be resumed", snapshot.State)
 	}
 	if snapshot.PauseRequested {
@@ -218,7 +243,11 @@ func (manager *Manager) Resume(ctx context.Context, jobID domain.JobID) (jobstor
 			return jobstore.Snapshot{}, err
 		}
 	}
-	queued, err := manager.transition(snapshot, job.StateQueued, "job_resumed", map[string]string{"reason": "user"})
+	eventKind := "job_resumed"
+	if snapshot.State == job.StateRetryWait {
+		eventKind = "job_retried"
+	}
+	queued, err := manager.transition(snapshot, job.StateQueued, eventKind, map[string]string{"reason": "user"})
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
@@ -240,7 +269,54 @@ func (manager *Manager) Cancel(ctx context.Context, jobID domain.JobID) (jobstor
 		value := true
 		return manager.updateControl(ctx, snapshot, nil, &value, "job_cancel_requested")
 	}
-	return manager.transitionTerminal(snapshot, job.StateCanceled, "job_canceled", "canceled before execution", map[string]string{"reason": "user"})
+	canceled, err := manager.transitionTerminal(snapshot, job.StateCanceled, "job_canceled", "canceled before execution", map[string]string{"reason": "user"})
+	if err == nil {
+		manager.releaseLease(jobID)
+	}
+	return canceled, err
+}
+
+func (manager *Manager) ResolveConflict(ctx context.Context, jobID domain.JobID, resolution ConflictPolicy, applyAll bool) (jobstore.Snapshot, error) {
+	if resolution != ConflictOverwrite && resolution != ConflictSkip && resolution != ConflictAutoRename {
+		return jobstore.Snapshot{}, errors.New("resolve conflict: resolution must be overwrite, skip, or auto_rename")
+	}
+	snapshot, err := manager.store.Get(ctx, jobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	conflicts, err := manager.store.ListConflicts(ctx, jobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	conflictIndex := -1
+	for _, conflict := range conflicts {
+		if conflict.State == "waiting" {
+			conflictIndex = conflict.ConflictIndex
+		}
+	}
+	if conflictIndex < 0 {
+		return jobstore.Snapshot{}, errors.New("resolve conflict: Job has no waiting conflict")
+	}
+	eventID, err := domain.NewEventID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	applyScope := "item"
+	if applyAll {
+		applyScope = "job"
+	}
+	queued, err := manager.store.ResolveConflict(ctx, jobstore.ResolveConflictRequest{
+		JobID: jobID, ConflictIndex: conflictIndex, ExpectedVersion: snapshot.StateVersion,
+		Resolution: string(resolution), ApplyScope: applyScope, EventID: eventID, Now: manager.now(),
+	})
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	manager.notify(jobID)
+	if err := manager.enqueue(jobID); err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	return queued, nil
 }
 
 func (manager *Manager) Events(ctx context.Context, jobID domain.JobID, afterSequence int64, limit int) ([]jobstore.EventRecord, error) {
@@ -363,6 +439,10 @@ func (manager *Manager) workerLoop() {
 }
 
 func (manager *Manager) execute(jobID domain.JobID) {
+	release := manager.takeLease(jobID)
+	if release != nil {
+		defer release()
+	}
 	snapshot, err := manager.store.Get(manager.ctx, jobID)
 	if err != nil || snapshot.State != job.StateQueued {
 		return
@@ -375,17 +455,23 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	if err != nil {
 		return
 	}
+	if err := manager.applyConflictResolution(&plan); err != nil {
+		return
+	}
 	snapshot, err = manager.transition(snapshot, job.StateRunning, "job_started", map[string]any{})
 	if err != nil {
 		return
 	}
 	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
-		release, acquireErr := acquirer.Acquire(manager.ctx, plan)
-		if acquireErr != nil {
-			manager.handleExecutionError(snapshot, acquireErr)
-			return
+		if release == nil {
+			acquiredRelease, acquireErr := acquirer.Acquire(manager.ctx, plan)
+			if acquireErr != nil {
+				manager.handleExecutionError(snapshot, acquireErr)
+				return
+			}
+			release = acquiredRelease
+			defer release()
 		}
-		defer release()
 	}
 	journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
 	result, executeErr := NewWorker(manager.resolver, journal).Execute(manager.ctx, plan, manager.control(jobID))
@@ -404,7 +490,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	case executeErr != nil:
 		manager.handleExecutionError(current, executeErr)
 	case result.Outcome == OutcomeWaitingConflict:
-		_, _ = manager.transition(current, job.StateWaitingConflict, "job_waiting_conflict", map[string]any{"final": result.Final})
+		manager.openConflict(current, plan, result.Final, "destination_appeared")
 	default:
 		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", map[string]any{"sha256": result.SHA256})
 		if transitionErr == nil {
@@ -421,6 +507,51 @@ func (manager *Manager) execute(jobID domain.JobID) {
 			})
 		}
 	}
+}
+
+func (manager *Manager) openConflict(snapshot jobstore.Snapshot, plan Plan, final domain.Location, class string) {
+	sourceJSON, err := json.Marshal(plan.Source)
+	if err != nil {
+		manager.fail(snapshot, err)
+		return
+	}
+	destinationJSON, err := json.Marshal(struct {
+		Final domain.Location `json:"final"`
+	}{Final: final})
+	if err != nil {
+		manager.fail(snapshot, err)
+		return
+	}
+	eventID, err := domain.NewEventID(manager.generator)
+	if err != nil {
+		manager.fail(snapshot, err)
+		return
+	}
+	_, _, err = manager.store.OpenConflict(manager.ctx, jobstore.OpenConflictRequest{
+		JobID: snapshot.JobID, ExpectedVersion: snapshot.StateVersion, StepIndex: 0, Class: class,
+		SourceJSON: string(sourceJSON), DestinationJSON: string(destinationJSON), EventID: eventID, Now: manager.now(),
+	})
+	if err == nil {
+		manager.notify(snapshot.JobID)
+	}
+}
+
+func (manager *Manager) applyConflictResolution(plan *Plan) error {
+	conflicts, err := manager.store.ListConflicts(manager.ctx, plan.JobID)
+	if err != nil {
+		return err
+	}
+	for _, conflict := range conflicts {
+		if conflict.State != "resolved" {
+			continue
+		}
+		resolution := ConflictPolicy(conflict.Resolution)
+		if resolution != ConflictOverwrite && resolution != ConflictSkip && resolution != ConflictAutoRename {
+			return fmt.Errorf("execute Job: invalid durable conflict resolution %q", conflict.Resolution)
+		}
+		plan.ConflictPolicy = resolution
+	}
+	return nil
 }
 
 func (manager *Manager) control(jobID domain.JobID) Control {
@@ -513,6 +644,40 @@ func (manager *Manager) notify(jobID domain.JobID) {
 	manager.mu.Unlock()
 	for _, waiter := range waiters {
 		close(waiter)
+	}
+}
+
+func (manager *Manager) retainLease(jobID domain.JobID, release func()) {
+	manager.mu.Lock()
+	previous := manager.leases[jobID]
+	manager.leases[jobID] = release
+	manager.mu.Unlock()
+	if previous != nil {
+		previous()
+	}
+}
+
+func (manager *Manager) takeLease(jobID domain.JobID) func() {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	release := manager.leases[jobID]
+	delete(manager.leases, jobID)
+	return release
+}
+
+func (manager *Manager) releaseLease(jobID domain.JobID) {
+	if release := manager.takeLease(jobID); release != nil {
+		release()
+	}
+}
+
+func (manager *Manager) releaseAllLeases() {
+	manager.mu.Lock()
+	leases := manager.leases
+	manager.leases = make(map[domain.JobID]func())
+	manager.mu.Unlock()
+	for _, release := range leases {
+		release()
 	}
 }
 

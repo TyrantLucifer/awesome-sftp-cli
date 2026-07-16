@@ -59,6 +59,82 @@ func TestCreateJobIsTransactionalAndRequestIdempotent(t *testing.T) {
 	}
 }
 
+func TestCreateAndResolveConflictAtomicallyQueuesJob(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, database := newTestStore(t, ctx)
+	request := createRequest(t, 11)
+	request.InitialState = job.StateAwaitingConfirmation
+	request.InitialConflict = &ConflictSeed{
+		StepIndex: 0, Class: "destination_exists", SourceJSON: `{"path":"/source"}`,
+		DestinationJSON: `{"path":"/final"}`,
+	}
+	created, _, err := store.Create(ctx, request)
+	if err != nil {
+		t.Fatalf("create conflicting Job: %v", err)
+	}
+	conflicts, err := store.ListConflicts(ctx, created.JobID)
+	if err != nil {
+		t.Fatalf("list conflicts: %v", err)
+	}
+	if len(conflicts) != 1 || conflicts[0].State != "waiting" || conflicts[0].Class != "destination_exists" {
+		t.Fatalf("initial conflicts = %#v", conflicts)
+	}
+	queued, err := store.ResolveConflict(ctx, ResolveConflictRequest{
+		JobID: created.JobID, ConflictIndex: 0, ExpectedVersion: created.StateVersion,
+		Resolution: "overwrite", ApplyScope: "job", EventID: testEventID(t, 110),
+		Now: time.Unix(1_100, 0),
+	})
+	if err != nil {
+		t.Fatalf("resolve conflict: %v", err)
+	}
+	if queued.State != job.StateQueued || queued.StateVersion != created.StateVersion+1 {
+		t.Fatalf("resolved snapshot = %#v", queued)
+	}
+	conflicts, err = store.ListConflicts(ctx, created.JobID)
+	if err != nil {
+		t.Fatalf("list resolved conflicts: %v", err)
+	}
+	if len(conflicts) != 1 || conflicts[0].State != "resolved" || conflicts[0].Resolution != "overwrite" || conflicts[0].ApplyScope != "job" {
+		t.Fatalf("resolved conflicts = %#v", conflicts)
+	}
+	assertCount(t, ctx, database, "job_events", 2)
+}
+
+func TestOpenConflictAtomicallyMovesRunningJobToWaiting(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, _ := newTestStore(t, ctx)
+	created, _, err := store.Create(ctx, createRequest(t, 12))
+	if err != nil {
+		t.Fatalf("create Job: %v", err)
+	}
+	running, _, err := store.Transition(ctx, TransitionRequest{
+		JobID: created.JobID, ExpectedVersion: created.StateVersion, To: job.StateRunning,
+		EventID: testEventID(t, 120), EventKind: "job_started", PayloadJSON: `{}`, Now: time.Unix(1_200, 0),
+	})
+	if err != nil {
+		t.Fatalf("start Job: %v", err)
+	}
+	waiting, conflict, err := store.OpenConflict(ctx, OpenConflictRequest{
+		JobID: running.JobID, ExpectedVersion: running.StateVersion, StepIndex: 0,
+		Class: "destination_appeared", SourceJSON: `{"path":"/source"}`, DestinationJSON: `{"path":"/final"}`,
+		EventID: testEventID(t, 121), Now: time.Unix(1_201, 0),
+	})
+	if err != nil {
+		t.Fatalf("open conflict: %v", err)
+	}
+	if waiting.State != job.StateWaitingConflict || conflict.ConflictIndex != 0 || conflict.State != "waiting" {
+		t.Fatalf("opened conflict = (%#v, %#v)", waiting, conflict)
+	}
+	conflicts, err := store.ListConflicts(ctx, created.JobID)
+	if err != nil || !reflect.DeepEqual(conflicts, []ConflictRecord{conflict}) {
+		t.Fatalf("durable conflicts = (%#v, %v)", conflicts, err)
+	}
+}
+
 func TestTransitionIsTransactionalMonotonicAndRejectsIllegalState(t *testing.T) {
 	t.Parallel()
 
