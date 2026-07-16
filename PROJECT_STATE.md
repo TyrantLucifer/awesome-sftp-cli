@@ -1,14 +1,14 @@
 # Project State
 
-- **Updated**: 2026-07-15
-- **Lifecycle**: Stage 1 read-only explorer not started
-- **Active stage**: Stage 1 — Read-only Explorer
+- **Updated**: 2026-07-16
+- **Lifecycle**: Stage 2 durable transfers Not Started
+- **Active stage**: Stage 2 — Durable Transfers
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
 
-The approved design now has a verified Go foundation on branch `codex/stage0-foundation`. Module/toolchain, role dispatch, domain/config/clock, framed IPC, Provider contracts, deterministic Fake base, docscheck, Make/tooling, supply-chain checks, and pinned CI/reproducibility workflows exist. Tasks 1–11, independent reviews, two cold-start audit cycles, local dual-toolchain gates and pollution checks are complete. The first Hosted run `29394164471` exposed a GNU Make 4.x safe `-I` propagation false positive and was superseded. The focused regression and minimal fix are committed as `cf8e6efd2814d835f8c1f5c2739608477b5216ed`, tree `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5`; replacement Hosted run [`29394698864`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) passed all 23 jobs, including every native/oldstable leg, quality, four builds, eight independent reproducibility producers, comparison and final provenance aggregation. CORE-001–008 are Verified and Stage 0 is Complete. Stage 1 is unlocked but Not Started.
+Stage 1 is complete. The final implementation candidate is commit `90cbfea81bd2d802bd3f7579a0b192c81ba3281b`, tree `53c7b1ac62e809b7046ea366701a21e6dc0bf757`; [Hosted run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) passed 24/24 jobs. Its auth job passed the real OpenSSH matrix, two-sshd recovery/daemon-restart scenarios and MIT Kerberos/GSSAPI valid, missing, expired and externally renewed ticket cases. M1.4 also closes packet-bounded remote directory enumeration through ADR-0011, all three Endpoint combinations, workspace reopen, nearest-parent recovery, capability replacement, and native macOS/Linux PTY/security evidence. Stage 2 is intentionally Not Started.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -36,21 +36,23 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Begin Stage 1 M1.1 only in a dedicated implementation change: perform the exact `tcell/v3 v3.4.0` dependency intake, then implement ADR-0007 Paths, single-instance lock and peer-UID boundaries test-first. Do not infer production readiness from the Stage 0 foundation.
+Perform the ADR-0008 dependency intake for exact `modernc.org/sqlite v1.53.0` and `modernc.org/libc v1.73.4`, including license/module/vulnerability, dual-toolchain, four-target and native database checks, before creating the Stage 2 schema or migration runner.
 
 ## Required reading for the next session
 
 1. [Documentation map](docs/README.md)
-2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 1
-3. [Feature matrix](docs/product/feature-matrix.md), Stage 1 rows
-4. [Stage 1 specification](docs/stages/01-read-only-explorer.md)
-5. [Stage 0 verification](docs/verification/stage-00.md), as the completed foundation handoff
+2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 2
+3. [Feature matrix](docs/product/feature-matrix.md), Stage 2 rows
+4. [Stage 2 specification](docs/stages/02-durable-transfers.md)
+5. [Stage 1 verification](docs/verification/stage-01.md), as the completed explorer handoff
 6. [Approved design](docs/superpowers/specs/2026-07-14-vim-first-sftp-commander-design.md)
-7. ADRs referenced by Stage 1
+7. ADRs referenced by Stage 2, beginning with ADR-0008
 
 ## Validation record
 
-The current command/result ledger is [Stage 0 verification](docs/verification/stage-00.md). The latest controller-run checkpoint used macOS GNU Bash 3.2 and GNU Make 3.81 with external output paths containing spaces. Go 1.26.5 `make check`, `lint`, `supply-chain`, `build-all`, and `ci` passed, including full race, four fuzz targets, zero lint issues, no reported vulnerabilities, actionlint, four cross-builds with metadata assertions, and native darwin/arm64 help/version smoke. Exact Go 1.25.12 `make check` also passed. Complete candidate and ignored-output tree/tar snapshots were byte-identical before and after, and staging remained empty. All four immutable action refs were revalidated read-only against their official tags on 2026-07-15.
+The completed command/result ledger is [Stage 1 verification](docs/verification/stage-01.md); [Stage 0 verification](docs/verification/stage-00.md) remains the foundation handoff. On the final implementation tree, `GOTOOLCHAIN=go1.26.5 make ci`, exact `GOTOOLCHAIN=go1.25.12 make check`, focused current/oldstable integration tests, focused race, shell syntax and pollution checks passed. This covers docs, unit/Provider contracts, full race, lint, four fuzz smokes, supply chain, actionlint and four target builds. Hosted run [29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) then passed all 24 quality, auth, native, oldstable, build, reproducibility and comparison jobs.
+
+After the two approvals, the recovery state-machine and ADR-0011 streaming-cursor candidate passed focused current/oldstable/race tests, both toolchains' `go mod tidy -diff` and `go mod verify`, current `make ci`, oldstable `make check`, docscheck and `git diff --check`. Current `govulncheck` finds zero reachable/imported-package vulnerabilities and one uncalled required-module finding. These local precursor results are superseded by the exact implementation-tree Hosted pass recorded above.
 
 Task 11 focused revalidation now also passes: the final cross-document decision review is clean; GNU Make 3.81 rejects late/continued execution flags, target-specific controls, internal-guard command-line overrides and `-e` environment overrides while preserving all 14 forced guards and 11 Go probes and accepting safe output-directory assignments. Provenance policy binds actual artifact hashes and target tuples to comparison evidence, requires `-buildvcs=false` for cross/repro builds, compares canonical shell content with exact semantic whitespace, and fixes nightly fuzz/concurrency workloads into the producer profile. IPC envelope/control JSON is strict UTF-8 on decode and encode; Code/Retry/Effect are canonical and retry delay is non-negative while raw error paths remain base64 diagnostic context. Focused package/race/vet/lint/docscheck checks and independent re-reviews passed with staging empty.
 
@@ -62,7 +64,9 @@ The accepted final pre-Hosted local closeout checkpoint is tree `5d598eea00fac2b
 - The Stage 0 module is `github.com/TyrantLucifer/awesome-mac-sftp`, with Go 1.25.0 language compatibility, Go 1.26.5 preferred, and exact Go 1.25.12 oldstable verification.
 - Cross-host direct transfer is not assumed to work with Kerberos. It is an optional capability that must prove destination reachability and non-interactive credentials on the source host without forwarding or copying user credentials; otherwise the route is local relay.
 - GUI opener behavior differs by platform. Stage 3 must implement platform adapters and validate lease/change detection on both macOS and Linux.
-- Two user-owned IDE files, `.idea/.gitignore` and `.idea/misc.xml`, appeared concurrently during the Task 8 final review. Task 11 classified `.idea/` as local JetBrains/Java IDE metadata and excluded it through the repository root `.gitignore`; the files themselves were preserved and are not product-candidate content.
+- Seven user-owned JetBrains files are present under ignored `.idea/`: `.gitignore`, `awesome-mac-sftp.iml`, `go.imports.xml`, `misc.xml`, `modules.xml`, `vcs.xml` and `workspace.xml`. They are preserved local IDE metadata and are not product-candidate content. Ignored `.superpowers/`, `coverage/` and `dist/` are respectively disposable coordination output and reproducible validation artifacts; none are tracked.
+- Final platform-security fixtures cover real Darwin deny/direct/inherited ACLs, Linux access/default ACL xattrs, cross-process locking and a root-gated hostile-other-UID socket peer. Local race, exact Go 1.25.12, docs and actionlint checks pass, and all four native Hosted jobs passed in run 29417470068; DAEM-002/SEC-001 are Verified.
+- Stage 1 is a production-grade read-only explorer slice, not a production-ready 1.0 release. Copy, move, upload, rename, delete, durable jobs and SQLite persistence remain Stage 2; external editing/cache remains Stage 3; recursive search/helper remains Stage 4; direct transfer and scale hardening remain Stage 5; release readiness remains Stage 6.
 
 ## Working-tree policy
 

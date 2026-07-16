@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0 已完成；Stage 1–6 保持 Not Started。下一次功能实现从 Stage 1 的 M1.1 开始。
+Stage 0–1 已完成；Stage 2–6 保持 Not Started。下一步只允许先执行 Stage 2 的 ADR-0008 精确 SQLite 依赖准入，不得在依赖与平台数据库门禁前创建 schema 或写路径。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -14,7 +14,7 @@ Stage 0 已完成；Stage 1–6 保持 Not Started。下一次功能实现从 St
 
 **Status**: Complete
 
-**Current checkpoint**: 本地实现、独立审查、两轮 cold-start audit 与最终本地 closeout 均已完成。首轮 Hosted run `29394164471` 暴露并固定了 GNU Make 4.x 安全 `-I` 路径误判。修复提交 `cf8e6efd2814d835f8c1f5c2739608477b5216ed`、树 `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5` 的替代 Hosted run [`29394698864`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) 随后 23/23 作业通过：四个 native、四个 oldstable、quality、四目标 build、八个独立缓存 reproducibility producer、compare 与最终 provenance aggregation 均为绿色。Stage 0 的 CORE-001–008 已有可追溯完成证据；Stage 1 已解锁但尚未开始。
+**Current checkpoint**: 本地实现、独立审查、两轮 cold-start audit 与最终本地 closeout 均已完成。首轮 Hosted run `29394164471` 暴露并固定了 GNU Make 4.x 安全 `-I` 路径误判。修复提交 `cf8e6efd2814d835f8c1f5c2739608477b5216ed`、树 `e70a8f0c5fc57817f6fa44dda31faaf4652b67c5` 的替代 Hosted run [`29394698864`](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29394698864) 随后 23/23 作业通过：四个 native、四个 oldstable、quality、四目标 build、八个独立缓存 reproducibility producer、compare 与最终 provenance aggregation 均为绿色。Stage 0 的 CORE-001–008 已有可追溯完成证据；其后续状态见下方阶段条目。
 
 ## Stage 1: Read-only Explorer
 
@@ -24,7 +24,55 @@ Stage 0 已完成；Stage 1–6 保持 Not Started。下一次功能实现从 St
 
 **Tests**: 单元与 Provider 契约测试；ADR-0007 路径的 XDG/TMPDIR/override/symlink/owner/mode、Darwin系统别名、integrity-only与owner-private deny/allow-read/write/inherited ACL、Linux access/default ACL、sticky `/tmp` 回退和竞态；ADR-0001 默认`/usr/bin/ssh`/安全absolute override完整链、poisoned PATH、special-bits/ACL/替换与精确argv/冲突配置；临时sshd、ProxyCommand、MIT Kerberos/GSSAPI、重启/断网/认证等待和macOS/Linux TUI冒烟。
 
-**Status**: Not Started
+**Status**: Complete
+
+### M1.1: 本地只读端到端
+
+**Goal**: 完成 `tcell/v3 v3.4.0` intake、ADR-0007 平台安全边界、daemon/IPC/LocalFS 接入，以及完全离线可用的本地/本地双栏 TUI。
+
+**Success Criteria**: daemon 自动启动并收敛为当前用户单实例；私有 `control-v1.sock`、完整 ancestor/ACL 验证和双向 peer UID 检查 fail closed；LocalFS 通过共享 Provider contract；双栏支持窗口化列表、Vim 导航、过滤、选择和有界基础预览；反复退出重入后资源回到稳定基线。
+
+**Tests**: 精确依赖许可证/module graph/漏洞/Go 1.25.12+1.26.5/四目标 intake；路径、ACL、lock、peer UID 与 stale socket 单元/平台测试；daemon 并发启动、握手、重连、取消和泄漏集成测试；LocalFS contract；纯 reducer/renderer、`vt.NewMockTerm`、50k 结构性基准和离线 PTY smoke。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: 提交 `8e649f534b500e494ec2984a763e4491711df5fe` 的本地双 Go/四目标/完整门禁、focused race、50k benchmark 与 darwin/arm64 离线 PTY smoke 均通过；Hosted run [29399674061](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29399674061) 的 native、oldstable、quality、build、reproducibility、compare 与 provenance 全部绿色。
+
+### M1.2: 真实 SFTP Endpoint
+
+**Goal**: 完成最初的 `pkg/sftp v1.13.10` intake，并仅通过 ADR-0001 的 validated absolute system OpenSSH stdio 实现 SFTP Provider 与双远端浏览；最终依赖边界由 ADR-0011 修订为 upstream v1.13.11 加 immutable cursor fork。
+
+**Success Criteria**: 默认 `/usr/bin/ssh` 且 PATH fake 0-hit；host alias 与精确 argv 无注入面；stderr 脱敏限长，取消/退出回收子进程；本地/远端和远端/远端可独立浏览并传播 partial/degraded 状态。
+
+**Tests**: 同等级依赖 intake；binary 完整链/ACL/special-bits/替换、逐参数 argv 与冲突 ssh_config；真实临时 sshd、Host alias、非默认端口、两个隔离 sshd、断线与 Provider contract。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: 提交 `28f8731604201763e48bf43c5a7f7e2a7014ca6c` 的精确 pkg/sftp intake、validated `/usr/bin/ssh`、进程组回收、SFTP contract、双远端路由与错误映射均通过本地双 Go/race/四目标门禁；Hosted run [29401801663](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29401801663) 的真实双 sshd、poisoned PATH 0-hit、冲突 ssh_config、非默认端口、断线隔离及完整 CI/provenance 矩阵全绿。
+
+### M1.3: 认证与复杂 SSH 配置
+
+**Goal**: 实现单次消费的 askpass/Auth Broker，并证明系统 OpenSSH 的 ProxyCommand/ProxyJump、Agent、密钥、交互认证和 Kerberos/GSSAPI 路径可用且不泄密。
+
+**Success Criteria**: challenge 唯一关联 endpoint/connection/client；附着、无客户端、超时、取消和多提示均有界恢复；认证失败不无限重试；秘密不进入日志、配置、工作区、缓存或测试产物。
+
+**Tests**: Broker 状态机/race/秘密扫描；代理与双提示 MFA；agent/key/password；MIT Kerberos 临时 realm 的 GSSAPI-only 成功、ticket 缺失/过期/外部续期恢复；host-key 语义不降级。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: 提交 `7f0ea00981cecd5799b3c17ee56eff204cfd5a90` 的 daemon-global 单次消费 Auth Broker、owner/attach/detach/timeout/cancel/多提示边界、同二进制 askpass、TUI 提示与安全失败阶段均通过聚焦 race/vet；Hosted run [29408865534](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29408865534) 的 auth job [87330882913](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29408865534/job/87330882913) 真实通过 key、agent、ProxyCommand、ProxyJump、password、错误密码、取消、双提示 MFA、首次 host-key 确认、变化 host-key fail-closed，以及 MIT Kerberos/GSSAPI 有效、缺失、过期和外部续票恢复矩阵与秘密扫描。
+
+### M1.4: 工作区与恢复
+
+**Goal**: 完成 CLI Location、SSH Host 模糊选择、双栏工作区保存恢复，以及 SSH/daemon/能力/位置变化后的可预测恢复。
+
+**Success Criteria**: `amsftp` 的零/一/二 Location 与 `--workspace` 入口可用；工作区原子、无秘密且损坏可恢复；三种 Endpoint 组合和所有恢复路径有证据；macOS/Linux 的窄终端、resize、信号和退出重入通过。
+
+**Tests**: Location/Host parser 与 Include/通配 fixture；workspace round-trip/中断/损坏/秘密扫描；断网、sshd/daemon 重启、能力变化和失效目录；macOS/Linux PTY、SIGWINCH、窄终端、退出重入及完整 Stage 1 gate。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: 最终实现提交 `90cbfea81bd2d802bd3f7579a0b192c81ba3281b`、树 `53c7b1ac62e809b7046ea366701a21e6dc0bf757` 已通过完整本地 current/oldstable 门禁；[Hosted run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) 24/24 作业全绿。真实 auth job 同时通过三种 Endpoint 组合、workspace 重入、sshd/daemon 重启、失效目录 nearest-parent 恢复、OpenSSH 认证矩阵和 MIT Kerberos/GSSAPI 四用例；ADR-0011 packet-bounded SFTP cursor、四平台 kernel ACL/lock/hostile-UID 与 PTY resize/退出重入证据均闭环。Stage 1/M1.4 完成，Stage 2 保持 Not Started。
 
 ## Stage 2: Durable Transfers
 

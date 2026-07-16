@@ -1,0 +1,334 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+)
+
+func TestSSHConnectStageErrorPreservesSafeStageAndClassification(t *testing.T) {
+	cause := errors.New("private transport detail")
+	err := sshConnectStageError("establish OpenSSH SFTP session", domain.CodeTransportInterrupted, domain.RetryAfterReconnect, cause)
+	var operationError *domain.OpError
+	if !errors.As(err, &operationError) {
+		t.Fatalf("error = %T, want *domain.OpError", err)
+	}
+	if operationError.Operation != "connect_ssh" || operationError.Message != "establish OpenSSH SFTP session" {
+		t.Fatalf("public error = %#v", operationError)
+	}
+	if operationError.Code != domain.CodeTransportInterrupted || operationError.Retry.Kind != domain.RetryAfterReconnect || operationError.Effect != domain.EffectNone {
+		t.Fatalf("classification = %#v", operationError)
+	}
+	if !errors.Is(err, cause) {
+		t.Fatal("private cause was not retained for daemon-local diagnostics")
+	}
+	if operationError.Error() == cause.Error() {
+		t.Fatal("public error exposed the private cause")
+	}
+}
+
+func TestClientErrorMessageAppendsSafeRemoteCorrelation(t *testing.T) {
+	requestID := domain.RequestID("req_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	remote := &daemon.RemoteError{RequestID: requestID, RPC: ipc.RPCError{
+		Code:    domain.CodePermissionDenied,
+		Message: "access denied",
+		Retry:   domain.RetryAdvice{Kind: domain.RetryNever},
+		Effect:  domain.EffectNone,
+	}}
+	message := clientErrorMessage(remote)
+	for _, want := range []string{"access denied", string(requestID), "error_code=permission_denied"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("clientErrorMessage() = %q, want %q", message, want)
+		}
+	}
+	local := errors.New("local failure")
+	if got := clientErrorMessage(local); got != local.Error() {
+		t.Fatalf("local clientErrorMessage() = %q", got)
+	}
+}
+
+func TestPaneConnectionAttemptsCancelAndRejectOlderResult(t *testing.T) {
+	var attempts paneConnectionAttempts
+	ctx := context.Background()
+	firstCtx, firstEpoch := attempts.Begin(ctx, tui.Left)
+	secondCtx, secondEpoch := attempts.Begin(ctx, tui.Left)
+
+	select {
+	case <-firstCtx.Done():
+	default:
+		t.Fatal("new connection attempt did not cancel the older attempt")
+	}
+	if secondCtx.Err() != nil {
+		t.Fatalf("new connection context is already canceled: %v", secondCtx.Err())
+	}
+	if attempts.Accept(tui.Left, firstEpoch) {
+		t.Fatal("older connection result was accepted")
+	}
+	if !attempts.Accept(tui.Left, secondEpoch) {
+		t.Fatal("current connection result was rejected")
+	}
+	if attempts.Accept(tui.Left, secondEpoch) {
+		t.Fatal("completed connection result was accepted twice")
+	}
+}
+
+func TestListingResultCurrentRejectsStaleGeneration(t *testing.T) {
+	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	location, err := domain.NewLocation(endpointID, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := tui.NewModel(
+		tui.NewPaneState(domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, location),
+		tui.NewPaneState(domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, location),
+	)
+	model, _ = tui.Reduce(model, tui.BeginListing{Pane: tui.Left, Generation: 8, Location: location})
+	if listingResultCurrent(model, tui.Left, 7) {
+		t.Fatal("stale listing result was accepted")
+	}
+	if !listingResultCurrent(model, tui.Left, 8) {
+		t.Fatal("current listing result was rejected")
+	}
+}
+
+func TestEndpointSwitchFailurePreservesCommittedConnectionState(t *testing.T) {
+	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	location, err := domain.NewLocation(endpointID, "/tmp")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := tui.NewModel(
+		tui.NewPaneState(domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, location),
+		tui.NewPaneState(domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal}, location),
+	)
+	if got := connectionFailureState(model, tui.Left, true); got != domain.StateReady {
+		t.Fatalf("switch failure state = %q, want committed ready", got)
+	}
+	if got := connectionFailureState(model, tui.Left, false); got != domain.StateFailed {
+		t.Fatalf("recovery failure state = %q, want failed", got)
+	}
+}
+
+func TestCapabilitySnapshotFromWirePreservesCompleteSessionState(t *testing.T) {
+	response := ipc.ProviderSnapshotResponse{
+		EndpointID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SessionID:  "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Generation: 4,
+		Complete:   false,
+		Items: []ipc.WireCapability{
+			{Name: "metadata", Version: 2, Constraints: []domain.CapabilityConstraint{{Name: "precision", Value: "second"}}},
+			{Name: "read", Version: 1},
+		},
+	}
+	snapshot, err := capabilitySnapshotFromWire(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Revision.SessionID != "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa" || snapshot.Revision.Generation != 4 || snapshot.Complete || len(snapshot.Items) != 2 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+	metadata, ok := snapshot.Lookup("metadata")
+	if !ok || metadata.Version != 2 || len(metadata.Constraints) != 1 || metadata.Constraints[0].Value != "second" {
+		t.Fatalf("metadata capability = %#v, %t", metadata, ok)
+	}
+}
+
+func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
+	leftID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	rightID := domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	leftLocation, err := domain.NewLocation(leftID, "/Users/test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rightLocation, err := domain.NewLocation(rightID, "/srv/release")
+	if err != nil {
+		t.Fatal(err)
+	}
+	model := tui.NewModel(
+		tui.NewPaneState(domain.Endpoint{ID: leftID, Kind: domain.EndpointLocal, DisplayName: "local"}, leftLocation),
+		tui.NewPaneState(domain.Endpoint{ID: rightID, Kind: domain.EndpointSSH, DisplayName: "prod", SSHHostAlias: "prod"}, rightLocation),
+	)
+	model.Active = tui.Right
+	model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.Left, Query: "report"})
+	rightPane := model.Panes[tui.Right]
+	rightPane.Sort = tui.SortState{Key: tui.SortModified, Descending: true}
+	rightPane.ShowHidden = true
+	model.Panes[tui.Right] = rightPane
+	now := time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC)
+	document, err := workspaceDocument(model, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if document.UpdatedAt != now || document.Layout.ActivePane != 1 || document.Panes[0].Path != "/Users/test" || document.Panes[0].Filter != "report" {
+		t.Fatalf("document = %#v", document)
+	}
+	if document.Panes[1].Endpoint.Kind != domain.EndpointSSH || document.Panes[1].Endpoint.SSHHostAlias != "prod" || document.Panes[1].Path != "/srv/release" {
+		t.Fatalf("remote pane = %#v", document.Panes[1])
+	}
+	if document.Panes[1].Sort.Key != workspace.SortModified || document.Panes[1].Sort.Direction != workspace.SortDescending || !document.Panes[1].ShowHidden {
+		t.Fatalf("remote pane preferences = %#v", document.Panes[1])
+	}
+	restored := tui.NewPaneState(domain.Endpoint{ID: rightID, Kind: domain.EndpointSSH, SSHHostAlias: "prod"}, rightLocation)
+	applyWorkspacePanePreferences(&restored, document.Panes[1])
+	if restored.Sort != rightPane.Sort || !restored.ShowHidden {
+		t.Fatalf("restored preferences = %#v", restored)
+	}
+}
+
+func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
+	base := filepath.Join("/tmp", "amsftp-test-"+strconv.Itoa(os.Getpid()))
+	if err := os.Mkdir(base, 0o700); err != nil && !os.IsExist(err) {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	// #nosec G302 -- private runtime directories intentionally require mode 0700.
+	if err := os.Chmod(base, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	persistent := testkit.PersistentTempDir(t)
+	paths := platform.Paths{StateDir: filepath.Join(persistent, "state"), LogFile: filepath.Join(persistent, "log", "daemon.jsonl"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
+	purpose := platform.ValidateRuntimeFallback
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- runDaemonWithPaths(ctx, paths, purpose) }()
+	var client *daemon.Client
+	var err error
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		attemptCtx, stop := context.WithTimeout(context.Background(), 200*time.Millisecond)
+		client, err = connectExisting(attemptCtx, paths, purpose)
+		stop()
+		if err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if err != nil {
+		cancel()
+		t.Fatalf("connect daemon: %v", err)
+	}
+	var endpoints ipc.ProviderEndpointsResponse
+	if err := client.Call(context.Background(), daemon.ProviderEndpoints, struct{}{}, &endpoints); err != nil {
+		t.Fatal(err)
+	}
+	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Kind != "local" {
+		t.Fatalf("endpoints = %#v", endpoints.Endpoints)
+	}
+	var workspaces workspace.ListResponse
+	if err := client.Call(context.Background(), daemon.WorkspaceList, workspace.ListRequest{}, &workspaces); err != nil {
+		t.Fatalf("list daemon workspaces: %v", err)
+	}
+	_ = client.Close()
+	for index := 0; index < 5; index++ {
+		reconnect, err := connectExisting(context.Background(), paths, purpose)
+		if err != nil {
+			t.Fatalf("reconnect %d: %v", index, err)
+		}
+		_ = reconnect.Close()
+	}
+	secondDone := make(chan error, 1)
+	go func() { secondDone <- runDaemonWithPaths(context.Background(), paths, purpose) }()
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("second daemon: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("second daemon did not converge on held lock")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not stop")
+	}
+	if _, err := os.Lstat(paths.ControlSocket); !os.IsNotExist(err) {
+		t.Fatalf("socket remains after shutdown: %v", err)
+	}
+}
+
+func connectExisting(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
+	connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
+	if err != nil {
+		return nil, err
+	}
+	return daemon.NewClient(ctx, connection, "test", "test-client")
+}
+
+func TestStartLocationsParsesLocalAndRemote(t *testing.T) {
+	locations, err := startLocations([]string{".", "work-alias:/srv/data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if locations[0].host != "" || !filepath.IsAbs(locations[0].path) {
+		t.Fatalf("local = %#v", locations[0])
+	}
+	if locations[1] != (startLocation{host: "work-alias", path: "/srv/data"}) {
+		t.Fatalf("remote = %#v", locations[1])
+	}
+	colonPaths := []string{"/tmp/local:archive", "./local:archive", "../local:archive"}
+	for _, value := range colonPaths {
+		parsed, err := startLocations([]string{value})
+		if err != nil {
+			t.Fatalf("startLocations(%q): %v", value, err)
+		}
+		if parsed[0].host != "" || !filepath.IsAbs(parsed[0].path) {
+			t.Fatalf("colon local %q = %#v", value, parsed[0])
+		}
+	}
+	for _, value := range []string{"-bad:/", "host:relative", "host\nname:/"} {
+		if _, err := startLocations([]string{value}); err == nil {
+			t.Fatalf("startLocations(%q) error = nil", value)
+		}
+	}
+}
+
+func TestInitialPaneStateRepresentsRemoteWithoutConnectingIt(t *testing.T) {
+	local := domain.Endpoint{ID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: domain.EndpointLocal, DisplayName: "local"}
+	pane, err := initialPaneState(local, startLocation{host: "work-alias", path: "/srv/data"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pane.Endpoint.ID != local.ID || pane.Endpoint.Kind != domain.EndpointLocal || pane.Endpoint.DisplayName != "connecting work-alias" {
+		t.Fatalf("placeholder endpoint = %#v", pane.Endpoint)
+	}
+	if pane.Location.EndpointID != local.ID || pane.Location.Path != "/srv/data" || !pane.Listing.Loading {
+		t.Fatalf("placeholder pane = %#v", pane)
+	}
+}
+
+func TestWorkspaceStartLocationsUseStableEndpointReferences(t *testing.T) {
+	document := workspace.Document{
+		SchemaVersion: workspace.SchemaVersion,
+		UpdatedAt:     time.Now().UTC(),
+		Panes: [2]workspace.Pane{
+			{Endpoint: workspace.EndpointRef{Kind: domain.EndpointLocal}, Path: "/local", Sort: workspace.SortState{Key: workspace.SortName, Direction: workspace.SortAscending}},
+			{Endpoint: workspace.EndpointRef{Kind: domain.EndpointSSH, SSHHostAlias: "work"}, Path: "/remote", Sort: workspace.SortState{Key: workspace.SortName, Direction: workspace.SortAscending}},
+		},
+		CachePolicy: workspace.CacheEphemeral,
+	}
+	got, err := workspaceStartLocations(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := [2]startLocation{{path: "/local"}, {host: "work", path: "/remote"}}
+	if got != want {
+		t.Fatalf("workspace locations = %#v, want %#v", got, want)
+	}
+}

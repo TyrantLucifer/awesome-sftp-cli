@@ -133,6 +133,7 @@ func canonicalProvenanceWorkflowProfile(path string) (provenanceWorkflowProfile,
 	case ".github/workflows/ci.yml":
 		legs := []string{
 			"quality",
+			"auth-integration",
 			"native-ubuntu-22.04",
 			"native-ubuntu-24.04",
 			"native-macos-15",
@@ -163,35 +164,40 @@ func canonicalProvenanceWorkflowProfile(path string) (provenanceWorkflowProfile,
 					expectedLegs: legs[0:1], environment: map[string]string{"LEG": "quality"},
 				},
 				{
+					jobID: "auth-integration", leg: "auth-integration", runsOn: "ubuntu-24.04", timeout: "30",
+					matrix: noProvenanceMatrix, record: standardProvenanceRecord,
+					expectedLegs: legs[1:2], environment: map[string]string{"LEG": "auth-integration"},
+				},
+				{
 					jobID: "native", leg: "native-${{ matrix.os }}", runsOn: "${{ matrix.os }}", timeout: "45",
 					matrix: osProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[1:5], environment: map[string]string{"LEG": "native-${{ matrix.os }}"},
+					expectedLegs: legs[2:6], environment: map[string]string{"LEG": "native-${{ matrix.os }}"},
 				},
 				{
 					jobID: "oldstable", leg: "oldstable-${{ matrix.os }}", runsOn: "${{ matrix.os }}", timeout: "30",
 					matrix: osProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[5:9], environment: map[string]string{"GOTOOLCHAIN": "local", "LEG": "oldstable-${{ matrix.os }}"},
+					expectedLegs: legs[6:10], environment: map[string]string{"GOTOOLCHAIN": "local", "LEG": "oldstable-${{ matrix.os }}"},
 				},
 				{
 					jobID: "build", leg: "build-${{ matrix.artifact }}", runsOn: "ubuntu-24.04", timeout: "20",
 					matrix: buildProvenanceMatrix, record: buildArtifactProvenanceRecord,
-					expectedLegs: legs[9:13], environment: map[string]string{"LEG": "build-${{ matrix.artifact }}"},
+					expectedLegs: legs[10:14], environment: map[string]string{"LEG": "build-${{ matrix.artifact }}"},
 				},
 				{
 					jobID: "reproducibility", leg: "repro-${{ matrix.artifact }}-${{ matrix.replica }}", runsOn: "ubuntu-24.04", timeout: "20",
 					matrix: reproProvenanceMatrix, record: reproArtifactProvenanceRecord,
-					expectedLegs: legs[13:21], environment: map[string]string{"LEG": "repro-${{ matrix.artifact }}-${{ matrix.replica }}"},
+					expectedLegs: legs[14:22], environment: map[string]string{"LEG": "repro-${{ matrix.artifact }}-${{ matrix.replica }}"},
 				},
 				{
 					jobID: "reproducibility-compare", leg: "reproducibility-compare", runsOn: "ubuntu-24.04", timeout: "15",
 					needs: []string{"reproducibility"}, matrix: noProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[21:22], environment: map[string]string{"LEG": "reproducibility-compare"},
+					expectedLegs: legs[22:23], environment: map[string]string{"LEG": "reproducibility-compare"},
 					comparisonArtifact: "reproducibility-comparison",
 				},
 			},
-			compareNeeds:       []string{"quality", "native", "oldstable", "build", "reproducibility", "reproducibility-compare"},
+			compareNeeds:       []string{"quality", "auth-integration", "native", "oldstable", "build", "reproducibility", "reproducibility-compare"},
 			expectedLegs:       legs,
-			fileCount:          44,
+			fileCount:          46,
 			comparisonArtifact: "reproducibility-comparison",
 			artifactGroups: []provenanceArtifactGroup{
 				{artifact: "amsftp-darwin-arm64", goos: "darwin", goarch: "arm64", buildLeg: "build-amsftp-darwin-arm64", reproALeg: "repro-amsftp-darwin-arm64-a", reproBLeg: "repro-amsftp-darwin-arm64-b"},
@@ -301,6 +307,8 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 	}
 
 	switch profile.jobID {
+	case "auth-integration":
+		return len(job.steps) == 8 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
 	case "build":
 		return len(job.steps) == 8 && canonicalBuildProducerPrefix(job.steps[:recordIndex])
 	case "fuzz":
@@ -314,6 +322,43 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 	default:
 		return true
 	}
+}
+
+func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
+	if len(steps) != 6 {
+		return false
+	}
+	return stepIsExactCheckout(steps[0]) && stepIsExactCurrentSetupGo(steps[1]) &&
+		canonicalRunStep(steps[2], "Install isolated authentication fixtures", []string{
+			`set -euo pipefail`,
+			`sudo apt-get update`,
+			`sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \`,
+			`  expect \`,
+			`  krb5-admin-server \`,
+			`  krb5-kdc \`,
+			`  krb5-user \`,
+			`  netcat-openbsd \`,
+			`  openssh-server`,
+		}) &&
+		canonicalRunStep(steps[3], "Build installed same-binary fixture", []string{
+			`set -euo pipefail`,
+			`mkdir -p "${RUNNER_TEMP}/auth-integration"`,
+			`go build -trimpath -o "${RUNNER_TEMP}/auth-integration/amsftp" ./cmd/amsftp`,
+		}) &&
+		canonicalRunStep(steps[4], "Run real OpenSSH authentication matrix", []string{
+			`set -euo pipefail`,
+			`sudo env \`,
+			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \`,
+			`  AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
+			`  bash ./internal/integration/hosted-auth.sh`,
+		}) &&
+		canonicalRunStep(steps[5], "Run real MIT Kerberos/GSSAPI matrix", []string{
+			`set -euo pipefail`,
+			`sudo env \`,
+			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \`,
+			`  AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
+			`  bash ./internal/integration/hosted-kerberos.sh`,
+		})
 }
 
 func canonicalProvenanceCollector(doc workflowDoc, job workflowJob, profile provenanceWorkflowProfile) bool {

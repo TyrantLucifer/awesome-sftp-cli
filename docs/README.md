@@ -11,13 +11,14 @@ This repository treats documentation as part of the product contract. A feature 
 5. [Implementation plan](../IMPLEMENTATION_PLAN.md) tracks stage-level execution.
 6. [Stage specifications](stages/) define scope, tests, exit criteria, and handoff requirements for each stage.
 7. [Testing strategy](testing/strategy.md) defines the validation ladder and required fixtures.
-8. [Stage verification](verification/stage-00.md) records the latest completed stage's exact evidence, candidate identity, and handoff gates.
+8. [Stage verification](verification/stage-01.md) records the latest completed stage's exact evidence, candidate identity, and handoff gates.
 9. [Project state](../PROJECT_STATE.md) is the short, current handoff for the next work session.
 
 ## Engineering gates
 
 - [Local testing and quality gates](development/testing.md) documents the repeatable Make entrypoints, exact toolchains, and platform matrix.
 - [Dependency and supply-chain policy](security/dependency-policy.md) defines dependency review, pinned tools, and immutable CI actions.
+- [Read-only Explorer guide](user/read-only-explorer.md) documents the current Stage 1 launch, OpenSSH reuse, keys, workspaces, recovery, and diagnostics behavior.
 
 ## Required reading order for a new session
 
@@ -27,7 +28,7 @@ Read only as far as needed, in this order:
 2. the active stage in `IMPLEMENTATION_PLAN.md`
 3. `docs/product/feature-matrix.md`
 4. the active `docs/stages/NN-*.md`
-5. the latest completed `docs/verification/stage-NN.md` until the active stage creates its own verification record
+5. the latest completed `docs/verification/stage-NN.md` until the active stage creates its own verification record (currently Stage 1)
 6. ADRs and interfaces linked by that stage
 7. the complete worktree status/manifest plus the last green validation commands recorded in the verification record and `PROJECT_STATE.md`
 

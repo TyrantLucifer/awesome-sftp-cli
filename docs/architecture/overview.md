@@ -8,7 +8,7 @@
 
 ### 当前实现边界
 
-本文主体描述 1.0 目标架构，不代表这些运行时组件已经存在。Stage 0 has completed and verified foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Stage 1 is not started. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates. 已完成证据见 [Stage 0 verification](../verification/stage-00.md)。
+本文主体描述 1.0 目标架构，不代表所有运行时组件已经存在。Stage 0 foundation 与 Stage 1 Read-only Explorer 已完成：CLI Location/Host picker、secret-free 原子 workspace、双栏恢复、能力快照替换、packet-bounded SFTP cursor 和有界结构化 daemon 日志均有本地与 Hosted 证据。SQLite、传输引擎、内容缓存、外部编辑和 remote helper 仍未交付，项目也未达到 production readiness。完成证据见 [Stage 1 verification](../verification/stage-01.md)；生产/发行就绪只由 Stage 6 门禁判定。
 
 ### 已冻结兼容与发行基线
 
@@ -36,6 +36,7 @@
 - [ADR-0008：pure-Go SQLite 与前向迁移](adr/0008-modernc-sqlite-and-forward-migrations.md)
 - [ADR-0009：支持平台、CI 与首发包装](adr/0009-supported-platform-ci-and-packaging-baseline.md)
 - [ADR-0010：Helper 产物信任与分发](adr/0010-helper-artifact-trust-and-distribution.md)
+- [ADR-0011：SFTP 流式目录游标窄 fork](adr/0011-pkg-sftp-streaming-directory-cursor.md)
 
 ## 2. 架构原则
 
@@ -86,6 +87,10 @@
 
 渲染边界固定使用 `github.com/gdamore/tcell/v3 v3.4.0`；项目自己的纯 Go model/reducer 维护 Vim 模式和两栏状态，tcell 只处理终端事件与可见 cell。目录视图必须窗口化，不能为 5 万条记录构造完整 View。结构化日志统一使用注入的标准库 `log/slog`，不得依赖全局 logger。精确约束见 [ADR-0006](adr/0006-public-identity-toolchain-and-runtime-libraries.md)。
 
+Stage 1 的实际 daemon 为每个已附着 client session 创建 Provider 路由：一个共享只读 LocalFS 基线，加上该 session 明确连接的 SSH Provider。远端切换先创建候选 endpoint、获取完整 capability snapshot，并在目标位置第一批列表成功后原子提交 PaneState；随后才释放旧 SSH Provider/游标。连接 epoch、列表 generation 和预览 generation 分别阻止被取消或旧 daemon/session 的迟到结果覆盖当前状态。client 分离会关闭其远端 Provider；持久 workspace 用 Host alias 和路径在下一次附着时重建会话，而不是持久化活连接或认证材料。
+
+daemon 启动后在平台 LogFile 打开 owner-only JSON 日志。业务 server 显式接收 `*slog.Logger`；持久 handler 在 JSON 编码前把消息替换为固定 token，只保留已注册且验证过的 `component`、`event`、`endpoint_id`、`job_id`、`request_id`、`error_code` 字符串。rolling writer 在互斥写入下限制为 4 MiB 当前文件与三份备份；每次打开/轮转均复用 ADR-0007 私有目录/文件验证。RPC RemoteError 保留 request ID，TUI 可显示不含路径、命令或 raw cause 的稳定诊断摘要。
+
 ### 3.2 本机守护进程
 
 守护进程是运行时事实源，负责：
@@ -109,7 +114,7 @@
 
 正式平台默认 absolute path 是 `/usr/bin/ssh`，不查找 `PATH`；自定义 binary 只接受 ADR-0001 逐级验证 owner/mode/ACL/no-symlink/special-bits 后的显式 absolute real path，并在每次启动前重验。守护进程把该子进程的标准输入与标准输出交给 Go SFTP 协议层。调用不经过 shell；host alias 必须通过格式校验。固定参数关闭 TTY、escape、agent/X11/端口转发、LocalCommand/RemoteCommand、后台化、tunnel与新GSS delegation；系统ssh仍负责认证/config/proxy/known_hosts且SFTP可复用ControlMaster，既有master先前的delegation/forward属于用户配置边界。Helper与用户授权remote `!`/`gs`则强制GSS delegation off及ControlMaster/Path/Persist off的fresh transport；完整argv、marker/cwd quoting、TTY与取消契约见[ADR-0001](adr/0001-system-openssh-transport.md)。
 
-SFTP 协议 client 固定为 `github.com/pkg/sftp v1.13.10`，只连接已经由 ADR-0001 精确 system-ssh argv 建立的 stdio；它不接管 SSH 握手、凭据或配置解析。
+SFTP 协议 client 保持 `github.com/pkg/sftp` import path，根 module 按 [ADR-0011](adr/0011-pkg-sftp-streaming-directory-cursor.md) pin upstream v1.13.11，并 replace 到精确 immutable cursor fork `github.com/TyrantLucifer/sftp v1.13.12-0.20260715132526-f947b886400b`；它只连接已经由 ADR-0001 精确 system-ssh argv 建立的 stdio，不接管 SSH 握手、凭据或配置解析。
 
 ### 3.4 可选远端 helper
 

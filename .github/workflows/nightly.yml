@@ -62,7 +62,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Fuzz one target
         run: go test -run='^$' -fuzz="^${{ matrix.target }}$" -fuzztime=10m "${{ matrix.package }}"
       - name: Record provenance
@@ -129,7 +129,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Repeat concurrency contracts
         run: go test -count=100 -run='^(TestNthCallFaultIsConsumedOnce|TestDelayUsesManualClock|TestGateHonorsContextCancellation|TestFaultCallSequencesAreLinearized)$' ./internal/provider/fake
       - name: Record provenance

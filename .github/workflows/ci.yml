@@ -25,7 +25,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          if test "${RUNNER_OS}" = Linux; then
+            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+          fi
       - run: make check
         env:
           BUILD_DIR: ${{ runner.temp }}/quality/build
@@ -33,6 +40,104 @@ jobs:
       - run: make lint
       - run: make fuzz-smoke
       - run: make supply-chain
+      - name: Run real OpenSSH SFTP integration
+        env:
+          AMSFTP_REAL_SSHD: "1"
+        run: |
+          set -euo pipefail
+          if ! command -v sshd >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y openssh-server
+          fi
+          sudo mkdir -p /run/sshd
+          go test -count=1 -run '^TestRealOpenSSHSFTPHostAliasAndNonDefaultPort$' ./internal/integration
+      - name: Record provenance
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/provenance"
+          porcelain="${RUNNER_TEMP}/provenance/${LEG}.porcelain"
+          record="${RUNNER_TEMP}/provenance/${LEG}.env"
+          : "${RUNNER_OS:?RUNNER_OS is required}"
+          : "${RUNNER_ARCH:?RUNNER_ARCH is required}"
+          : "${ImageOS:?ImageOS is required}"
+          : "${ImageVersion:?ImageVersion is required}"
+          go_env_goos="$(go env GOOS)"
+          go_env_goarch="$(go env GOARCH)"
+          test -n "${go_env_goos}"
+          test -n "${go_env_goarch}"
+          git status --porcelain=v1 -uall >"${porcelain}"
+          {
+            printf 'schema=amsftp-provenance-v1\n'
+            printf 'workflow=%s\n' "${GITHUB_WORKFLOW}"
+            printf 'job=%s\n' "${GITHUB_JOB}"
+            printf 'leg=%s\n' "${LEG}"
+            printf 'head=%s\n' "$(git rev-parse HEAD)"
+            printf 'tree=%s\n' "$(git rev-parse 'HEAD^{tree}')"
+            printf 'go_version=%s\n' "$(go version)"
+            printf 'runner_os=%s\n' "${RUNNER_OS}"
+            printf 'runner_arch=%s\n' "${RUNNER_ARCH}"
+            printf 'runner_image_os=%s\n' "${ImageOS}"
+            printf 'runner_image_version=%s\n' "${ImageVersion}"
+            printf 'go_env_goos=%s\n' "${go_env_goos}"
+            printf 'go_env_goarch=%s\n' "${go_env_goarch}"
+            if test -s "${porcelain}"; then
+              printf 'status=dirty\n'
+            else
+              printf 'status=clean\n'
+            fi
+          } >"${record}"
+          test ! -s "${porcelain}"
+      - name: Upload provenance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: provenance-${{ env.LEG }}
+          path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
+          if-no-files-found: error
+
+  auth-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      LEG: auth-integration
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Install isolated authentication fixtures
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            expect \
+            krb5-admin-server \
+            krb5-kdc \
+            krb5-user \
+            netcat-openbsd \
+            openssh-server
+      - name: Build installed same-binary fixture
+        run: |
+          set -euo pipefail
+          mkdir -p "${RUNNER_TEMP}/auth-integration"
+          go build -trimpath -o "${RUNNER_TEMP}/auth-integration/amsftp" ./cmd/amsftp
+      - name: Run real OpenSSH authentication matrix
+        run: |
+          set -euo pipefail
+          sudo env \
+            AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \
+            AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            bash ./internal/integration/hosted-auth.sh
+      - name: Run real MIT Kerberos/GSSAPI matrix
+        run: |
+          set -euo pipefail
+          sudo env \
+            AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \
+            AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            bash ./internal/integration/hosted-kerberos.sh
       - name: Record provenance
         run: |
           set -euo pipefail
@@ -97,7 +202,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          if test "${RUNNER_OS}" = Linux; then
+            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+          fi
       - run: make fmt-check
       - run: make vet
       - run: make test
@@ -113,6 +225,18 @@ jobs:
       - run: go build -trimpath -o "${{ runner.temp }}/native/bin/amsftp" ./cmd/amsftp
       - run: '"${{ runner.temp }}/native/bin/amsftp" --help'
       - run: '"${{ runner.temp }}/native/bin/amsftp" --version'
+      - name: Run native platform kernel security fixtures
+        run: |
+          set -euo pipefail
+          platform_test="${RUNNER_TEMP}/native-platform.test"
+          go test -c -o "${platform_test}" ./internal/platform
+          "${platform_test}" -test.v -test.run '^(Test(Darwin|Linux)KernelACL.*|TestAcquireInstanceLockIsExclusiveAcrossProcesses)$'
+          sudo env \
+            AMSFTP_HOSTILE_UID="$(id -u)" \
+            AMSFTP_HOSTILE_GID="$(id -g)" \
+            "${platform_test}" -test.v -test.run '^TestControlSocketRejectsOtherUIDPeer$'
+      - name: Run native PTY resize and recovery smoke
+        run: python3 ./internal/integration/hosted-pty.py "${{ runner.temp }}/native/bin/amsftp"
       - name: Record provenance
         run: |
           set -euo pipefail
@@ -178,7 +302,14 @@ jobs:
         with:
           go-version: 1.25.12
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          if test "${RUNNER_OS}" = Linux; then
+            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+          fi
       - run: make check
         env:
           BUILD_DIR: ${{ runner.temp }}/oldstable/build
@@ -255,7 +386,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-          cache-dependency-path: tools/go.sum
+          cache-dependency-path: "go.sum\ntools/go.sum"
       - run: mkdir -p "${{ runner.temp }}/build/${{ matrix.artifact }}"
       - name: Cross-build
         env:
@@ -571,6 +702,7 @@ jobs:
   compare:
     needs:
       - quality
+      - auth-integration
       - native
       - oldstable
       - build
@@ -611,6 +743,7 @@ jobs:
           bindings="${RUNNER_TEMP}/expected-artifact-bindings.txt"
           cat >"${manifest}" <<'LEGS'
           quality
+          auth-integration
           native-ubuntu-22.04
           native-ubuntu-24.04
           native-macos-15
@@ -633,13 +766,13 @@ jobs:
           repro-amsftp-linux-amd64-b
           reproducibility-compare
           LEGS
-          test "$(wc -l <"${manifest}" | tr -d '[:space:]')" -eq 22
+          test "$(wc -l <"${manifest}" | tr -d '[:space:]')" -eq 23
           find "${root}" -mindepth 1 -maxdepth 1 -type f -name '*.env' -exec basename {} .env \; | LC_ALL=C sort >"${actual_env}"
           find "${root}" -mindepth 1 -maxdepth 1 -type f -name '*.porcelain' -exec basename {} .porcelain \; | LC_ALL=C sort >"${actual_porcelain}"
           LC_ALL=C sort -o "${manifest}" "${manifest}"
           cmp -s "${manifest}" "${actual_env}"
           cmp -s "${manifest}" "${actual_porcelain}"
-          test "$(find "${root}" -mindepth 1 -print | wc -l | tr -d '[:space:]')" -eq 44
+          test "$(find "${root}" -mindepth 1 -print | wc -l | tr -d '[:space:]')" -eq 46
           cat >"${bindings}" <<'BINDINGS'
           amsftp-darwin-arm64|darwin|arm64|build-amsftp-darwin-arm64|repro-amsftp-darwin-arm64-a|repro-amsftp-darwin-arm64-b
           amsftp-darwin-amd64|darwin|amd64|build-amsftp-darwin-amd64|repro-amsftp-darwin-amd64-a|repro-amsftp-darwin-amd64-b

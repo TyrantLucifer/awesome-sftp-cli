@@ -2,14 +2,14 @@
 
 > - 产品：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
 > - 基线：已批准产品设计
-> - 实现状态：Stage 0 已完成；Stage 1–6 尚未开始
-> - 最后更新：2026-07-15
+> - 实现状态：Stage 0–1 已完成；Stage 2–6 尚未开始
+> - 最后更新：2026-07-16
 
 ## 1. 使用规则
 
 本矩阵是 1.0 交付范围的逐项事实源。每条能力使用稳定 ID；ID 一经进入矩阵不得复用，能力被取消时保留原行并将状态改为 `Removed`，同时链接对应 ADR。实现不得只在代码或聊天中增加能力而不更新本矩阵。
 
-Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Planned`。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
+Stage 0–1 的独立完成行已按证据标记为 `Verified`；跨阶段行在只完成 Stage 1 slice 时仍保持 `In Progress`，Stage 2–6 未开始行保持 `Planned`。Stage 1 最终实现树与真实 OpenSSH/Kerberos/recovery/native/reproducibility 证据见 [Stage 1 verification](../verification/stage-01.md)。实现后必须用可复现的实际证据替换预期证据，包括测试名或命令、验证平台、测试夹具/环境和结果记录；只有代码、测试、阶段验证记录、功能矩阵与 `PROJECT_STATE.md` 一致时，状态才能改为 `Verified`。
 
 状态词义：
 
@@ -49,55 +49,55 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| AUTH-001 | 系统 OpenSSH 为唯一 SSH 实现 | 1 | Planned | 远端会话按 ADR-0001 以 validated absolute OpenSSH path 和精确安全 argv 启动 SFTP subsystem；默认 `/usr/bin/ssh`、不查找 PATH，产品不实现第二套 SSH/Kerberos 协议栈。 | 未实施；预期证据：absolute resolver/poisoned PATH/逐参数 argv 单元测试与真实 OpenSSH SFTP subsystem 浏览测试。 |
-| AUTH-002 | 有边界地继承 `~/.ssh/config` | 1 | Planned | Host/Include/Match/Identity/host-key/auth/GSSAPI/proxy/agent按system ssh生效；SFTP固定关闭TTY/escape/forward/commands/background/tunnel及新GSS delegation但保留ControlMaster兼容，既有master状态是用户边界。Helper与remote `!`/`gs`另强制fresh transport、GSS delegation和ControlMaster/Path/Persist off。 | 未实施；预期证据：冲突config、真实sshd、GSSAPI-only、CM新建/复用及fresh helper/shell不复用矩阵。 |
-| AUTH-003 | Kerberos/GSSAPI 认证 | 1 | Planned | 有效本机 Kerberos ticket 和 OpenSSH GSSAPI 配置可直接建立 SFTP 会话，产品不要求再次保存密码。 | 未实施；预期证据：MIT Kerberos 临时 realm 的成功、票据过期与续期后重试集成测试。 |
-| AUTH-004 | OpenSSH 支持的 agent/密钥/交互认证 | 1 | Planned | SSH agent、文件密钥、硬件密钥、密码与多因素认证由已安装 OpenSSH 处理；产品只转交交互提示和结果。 | 未实施；预期证据：agent、key、password 和双提示 MFA 的矩阵集成测试。 |
-| AUTH-005 | ProxyCommand/ProxyJump 链路 | 1 | Planned | 用户现有代理命令与跳板配置无需复制到产品即可用于浏览和任务连接。 | 未实施；预期证据：临时 bastion/ProxyCommand 拓扑端到端测试。 |
-| AUTH-006 | askpass broker | 1 | Planned | daemon 将 OpenSSH 交互提示发送到当前受信任 TUI，答案仅在内存和该次认证会话中存在；提示来源与目标端点清晰可见。 | 未实施；预期证据：askpass 请求/取消/超时/多提示测试及内存与持久层秘密扫描。 |
+| AUTH-001 | 系统 OpenSSH 为唯一 SSH 实现 | 1 | Verified | 远端会话按 ADR-0001 以 validated absolute OpenSSH path 和精确安全 argv 启动 SFTP subsystem；默认 `/usr/bin/ssh`、不查找 PATH，产品不实现第二套 SSH/Kerberos 协议栈。 | Exact argv/path/inode tests plus real sshd and MIT Kerberos runs prove the same system OpenSSH stdio path; no embedded SSH/Kerberos stack or `kinit` path exists. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
+| AUTH-002 | 有边界地继承 `~/.ssh/config` | 1 | Verified | Host/Include/Match/Identity/host-key/auth/GSSAPI/proxy/agent按system ssh生效；SFTP固定关闭TTY/escape/forward/commands/background/tunnel及新GSS delegation但保留ControlMaster兼容，既有master状态是用户边界。Helper与remote `!`/`gs`另强制fresh transport、GSS delegation和ControlMaster/Path/Persist off。 | Real Host/Include/Match/Identity/host-key/auth/GSSAPI/proxy/agent fixtures, conflicting fixed options, and ControlMaster new/reuse all pass through system OpenSSH in Hosted auth runs. See [Stage 1 verification](../verification/stage-01.md). |
+| AUTH-003 | Kerberos/GSSAPI 认证 | 1 | Verified | 有效本机 Kerberos ticket 和 OpenSSH GSSAPI 配置可直接建立 SFTP 会话，产品不要求再次保存密码。 | Isolated MIT realm, GSSAPI-only sshd, valid/missing/expired/external-renewal cases and cache-copy scan passed in Hosted job 87330882913. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
+| AUTH-004 | OpenSSH 支持的 agent/密钥/交互认证 | 1 | Verified | SSH agent、文件密钥、硬件密钥、密码与多因素认证由已安装 OpenSSH 处理；产品只转交交互提示和结果。 | Real key, login-agent, password and key-passphrase+password MFA passed through the system OpenSSH/askpass path in Hosted job 87330882913; fixed argv does not replace OpenSSH credential providers. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
+| AUTH-005 | ProxyCommand/ProxyJump 链路 | 1 | Verified | 用户现有代理命令与跳板配置无需复制到产品即可用于浏览和任务连接。 | Real ProxyCommand and ProxyJump SFTP cases passed without application-side config parsing in Hosted job 87330882913. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
+| AUTH-006 | askpass broker | 1 | Verified | daemon 将 OpenSSH 交互提示发送到当前受信任 TUI，答案仅在内存和该次认证会话中存在；提示来源与目标端点清晰可见。 | Broker owner/race/detach/no-client/timeout/cancel/prompt-limit tests, same-binary askpass/TUI tests, focused race and real password/MFA/cancel fixtures pass. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
 | AUTH-007 | 无附着客户端时等待认证 | 2 | Planned | 任务需要交互认证且没有 TUI 时进入 `waiting_auth`；重新附着后可继续，不进行无限失败重试。 | 未实施；预期证据：后台任务认证过期、TUI 退出/重连状态机测试。 |
-| AUTH-008 | Host key 语义不降级 | 1 | Planned | StrictHostKeyChecking、known_hosts 和主机密钥变更完全遵循系统 OpenSSH；产品不自动接受未知或变化密钥。 | 未实施；预期证据：首次未知、已知、变更 host key 三类集成测试。 |
-| AUTH-009 | 不持久化认证秘密 | 1 | Planned | SQLite、配置、缓存、日志和诊断包中均不出现密码、私钥内容、askpass 答案、agent 数据或 Kerberos ticket。 | 未实施；预期证据：持久文件/日志扫描测试与安全审查记录。 |
+| AUTH-008 | Host key 语义不降级 | 1 | Verified | StrictHostKeyChecking、known_hosts 和主机密钥变更完全遵循系统 OpenSSH；产品不自动接受未知或变化密钥。 | Known-host cases, explicit first-use confirmation, and changed-key fail-closed with unchanged known_hosts passed in Hosted job 87330882913. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
+| AUTH-009 | 不持久化认证秘密 | 1 | Verified | SQLite、配置、缓存、日志和诊断包中均不出现密码、私钥内容、askpass 答案、agent 数据或 Kerberos ticket。 | Injected password/MFA/passphrase markers were absent from test-owned config/runtime/log/workspace artifacts; Kerberos cache path/content-copy scans and destruction passed in Hosted job 87330882913. See [Stage 1 verification](../verification/stage-01.md#m13-feature-evidence). |
 | AUTH-010 | 认证失败可恢复 | 2 | Planned | 认证失败保留任务与安全检查点，展示端点和 OpenSSH 原因；票据/agent 修复后可手动或策略化重试。 | 未实施；预期证据：过期 ticket、锁定 agent、错误密码修复后的恢复测试。 |
 
 ## 5. 连接与端点
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| CONN-001 | 本地文件系统端点 | 1 | Planned | 任一栏可浏览本地绝对路径，并使用与远端一致的导航、选择和能力展示模型。 | 未实施；预期证据：LocalFS provider contract suite 与权限/符号链接测试。 |
-| CONN-002 | OpenSSH stdio 上的结构化 SFTP | 1 | Planned | daemon 按 ADR-0001 的 validated-absolute-ssh-path 与精确 argv 从子进程 stdin/stdout 创建 SFTP client；binary/host 均不可经 PATH 或选项注入，也不解析人类可读 `sftp` 命令输出。 | 未实施；预期证据：default/override binary 完整 ancestor+ACL+special-bits、poisoned PATH、argv/host、真实 sshd list/stat/read、副作用冲突配置和协议错误注入测试。 |
-| CONN-003 | CLI 双路径启动 | 1 | Planned | `amsftp <left> <right>` 接受本地路径与 `host:path`，两个初始位置均被解析、连接并独立报告错误。 | 未实施；预期证据：local/local、local/remote、remote/remote 参数契约测试。 |
-| CONN-004 | 无参数 SSH host 模糊选择 | 1 | Planned | 无参数启动从 OpenSSH 配置可见 Host alias 构建可搜索列表；通配符和不可直接选择项有确定处理。 | 未实施；预期证据：多文件 Include/通配 Host fixture 的 picker 快照与选择测试。 |
-| CONN-005 | 多远端并存 | 1 | Planned | daemon 可同时维护 remote A 与 remote B 会话，连接、错误、认证提示和能力不会串线。 | 未实施；预期证据：两个隔离 sshd 并发浏览和断开其中一个的集成测试。 |
-| CONN-006 | 自动断线检测与重连 | 1 | Planned | EOF、网络中断和 server restart 被识别为连接状态变化；只读操作可安全重发，写任务交给恢复状态机。 | 未实施；预期证据：断网/重启 sshd 后列表恢复及写任务不重复提交测试。 |
-| CONN-007 | 会话级能力探测 | 1 | Planned | 建连后记录 SFTP 扩展、路径/rename 能力和 helper 可用性；重连后重新探测，旧能力不盲目复用。 | 未实施；预期证据：不同 SFTP server capability fixtures 和重连能力变化测试。 |
-| CONN-008 | 规范化 Location | 1 | Planned | Location 始终由 Endpoint ID 与规范化绝对路径组成；不同端点的相同路径不会被视为同一对象。 | 未实施；预期证据：路径规范化、根目录、相对路径和跨端点相等性单元测试。 |
-| CONN-009 | 连接错误带上下文 | 1 | Planned | 错误至少包含端点显示名、阶段、OpenSSH 退出/标准错误摘要与可行动建议，不只显示“连接失败”。 | 未实施；预期证据：DNS、拒绝连接、host key、认证、SFTP subsystem 缺失错误快照测试。 |
+| CONN-001 | 本地文件系统端点 | 1 | Verified | 任一栏可浏览本地绝对路径，并使用与远端一致的导航、选择和能力展示模型。 | LocalFS shared contract, pagination/cancellation/symlink/range tests, local/local PTY and four Hosted native legs pass. See [Stage 1 verification](../verification/stage-01.md). |
+| CONN-002 | OpenSSH stdio 上的结构化 SFTP | 1 | Verified | daemon 按 ADR-0001 的 validated-absolute-ssh-path 与精确 argv 从子进程 stdin/stdout 创建 SFTP client；binary/host 均不可经 PATH 或选项注入，也不解析人类可读 `sftp` 命令输出。 | Exact path/argv and structured pkg/sftp Provider contracts plus the real two-sshd Hosted run 29401801663 pass; poisoned PATH remains 0-hit. See [Stage 1 verification](../verification/stage-01.md). |
+| CONN-003 | CLI 双路径启动 | 1 | Verified | `amsftp <left> <right>` 接受本地路径与 `host:path`，两个初始位置均被解析、连接并独立报告错误。 | Zero/one/two Location parser, stable Endpoint startup, pane-local errors and the Hosted local/local, local/remote and remote/remote PTY matrix pass in run 29467496969. See [Stage 1 verification](../verification/stage-01.md). |
+| CONN-004 | 无参数 SSH host 模糊选择 | 1 | Verified | 无参数启动从 OpenSSH 配置可见 Host alias 构建可搜索列表；通配符和不可直接选择项有确定处理。 | Include expansion, positive/negated/wildcard Host discovery, deterministic fuzzy picker/manual-alias tests and picker render snapshots pass. See [Stage 1 verification](../verification/stage-01.md). |
+| CONN-005 | 多远端并存 | 1 | Verified | daemon 可同时维护 remote A 与 remote B 会话，连接、错误、认证提示和能力不会串线。 | Two isolated real sshd endpoints browse independently and one-session disconnect isolation passed in Hosted run 29401801663; pane connection epochs prevent async cross-talk. See [Stage 1 verification](../verification/stage-01.md). |
+| CONN-006 | 自动断线检测与重连 | 1 | Verified | EOF、网络中断和 server restart 被识别为连接状态变化；只读操作可安全重发，写任务交给恢复状态机。 | Typed interruption, bounded reconnect, stale-generation rejection, real sshd restart, daemon restart and nearest-parent recovery pass in Hosted run 29467496969. See [Stage 1 verification](../verification/stage-01.md). |
+| CONN-007 | 会话级能力探测 | 1 | Verified | 建连后记录 SFTP 扩展、路径/rename 能力和 helper 可用性；重连后重新探测，旧能力不盲目复用。 | Session/generation snapshots, replacement/withdrawal/stale-revision tests and the real reconnect transaction prove capabilities are re-established without reusing the old snapshot. See [Stage 1 verification](../verification/stage-01.md). |
+| CONN-008 | 规范化 Location | 1 | Verified | Location 始终由 Endpoint ID 与规范化绝对路径组成；不同端点的相同路径不会被视为同一对象。 | Domain, IPC, CLI and workspace Location tests cover roots, local/remote parsing, endpoint identity and raw-byte preservation. See [Stage 1 verification](../verification/stage-01.md). |
+| CONN-009 | 连接错误带上下文 | 1 | Verified | 错误至少包含端点显示名、阶段、OpenSSH 退出/标准错误摘要与可行动建议，不只显示“连接失败”。 | Pane errors name the Host alias; safe summaries carry stage, request ID, code, endpoint and retry/effect while bounded daemon logs preserve the cause. Auth, host-key, refused/transport and subsystem classifications plus actionable messages pass. See [Stage 1 verification](../verification/stage-01.md). |
 | CONN-010 | 受控会话复用与空闲回收 | 5 | Planned | 同端点操作在安全范围内复用连接；并发和空闲回收受配置限制，不因大任务无限创建 SSH 进程。 | 未实施；预期证据：连接池并发上限、空闲回收和任务隔离压力测试。 |
 
 ## 6. 双栏浏览
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| PANE-001 | 两个平等文件栏 | 1 | Planned | 启动后始终存在左右两栏；每栏拥有独立端点、路径、光标、选择、排序和加载状态。 | 未实施；预期证据：PaneState 单元测试与左右栏独立操作 TUI 快照测试。 |
-| PANE-002 | 任意端点组合 | 1 | Planned | local/local、local/remote、remote/local、同 remote 双路径和 remote A/remote B 均能浏览。 | 未实施；预期证据：五种组合的端到端浏览矩阵。 |
-| PANE-003 | 栏内独立切换端点 | 1 | Planned | 用户可只改变活动栏的端点，另一栏路径、选择和连接保持不变。 | 未实施；预期证据：端点 picker 交互测试和非活动栏状态保持断言。 |
-| PANE-004 | 增量目录加载 | 1 | Planned | 目录项以流式/分页方式进入模型，首屏无需等待完整目录读取，加载可取消。 | 未实施；预期证据：延迟 provider 下首批渲染、取消和不完整结果标识测试。 |
-| PANE-005 | 虚拟化文件列表 | 1 | Planned | renderer 只构造可见行与有界 overscan，不为数万条目录项创建等量 UI 组件；5 万项结构性基准证明渲染与分配规模只随可见窗口增长。 | 未实施；预期证据：纯 renderer/cell 快照、窗口边界测试和 50,000 项结构性分配基准；最终延迟/RSS/滚动曲线由 SCALE-001 在 Stage 5 验收。 |
-| PANE-006 | 文件元数据与类型展示 | 1 | Planned | 名称、类型、大小、修改时间、权限和链接信息按端点可用数据展示；未知字段不伪造。 | 未实施；预期证据：local/SFTP 元数据 fixture 快照与缺失字段测试。 |
-| PANE-007 | 排序、隐藏文件与刷新 | 1 | Planned | 每栏可独立选择排序、显示隐藏文件和手动刷新；刷新尽量保留规范化路径对应的光标/标记。 | 未实施；预期证据：排序稳定性、隐藏切换和刷新选择保持测试。 |
-| PANE-008 | 直接路径导航 | 1 | Planned | 用户可输入绝对路径或进入父/子目录；无权限、不存在和非目录路径保留原位置并显示原因。 | 未实施；预期证据：根目录、深路径、权限拒绝和不存在路径交互测试。 |
+| PANE-001 | 两个平等文件栏 | 1 | Verified | 启动后始终存在左右两栏；每栏拥有独立端点、路径、光标、选择、排序和加载状态。 | Reducer/render snapshots, independent sort/hidden/refresh controls, 50k visible-window benchmark and native PTY legs pass. See [Stage 1 verification](../verification/stage-01.md). |
+| PANE-002 | 任意端点组合 | 1 | Verified | local/local、local/remote、remote/local、同 remote 双路径和 remote A/remote B 均能浏览。 | Independent pane routing and the real local/local, local/remote, remote/remote and two-sshd Hosted PTY scenarios pass in run 29467496969. See [Stage 1 verification](../verification/stage-01.md). |
+| PANE-003 | 栏内独立切换端点 | 1 | Verified | 用户可只改变活动栏的端点，另一栏路径、选择和连接保持不变。 | Endpoint reducer tests plus real one-pane sshd restart and second-pane fresh-marker evidence prove pane-local switching/recovery and committed-state preservation. See [Stage 1 verification](../verification/stage-01.md). |
+| PANE-004 | 增量目录加载 | 1 | Verified | 目录项以流式/分页方式进入模型，首屏无需等待完整目录读取，加载可取消。 | 256-entry daemon pages, slow/cancel tests and ADR-0011's packet-bounded cursor prove `Limit=1` returns before a blocked second source batch; full current/oldstable/Hosted gates pass. See [Stage 1 verification](../verification/stage-01.md). |
+| PANE-005 | 虚拟化文件列表 | 1 | Verified | renderer 只构造可见行与有界 overscan，不为数万条目录项创建等量 UI 组件；5 万项结构性基准证明渲染与分配规模只随可见窗口增长。 | Visible-window/overscan tests and the 50,000-entry structural benchmark pass locally and under the full CI gate. See [Stage 1 verification](../verification/stage-01.md). |
+| PANE-006 | 文件元数据与类型展示 | 1 | Verified | 名称、类型、大小、修改时间、权限和链接信息按端点可用数据展示；未知字段不伪造。 | Shared LocalFS/SFTP Provider contracts and renderer snapshots cover kind, size, second-precision mtime, permissions, link target and absent fields. See [Stage 1 verification](../verification/stage-01.md). |
+| PANE-007 | 排序、隐藏文件与刷新 | 1 | Verified | 每栏可独立选择排序、显示隐藏文件和手动刷新；刷新尽量保留规范化路径对应的光标/标记。 | Independent-pane sort/hidden/refresh reducer tests and canonical Location cursor/mark remapping pass. See [Stage 1 verification](../verification/stage-01.md). |
+| PANE-008 | 直接路径导航 | 1 | Verified | 用户可输入绝对路径或进入父/子目录；无权限、不存在和非目录路径保留原位置并显示原因。 | Location/path-mode, parent/child/root, failed transaction and nearest-accessible-parent tests pass without changing a pane before success. See [Stage 1 verification](../verification/stage-01.md). |
 | PANE-009 | 符号链接可见且递归保守 | 2 | Planned | 链接目标信息可见；递归复制/搜索默认不跟随目录链接，除非用户策略显式允许并有循环保护。 | 未实施；预期证据：链接文件、目录环和跨边界链接的行为测试。 |
-| PANE-010 | 部分结果状态 | 1 | Planned | 列表被取消、断线或权限错误截断时明确标为 partial，不把已显示条目误报为完整目录。 | 未实施；预期证据：中途错误/取消的 partial 标记与刷新恢复测试。 |
+| PANE-010 | 部分结果状态 | 1 | Verified | 列表被取消、断线或权限错误截断时明确标为 partial，不把已显示条目误报为完整目录。 | Provider contract plus generation-safe reducer/render tests retain partial pages, reject stale completion and recover on refresh. See [Stage 1 verification](../verification/stage-01.md). |
 
 ## 7. 工作区与启动
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| WORK-001 | 保存双栏工作区 | 1 | Planned | 工作区保存两栏端点引用、路径、排序/过滤、布局与缓存策略，保存动作原子化。 | 未实施；预期证据：workspace round-trip、写入中断和损坏文件恢复测试。 |
-| WORK-002 | `--workspace` 启动 | 1 | Planned | `amsftp --workspace <name>` 恢复工作区；缺失端点或路径逐栏报错且允许修复。 | 未实施；预期证据：正常、缺失 host、路径无权限三类 CLI 集成测试。 |
-| WORK-003 | 最近工作区与模糊选择 | 1 | Planned | 无参数启动可选择已保存工作区或 SSH host，最近使用排序可预测且不影响显式搜索。 | 未实施；预期证据：picker 排序/过滤快照测试。 |
-| WORK-004 | 工作区不含秘密 | 1 | Planned | 工作区只引用 OpenSSH host alias 和产品设置，不包含密码、私钥、ticket 或认证答案。 | 未实施；预期证据：序列化内容 schema 测试和秘密模式扫描。 |
+| WORK-001 | 保存双栏工作区 | 1 | Verified | 工作区保存两栏端点引用、路径、排序/过滤、布局与缓存策略，保存动作原子化。 | Versioned round-trip, owner-private `0600`, interrupted replacement/corrupt preservation and real two-remote PTY save/reopen pass in Hosted run 29467496969. See [Stage 1 verification](../verification/stage-01.md). |
+| WORK-002 | `--workspace` 启动 | 1 | Verified | `amsftp --workspace <name>` 恢复工作区；缺失端点或路径逐栏报错且允许修复。 | CLI exclusivity, stable Endpoint restoration, corrupt/missing fallback and exact real `--workspace` re-entry with both remote markers pass. See [Stage 1 verification](../verification/stage-01.md). |
+| WORK-003 | 最近工作区与模糊选择 | 1 | Verified | 无参数启动可选择已保存工作区或 SSH host，最近使用排序可预测且不影响显式搜索。 | Deterministic recent workspace ordering, corrupt summaries, host merge, fuzzy/manual selection and minimum-size picker snapshots pass. See [Stage 1 verification](../verification/stage-01.md). |
+| WORK-004 | 工作区不含秘密 | 1 | Verified | 工作区只引用 OpenSSH host alias 和产品设置，不包含密码、私钥、ticket 或认证答案。 | Strict workspace schema/serialization tests and Hosted auth artifact scans prove only Endpoint aliases and UI policy are stored. See [Stage 1 verification](../verification/stage-01.md). |
 | WORK-005 | 每工作区缓存模式 | 3 | Planned | 工作区可选默认 LRU、ephemeral 或 pinned offline；恢复时准确应用并显示当前模式。 | 未实施；预期证据：三种工作区缓存策略的重启 round-trip 测试。 |
 | WORK-006 | 工作区 schema 迁移 | 6 | Planned | 旧版本工作区在备份后确定性迁移；不可迁移内容不被覆盖，并给出导出/修复路径。 | 未实施；预期证据：至少两个历史 fixture 的升级、失败回滚和幂等迁移测试。 |
 
@@ -105,18 +105,18 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| VIM-001 | 默认 Normal 模式 | 1 | Planned | 启动与退出弹层后回到 Normal；当前模式始终可见，普通字母不会意外输入路径。 | 未实施；预期证据：模式状态机单元测试与状态栏快照。 |
-| VIM-002 | `h/j/k/l` 导航 | 1 | Planned | `j/k` 移动光标，`h` 返回父目录，`l` 打开目录或触发默认文件动作；边界行为稳定。 | 未实施；预期证据：导航表驱动测试与空目录/根目录边界测试。 |
-| VIM-003 | `Tab` 切换活动栏 | 1 | Planned | `Tab` 只改变活动栏，两个 PaneState 均完整保留；视觉焦点清晰。 | 未实施；预期证据：反复切栏状态保持测试与 TUI 快照。 |
-| VIM-004 | `v`/`V` 连续选择 | 1 | Planned | Visual 选择可扩展、收缩、确认或取消；刷新后按规范化条目身份重映射，无法重映射时明确移除。 | 未实施；预期证据：选择状态机、目录刷新与条目消失测试。 |
-| VIM-005 | `Space` 离散标记 | 1 | Planned | Normal 模式下 `Space` 独立增减当前条目标记，与连续 Visual 选择可合并为操作集合且不重复。 | 未实施；预期证据：离散/连续选择合并与去重单元测试。 |
+| VIM-001 | 默认 Normal 模式 | 1 | Verified | 启动与退出弹层后回到 Normal；当前模式始终可见，普通字母不会意外输入路径。 | Mode reducer, tcell translation and status-line/modal snapshots prove Normal startup and layered cancellation. See [Stage 1 verification](../verification/stage-01.md). |
+| VIM-002 | `h/j/k/l` 导航 | 1 | Verified | `j/k` 移动光标，`h` 返回父目录，`l` 打开目录或触发默认文件动作；边界行为稳定。 | Pure reducer/tcell tests cover local and remote-independent Location navigation, bounded numeric counts and safe repeat. See [Stage 1 verification](../verification/stage-01.md). |
+| VIM-003 | `Tab` 切换活动栏 | 1 | Verified | `Tab` 只改变活动栏，两个 PaneState 均完整保留；视觉焦点清晰。 | Pane-state independence, tcell translation and focused renderer snapshots pass under full race/CI gates. See [Stage 1 verification](../verification/stage-01.md). |
+| VIM-004 | `v`/`V` 连续选择 | 1 | Verified | Visual 选择可扩展、收缩、确认或取消；刷新后按规范化条目身份重映射，无法重映射时明确移除。 | Visual selection reducer tests and canonical Location remapping across refresh pass. See [Stage 1 verification](../verification/stage-01.md). |
+| VIM-005 | `Space` 离散标记 | 1 | Verified | Normal 模式下 `Space` 独立增减当前条目标记，与连续 Visual 选择可合并为操作集合且不重复。 | Discrete mark toggling, selection identity and refresh remapping tests pass without producing mutation intents. See [Stage 1 verification](../verification/stage-01.md). |
 | VIM-006 | `y` 复制引用 | 2 | Planned | `y` 将选中 Location 引用写入内部剪贴板，不读取文件内容、不立即启动传输。 | 未实施；预期证据：跨端点 clipboard 序列化与源变化前计划测试。 |
 | VIM-007 | `d` 剪切引用 | 2 | Planned | `d` 只标记 cut intent，不删除或重命名任何源；状态栏清晰显示待移动项。 | 未实施；预期证据：按下 `d` 后 provider 零写操作断言及 UI 快照。 |
 | VIM-008 | `p` 创建操作意图 | 2 | Planned | `p` 以剪贴板和目标栏位置创建不可变 OperationIntent；普通复制直接排队，高风险项进入确认。 | 未实施；预期证据：copy/cut、多选、目标变化和风险分支测试。 |
 | VIM-009 | `D` 执行真实删除 | 2 | Planned | 只有大写 `D` 进入删除计划与确认；确认内容包含端点、数量、目录递归和可逆性。 | 未实施；预期证据：大小写键差异、确认取消和不可逆警示快照测试。 |
 | VIM-010 | 计数前缀 | 2 | Planned | 支持如 `5j`、`3k` 和适用操作的计数；计数越界有确定截断且不会泄漏到下一命令。 | 未实施；预期证据：键序列解析与边界表驱动测试。 |
 | VIM-011 | `.` 重复 | 2 | Planned | 重复最近一次可重复的高层动作，重新绑定当前 Location 并重新执行能力/风险检查，不复用过期确认。 | 未实施；预期证据：rename/transfer 等可重复动作及高风险重新确认测试。 |
-| VIM-012 | 可取消的模式与弹层 | 1 | Planned | `Esc` 按层级退出输入、选择、预览或确认，不中断已经排队的后台任务。 | 未实施；预期证据：嵌套 UI 状态的 Esc 优先级测试。 |
+| VIM-012 | 可取消的模式与弹层 | 1 | Verified | `Esc` 按层级退出输入、选择、预览或确认，不中断已经排队的后台任务。 | Auth, filter, path, endpoint, workspace, selection and preview cancellation tests prove layered Esc behavior; real auth cancel returns to TUI control. See [Stage 1 verification](../verification/stage-01.md). |
 | VIM-013 | 可配置键位且 Vim 默认不变 | 6 | Planned | 用户可重映射非保留动作并检测冲突；无配置时始终使用文档化 Vim 默认键位。 | 未实施；预期证据：默认 keymap 快照、冲突校验和自定义 round-trip 测试。 |
 | VIM-014 | 1.0 不实现宏与命名寄存器 | 6 | Planned | 帮助和配置 schema 不宣称完整宏/命名寄存器；相关键不会造成未定义破坏性行为。 | 未实施；预期证据：1.0 help 快照和保留键行为测试。 |
 | VIM-015 | `r` 重命名 | 2 | Planned | `r` 以当前或单个选中条目创建重命名意图，提交前验证同端点能力、目标冲突与源身份。 | 未实施；预期证据：文件/目录、目标存在、源变化和取消重命名测试。 |
@@ -129,20 +129,20 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| DAEM-001 | 按用户自动启动 daemon | 1 | Planned | 客户端连接不到 daemon 时可安全拉起一个当前用户实例；并发启动最终只有一个有效监听者。 | 未实施；预期证据：并发十客户端启动竞争测试。 |
-| DAEM-002 | 权限受限 Unix socket 与路径信任链 | 1 | Planned | config/state/cache/log/runtime应用根为euid-owned真实`0700`，文件/socket不宽于`0600`；ancestor/ssh用integrity-only，owner roots/files用owner-private。仅受测APFS/ext4/XFS（runtime可含受测tmpfs）明确no-ACL/unsupported可回到DAC；真实ACL查询/解析错误、NFSv4/CIFS/未知FS、不安全path/override均fail closed。runtime唯一宽松DAC回退是root-owned sticky`01777 /tmp`；peer非当前uid不可连接且无TCP。 | 未实施；预期证据：macOS/Linux path/owner/mode、allow/deny/inherited ACL、allowlisted no-ACL fallback与query/parse/network-FS拒绝、回退竞态、peer/端口。 |
-| DAEM-003 | TUI 可附着/分离 | 1 | Planned | TUI 退出只关闭客户端连接；重新启动可恢复 panes/workspace 并订阅现有任务。 | 未实施；预期证据：运行中任务期间退出/重连端到端测试。 |
+| DAEM-001 | 按用户自动启动 daemon | 1 | Verified | 客户端连接不到 daemon 时可安全拉起一个当前用户实例；并发启动最终只有一个有效监听者。 | Ten-process lock convergence, stale socket, five reconnects, idle cancellation, PTY exit/re-entry and four Hosted native legs pass. See [Stage 1 verification](../verification/stage-01.md). |
+| DAEM-002 | 权限受限 Unix socket 与路径信任链 | 1 | Verified | config/state/cache/log/runtime应用根为euid-owned真实`0700`，文件/socket不宽于`0600`；ancestor/ssh用integrity-only，owner roots/files用owner-private。仅受测APFS/ext4/XFS（runtime可含受测tmpfs）明确no-ACL/unsupported可回到DAC；真实ACL查询/解析错误、NFSv4/CIFS/未知FS、不安全path/override均fail closed。runtime唯一宽松DAC回退是root-owned sticky`01777 /tmp`；peer非当前uid不可连接且无TCP。 | Path/ACL/lock/socket tests include Darwin kernel deny/direct/inherited allow profiles, Linux kernel access/default ACLs, cross-process lock exclusivity and a root-gated real hostile-other-UID socket peer. All four native security steps passed in exact-head Hosted run 29417470068. See [Stage 1 verification](../verification/stage-01.md). |
+| DAEM-003 | TUI 可附着/分离 | 1 | In Progress | TUI 退出只关闭客户端连接；重新启动可恢复 panes/workspace 并订阅现有任务。 | Stage 1 client detach/re-entry and workspace restoration pass locally and in native PTY smokes; subscription to durable Stage 2 tasks is intentionally not yet implemented. See [Stage 1 verification](../verification/stage-01.md). |
 | DAEM-004 | TUI 退出后任务继续 | 2 | Planned | 最后一个 TUI 退出后，非交互任务继续运行；需要交互时进入等待状态。 | 未实施；预期证据：大文件复制中退出 TUI 后完成及 waiting_auth/waiting_conflict 测试。 |
 | DAEM-005 | 事件流与重放游标 | 2 | Planned | 客户端按游标接收任务/连接事件；短暂断连后可补齐或用一致快照恢复，不重复执行命令。 | 未实施；预期证据：断连、事件缺口、重连重放与快照回退测试。 |
 | DAEM-006 | 单写者持久状态 | 2 | Planned | SQLite仅在本地APFS/ext4/XFS且跨进程WAL/full-durability probe通过。唯一pristine是final+sidecars全不存在；existing先raw identity，无sidecar才immutable，有合法sidecar先probe/recovery再验证whole-main schema/history。final-absent intent bootstrap、受测SQL lexer、original..target durable attempt、sanitized/hold backup、非ready状态显式恢复、retention/space/fullsync/no-replace及最终清attempt→retention→checkpoint→immutable均fail closed；online WAL为64MiB soft/256MiB stop/264MiB absolute。 | 未实施；预期证据：FS/probe、wrong DB零写、bootstrap、sidecar recovery、checksum/lexer/schema、attempt/backup/hold/retention、Darwin顺序、WAL预算/最终验证。 |
 | DAEM-007 | daemon 重启恢复 | 2 | Planned | 异常退出后重新启动可恢复未完成任务、缓存租约和连接需求，并先验证外部状态再继续。 | 未实施；预期证据：各任务阶段 kill -9 的恢复矩阵。 |
-| DAEM-008 | helper 不作为 daemon 前置 | 1 | Planned | 本地 daemon 在所有远端均未安装 helper 时仍提供完整 Level 0 功能。 | 未实施；预期证据：禁止 helper 的端到端 Explorer/Transfer 基线套件。 |
+| DAEM-008 | helper 不作为 daemon 前置 | 1 | In Progress | 本地 daemon 在所有远端均未安装 helper 时仍提供完整 Level 0 功能。 | The complete read-only Explorer runs only through LocalFS/system OpenSSH/SFTP with no helper binary or handshake; Level 0 transfer coverage belongs to Stage 2. See [Stage 1 verification](../verification/stage-01.md). |
 
 ## 10. 预览
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| PREV-001 | 基础文本预览 | 1 | Planned | 活动栏文件可在底部 Preview 抽屉中查看有界文本；预览不阻塞目录导航。 | 未实施；预期证据：本地/远端 UTF-8 文本、延迟读取与导航并发测试。 |
+| PREV-001 | 基础文本预览 | 1 | Verified | 活动栏文件可在底部 Preview 抽屉中查看有界文本；预览不阻塞目录导航。 | LocalFS/SFTP bounded reads, 64 KiB RPC/model cap, binary detection, split UTF-8, multiline sanitization, stale-chunk rejection and cancellation pass. See [Stage 1 verification](../verification/stage-01.md). |
 | PREV-002 | 代码与 JSON 结构化显示 | 3 | Planned | 常见代码按语法高亮，合法 JSON 可格式化且保留原始查看；解析失败回退为纯文本并说明。 | 未实施；预期证据：语言 fixture、合法/非法/超大 JSON 快照测试。 |
 | PREV-003 | 元数据预览 | 3 | Planned | 文件、目录、链接和二进制对象均可显示端点、规范化路径、大小、时间、权限、类型和可用哈希。 | 未实施；预期证据：四类对象的 LocalFS/SFTP 元数据快照。 |
 | PREV-004 | 有界读取与继续加载 | 3 | Planned | 初次只读取配置上限；用户可继续加载，取消后停止远端读；内存不随文件总大小线性增长。 | 未实施；预期证据：100 GB 稀疏文件预览内存曲线、继续/取消测试。 |
@@ -276,7 +276,7 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| SRCH-001 | `/` 当前目录即时过滤 | 1 | Planned | 输入时由本地 daemon 对已加载目录项增量过滤，不产生远端命令；清空过滤恢复原列表与合理光标。 | 未实施；预期证据：大小写/模糊规则、增量加载和清空状态测试。 |
+| SRCH-001 | `/` 当前目录即时过滤 | 1 | Verified | 输入时由本地 daemon 对已加载目录项增量过滤，不产生远端命令；清空过滤恢复原列表与合理光标。 | Loaded/incoming page filtering, clear/cursor behavior, filter-mode key translation and zero remote-command routes pass under full tests. See [Stage 1 verification](../verification/stage-01.md). |
 | SRCH-002 | `f` 递归文件名搜索 | 4 | Planned | 从活动栏路径流式返回匹配路径、类型和必要元数据；结果可逐条打开或加入选择。 | 未实施；预期证据：LocalFS、Level 0 SFTP、helper 三种后端结果一致性测试。 |
 | SRCH-003 | `g/` 递归内容搜索 | 4 | Planned | 从活动栏路径流式返回文件、行号和有界摘要；二进制、编码和超长行有明确处理。 | 未实施；预期证据：文本/二进制/多编码/超长行 fixture 的三后端对照测试。 |
 | SRCH-004 | 搜索结果流式展示 | 4 | Planned | 首批结果无需等待全树结束；结果带进行中、完成、partial 或 canceled 状态，总量未知时不伪造百分比。 | 未实施；预期证据：延迟百万 fixture 首结果时间和状态快照。 |
@@ -291,7 +291,7 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| HELP-001 | Level 0 永久可用 | 1 | Planned | 未安装、禁用或不兼容 helper 时，标准 SFTP 浏览、传输、中继、恢复和有限搜索仍可用。 | 未实施；预期证据：阻止 helper 执行的完整 Level 0 回归套件。 |
+| HELP-001 | Level 0 永久可用 | 1 | In Progress | 未安装、禁用或不兼容 helper 时，标准 SFTP 浏览、传输、中继、恢复和有限搜索仍可用。 | The Stage 1 browse/filter/preview/recovery slice is helper-free by construction and uses standard SFTP; transfer/relay acceptance remains Stage 2. See [Stage 1 verification](../verification/stage-01.md). |
 | HELP-002 | 用户明确批准安装 | 4 | Planned | preliminary consent在probe前展示Endpoint/mapping/审计副作用并声明uid/path未知，取消=0 probe；probe/high-water/artifact/ancestor plan后，final consent展示observed numeric uid/target/path/create list/hash/mode/capability，取消=0 app-tree create/content。plan drift须重probe/确认。 | 未实施；预期证据：两阶段快照、两类取消0-hit、drift重确认与环境副作用边界。 |
 | HELP-003 | OS/架构/目录与 namespace 预检 | 4 | Planned | 默认 unknown/异构 session mapping 禁用 Helper；验证 root-owned `/usr/bin` utilities 后以 absolute fixed command 获取 non-root uid/physical cwd/uname，严格映射 target。cwd/RealPath 只做 compatibility preflight，不证明 node/mount/object；safe ASCII absolute home component≤255，所有 app dir/final/temp absolute path≤1000，全祖先仅 root/uid owner且不可写/symlink。 | 未实施；预期证据：shared/unknown/双节点异bytes、poisoned PATH、uname/uid0、255/256和1000/1001、metachar home、chroot/SFTP-d、ancestor测试。 |
 | HELP-004 | 当前策略验签与安全临时安装 | 4 | Planned | current-policy→prelim consent→probe/target/high-water→artifact hash→plan/final consent后才temp/write；首byte前Chmod+双复核、client回读、standard no-replace。Stage4仅non-release testdata key fixture，production trust拒fixture且dist无fixture assets；production manifests到Stage6 final bytes后才可生成。 | 未实施；预期证据：顺序/撤销/升级、fixture隔离扫描、write边界、EXCL/no-replace/path替换与每次exec重验。 |
@@ -342,15 +342,15 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| SEC-001 | 本地 IPC 最小暴露 | 1 | Planned | 只创建当前用户 `0600` Unix socket，不监听 TCP；请求关联到已验证的本地用户上下文。 | 未实施；预期证据：两平台权限/peer 检查和端口扫描。 |
-| SEC-002 | 认证材料零持久化 | 1 | Planned | 密码、私钥、agent 数据、Kerberos ticket 和 askpass 回答不进入数据库、配置、缓存、日志、core-friendly buffer 或诊断包。 | 未实施；预期证据：持久层扫描、敏感缓冲生命周期测试与安全审查。 |
-| SEC-003 | OpenSSH 信任策略与 SFTP 会话隔离 | 1 | Planned | host key、代理、认证与加密由系统 OpenSSH 决定；默认绝对 `/usr/bin/ssh`，安全 override逐级验证，永不搜索 PATH。精确 argv 只关闭 TTY/escape/转发/额外命令/后台化/tunnel。 | 未实施；预期证据：binary resolver ACL/special-bits/替换、poisoned PATH、完整 argv、冲突 config/traffic 和 host-key 测试。 |
+| SEC-001 | 本地 IPC 最小暴露 | 1 | Verified | 只创建当前用户 `0600` Unix socket，不监听 TCP；请求关联到已验证的本地用户上下文。 | Unix-only `0600` socket, lock/stale-socket and peer checks pass; a root-gated fixture deliberately widens DAC and proves a real other-UID peer is still rejected. Ubuntu 22.04/24.04 and macOS 15 ARM/Intel passed in exact-head Hosted run 29417470068. See [Stage 1 verification](../verification/stage-01.md). |
+| SEC-002 | 认证材料零持久化 | 1 | Verified | 密码、私钥、agent 数据、Kerberos ticket 和 askpass 回答不进入数据库、配置、缓存、日志、core-friendly buffer 或诊断包。 | Broker lifecycle tests plus Hosted injected-secret, workspace, diagnostic log and Kerberos cache-path/content scans pass; only one claimed answer reaches askpass stdout. See [Stage 1 verification](../verification/stage-01.md). |
+| SEC-003 | OpenSSH 信任策略与 SFTP 会话隔离 | 1 | Verified | host key、代理、认证与加密由系统 OpenSSH 决定；默认绝对 `/usr/bin/ssh`，安全 override逐级验证，永不搜索 PATH。精确 argv 只关闭 TTY/escape/转发/额外命令/后台化/tunnel。 | Resolver ACL/special-bit/symlink/replacement tests, exact argv, conflicting config, poisoned PATH 0-hit, real proxy/auth/GSSAPI and changed-key refusal pass. See [Stage 1 verification](../verification/stage-01.md). |
 | SEC-004 | 最小权限 helper | 4 | Planned | helper 明确拒绝 remote euid 0，只以非 root 登录 uid 按需运行，文件为 `0700`，无 sudo、setuid、服务注册或网络监听；remote root/admin/ACL/LSM/server 是声明的环境信任边界。 | 未实施；预期证据：uid0 拒绝、远端 DAC/第二 principal 说明、进程、端口和服务扫描。 |
 | SEC-005 | helper 供应链与每次执行 freshness | 4 | Planned | helper canonical raw manifest+detached sig 必须持久保存；安装及每次 enable/exec 都按当前客户端重跑 Ed25519、key/artifact revoke、target/compat/floor/high-water 和远端 attrs/hash。版本/协议不匹配、旧签名重放、客户端升级后撤销/floor 提高或 metadata 缺失均拒绝。 | 未实施；预期证据：篡改、错误 key/manifest、单产物撤销、fresh install 重放、upgrade-after-install revoke/floor、metadata 删除、降级和双 key 轮换测试。 |
 | SEC-006 | 路径规范化与根边界 | 2 | Planned | 所有操作使用 Endpoint+规范化路径；遍历中的 `..`、绝对跳转和链接不会越过用户确认的根范围。 | 未实施；预期证据：路径穿越、链接逃逸和混合分隔符 fuzz 测试。 |
 | SEC-007 | 临时目标与符号链接竞态防护 | 2 | Planned | part 名不可预测且绑定 Job；提交前重新验证目标类型/身份，拒绝把预期文件写到被替换的链接/目录。 | 未实施；预期证据：目标路径在预检后被替换的竞态集成测试。 |
 | SEC-008 | 外部进程与remote command边界 | 3 | Planned | 只有ssh使用严格owner/ACL validated-absolute resolver。editor/opener是用户授权同UID边界，但须结构化配置、PATH发现后absolute direct exec、文件独立arg。Helper是唯一app-generated restricted string；显式`!`/`gs`用ADR-0001 fresh argv/marker/Q/TTY契约，Provider/RPC不可隐式触发。 | 未实施；预期证据：ssh resolver、external-app lexer/absolute argv、helper/shell command separation、unsafe path/shell/banner/ForceCommand测试。 |
-| SEC-009 | 终端输出消毒 | 1 | Planned | 文件名、错误和远端输出中的 ANSI/OSC 控制序列不能执行任意终端动作，必要字符转义后显示。 | 未实施；预期证据：恶意文件名、stderr 和预览内容的终端快照测试。 |
+| SEC-009 | 终端输出消毒 | 1 | Verified | 文件名、错误和远端输出中的 ANSI/OSC 控制序列不能执行任意终端动作，必要字符转义后显示。 | Malicious filename, OpenSSH stderr, picker problem, preview line and invalid-UTF-8 sanitization tests/snapshots pass. See [Stage 1 verification](../verification/stage-01.md). |
 | SEC-010 | 缓存与状态目录私有 | 3 | Planned | 数据库、缓存、日志、socket 和临时文件使用当前用户私有目录/权限；创建时不受宽松 umask 影响。 | 未实施；预期证据：不同 umask 下 macOS/Linux mode 测试。 |
 | SEC-011 | 直传不扩张认证权限 | 5 | Planned | 直传只使用源主机已有非交互凭据，不自动 forwarding/delegation/复制密钥；预检结果可审计。 | 未实施；预期证据：源/目标认证拓扑测试和远端秘密文件扫描。 |
 | SEC-012 | 日志与诊断默认脱敏 | 6 | Planned | 用户名/主机/路径按策略可匿名化，环境变量、命令敏感参数、文件内容和认证提示答案不导出。 | 未实施；预期证据：构造秘密输入后的日志/诊断 golden scan。 |
@@ -366,8 +366,8 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 | OBS-003 | 速度、吞吐与 ETA 诚实展示 | 2 | Planned | 有可靠总量才显示百分比/ETA；瞬时与平均速度有采样窗口，未知值显示 unknown 而非 0 或 100%。 | 未实施；预期证据：已知/未知/变化总量的进度计算测试。 |
 | OBS-004 | 结构化连接与任务事件 | 2 | Planned | 事件至少包含时间、级别、端点、Job、阶段、稳定错误码和脱敏消息，可按 Job/端点过滤。 | 未实施；预期证据：事件 schema contract、过滤和序列快照测试。 |
 | OBS-005 | 路由、能力和降级说明 | 4 | Planned | UI 可查看端点 Level、缺失能力、选定路由、预检结果和降级原因。 | 未实施；预期证据：Level 0/1/2 与每类 fallback 的快照测试。 |
-| OBS-006 | partial/degraded 状态不伪装成功 | 1 | Planned | 列表、搜索、预览或任务只完成部分时显式标识 partial/degraded，并列出失败范围/限制。 | 未实施；预期证据：四类部分结果的状态传播测试。 |
-| OBS-007 | 上下文化错误 | 1 | Planned | 错误包含操作、端点、路径（可脱敏）、阶段、底层原因和下一步；保留原始 cause 供诊断。 | 未实施；预期证据：连接/浏览/传输/搜索错误 golden snapshots。 |
+| OBS-006 | partial/degraded 状态不伪装成功 | 1 | In Progress | 列表、搜索、预览或任务只完成部分时显式标识 partial/degraded，并列出失败范围/限制。 | Stage 1 listing and preview partial/binary/truncated states propagate through Provider, IPC, reducer and renderer; recursive search and task states belong to later stages. See [Stage 1 verification](../verification/stage-01.md). |
+| OBS-007 | 上下文化错误 | 1 | In Progress | 错误包含操作、端点、路径（可脱敏）、阶段、底层原因和下一步；保留原始 cause 供诊断。 | Stage 1 connection/browse errors retain daemon-local cause and expose safe request/code/endpoint/retry correlation; transfer/search golden matrices remain later-stage work. See [Stage 1 verification](../verification/stage-01.md). |
 | OBS-008 | 验证与提交证据 | 2 | Planned | 完成任务可查看实际大小/hash 策略、part、提交方式、源删除判定和异常保留源原因。 | 未实施；预期证据：copy/move/direct 完成记录 schema 与 UI 测试。 |
 | OBS-009 | 脱敏诊断包 | 6 | Planned | 用户可生成包含版本、平台、配置 schema、能力、近期事件和数据库健康摘要的诊断包；默认排除秘密与文件内容。 | 未实施；预期证据：诊断包 schema、脱敏扫描和损坏数据库场景测试。 |
 | OBS-010 | 自检命令 | 6 | Planned | 自检可检查 OpenSSH、运行目录权限、socket、数据库、缓存、helper 兼容和端点基础连通，并逐项给出结果。 | 未实施；预期证据：健康/多故障 fixture 的命令输出快照。 |
@@ -376,14 +376,14 @@ Stage 0 行已按完成证据标记为 `Verified`；Stage 1–6 行仍为 `Plann
 
 | ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
 |---|---|---:|---|---|---|
-| PLAT-001 | macOS 支持 | 1 | Planned | 最低 macOS 15，Intel 与 Apple Silicon 均可构建、运行 TUI/daemon、调用系统 OpenSSH、编辑器与 `open`；CI 原生覆盖 `macos-15-intel` 与 `macos-15`。 | 未实施；预期证据：两种架构的原生 CI、PTY 与 opener smoke。 |
-| PLAT-002 | Linux 功能基线 | 1 | Planned | 最低 Ubuntu 22.04；Stage 1 在 Ubuntu 22.04/24.04 amd64 原生运行 TUI/daemon、系统 OpenSSH、编辑器与 `xdg-open`，Linux arm64 此时只计构建证据且不得提前声明正式支持；其他 glibc Linux 为 best-effort。 | 未实施；预期证据：Ubuntu 22.04/24.04 amd64 原生 CI、PTY 与 opener smoke；Linux arm64 原生安装/冒烟及正式支持由 PLAT-003 在 Stage 6 前验收。 |
+| PLAT-001 | macOS 支持 | 1 | In Progress | 最低 macOS 15，Intel 与 Apple Silicon 均可构建、运行 TUI/daemon、调用系统 OpenSSH、编辑器与 `open`；CI 原生覆盖 `macos-15-intel` 与 `macos-15`。 | macOS 15 Intel/ARM native and oldstable jobs, product builds and PTY resize/exit/re-entry/signal smokes pass for the Explorer; editor/`open` behavior belongs to Stage 3. See [Stage 1 verification](../verification/stage-01.md). |
+| PLAT-002 | Linux 功能基线 | 1 | In Progress | 最低 Ubuntu 22.04；Stage 1 在 Ubuntu 22.04/24.04 amd64 原生运行 TUI/daemon、系统 OpenSSH、编辑器与 `xdg-open`，Linux arm64 此时只计构建证据且不得提前声明正式支持；其他 glibc Linux 为 best-effort。 | Ubuntu 22.04/24.04 amd64 native/oldstable, real OpenSSH/auth/Kerberos and PTY smokes pass; Linux arm64 is build-only and editor/xdg-open remains Stage 3. See [Stage 1 verification](../verification/stage-01.md). |
 | PLAT-003 | arm64 与 amd64 发布架构 | 6 | Planned | macOS/Linux 的 arm64、amd64 均有可启动发布物，行为契约一致。 | 未实施；预期证据：四目标构建、启动和校验记录。 |
 | PLAT-004 | 终端能力自适应 | 3 | Planned | 基础 TUI 只依赖通用终端能力；颜色、真彩、图片、鼠标等增强经探测启用，错误探测可由配置覆盖。 | 未实施；预期证据：TERM/COLORTERM/Kitty/iTerm2/Sixel/基础终端矩阵。 |
-| PLAT-005 | 远端 Linux 优先、标准 SFTP 基线 | 1 | Planned | 远端 Linux 是 helper/增强能力目标；任何兼容标准 SFTP 的非 Linux 服务可使用 Level 0，未支持增强明确降级。 | 未实施；预期证据：OpenSSH Linux 与至少一个非 helper SFTP server contract suite。 |
-| PLAT-006 | Unicode 与原始文件名 | 1 | Planned | UTF-8 名称正确显示；不可解码字节可无损引用和操作，排序/过滤不改变底层路径字节。 | 未实施；预期证据：CJK、emoji、组合字符和非法 UTF-8 文件名测试。 |
+| PLAT-005 | 远端 Linux 优先、标准 SFTP 基线 | 1 | In Progress | 远端 Linux 是 helper/增强能力目标；任何兼容标准 SFTP 的非 Linux 服务可使用 Level 0，未支持增强明确降级。 | Real Linux OpenSSH/internal-sftp and protocol-level SFTP contract fixtures pass without helper; a non-OpenSSH/non-Linux server fixture is not yet recorded. See [Stage 1 verification](../verification/stage-01.md). |
+| PLAT-006 | Unicode 与原始文件名 | 1 | In Progress | UTF-8 名称正确显示；不可解码字节可无损引用和操作，排序/过滤不改变底层路径字节。 | Domain/IPC/provider paths preserve raw bytes and renderer sanitization covers invalid UTF-8; CJK/emoji/combining renderer cases pass, but real SFTP invalid-byte end-to-end evidence remains open. See [Stage 1 verification](../verification/stage-01.md). |
 | PLAT-007 | 文件系统语义差异 | 2 | Planned | 大小写、权限、rename 原子性、链接和时间精度按端点能力处理，不把 macOS/本地语义强加给远端。 | 未实施；预期证据：大小写敏感/不敏感和不同时间精度 provider 测试。 |
-| PLAT-008 | 终端尺寸与恢复 | 1 | Planned | 小窗口显示明确最小布局，resize 后重排；正常/异常退出恢复备用屏幕、光标和输入模式。 | 未实施；预期证据：多尺寸 PTY、SIGWINCH 和信号退出测试。 |
+| PLAT-008 | 终端尺寸与恢复 | 1 | Verified | 小窗口显示明确最小布局，resize 后重排；正常/异常退出恢复备用屏幕、光标和输入模式。 | Minimum-size renderer snapshots and Ubuntu/macOS Intel/ARM native PTY SIGWINCH, normal quit, re-entry and SIGTERM smokes pass. See [Stage 1 verification](../verification/stage-01.md). |
 | PLAT-009 | 系统 OpenSSH 兼容范围 | 6 | Planned | OpenSSH 8.9p1 是最低测试基线而非启动时字符串硬拒绝线；发布文档列出最低验证版本和已测版本，缺少实际必需能力时自检给出明确错误。 | 未实施；预期证据：8.9p1 与当前系统 OpenSSH 的端到端兼容矩阵。 |
 
 ## 27. 配置、发布与生命周期
