@@ -13,6 +13,7 @@ type FindingKind string
 
 const (
 	FindingCrashTemp             FindingKind = "crash_temp"
+	FindingCorruptManifest       FindingKind = "corrupt_manifest"
 	FindingOrphanBlob            FindingKind = "orphan_blob"
 	FindingOrphanMaterialization FindingKind = "orphan_materialization"
 	FindingReservedQuarantine    FindingKind = "reserved_quarantine"
@@ -27,12 +28,14 @@ type Finding struct {
 }
 
 type ScanReport struct {
-	VerifiedBlobs []BlobInfo
-	Orphans       []Finding
-	Unknown       []Finding
-	Symlinks      []Finding
-	Visited       int
-	Truncated     bool
+	VerifiedBlobs            []BlobInfo
+	VerifiedEntries          []EntryManifestInfo
+	VerifiedMaterializations []MaterializationManifestInfo
+	Orphans                  []Finding
+	Unknown                  []Finding
+	Symlinks                 []Finding
+	Visited                  int
+	Truncated                bool
 }
 
 // Scan performs a bounded, no-follow restart inventory. It never removes,
@@ -68,7 +71,7 @@ func (scanner *cacheScanner) scanRoot() error {
 	}
 	known := map[string]func() error{
 		"blobs":            scanner.scanBlobs,
-		"entries":          func() error { return scanner.scanUnknownDirectory("entries", FindingUnknown) },
+		"entries":          scanner.scanEntries,
 		"materializations": scanner.scanMaterializations,
 		"quarantine":       func() error { return scanner.scanUnknownDirectory("quarantine", FindingReservedQuarantine) },
 		"staging":          scanner.scanStaging,
@@ -115,6 +118,64 @@ func (scanner *cacheScanner) scanRoot() error {
 		if scanner.report.Truncated {
 			return nil
 		}
+	}
+	return nil
+}
+
+func (scanner *cacheScanner) scanEntries() error {
+	root := filepath.Join(scanner.store.root, "entries")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return fmt.Errorf("scan cache entries: %w", err)
+	}
+	for _, entry := range entries {
+		if !scanner.visit() {
+			return nil
+		}
+		relative := filepath.Join("entries", entry.Name())
+		entryPath := filepath.Join(root, entry.Name())
+		if entry.Type()&os.ModeSymlink != 0 {
+			scanner.addSymlink(relative)
+			continue
+		}
+		id, parseErr := cache.ParseEntryID(entry.Name())
+		metadata, statErr := os.Lstat(entryPath) //nolint:gosec // bounded child under exact entries root
+		if parseErr != nil || statErr != nil || validatePrivateDirectoryMetadata(entryPath, metadata) != nil {
+			reason := "unexpected entry basename or attributes"
+			if statErr != nil {
+				reason = statErr.Error()
+			}
+			scanner.report.Unknown = append(scanner.report.Unknown, Finding{Kind: FindingUnknown, RelativePath: slash(relative), Reason: reason})
+			continue
+		}
+		if trustErr := validatePrivateDirectory(entryPath); trustErr != nil {
+			scanner.report.Orphans = append(scanner.report.Orphans, Finding{Kind: FindingCorruptManifest, RelativePath: slash(relative), Reason: trustErr.Error()})
+			continue
+		}
+		children, readErr := os.ReadDir(entryPath)
+		if readErr != nil {
+			scanner.report.Orphans = append(scanner.report.Orphans, Finding{Kind: FindingCorruptManifest, RelativePath: slash(relative), Reason: readErr.Error()})
+			continue
+		}
+		for _, child := range children {
+			if !scanner.visit() {
+				return nil
+			}
+			childRelative := filepath.Join(relative, child.Name())
+			if child.Type()&os.ModeSymlink != 0 {
+				scanner.addSymlink(childRelative)
+				continue
+			}
+			if child.Name() != ManifestFilename {
+				scanner.report.Unknown = append(scanner.report.Unknown, Finding{Kind: FindingUnknown, RelativePath: slash(childRelative), Reason: "unknown cache entry file preserved"})
+			}
+		}
+		info, inspectErr := scanner.store.ReadEntryManifest(id)
+		if inspectErr != nil {
+			scanner.report.Orphans = append(scanner.report.Orphans, Finding{Kind: FindingCorruptManifest, RelativePath: slash(filepath.Join(relative, ManifestFilename)), Reason: inspectErr.Error()})
+			continue
+		}
+		scanner.report.VerifiedEntries = append(scanner.report.VerifiedEntries, info)
 	}
 	return nil
 }
@@ -232,11 +293,17 @@ func (scanner *cacheScanner) scanMaterializations() error {
 				scanner.report.Unknown = append(scanner.report.Unknown, Finding{Kind: FindingUnknown, RelativePath: slash(childRelative), Reason: "unknown materialization entry preserved"})
 			}
 		}
-		if _, inspectErr := scanner.store.InspectMaterialization(id); inspectErr != nil {
+		manifest, inspectErr := scanner.store.ReadMaterializationManifest(id)
+		if inspectErr != nil {
 			scanner.report.Orphans = append(scanner.report.Orphans, Finding{Kind: FindingOrphanMaterialization, RelativePath: slash(relative), Reason: inspectErr.Error()})
 			continue
 		}
-		scanner.report.Orphans = append(scanner.report.Orphans, Finding{Kind: FindingOrphanMaterialization, RelativePath: slash(relative), Reason: "materialization requires durable catalog reconciliation"})
+		info, inspectErr := scanner.store.InspectMaterialization(manifest.MaterializationID)
+		if inspectErr != nil {
+			scanner.report.Orphans = append(scanner.report.Orphans, Finding{Kind: FindingOrphanMaterialization, RelativePath: slash(relative), Reason: inspectErr.Error()})
+			continue
+		}
+		scanner.report.VerifiedMaterializations = append(scanner.report.VerifiedMaterializations, MaterializationManifestInfo{Manifest: manifest, Info: info})
 	}
 	return nil
 }
