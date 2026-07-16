@@ -27,6 +27,109 @@ type ImageCapabilities struct {
 	Sixel  bool
 }
 
+// ImageCapabilityProof can only be created from a bounded terminal probe
+// response. Environment variables and terminal names are intentionally not
+// sufficient proof that emitting a graphics control sequence is safe.
+type ImageCapabilityProof struct {
+	protocol ImageProtocol
+}
+
+// ImageCapabilityProbe returns the bounded query whose response is accepted by
+// ConfirmImageCapability. The application must route the reply away from
+// normal key input and apply its own short read deadline.
+func ImageCapabilityProbe(protocol ImageProtocol) ([]byte, error) {
+	switch protocol {
+	case ImageProtocolKitty:
+		return []byte("\x1b_Gi=31,a=q,t=d,f=24,s=1,v=1;AAAA\x1b\\"), nil
+	case ImageProtocolITerm2:
+		return []byte("\x1b[>0q"), nil
+	case ImageProtocolSixel:
+		return []byte("\x1b[c"), nil
+	case ImageProtocolNone:
+		return nil, fmt.Errorf("terminal image probe: no protocol requested")
+	default:
+		return nil, fmt.Errorf("terminal image probe: unsupported protocol")
+	}
+}
+
+// Protocol returns the actively confirmed protocol, or none for a zero proof.
+func (proof ImageCapabilityProof) Protocol() ImageProtocol {
+	if proof.protocol == "" {
+		return ImageProtocolNone
+	}
+	return proof.protocol
+}
+
+// ConfirmImageCapability validates an exact response to a protocol-specific
+// active probe. The caller owns sending the query and bounding its read; this
+// function independently rejects oversized, concatenated, or control-injected
+// replies.
+func ConfirmImageCapability(protocol ImageProtocol, response []byte) (ImageCapabilityProof, error) {
+	if len(response) == 0 || len(response) > 256 {
+		return ImageCapabilityProof{}, fmt.Errorf("confirm terminal image protocol: invalid response size")
+	}
+	confirmed := false
+	switch protocol {
+	case ImageProtocolKitty:
+		confirmed = bytes.Equal(response, []byte("\x1b_Gi=31;OK\x1b\\"))
+	case ImageProtocolITerm2:
+		const prefix = "\x1bP>|iTerm2 "
+		const suffix = "\x1b\\"
+		if bytes.HasPrefix(response, []byte(prefix)) && bytes.HasSuffix(response, []byte(suffix)) {
+			version := response[len(prefix) : len(response)-len(suffix)]
+			confirmed = len(version) > 0 && len(version) <= 64 && safeTerminalVersion(version)
+		}
+	case ImageProtocolSixel:
+		confirmed = sixelCapabilityResponse(response)
+	case ImageProtocolNone:
+		return ImageCapabilityProof{}, fmt.Errorf("confirm terminal image protocol: no protocol requested")
+	default:
+		return ImageCapabilityProof{}, fmt.Errorf("confirm terminal image protocol: unsupported protocol")
+	}
+	if !confirmed {
+		return ImageCapabilityProof{}, fmt.Errorf("confirm terminal image protocol: probe did not confirm capability")
+	}
+	return ImageCapabilityProof{protocol: protocol}, nil
+}
+
+func safeTerminalVersion(value []byte) bool {
+	for _, character := range value {
+		if character != ' ' && character != '.' && character != '-' && character != '_' &&
+			(character < '0' || character > '9') && (character < 'A' || character > 'Z') && (character < 'a' || character > 'z') {
+			return false
+		}
+	}
+	return true
+}
+
+func sixelCapabilityResponse(response []byte) bool {
+	if len(response) < len("\x1b[?4c") || !bytes.HasPrefix(response, []byte("\x1b[?")) || response[len(response)-1] != 'c' {
+		return false
+	}
+	parameters := response[len("\x1b[?") : len(response)-1]
+	for _, parameter := range bytes.Split(parameters, []byte{';'}) {
+		if len(parameter) == 0 {
+			return false
+		}
+		value := 0
+		for _, digit := range parameter {
+			if digit < '0' || digit > '9' {
+				return false
+			}
+			value = value*10 + int(digit-'0')
+			if value > 9999 {
+				return false
+			}
+		}
+		if value == 4 {
+			return true
+		}
+	}
+	return false
+}
+
+// SelectImageProtocol selects among separately discovered capability hints. Its
+// result is not an active proof and cannot be passed to the live encoder.
 func SelectImageProtocol(environment map[string]string, capabilities ImageCapabilities) ImageProtocol {
 	term := environment["TERM"]
 	if capabilities.Kitty && (strings.Contains(term, "kitty") || environment["KITTY_WINDOW_ID"] != "") {
@@ -50,6 +153,22 @@ type ImageOutputLimits struct {
 
 func DefaultImageOutputLimits() ImageOutputLimits {
 	return ImageOutputLimits{MaxPayloadBytes: 4 * 1024 * 1024, MaxOutputBytes: 6 * 1024 * 1024, ChunkBytes: 4096, MaxPixels: 1_000_000}
+}
+
+const (
+	// Save cursor before output, then reset SGR and restore it afterwards. Each
+	// protocol payload also carries its own mandatory APC/OSC/DCS terminator.
+	terminalImageSafetyPrefix = "\x1b7"
+	terminalImageSafetySuffix = "\x1b[0m\x1b8"
+)
+
+// EncodeTerminalImageWithProof is the only encoder entry point suitable for
+// live terminal output. A zero or fabricated proof cannot select a protocol.
+func EncodeTerminalImageWithProof(proof ImageCapabilityProof, mediaType string, payload []byte, limits ImageOutputLimits) ([]byte, error) {
+	if proof.Protocol() == ImageProtocolNone {
+		return nil, fmt.Errorf("encode terminal image: capability is not actively confirmed")
+	}
+	return EncodeTerminalImage(proof.Protocol(), mediaType, payload, limits)
 }
 
 func EncodeTerminalImage(protocol ImageProtocol, mediaType string, payload []byte, limits ImageOutputLimits) ([]byte, error) {
@@ -98,7 +217,7 @@ func EncodeTerminalImage(protocol ImageProtocol, mediaType string, payload []byt
 		if decodeErr != nil {
 			return nil, fmt.Errorf("encode terminal image: payload is not a valid PNG")
 		}
-		return encodeSixel(decoded, projected), nil
+		return wrapTerminalImage(encodeSixel(decoded, projected)), nil
 	}
 	encoded := base64.StdEncoding.EncodeToString(payload)
 	var output []byte
@@ -125,7 +244,15 @@ func EncodeTerminalImage(protocol ImageProtocol, mediaType string, payload []byt
 		output = append(output, encoded...)
 		output = append(output, '\a')
 	}
-	return output, nil
+	return wrapTerminalImage(output), nil
+}
+
+func wrapTerminalImage(payload []byte) []byte {
+	output := make([]byte, 0, len(terminalImageSafetyPrefix)+len(payload)+len(terminalImageSafetySuffix))
+	output = append(output, terminalImageSafetyPrefix...)
+	output = append(output, payload...)
+	output = append(output, terminalImageSafetySuffix...)
+	return output
 }
 
 const sixelPaletteSize = 16
@@ -134,7 +261,7 @@ func projectedSixelOutputBytes(width, height, maximum int) (int, error) {
 	if width <= 0 || height <= 0 || maximum <= 0 {
 		return 0, fmt.Errorf("encode terminal image: invalid Sixel dimensions or output budget")
 	}
-	projected := uint64(len("\x1bPq") + len("\x1b\\"))
+	projected := uint64(len(terminalImageSafetyPrefix) + len("\x1bPq") + len("\x1b\\") + len(terminalImageSafetySuffix))
 	projected += uint64(len(fmt.Sprintf("\"1;1;%d;%d", width, height)))
 	for palette := 0; palette < sixelPaletteSize; palette++ {
 		projected += uint64(len(sixelPaletteDefinition(palette)))
@@ -236,8 +363,8 @@ func verifyPNG(payload []byte) error {
 }
 
 func projectedImageOutputBytes(protocol ImageProtocol, payloadBytes, encodedBytes int, limits ImageOutputLimits) (int, error) {
-	projected := uint64(encodedBytes)        //nolint:gosec // encodedBytes is non-negative and derived from a slice length
-	maximum := uint64(limits.MaxOutputBytes) //nolint:gosec // positivity validated by caller
+	projected := uint64(encodedBytes) + uint64(len(terminalImageSafetyPrefix)+len(terminalImageSafetySuffix)) //nolint:gosec // encodedBytes is non-negative and derived from a slice length
+	maximum := uint64(limits.MaxOutputBytes)                                                                  //nolint:gosec // positivity validated by caller
 	if projected > maximum {
 		return 0, fmt.Errorf("encode terminal image: output exceeds %d bytes", limits.MaxOutputBytes)
 	}

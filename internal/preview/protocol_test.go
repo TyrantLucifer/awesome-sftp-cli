@@ -50,6 +50,59 @@ func TestSelectImageProtocolRequiresConfirmedCapability(t *testing.T) {
 	}
 }
 
+func TestConfirmImageCapabilityAcceptsOnlyBoundedExactProbeResponses(t *testing.T) {
+	tests := []struct {
+		protocol ImageProtocol
+		response []byte
+	}{
+		{ImageProtocolKitty, []byte("\x1b_Gi=31;OK\x1b\\")},
+		{ImageProtocolITerm2, []byte("\x1bP>|iTerm2 3.5.14\x1b\\")},
+		{ImageProtocolSixel, []byte("\x1b[?1;2;4c")},
+	}
+	for _, test := range tests {
+		proof, err := ConfirmImageCapability(test.protocol, test.response)
+		if err != nil || proof.Protocol() != test.protocol {
+			t.Fatalf("confirm %q = %q, %v", test.protocol, proof.Protocol(), err)
+		}
+		if _, err := EncodeTerminalImageWithProof(proof, "image/png", testPNG(t), DefaultImageOutputLimits()); err != nil {
+			t.Fatalf("encode with %q proof: %v", test.protocol, err)
+		}
+	}
+	for name, test := range map[string]struct {
+		protocol ImageProtocol
+		response []byte
+	}{
+		"environment hint": {ImageProtocolKitty, []byte("xterm-kitty")},
+		"kitty wrong id":   {ImageProtocolKitty, []byte("\x1b_Gi=32;OK\x1b\\")},
+		"sixel absent":     {ImageProtocolSixel, []byte("\x1b[?1;2c")},
+		"iterm injected":   {ImageProtocolITerm2, []byte("\x1bP>|iTerm2 3.5\x1b\\\x1b[2J")},
+		"oversized":        {ImageProtocolKitty, bytes.Repeat([]byte("x"), 257)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if proof, err := ConfirmImageCapability(test.protocol, test.response); err == nil || proof.Protocol() != ImageProtocolNone {
+				t.Fatalf("unsafe response accepted: proof=%q err=%v", proof.Protocol(), err)
+			}
+		})
+	}
+	if output, err := EncodeTerminalImageWithProof(ImageCapabilityProof{}, "image/png", testPNG(t), DefaultImageOutputLimits()); err == nil || len(output) != 0 {
+		t.Fatalf("unconfirmed proof output=%q err=%v", output, err)
+	}
+}
+
+func TestImageCapabilityProbeIsFixedAndBounded(t *testing.T) {
+	for _, protocol := range []ImageProtocol{ImageProtocolKitty, ImageProtocolITerm2, ImageProtocolSixel} {
+		query, err := ImageCapabilityProbe(protocol)
+		if err != nil || len(query) == 0 || len(query) > 64 {
+			t.Fatalf("probe %q = %q, %v", protocol, query, err)
+		}
+	}
+	for _, protocol := range []ImageProtocol{ImageProtocolNone, ImageProtocol("unknown")} {
+		if query, err := ImageCapabilityProbe(protocol); err == nil || len(query) != 0 {
+			t.Fatalf("unsafe probe %q = %q, %v", protocol, query, err)
+		}
+	}
+}
+
 func TestEncodeKittyImageUsesBoundedChunkedAPC(t *testing.T) {
 	payload := testPNG(t)
 	encoded, err := EncodeTerminalImage(ImageProtocolKitty, "image/png", payload, ImageOutputLimits{MaxPayloadBytes: 6000, MaxOutputBytes: 12000, ChunkBytes: 64, MaxPixels: 100})
@@ -57,7 +110,7 @@ func TestEncodeKittyImageUsesBoundedChunkedAPC(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	if !strings.HasPrefix(text, "\x1b_Gf=100,a=T,q=2,m=1;") || !strings.HasSuffix(text, "\x1b\\") || strings.Count(text, "\x1b_G") != 2 {
+	if !strings.HasPrefix(text, terminalImageSafetyPrefix+"\x1b_Gf=100,a=T,q=2,m=1;") || !strings.HasSuffix(text, terminalImageSafetySuffix) || strings.Count(text, "\x1b_G") != 2 {
 		t.Fatalf("kitty output framing/chunks = %q", text[:min(len(text), 80)])
 	}
 	if len(encoded) > 12000 {
@@ -71,7 +124,7 @@ func TestEncodeITerm2ImageUsesExactInlineEnvelope(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(encoded), "\x1b]1337;File=inline=1;size=68:"+base64.StdEncoding.EncodeToString(payload)+"\a"; got != want {
+	if got, want := string(encoded), terminalImageSafetyPrefix+"\x1b]1337;File=inline=1;size=68:"+base64.StdEncoding.EncodeToString(payload)+"\a"+terminalImageSafetySuffix; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
@@ -107,7 +160,7 @@ func TestEncodeSixelImageUsesBoundedDCSAndNeverEmbedsTerminalInput(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(encoded, []byte("\x1bPq")) || !bytes.HasSuffix(encoded, []byte("\x1b\\")) || len(encoded) > limits.MaxOutputBytes {
+	if !bytes.HasPrefix(encoded, []byte(terminalImageSafetyPrefix+"\x1bPq")) || !bytes.HasSuffix(encoded, []byte(terminalImageSafetySuffix)) || !bytes.Contains(encoded, []byte("\x1b\\"+terminalImageSafetySuffix)) || len(encoded) > limits.MaxOutputBytes {
 		t.Fatalf("sixel framing/output = %q", encoded)
 	}
 	if bytes.Contains(encoded, payload) {
