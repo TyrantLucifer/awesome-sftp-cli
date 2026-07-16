@@ -8,6 +8,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"github.com/gdamore/tcell/v3"
@@ -128,6 +129,41 @@ func TestTranslateTCellDistinguishesUppercaseDrawerKeys(t *testing.T) {
 		press, ok := action.(KeyPress)
 		if !ok || press.Key != want {
 			t.Fatalf("translate %q = %#v, want %q", input, action, want)
+		}
+	}
+}
+
+func TestPreviewDrawerKeysEmitBoundedReadModesAndViewToggles(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, _ = Reduce(model, KeyPress{Key: KeyPreviewDrawer})
+	model.Preview = PreviewState{
+		Identity: PreviewRequestIdentity{Mode: builtinpreview.ReadRange, Offset: 65536, RequestedLimit: 65536},
+		View:     builtinpreview.ViewAuto,
+	}
+	tests := []struct {
+		key        Key
+		wantMode   builtinpreview.ReadMode
+		wantOffset uint64
+		wantView   builtinpreview.ViewMode
+	}{
+		{key: KeyParent, wantMode: builtinpreview.ReadHead, wantView: builtinpreview.ViewAuto},
+		{key: KeyOpen, wantMode: builtinpreview.ReadTail, wantView: builtinpreview.ViewAuto},
+		{key: KeyDown, wantMode: builtinpreview.ReadRange, wantOffset: 131072, wantView: builtinpreview.ViewAuto},
+		{key: KeyUp, wantMode: builtinpreview.ReadRange, wantOffset: 0, wantView: builtinpreview.ViewAuto},
+		{key: KeyRename, wantMode: builtinpreview.ReadRange, wantOffset: 65536, wantView: builtinpreview.ViewRawJSON},
+	}
+	for _, test := range tests {
+		got, intents := Reduce(model, KeyPress{Key: test.key})
+		if len(intents) != 2 || intents[0].Kind != IntentPreviewCancel || intents[1].Kind != IntentPreview {
+			t.Fatalf("key %q intents = %#v", test.key, intents)
+		}
+		intent := intents[1]
+		if intent.PreviewMode != test.wantMode || intent.PreviewOffset != test.wantOffset || intent.PreviewView != test.wantView {
+			t.Fatalf("key %q intent = %#v", test.key, intent)
+		}
+		if got.Preview.View != test.wantView {
+			t.Fatalf("key %q view = %q, want %q", test.key, got.Preview.View, test.wantView)
 		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net"
 	"os"
 	"os/exec"
@@ -770,14 +771,22 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				return
 			}
 			activeClient := client
+			mode := intent.PreviewMode
+			if mode == "" {
+				mode = builtinpreview.ReadHead
+			}
+			view := intent.PreviewView
+			if view == "" {
+				view = builtinpreview.ViewAuto
+			}
 			identity := tui.PreviewRequestIdentity{
 				RequestID: requestID, Pane: intent.Pane, EndpointSession: intent.EndpointSession,
-				EndpointGeneration: intent.EndpointGeneration, Mode: builtinpreview.ReadHead,
+				EndpointGeneration: intent.EndpointGeneration, Mode: mode, Offset: intent.PreviewOffset,
 				RequestedLimit: builtinpreview.ReadChunkBytes, UIGeneration: generation,
 			}
 			go func() {
 				defer cancel()
-				previewLocation(requestCtx, activeClient, identity, intent.Location, actions)
+				previewLocation(requestCtx, activeClient, identity, view, intent.Location, actions)
 			}()
 			return
 		case tui.IntentPreviewCancel:
@@ -1485,25 +1494,25 @@ func recoveryParent(location domain.Location) (domain.Location, bool) {
 	return domain.Location{EndpointID: location.EndpointID, Path: domain.CanonicalPath(parent)}, true
 }
 
-func previewLocation(ctx context.Context, client *daemon.Client, identity tui.PreviewRequestIdentity, location domain.Location, actions chan<- tui.Action) {
+func previewLocation(ctx context.Context, client *daemon.Client, identity tui.PreviewRequestIdentity, view builtinpreview.ViewMode, location domain.Location, actions chan<- tui.Action) {
 	generation := identity.UIGeneration
 	var statResponse ipc.ProviderStatResponse
 	if err := client.Call(ctx, daemon.ProviderStat, ipc.ProviderStatRequest{Location: ipc.EncodeLocation(location)}, &statResponse); err != nil {
 		if ctx.Err() == nil {
-			actions <- tui.BeginPreview{Generation: generation, Location: location}
+			actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
 			actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: clientErrorMessage(err)}
 		}
 		return
 	}
 	entry, err := ipc.DecodeEntry(statResponse.Entry)
 	if err != nil {
-		actions <- tui.BeginPreview{Generation: generation, Location: location}
+		actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
 		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
 		return
 	}
 	source, err := builtinpreview.FreezeSource(location, entry.Fingerprint)
 	if err != nil {
-		actions <- tui.BeginPreview{Generation: generation, Location: location}
+		actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
 		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
 		return
 	}
@@ -1512,10 +1521,16 @@ func previewLocation(ctx context.Context, client *daemon.Client, identity tui.Pr
 	if entry.Metadata.Size != nil {
 		fileSize = *entry.Metadata.Size
 	}
-	plan := builtinpreview.PlanHead(fileSize)
+	plan, err := planPreviewRead(fileSize, identity.Mode, identity.Offset)
+	if err != nil {
+		actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
+		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
+		return
+	}
+	identity.Mode = plan.Mode
 	identity.Offset = plan.Offset
 	identity.RequestedLimit = plan.Limit
-	actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity}
+	actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
 	var response ipc.ProviderReadResponse
 	expectedFingerprint := ipc.EncodeFingerprint(entry.Fingerprint)
 	err = client.Call(ctx, daemon.ProviderRead, ipc.ProviderReadRequest{
@@ -1537,8 +1552,14 @@ func previewLocation(ctx context.Context, client *daemon.Client, identity tui.Pr
 		actions <- tui.PreviewChunk{Generation: generation, Identity: identity, Done: true, Message: err.Error()}
 		return
 	}
+	window, err := builtinpreview.ApplyReadPlan(builtinpreview.ReadWindow{}, plan, data)
+	if err != nil {
+		actions <- tui.PreviewChunk{Generation: generation, Identity: identity, Done: true, Message: err.Error()}
+		return
+	}
 	result := builtinpreview.Render(builtinpreview.Request{
-		Path: string(location.Path), Data: data, Offset: plan.Offset, Complete: response.EOF && plan.Offset == 0,
+		Path: string(location.Path), Data: window.Data, View: view, Offset: window.Offset, Complete: window.Complete,
+		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
 	}, builtinpreview.DefaultLimits())
 	summary := result.Summary
 	if result.Warning != "" {
@@ -1552,4 +1573,26 @@ func previewLocation(ctx context.Context, client *daemon.Client, identity tui.Pr
 		Truncated: result.Truncated || result.Partial, Rendered: true,
 		Kind: string(result.Kind), Summary: summary,
 	}
+}
+
+func planPreviewRead(fileSize uint64, mode builtinpreview.ReadMode, offset uint64) (builtinpreview.ReadPlan, error) {
+	var plan builtinpreview.ReadPlan
+	var err error
+	switch mode {
+	case "", builtinpreview.ReadHead:
+		plan = builtinpreview.PlanHead(fileSize)
+	case builtinpreview.ReadTail:
+		plan = builtinpreview.PlanTail(fileSize)
+	case builtinpreview.ReadRange, builtinpreview.ReadContinue:
+		plan, err = builtinpreview.PlanRange(fileSize, offset, builtinpreview.ReadChunkBytes)
+	default:
+		return builtinpreview.ReadPlan{}, fmt.Errorf("unsupported preview read mode %q", mode)
+	}
+	if err != nil {
+		return builtinpreview.ReadPlan{}, err
+	}
+	if plan.Offset > math.MaxInt64 {
+		return builtinpreview.ReadPlan{}, fmt.Errorf("preview offset %d exceeds Provider range limit", plan.Offset)
+	}
+	return plan, nil
 }

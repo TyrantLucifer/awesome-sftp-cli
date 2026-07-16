@@ -14,6 +14,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
@@ -101,6 +102,33 @@ func TestListingResultCurrentRejectsStaleGeneration(t *testing.T) {
 	}
 	if !listingResultCurrent(model, tui.Left, 8) {
 		t.Fatal("current listing result was rejected")
+	}
+}
+
+func TestPlanPreviewReadRoutesHeadTailAndAbsoluteRange(t *testing.T) {
+	const fileSize = uint64(100 * 1024 * 1024 * 1024)
+	const rangeOffset = uint64(50 * 1024 * 1024 * 1024)
+	wantRange, err := builtinpreview.PlanRange(fileSize, rangeOffset, builtinpreview.ReadChunkBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		mode   builtinpreview.ReadMode
+		offset uint64
+		want   builtinpreview.ReadPlan
+	}{
+		{mode: builtinpreview.ReadHead, want: builtinpreview.PlanHead(fileSize)},
+		{mode: builtinpreview.ReadTail, want: builtinpreview.PlanTail(fileSize)},
+		{mode: builtinpreview.ReadRange, offset: rangeOffset, want: wantRange},
+	}
+	for _, test := range tests {
+		got, err := planPreviewRead(fileSize, test.mode, test.offset)
+		if err != nil || got != test.want {
+			t.Fatalf("planPreviewRead(%q,%d) = %#v, %v; want %#v", test.mode, test.offset, got, err, test.want)
+		}
+	}
+	if _, err := planPreviewRead(fileSize, "invalid", 0); err == nil {
+		t.Fatal("invalid preview mode succeeded")
 	}
 }
 

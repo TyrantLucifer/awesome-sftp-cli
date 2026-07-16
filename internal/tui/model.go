@@ -335,6 +335,7 @@ type PreviewState struct {
 	Kind       string
 	Summary    string
 	Message    string
+	View       builtinpreview.ViewMode
 }
 
 type PreviewRequestIdentity struct {
@@ -515,6 +516,9 @@ type Intent struct {
 	ApplyAll              bool
 	CommandText           string
 	ShellHome             bool
+	PreviewMode           builtinpreview.ReadMode
+	PreviewOffset         uint64
+	PreviewView           builtinpreview.ViewMode
 }
 
 type Key string
@@ -601,6 +605,7 @@ type BeginPreview struct {
 	Generation uint64
 	Location   domain.Location
 	Identity   PreviewRequestIdentity
+	View       builtinpreview.ViewMode
 }
 type PreviewChunk struct {
 	Generation uint64

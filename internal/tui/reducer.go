@@ -9,6 +9,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
@@ -229,7 +230,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		if action.Identity.RequestID != "" && (action.Identity.UIGeneration != action.Generation || action.Identity.Source.Location != action.Location || !validPane(action.Identity.Pane)) {
 			return model, nil
 		}
-		model.Preview = PreviewState{Generation: action.Generation, Identity: action.Identity, Location: action.Location, Loading: true}
+		model.Preview = PreviewState{Generation: action.Generation, Identity: action.Identity, Location: action.Location, Loading: true, View: action.View}
 		return model, nil
 	case PreviewChunk:
 		if model.Preview.Generation != action.Generation || !previewIdentityMatches(model.Preview.Identity, action.Identity) {
@@ -670,6 +671,9 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		if model.Drawer.Mode == DrawerJobs {
 			return reduceJobsKey(model, key)
 		}
+		if model.Drawer.Mode == DrawerPreview {
+			return reducePreviewKey(model, key)
+		}
 		return model, nil
 	}
 	count := model.Count
@@ -937,6 +941,48 @@ func reduceJobsKey(model Model, key Key) (Model, []Intent) {
 	return model, []Intent{intent}
 }
 
+func reducePreviewKey(model Model, key Key) (Model, []Intent) {
+	pane := model.Panes[model.Active]
+	entry := pane.visibleEntry(pane.Cursor)
+	if entry.Kind != domain.EntryFile || entry.Location.Path == "" {
+		return model, nil
+	}
+	intent := previewIntent(model.Active, pane, entry)
+	intent.PreviewMode = model.Preview.Identity.Mode
+	intent.PreviewOffset = model.Preview.Identity.Offset
+	intent.PreviewView = model.Preview.View
+	step := model.Preview.Identity.RequestedLimit
+	if step == 0 {
+		step = builtinpreview.ReadChunkBytes
+	}
+	switch key {
+	case KeyParent:
+		intent.PreviewMode = builtinpreview.ReadHead
+		intent.PreviewOffset = 0
+	case KeyOpen:
+		intent.PreviewMode = builtinpreview.ReadTail
+		intent.PreviewOffset = 0
+	case KeyDown:
+		intent.PreviewMode = builtinpreview.ReadRange
+		if intent.PreviewOffset <= ^uint64(0)-step {
+			intent.PreviewOffset += step
+		}
+	case KeyUp:
+		intent.PreviewMode = builtinpreview.ReadRange
+		if intent.PreviewOffset > step {
+			intent.PreviewOffset -= step
+		} else {
+			intent.PreviewOffset = 0
+		}
+	case KeyRename:
+		intent.PreviewView = builtinpreview.ToggleView(model.Preview.View, true)
+		model.Preview.View = intent.PreviewView
+	default:
+		return model, nil
+	}
+	return model, []Intent{{Kind: IntentPreviewCancel}, intent}
+}
+
 func drawerModeForKey(key Key) (DrawerMode, bool) {
 	switch key {
 	case KeyPreviewDrawer:
@@ -1017,6 +1063,7 @@ func previewIntent(paneID PaneID, pane PaneState, entry domain.Entry) Intent {
 	return Intent{
 		Kind: IntentPreview, Pane: paneID, Location: entry.Location, Limit: PreviewByteLimit,
 		EndpointSession: pane.Capabilities.Revision.SessionID, EndpointGeneration: pane.Capabilities.Revision.Generation,
+		PreviewMode: builtinpreview.ReadHead, PreviewView: builtinpreview.ViewAuto,
 	}
 }
 
