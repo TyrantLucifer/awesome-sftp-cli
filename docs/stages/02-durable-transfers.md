@@ -1,6 +1,6 @@
 # Stage 2 — Durable Transfers
 
-- **状态**：Not Started
+- **状态**：In Progress
 - **阶段类型**：持久化写操作与数据安全
 - **前置条件**：[Stage 1 — Read-only Explorer](01-read-only-explorer.md) 已通过退出门禁
 - **完成后进入**：[Stage 3 — Preview, Edit & Cache](03-preview-edit-cache.md)

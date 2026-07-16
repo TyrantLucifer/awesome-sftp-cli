@@ -1,14 +1,15 @@
 # Project State
 
 - **Updated**: 2026-07-16
-- **Lifecycle**: Stage 2 durable transfers Not Started
+- **Lifecycle**: Stage 2 durable transfers In Progress
 - **Active stage**: Stage 2 — Durable Transfers
+- **Current milestone**: M2.1 — Persistent state-machine foundation; zero-gate dependency intake
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
 
-Stage 1 is complete. The final implementation candidate is commit `90cbfea81bd2d802bd3f7579a0b192c81ba3281b`, tree `53c7b1ac62e809b7046ea366701a21e6dc0bf757`; [Hosted run 29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) passed 24/24 jobs. Its auth job passed the real OpenSSH matrix, two-sshd recovery/daemon-restart scenarios and MIT Kerberos/GSSAPI valid, missing, expired and externally renewed ticket cases. M1.4 also closes packet-bounded remote directory enumeration through ADR-0011, all three Endpoint combinations, workspace reopen, nearest-parent recovery, capability replacement, and native macOS/Linux PTY/security evidence. Stage 2 is intentionally Not Started.
+Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; M2.1 is at the required ADR-0008 dependency-intake gate, before schema or production database-open code.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -38,6 +39,12 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 Perform the ADR-0008 dependency intake for exact `modernc.org/sqlite v1.53.0` and `modernc.org/libc v1.73.4`, including license/module/vulnerability, dual-toolchain, four-target and native database checks, before creating the Stage 2 schema or migration runner.
 
+## Current risks
+
+- The modernc module graph and narrow `NewBackup`/URI pragma source contract have not yet been admitted; schema work remains blocked.
+- APFS can be exercised locally, but ext4/XFS database semantics require native Linux Hosted fixtures; cross-builds are not acceptance evidence.
+- Stage 2 touches persistent user state and destructive file operations, so every milestone remains fail-closed to the verified Stage 1 read-only surface until its evidence is complete.
+
 ## Required reading for the next session
 
 1. [Documentation map](docs/README.md)
@@ -49,6 +56,8 @@ Perform the ADR-0008 dependency intake for exact `modernc.org/sqlite v1.53.0` an
 7. ADRs referenced by Stage 2, beginning with ADR-0008
 
 ## Validation record
+
+Stage 2 baseline checks on 2026-07-16: clean `main` exactly matched `origin/main` at `b99fca2f729a8445b20935c69eda52cfa6dbbd28` / tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; `git fetch --prune origin` succeeded; the fixed Stage 2 branch did not exist locally or remotely and was created from that baseline; exact-main Hosted run `29468930350` reports `success`. Stage 2 evidence is maintained in [Stage 2 verification](docs/verification/stage-02.md).
 
 The completed command/result ledger is [Stage 1 verification](docs/verification/stage-01.md); [Stage 0 verification](docs/verification/stage-00.md) remains the foundation handoff. On the final implementation tree, `GOTOOLCHAIN=go1.26.5 make ci`, exact `GOTOOLCHAIN=go1.25.12 make check`, focused current/oldstable integration tests, focused race, shell syntax and pollution checks passed. This covers docs, unit/Provider contracts, full race, lint, four fuzz smokes, supply chain, actionlint and four target builds. Hosted run [29467496969](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29467496969) then passed all 24 quality, auth, native, oldstable, build, reproducibility and comparison jobs.
 
