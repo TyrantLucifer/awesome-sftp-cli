@@ -25,15 +25,17 @@ type ManagerConfig struct {
 }
 
 type JobView struct {
-	Snapshot      jobstore.Snapshot `json:"snapshot"`
-	Kind          OperationKind     `json:"kind"`
-	Source        domain.Location   `json:"source"`
-	Final         domain.Location   `json:"final"`
-	Phase         Phase             `json:"phase,omitempty"`
-	Bytes         uint64            `json:"bytes"`
-	BytesTotal    *uint64           `json:"bytes_total,omitempty"`
-	Items         uint64            `json:"items"`
-	WaitingReason string            `json:"waiting_reason,omitempty"`
+	Snapshot       jobstore.Snapshot `json:"snapshot"`
+	Kind           OperationKind     `json:"kind"`
+	Source         domain.Location   `json:"source"`
+	Final          domain.Location   `json:"final"`
+	Phase          Phase             `json:"phase,omitempty"`
+	Bytes          uint64            `json:"bytes"`
+	BytesTotal     *uint64           `json:"bytes_total,omitempty"`
+	Items          uint64            `json:"items"`
+	WaitingReason  string            `json:"waiting_reason,omitempty"`
+	RecentError    string            `json:"recent_error,omitempty"`
+	RecoveryResult string            `json:"recovery_result,omitempty"`
 }
 
 // Manager owns transfer execution independently from any client connection.
@@ -355,6 +357,25 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			view.Bytes = checkpoint.Offset
 			view.Final = checkpoint.Final
 		}
+		afterSequence := snapshot.NextEventSequence - 8
+		if afterSequence < 0 {
+			afterSequence = 0
+		}
+		events, err := manager.store.ListEvents(ctx, snapshot.JobID, afterSequence, 8)
+		if err != nil {
+			return nil, err
+		}
+		for _, event := range events {
+			var payload map[string]string
+			if json.Unmarshal([]byte(event.PayloadJSON), &payload) == nil {
+				if message := payload["error"]; message != "" {
+					view.RecentError = message
+				}
+				if event.Kind == "job_recovered" {
+					view.RecoveryResult = payload["reason"]
+				}
+			}
+		}
 		switch snapshot.State {
 		case job.StateAwaitingConfirmation, job.StateWaitingAuth, job.StateWaitingConflict, job.StateRetryWait, job.StatePaused:
 			view.WaitingReason = string(snapshot.State)
@@ -587,7 +608,7 @@ func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, execute
 }
 
 func (manager *Manager) fail(snapshot jobstore.Snapshot, failure error) {
-	_, _ = manager.transitionTerminal(snapshot, job.StateFailed, "job_failed", failure.Error(), errorPayload(failure))
+	_, _ = manager.transitionTerminal(snapshot, job.StateFailed, "job_failed", safeErrorSummary(failure), errorPayload(failure))
 }
 
 func (manager *Manager) transition(snapshot jobstore.Snapshot, to job.State, kind string, payload any) (jobstore.Snapshot, error) {
@@ -708,5 +729,20 @@ func (manager *Manager) queueCapacity() int {
 }
 
 func errorPayload(err error) map[string]string {
-	return map[string]string{"error": err.Error()}
+	payload := map[string]string{"error": safeErrorSummary(err)}
+	var operationError *domain.OpError
+	if errors.As(err, &operationError) {
+		payload["code"] = string(operationError.Code)
+		payload["retry"] = string(operationError.Retry.Kind)
+		payload["effect"] = string(operationError.Effect)
+	}
+	return payload
+}
+
+func safeErrorSummary(err error) string {
+	var operationError *domain.OpError
+	if errors.As(err, &operationError) {
+		return string(operationError.Code)
+	}
+	return "internal transfer error"
 }

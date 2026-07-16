@@ -192,6 +192,81 @@ func TestWorkerConflictPoliciesAreRecheckedAtCommit(t *testing.T) {
 	}
 }
 
+func TestWorkerProvesCommitAfterRenameResponseIsLost(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("committed-before-disconnect"), ConflictAsk)
+	destination := &renameResponseLostProvider{mutableTestProvider: fixture.destination}
+	fixture.resolver[fixture.destination.Descriptor().ID] = destination
+
+	result, err := NewWorker(fixture.resolver, newMemoryJournal()).Execute(context.Background(), fixture.plan, nil)
+	if err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+	if result.Outcome != OutcomeCompleted {
+		t.Fatalf("result = %#v", result)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("committed-before-disconnect"))
+}
+
+func TestWorkerHandlesShortWritesWithinFixedBufferBudget(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("short-write-payload"), ConflictAsk)
+	fixture.plan.BufferBytes = 7
+	fixture.resolver[fixture.source.Descriptor().ID] = &shortReadProvider{Provider: fixture.source, maxRead: 3}
+	destination := &shortWriteProvider{mutableTestProvider: fixture.destination, maxWrite: 2}
+	fixture.resolver[fixture.destination.Descriptor().ID] = destination
+	journal := newMemoryJournal()
+
+	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+	if err != nil || result.Outcome != OutcomeCompleted {
+		t.Fatalf("short-write Execute() = (%#v, %v)", result, err)
+	}
+	if journal.maxBufferBytes > int(fixture.plan.BufferBytes) {
+		t.Fatalf("observed buffer = %d, budget = %d", journal.maxBufferBytes, fixture.plan.BufferBytes)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("short-write-payload"))
+}
+
+func TestWorkerResumesAfterTransportInterruptAtDurableOffset(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("disconnect-and-resume"), ConflictAsk)
+	fixture.plan.BufferBytes = 4
+	destination := &interruptingWriteProvider{mutableTestProvider: fixture.destination, interruptAfter: 4}
+	fixture.resolver[fixture.destination.Descriptor().ID] = destination
+	journal := newMemoryJournal()
+
+	_, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+	if !domain.IsCode(err, domain.CodeTransportInterrupted) {
+		t.Fatalf("interrupted Execute() error = %v", err)
+	}
+	if checkpoint := journal.latest(); checkpoint.Offset != 4 || checkpoint.Phase != PhaseStreaming {
+		t.Fatalf("interrupted checkpoint = %#v", checkpoint)
+	}
+	if _, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final}); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("interrupt exposed final: %v", err)
+	}
+	fixture.resolver[fixture.destination.Descriptor().ID] = fixture.destination
+	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+	if err != nil || result.Outcome != OutcomeCompleted {
+		t.Fatalf("resumed Execute() = (%#v, %v)", result, err)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("disconnect-and-resume"))
+}
+
+func TestWorkerPartOpenFailuresNeverExposeFinal(t *testing.T) {
+	for _, code := range []domain.Code{domain.CodePermissionDenied, domain.CodeResourceExhausted} {
+		t.Run(string(code), func(t *testing.T) {
+			fixture := newWorkerFixture(t, []byte("must-not-publish"), ConflictAsk)
+			destination := &openWriteFailureProvider{mutableTestProvider: fixture.destination, code: code}
+			fixture.resolver[fixture.destination.Descriptor().ID] = destination
+			_, err := NewWorker(fixture.resolver, newMemoryJournal()).Execute(context.Background(), fixture.plan, nil)
+			if !domain.IsCode(err, code) {
+				t.Fatalf("Execute() error = %v, want %s", err, code)
+			}
+			if _, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final}); !domain.IsCode(err, domain.CodeNotFound) {
+				t.Fatalf("failed part open exposed final: %v", err)
+			}
+		})
+	}
+}
+
 type workerFixture struct {
 	plan            Plan
 	create          jobstore.CreateRequest
@@ -209,6 +284,130 @@ type mutableTestProvider interface {
 type closeTimestampProvider struct {
 	mutableTestProvider
 	root string
+}
+
+type renameResponseLostProvider struct{ mutableTestProvider }
+
+func (provider *renameResponseLostProvider) Rename(ctx context.Context, request providerapi.RenameRequest) (providerapi.RenameResult, error) {
+	result, err := provider.mutableTestProvider.Rename(ctx, request)
+	if err != nil {
+		return result, err
+	}
+	location := request.Destination
+	return result, &domain.OpError{
+		Code: domain.CodeTransportInterrupted, Message: "rename response lost", Operation: "rename",
+		EndpointID: request.Destination.EndpointID, Location: &location,
+		Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectUnknown,
+	}
+}
+
+type shortWriteProvider struct {
+	mutableTestProvider
+	maxWrite int
+}
+
+type shortReadProvider struct {
+	providerapi.Provider
+	maxRead int
+}
+
+func (provider *shortReadProvider) OpenRead(ctx context.Context, request providerapi.OpenReadRequest) (providerapi.ReadHandle, error) {
+	handle, err := provider.Provider.OpenRead(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &shortReadHandle{ReadHandle: handle, maxRead: provider.maxRead}, nil
+}
+
+type shortReadHandle struct {
+	providerapi.ReadHandle
+	maxRead int
+}
+
+func (handle *shortReadHandle) Read(ctx context.Context, data []byte) (int, error) {
+	if len(data) > handle.maxRead {
+		data = data[:handle.maxRead]
+	}
+	return handle.ReadHandle.Read(ctx, data)
+}
+
+func (provider *shortWriteProvider) OpenWrite(ctx context.Context, request providerapi.OpenWriteRequest) (providerapi.WriteHandle, error) {
+	handle, err := provider.mutableTestProvider.OpenWrite(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &shortWriteHandle{WriteHandle: handle, maxWrite: provider.maxWrite}, nil
+}
+
+type shortWriteHandle struct {
+	providerapi.WriteHandle
+	maxWrite int
+}
+
+func (handle *shortWriteHandle) Write(ctx context.Context, data []byte) (int, error) {
+	if len(data) > handle.maxWrite {
+		data = data[:handle.maxWrite]
+	}
+	return handle.WriteHandle.Write(ctx, data)
+}
+
+type interruptingWriteProvider struct {
+	mutableTestProvider
+	interruptAfter int
+}
+
+func (provider *interruptingWriteProvider) OpenWrite(ctx context.Context, request providerapi.OpenWriteRequest) (providerapi.WriteHandle, error) {
+	handle, err := provider.mutableTestProvider.OpenWrite(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	location := request.Location
+	return &interruptingWriteHandle{WriteHandle: handle, remaining: provider.interruptAfter, location: &location}, nil
+}
+
+type interruptingWriteHandle struct {
+	providerapi.WriteHandle
+	remaining int
+	location  *domain.Location
+}
+
+func (handle *interruptingWriteHandle) Write(ctx context.Context, data []byte) (int, error) {
+	if handle.remaining <= 0 {
+		return 0, &domain.OpError{
+			Code: domain.CodeTransportInterrupted, Message: "injected transport interrupt", Operation: "write",
+			EndpointID: handle.location.EndpointID, Location: handle.location,
+			Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone,
+		}
+	}
+	if len(data) > handle.remaining {
+		data = data[:handle.remaining]
+	}
+	n, err := handle.WriteHandle.Write(ctx, data)
+	handle.remaining -= n
+	return n, err
+}
+
+type openWriteFailureProvider struct {
+	mutableTestProvider
+	code    domain.Code
+	message string
+}
+
+func (provider *openWriteFailureProvider) OpenWrite(_ context.Context, request providerapi.OpenWriteRequest) (providerapi.WriteHandle, error) {
+	location := request.Location
+	retry := domain.RetryNever
+	if provider.code == domain.CodeResourceExhausted {
+		retry = domain.RetryBackoff
+	}
+	message := provider.message
+	if message == "" {
+		message = "injected part open failure"
+	}
+	return nil, &domain.OpError{
+		Code: provider.code, Message: message, Operation: "open_write",
+		EndpointID: location.EndpointID, Location: &location,
+		Retry: domain.RetryAdvice{Kind: retry}, Effect: domain.EffectNone,
+	}
 }
 
 func (provider *closeTimestampProvider) OpenWrite(ctx context.Context, request providerapi.OpenWriteRequest) (providerapi.WriteHandle, error) {

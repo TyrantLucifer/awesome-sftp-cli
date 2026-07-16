@@ -218,9 +218,21 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if statErr != nil {
 			return Result{}, statErr
 		}
-		if partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != current.Offset ||
-			!reflect.DeepEqual(partEntry.Fingerprint, current.PartFingerprint) {
+		if partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != current.Offset {
 			return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part no longer matches durable checkpoint", domain.RetryAfterConflict)
+		}
+		if !reflect.DeepEqual(partEntry.Fingerprint, current.PartFingerprint) {
+			checksum, verifyErr := verifyFile(ctx, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+			if verifyErr != nil {
+				return Result{}, verifyErr
+			}
+			if checksum != hex.EncodeToString(hasher.Sum(nil)) {
+				return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part content no longer matches durable checkpoint", domain.RetryAfterConflict)
+			}
+			current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
+			if err := worker.journal.Save(ctx, current); err != nil {
+				return Result{}, fmt.Errorf("execute transfer: refresh revalidated part checkpoint: %w", err)
+			}
 		}
 		writeHandle, err = destination.OpenWrite(ctx, providerapi.OpenWriteRequest{
 			Location:            plan.Part,

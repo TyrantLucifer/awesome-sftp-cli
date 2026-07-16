@@ -156,15 +156,11 @@ func TestStage2TemporarySSHDPTYUploadDownloadMVP(t *testing.T) {
 			_ = os.Remove(configPath)
 		}
 	})
-	binary := filepath.Join(t.TempDir(), "amsftp")
-	// #nosec G204 -- the output is confined to the test-owned temporary directory.
-	build := exec.Command("go", "build", "-trimpath", "-o", binary, "../../cmd/amsftp")
-	if output, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("build amsftp: %v\n%s", err, output)
-	}
+	binary, observer := buildStage2MVPFixtures(t)
 	remoteRoot := t.TempDir()
 	// #nosec G204 -- script and alias are fixed, and paths are test-owned.
 	command := exec.Command("python3", "hosted-stage2-mvp.py", binary, alias, remoteRoot)
+	command.Env = append(os.Environ(), "AMSFTP_STAGE2_VT_OBSERVER="+observer)
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("Stage 2 temporary-sshd PTY MVP failed: %v\n%s\nsshd:\n%s", err, output, server.logs.String())
 	}

@@ -2,8 +2,10 @@ package transfer
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -302,8 +304,9 @@ func TestManagerCancelRetainsPartAndReplaysOrderedEvents(t *testing.T) {
 	}
 	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
 	t.Cleanup(func() { _ = database.Close() })
+	generator := &testkit.SequenceGenerator{}
 	manager, err := NewManager(ManagerConfig{
-		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Store: store, Resolver: resolver, Generator: generator,
 		Now: func() time.Time { return time.Unix(1_800_000_400, 0) }, MaxConcurrent: 1,
 	})
 	if err != nil {
@@ -440,8 +443,9 @@ func TestManagerPersistsAndResolvesCommitTimeConflict(t *testing.T) {
 	}
 	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
 	t.Cleanup(func() { _ = database.Close() })
+	generator := &testkit.SequenceGenerator{}
 	manager, err := NewManager(ManagerConfig{
-		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Store: store, Resolver: resolver, Generator: generator,
 		Now: func() time.Time { return time.Unix(1_800_000_700, 0) }, MaxConcurrent: 1,
 	})
 	if err != nil {
@@ -482,6 +486,192 @@ func TestManagerPersistsAndResolvesCommitTimeConflict(t *testing.T) {
 		t.Fatalf("completed state = %q", completed.State)
 	}
 	assertWorkerBytes(t, fixture.destination, domain.Location{EndpointID: fixture.plan.Final.EndpointID, Path: "/final (1)"}, []byte("raced-copy"))
+}
+
+func TestManagerClassifiesPermissionAndDiskFullWithoutFalseSuccess(t *testing.T) {
+	tests := []struct {
+		name      string
+		code      domain.Code
+		wantState job.State
+	}{
+		{name: "permission", code: domain.CodePermissionDenied, wantState: job.StateFailed},
+		{name: "disk full", code: domain.CodeResourceExhausted, wantState: job.StateRetryWait},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkerFixture(t, []byte("must-not-complete"), ConflictAsk)
+			destination := &openWriteFailureProvider{mutableTestProvider: fixture.destination, code: test.code}
+			resolver := MapResolver{
+				fixture.source.Descriptor().ID: fixture.source, fixture.destination.Descriptor().ID: destination,
+			}
+			store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+			t.Cleanup(func() { _ = database.Close() })
+			manager, err := NewManager(ManagerConfig{
+				Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+				Now: func() time.Time { return time.Unix(1_800_000_800, 0) }, MaxConcurrent: 1,
+			})
+			if err != nil {
+				t.Fatalf("NewManager(): %v", err)
+			}
+			t.Cleanup(manager.Close)
+			if err := manager.Start(context.Background()); err != nil {
+				t.Fatalf("Start(): %v", err)
+			}
+			created, err := manager.CreateCopy(context.Background(), Intent{
+				Clipboard: ClipboardCopy, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory,
+				Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+			})
+			if err != nil {
+				t.Fatalf("CreateCopy(): %v", err)
+			}
+			var result jobstore.Snapshot
+			if test.wantState.Terminal() {
+				result = waitForTerminal(t, manager, created.JobID)
+			} else {
+				result = waitForState(t, manager, created.JobID, test.wantState)
+			}
+			if result.State != test.wantState {
+				t.Fatalf("state = %q, want %q", result.State, test.wantState)
+			}
+			views, err := manager.JobViews(context.Background(), 10)
+			if err != nil || len(views) != 1 || views[0].RecentError == "" {
+				t.Fatalf("failure Job view = (%#v, %v)", views, err)
+			}
+			if _, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final}); !domain.IsCode(err, domain.CodeNotFound) {
+				t.Fatalf("failure exposed final: %v", err)
+			}
+		})
+	}
+}
+
+func TestManagerRestartRevalidatesPartAfterAbruptHandleClose(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("daemon-restart"), ConflictAsk)
+	readStarted := make(chan struct{})
+	readRelease := make(chan struct{})
+	gatedSource := &gatedReadProvider{Provider: fixture.source, started: readStarted, release: readRelease}
+	closingDestination := &closeTimestampProvider{mutableTestProvider: fixture.destination, root: fixture.destinationRoot}
+	resolver := MapResolver{
+		fixture.source.Descriptor().ID: gatedSource, fixture.destination.Descriptor().ID: closingDestination,
+	}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	generator := &testkit.SequenceGenerator{}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_900, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewManager(): %v", err)
+	}
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatalf("Start(): %v", err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatalf("CreateCopy(): %v", err)
+	}
+	select {
+	case <-readStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not reach gated read")
+	}
+	manager.Close()
+
+	restarted, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_901, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewManager(restart): %v", err)
+	}
+	t.Cleanup(restarted.Close)
+	if err := restarted.Start(context.Background()); err != nil {
+		t.Fatalf("Start(restart): %v", err)
+	}
+	paused := waitForState(t, restarted, created.JobID, job.StatePaused)
+	if _, err := restarted.Resume(context.Background(), paused.JobID); err != nil {
+		t.Fatalf("Resume(): %v", err)
+	}
+	waitContext, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	completed, err := restarted.Wait(waitContext, created.JobID)
+	if err != nil {
+		current, _ := store.Get(context.Background(), created.JobID)
+		checkpoint, _ := (JobJournal{Store: store, StepIndex: 0}).Load(context.Background(), created.JobID)
+		t.Fatalf("Wait(): %v; current=%#v checkpoint=%#v", err, current, checkpoint)
+	}
+	if completed.State != job.StateCompleted {
+		t.Fatalf("completed state = %q", completed.State)
+	}
+	views, err := restarted.JobViews(context.Background(), 10)
+	if err != nil || len(views) != 1 || views[0].RecoveryResult == "" {
+		t.Fatalf("recovered Job view = (%#v, %v)", views, err)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("daemon-restart"))
+}
+
+func TestManagerNeverPersistsProviderErrorDetails(t *testing.T) {
+	const secret = "stage2-provider-secret-canary"
+	fixture := newWorkerFixture(t, []byte("secret-scan"), ConflictAsk)
+	destination := &openWriteFailureProvider{
+		mutableTestProvider: fixture.destination, code: domain.CodePermissionDenied, message: secret,
+	}
+	resolver := MapResolver{
+		fixture.source.Descriptor().ID: fixture.source, fixture.destination.Descriptor().ID: destination,
+	}
+	databasePath := testDatabasePath(t)
+	store, database := openTransferStore(t, context.Background(), databasePath, true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(1_800_001_000, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewManager(): %v", err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatalf("Start(): %v", err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatalf("CreateCopy(): %v", err)
+	}
+	failed := waitForTerminal(t, manager, created.JobID)
+	if failed.State != job.StateFailed {
+		t.Fatalf("failed state = %q", failed.State)
+	}
+	if failed.TerminalSummary != nil && strings.Contains(*failed.TerminalSummary, secret) {
+		t.Fatalf("terminal summary persisted secret: %q", *failed.TerminalSummary)
+	}
+	events, err := manager.Events(context.Background(), created.JobID, 0, 20)
+	if err != nil {
+		t.Fatalf("Events(): %v", err)
+	}
+	for _, event := range events {
+		if strings.Contains(event.PayloadJSON, secret) {
+			t.Fatalf("event persisted secret: %s", event.PayloadJSON)
+		}
+	}
+	if err := store.CheckpointIdle(context.Background()); err != nil {
+		t.Fatalf("CheckpointIdle(): %v", err)
+	}
+	for _, path := range []string{databasePath, databasePath + "-wal", databasePath + "-shm"} {
+		// #nosec G304 -- paths are fixed suffixes of this test's private database fixture.
+		data, err := os.ReadFile(path)
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("read state artifact %s: %v", path, err)
+		}
+		if strings.Contains(string(data), secret) {
+			t.Fatalf("state artifact %s persisted secret", path)
+		}
+	}
 }
 
 func waitForTerminal(t *testing.T, manager *Manager, jobID domain.JobID) jobstore.Snapshot {

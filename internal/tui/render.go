@@ -251,6 +251,12 @@ func renderJobsView(surface Surface, jobs []transfer.JobView, cursor, width, hei
 		if view.Snapshot.TerminalSummary != nil {
 			summary += " — " + *view.Snapshot.TerminalSummary
 		}
+		if view.RecentError != "" {
+			summary += " — error: " + view.RecentError
+		}
+		if view.RecoveryResult != "" {
+			summary += " — recovered: " + view.RecoveryResult
+		}
 		surface.PutClipped(x+1, row+2, drawerWidth-2, summary, StyleStatus)
 	}
 }
