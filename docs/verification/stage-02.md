@@ -26,7 +26,7 @@ No user change was overwritten. Existing ignored IDE and validation artifacts re
 
 ## Zero-gate dependency intake
 
-**Status**: Local Complete; Hosted Native Pending
+**Status**: Complete
 
 Admitted exact pins:
 
@@ -47,7 +47,7 @@ Evidence before any schema or production database open path:
 - [x] Go 1.26.5 and exact Go 1.25.12 compile/test/tidy/verify gates.
 - [x] darwin/linux × amd64/arm64 `CGO_ENABLED=0` package and product builds.
 - [x] Native macOS APFS open/transaction/WAL/online-backup smoke on Darwin arm64 with 58 GiB free.
-- [ ] Native Linux open/transaction/WAL/online-backup smoke on the exact pushed SHA.
+- [x] Native Linux open/transaction/WAL/online-backup smoke on exact commit `6959a5ea58aa4a9f6601a10bd91da7164ec891ad`: Ubuntu 22.04 and 24.04 native jobs passed in [Hosted run 29470643854](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29470643854).
 - [x] modernc v1.53.0 `NewBackup`, URI pragma ordering and narrow API source-contract check.
 
 Local command ledger:
@@ -71,8 +71,8 @@ Local command ledger:
 
 - **Status**: In Progress
 - **Goal**: ADR-0008 state store, Version 1 schema, Job/step state machine, transactional events and deterministic restart recovery.
-- **Current action**: push the isolated intake commit and close the native Linux Hosted gate before schema work.
-- **Last green command**: external-output `make ci` on Go 1.26.5; exact Go 1.25.12 `make check` also passed.
+- **Current action**: freeze the canonical Version 1 schema and implement the migration runner.
+- **Last green command**: exact-intake Hosted run 29470643854 native Ubuntu 22.04/24.04 jobs; both passed `make test` and `make test-race`.
 
 ### M2.2 — Single-file copy, conflict and commit
 
