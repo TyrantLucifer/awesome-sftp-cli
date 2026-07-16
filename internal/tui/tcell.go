@@ -96,6 +96,14 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 				return KeyPress{Key: KeyPath}, true
 			case "c":
 				return KeyPress{Key: KeyEndpoint}, true
+			case "y":
+				return KeyPress{Key: KeyCopy}, true
+			case "d":
+				return KeyPress{Key: KeyCut}, true
+			case "p":
+				return KeyPress{Key: KeyPaste}, true
+			case "J":
+				return KeyPress{Key: KeyJobs}, true
 			default:
 				return TextInput{Text: event.Str()}, true
 			}

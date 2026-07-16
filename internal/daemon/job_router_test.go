@@ -41,7 +41,7 @@ func TestProviderSessionExposesOnlyHighLevelTransferAndJobRoutes(t *testing.T) {
 		t.Fatalf("created = %#v, intent = %#v", created, service.created)
 	}
 	listed := handlePayload[JobListResponse](t, session, JobList, JobListRequest{Limit: 20})
-	if len(listed.Jobs) != 1 || listed.Jobs[0].JobID != service.snapshot.JobID {
+	if len(listed.Jobs) != 1 || listed.Jobs[0].Snapshot.JobID != service.snapshot.JobID {
 		t.Fatalf("listed = %#v", listed)
 	}
 	events := handlePayload[JobEventsResponse](t, session, JobEvents, JobEventsRequest{JobID: service.snapshot.JobID, AfterSequence: 1, Limit: 20})
@@ -81,8 +81,8 @@ func (service *recordingTransferService) CreateCopy(_ context.Context, intent tr
 	return service.snapshot, nil
 }
 
-func (service *recordingTransferService) Jobs(context.Context, int) ([]jobstore.Snapshot, error) {
-	return []jobstore.Snapshot{service.snapshot}, nil
+func (service *recordingTransferService) JobViews(context.Context, int) ([]transfer.JobView, error) {
+	return []transfer.JobView{{Snapshot: service.snapshot}}, nil
 }
 
 func (service *recordingTransferService) Events(context.Context, domain.JobID, int64, int) ([]jobstore.EventRecord, error) {

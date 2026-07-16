@@ -24,6 +24,18 @@ type ManagerConfig struct {
 	MaxQueued     int
 }
 
+type JobView struct {
+	Snapshot      jobstore.Snapshot `json:"snapshot"`
+	Kind          OperationKind     `json:"kind"`
+	Source        domain.Location   `json:"source"`
+	Final         domain.Location   `json:"final"`
+	Phase         Phase             `json:"phase,omitempty"`
+	Bytes         uint64            `json:"bytes"`
+	BytesTotal    *uint64           `json:"bytes_total,omitempty"`
+	Items         uint64            `json:"items"`
+	WaitingReason string            `json:"waiting_reason,omitempty"`
+}
+
 // Manager owns transfer execution independently from any client connection.
 type Manager struct {
 	store     *jobstore.Store
@@ -239,6 +251,43 @@ func (manager *Manager) Jobs(ctx context.Context, limit int) ([]jobstore.Snapsho
 	return manager.store.List(ctx, limit)
 }
 
+func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, error) {
+	snapshots, err := manager.store.List(ctx, limit)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]JobView, 0, len(snapshots))
+	for _, snapshot := range snapshots {
+		record, err := manager.store.GetPlan(ctx, snapshot.JobID)
+		if err != nil {
+			return nil, err
+		}
+		plan, err := DecodePlan(record, snapshot.JobID)
+		if err != nil {
+			return nil, err
+		}
+		view := JobView{
+			Snapshot: snapshot, Kind: plan.Kind, Source: plan.Source.Location, Final: plan.Final,
+			BytesTotal: plan.Source.Fingerprint.Size, Items: 1,
+		}
+		checkpoint, err := (JobJournal{Store: manager.store, StepIndex: 0}).Load(ctx, snapshot.JobID)
+		if err != nil {
+			return nil, err
+		}
+		if checkpoint != nil {
+			view.Phase = checkpoint.Phase
+			view.Bytes = checkpoint.Offset
+			view.Final = checkpoint.Final
+		}
+		switch snapshot.State {
+		case job.StateAwaitingConfirmation, job.StateWaitingAuth, job.StateWaitingConflict, job.StateRetryWait, job.StatePaused:
+			view.WaitingReason = string(snapshot.State)
+		}
+		views = append(views, view)
+	}
+	return views, nil
+}
+
 func (manager *Manager) waitUntil(ctx context.Context, jobID domain.JobID, done func(job.State) bool) (jobstore.Snapshot, error) {
 	for {
 		snapshot, err := manager.store.Get(ctx, jobID)
@@ -359,7 +408,15 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	default:
 		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", map[string]any{"sha256": result.SHA256})
 		if transitionErr == nil {
-			_, _ = manager.transitionTerminal(verifying, job.StateCompleted, "job_completed", string(result.Outcome), map[string]any{
+			terminalState := job.StateCompleted
+			eventKind := "job_completed"
+			summary := string(result.Outcome)
+			if plan.Kind == OperationMove {
+				terminalState = job.StateCompletedWithSourceRetained
+				eventKind = "job_completed_source_retained"
+				summary = "destination completed and source retained; delete step not executed"
+			}
+			_, _ = manager.transitionTerminal(verifying, terminalState, eventKind, summary, map[string]any{
 				"bytes": result.Bytes, "final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome,
 			})
 		}

@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 type CellStyle uint8
@@ -208,7 +209,53 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeEndpoint {
 		renderEndpointModal(surface, string(model.endpointInput), width, height)
 	}
+	if model.ShowJobs {
+		renderJobsView(surface, model.Jobs, width, height)
+	}
 	return stats
+}
+
+func renderJobsView(surface Surface, jobs []transfer.JobView, width, height int) {
+	drawerWidth := min(width-4, 88)
+	if drawerWidth < 30 || height < 7 {
+		return
+	}
+	drawerHeight := min(height-2, max(5, 2+len(jobs)*3))
+	x := (width - drawerWidth) / 2
+	y := (height - drawerHeight) / 2
+	for row := 0; row < drawerHeight; row++ {
+		surface.PutClipped(x, y+row, drawerWidth, strings.Repeat(" ", drawerWidth), StyleStatus)
+	}
+	surface.PutClipped(x+1, y, drawerWidth-2, "JOBS — J close", StyleStatus)
+	if len(jobs) == 0 {
+		surface.PutClipped(x+1, y+2, drawerWidth-2, "No durable Jobs", StyleStatus)
+		return
+	}
+	rowsAvailable := drawerHeight - 2
+	visibleJobs := min(len(jobs), rowsAvailable/3)
+	for index := 0; index < visibleJobs; index++ {
+		view := jobs[index]
+		state := string(view.Snapshot.State)
+		if view.WaitingReason != "" {
+			state += " (" + view.WaitingReason + ")"
+		}
+		line := fmt.Sprintf("%s  %s  %d item(s)  %s", state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal))
+		row := y + 1 + index*3
+		surface.PutClipped(x+1, row, drawerWidth-2, line, StyleStatus)
+		surface.PutClipped(x+1, row+1, drawerWidth-2, fmt.Sprintf("%s → %s", view.Source.Path, view.Final.Path), StyleStatus)
+		summary := string(view.Snapshot.JobID)
+		if view.Snapshot.TerminalSummary != nil {
+			summary += " — " + *view.Snapshot.TerminalSummary
+		}
+		surface.PutClipped(x+1, row+2, drawerWidth-2, summary, StyleStatus)
+	}
+}
+
+func formatJobBytes(completed uint64, total *uint64) string {
+	if total == nil {
+		return fmt.Sprintf("%d B", completed)
+	}
+	return fmt.Sprintf("%d/%d B", completed, *total)
 }
 
 func renderWorkspaceModal(surface Surface, name string, width, height int) {

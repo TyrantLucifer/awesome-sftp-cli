@@ -52,6 +52,14 @@ func TestManagerContinuesCreatedJobAfterClientContextCancellation(t *testing.T) 
 		t.Fatalf("detached Job state = %q, want completed", completed.State)
 	}
 	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("client-independent"))
+	views, err := manager.JobViews(context.Background(), 20)
+	if err != nil {
+		t.Fatalf("JobViews(): %v", err)
+	}
+	if len(views) != 1 || views[0].Snapshot.JobID != created.JobID || views[0].Source != fixture.plan.Source.Location ||
+		views[0].Final.Path != "/final" || views[0].Phase != PhaseCommitted || views[0].Bytes != uint64(len("client-independent")) {
+		t.Fatalf("JobViews() = %#v", views)
+	}
 }
 
 func TestManagerReloadsQueuedFrozenPlanFromDurableStore(t *testing.T) {
@@ -207,6 +215,37 @@ func TestManagerCancelRetainsPartAndReplaysOrderedEvents(t *testing.T) {
 	replayed, err := manager.Events(context.Background(), created.JobID, events[len(events)-2].Sequence, 20)
 	if err != nil || len(replayed) != 1 || replayed[0].EventID != events[len(events)-1].EventID {
 		t.Fatalf("replayed events = (%#v, %v)", replayed, err)
+	}
+}
+
+func TestManagerCutCompletesWithSourceRetainedUntilDeleteStepExists(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("retain-source"), ConflictAsk)
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(1_800_000_500, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewManager(): %v", err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatalf("Start(): %v", err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCut, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatalf("CreateCopy(): %v", err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompletedWithSourceRetained {
+		t.Fatalf("cut Job state = %q, want completed_with_source_retained", completed.State)
+	}
+	if _, err := fixture.source.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Source.Location}); err != nil {
+		t.Fatalf("cut source was not retained: %v", err)
 	}
 }
 

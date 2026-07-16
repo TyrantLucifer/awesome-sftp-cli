@@ -7,6 +7,9 @@ import (
 	"unicode/utf8"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 func TestVisibleWindowUsesBoundedOverscan(t *testing.T) {
@@ -50,6 +53,24 @@ func TestRendererSnapshotShowsTwoPanesFocusReadOnlyAndPartialState(t *testing.T)
 	for _, want := range []string{"[left] /left", " right  /right", "> dir", "READ-ONLY", "partial"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("snapshot missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRendererShowsMinimalDurableJobsView(t *testing.T) {
+	model := testModel(t)
+	model.ShowJobs = true
+	model.Jobs = []transfer.JobView{{
+		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth},
+		Source:   domain.Location{Path: "/source"}, Final: domain.Location{Path: "/final"},
+		Phase: transfer.PhaseStreaming, Bytes: 42, Items: 1, WaitingReason: "waiting_auth",
+	}}
+	surface := newMemorySurface(100, 12)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"JOBS", "waiting_auth", "streaming", "42 B", "/source", "/final"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Jobs view missing %q:\n%s", want, got)
 		}
 	}
 }

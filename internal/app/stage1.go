@@ -545,6 +545,54 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			case <-runCtx.Done():
 			}
 			return
+		case tui.IntentTransferCapture:
+			activeClient := client
+			go func() {
+				var response daemon.JobCaptureResponse
+				captureErr := activeClient.Call(runCtx, daemon.JobCapture, daemon.JobCaptureRequest{Location: ipc.EncodeLocation(intent.Location)}, &response)
+				result := tui.ClipboardCaptured{Clipboard: intent.Clipboard, Reference: response.Reference}
+				if captureErr != nil {
+					result.Message = "capture failed: " + clientErrorMessage(captureErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentCreateCopyJob:
+			activeClient := client
+			go func() {
+				var response daemon.JobSnapshotResponse
+				createErr := activeClient.Call(runCtx, daemon.JobCreateCopy, daemon.JobCreateCopyRequest{Intent: transfer.Intent{
+					Clipboard: intent.Clipboard, Source: intent.Source, DestinationDirectory: intent.Location,
+					Name: intent.Name, ConflictPolicy: transfer.ConflictAsk,
+				}}, &response)
+				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
+				if createErr != nil {
+					result.Message = "create Job failed: " + clientErrorMessage(createErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
+		case tui.IntentJobList:
+			activeClient := client
+			go func() {
+				var response daemon.JobListResponse
+				listErr := activeClient.Call(runCtx, daemon.JobList, daemon.JobListRequest{Limit: 100}, &response)
+				result := tui.JobsLoaded{Jobs: response.Jobs}
+				if listErr != nil {
+					result.Message = "list Jobs failed: " + clientErrorMessage(listErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
 		case tui.IntentPreview:
 			if previewCancel != nil {
 				previewCancel()

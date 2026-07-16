@@ -6,6 +6,8 @@ import (
 	"strings"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 type PaneID uint8
@@ -353,19 +355,28 @@ func (p PreviewState) DisplayText() string {
 }
 
 type Model struct {
-	Panes   [2]PaneState
-	Active  PaneID
-	Mode    Mode
-	Count   int
-	Preview PreviewState
-	Auth    AuthState
-	Notice  string
+	Panes     [2]PaneState
+	Active    PaneID
+	Mode      Mode
+	Count     int
+	Preview   PreviewState
+	Auth      AuthState
+	Clipboard ClipboardState
+	Jobs      []transfer.JobView
+	ShowJobs  bool
+	Notice    string
 
 	workspaceName []rune
 	pathInput     []rune
 	endpointInput []rune
 	Width         int
 	Height        int
+}
+
+type ClipboardState struct {
+	Kind      transfer.ClipboardKind
+	Reference transfer.FileRef
+	Ready     bool
 }
 
 func NewModel(left, right PaneState) Model {
@@ -392,6 +403,9 @@ const (
 	IntentWorkspaceSave   IntentKind = "workspace_save"
 	IntentConnectEndpoint IntentKind = "connect_endpoint"
 	IntentReleaseEndpoint IntentKind = "release_endpoint"
+	IntentTransferCapture IntentKind = "transfer_capture"
+	IntentCreateCopyJob   IntentKind = "create_copy_job"
+	IntentJobList         IntentKind = "job_list"
 )
 
 const PreviewByteLimit = 64 * 1024
@@ -411,6 +425,8 @@ type Intent struct {
 	CapabilityGeneration uint64
 	Capabilities         domain.CapabilitySnapshot
 	CommitEndpoint       bool
+	Clipboard            transfer.ClipboardKind
+	Source               transfer.FileRef
 }
 
 type Key string
@@ -434,6 +450,10 @@ const (
 	KeyRefresh      Key = "refresh"
 	KeyPath         Key = "path"
 	KeyEndpoint     Key = "endpoint"
+	KeyCopy         Key = "copy"
+	KeyCut          Key = "cut"
+	KeyPaste        Key = "paste"
+	KeyJobs         Key = "jobs"
 )
 
 type Action interface{ isAction() }
@@ -507,6 +527,20 @@ type WorkspaceSaveResult struct {
 	Name    string
 	Message string
 }
+type ClipboardCaptured struct {
+	Clipboard transfer.ClipboardKind
+	Reference transfer.FileRef
+	Message   string
+}
+type JobCreated struct {
+	JobID   domain.JobID
+	State   job.State
+	Message string
+}
+type JobsLoaded struct {
+	Jobs    []transfer.JobView
+	Message string
+}
 
 func (KeyPress) isAction()              {}
 func (CountDigit) isAction()            {}
@@ -522,6 +556,9 @@ func (AuthChallengeReceived) isAction() {}
 func (PaneConnected) isAction()         {}
 func (PaneConnectionChanged) isAction() {}
 func (WorkspaceSaveResult) isAction()   {}
+func (ClipboardCaptured) isAction()     {}
+func (JobCreated) isAction()            {}
+func (JobsLoaded) isAction()            {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

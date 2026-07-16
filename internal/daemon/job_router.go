@@ -23,7 +23,7 @@ const (
 type TransferService interface {
 	Capture(context.Context, domain.Location) (transfer.FileRef, error)
 	CreateCopy(context.Context, transfer.Intent) (jobstore.Snapshot, error)
-	Jobs(context.Context, int) ([]jobstore.Snapshot, error)
+	JobViews(context.Context, int) ([]transfer.JobView, error)
 	Events(context.Context, domain.JobID, int64, int) ([]jobstore.EventRecord, error)
 	Pause(context.Context, domain.JobID) (jobstore.Snapshot, error)
 	Resume(context.Context, domain.JobID) (jobstore.Snapshot, error)
@@ -51,7 +51,7 @@ type JobListRequest struct {
 }
 
 type JobListResponse struct {
-	Jobs []jobstore.Snapshot `json:"jobs"`
+	Jobs []transfer.JobView `json:"jobs"`
 }
 
 type JobEventsRequest struct {
@@ -96,7 +96,7 @@ func (session *providerSession) handleJob(ctx context.Context, name string, payl
 		if err := decodePayload(payload, &request); err != nil {
 			return nil, invalidArgument("decode Job list request", err)
 		}
-		jobs, err := session.transfer.Jobs(ctx, request.Limit)
+		jobs, err := session.transfer.JobViews(ctx, request.Limit)
 		return JobListResponse{Jobs: jobs}, err
 	case JobEvents:
 		var request JobEventsRequest

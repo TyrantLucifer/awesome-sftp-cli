@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 const (
@@ -81,6 +84,61 @@ func TestReducerEmitsOnlyReadOnlyNavigationIntents(t *testing.T) {
 	intent := assertSingleIntent(t, intents, IntentPreview, "/left/file.txt")
 	if intent.Limit != PreviewByteLimit {
 		t.Fatalf("preview limit = %d, want %d", intent.Limit, PreviewByteLimit)
+	}
+}
+
+func TestReducerCapturesFrozenCopyOrCutAndPastesIntoCurrentPane(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		key       Key
+		clipboard transfer.ClipboardKind
+	}{
+		{name: "copy", key: KeyCopy, clipboard: transfer.ClipboardCopy},
+		{name: "cut", key: KeyCut, clipboard: transfer.ClipboardCut},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := testModel(t)
+			model, _ = Reduce(model, KeyPress{Key: KeyDown})
+			model, intents := Reduce(model, KeyPress{Key: test.key})
+			capture := assertSingleIntent(t, intents, IntentTransferCapture, "/left/file.txt")
+			if capture.Clipboard != test.clipboard {
+				t.Fatalf("capture clipboard = %q, want %q", capture.Clipboard, test.clipboard)
+			}
+			reference := transfer.FileRef{
+				Location: capture.Location, Kind: domain.EntryFile,
+				CapabilityRevision: domain.CapabilityRevision{SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Generation: 7},
+			}
+			model, _ = Reduce(model, ClipboardCaptured{Clipboard: test.clipboard, Reference: reference})
+			model, _ = Reduce(model, KeyPress{Key: KeyTab})
+			_, intents = Reduce(model, KeyPress{Key: KeyPaste})
+			if len(intents) != 1 {
+				t.Fatalf("paste intents = %#v, want one", intents)
+			}
+			paste := intents[0]
+			if paste.Kind != IntentCreateCopyJob || paste.Pane != Right || paste.Location.Path != "/right" {
+				t.Fatalf("paste route = %#v", paste)
+			}
+			if paste.Clipboard != test.clipboard || paste.Source.Location != reference.Location || paste.Name != "file.txt" {
+				t.Fatalf("paste intent = %#v", paste)
+			}
+		})
+	}
+}
+
+func TestReducerOpensMinimalDurableJobsView(t *testing.T) {
+	model := testModel(t)
+	model, intents := Reduce(model, KeyPress{Key: KeyJobs})
+	if !model.ShowJobs || len(intents) != 1 || intents[0].Kind != IntentJobList {
+		t.Fatalf("open Jobs model=%#v intents=%#v", model, intents)
+	}
+	view := transfer.JobView{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth}, Phase: transfer.PhaseStreaming, Bytes: 42, Items: 1, WaitingReason: "waiting_auth"}
+	model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}})
+	if len(model.Jobs) != 1 || model.Jobs[0].Snapshot.JobID != view.Snapshot.JobID {
+		t.Fatalf("Jobs model = %#v", model.Jobs)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeyJobs})
+	if model.ShowJobs || len(intents) != 0 {
+		t.Fatalf("close Jobs model=%#v intents=%#v", model, intents)
 	}
 }
 

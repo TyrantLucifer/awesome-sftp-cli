@@ -7,6 +7,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 const navigationCountLimit = 1_000_000
@@ -289,6 +290,25 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			model.Notice = "workspace saved: " + action.Name
 		}
 		return model, nil
+	case ClipboardCaptured:
+		if action.Message != "" {
+			model.Notice = action.Message
+			return model, nil
+		}
+		model.Clipboard = ClipboardState{Kind: action.Clipboard, Reference: action.Reference, Ready: true}
+		model.Notice = string(action.Clipboard) + " source captured: " + string(action.Reference.Location.Path)
+		return model, nil
+	case JobCreated:
+		if action.Message != "" {
+			model.Notice = action.Message
+		} else {
+			model.Notice = "Job queued: " + string(action.JobID) + " (" + string(action.State) + ")"
+		}
+		return model, nil
+	case JobsLoaded:
+		model.Jobs = append([]transfer.JobView(nil), action.Jobs...)
+		model.Notice = action.Message
+		return model, nil
 	default:
 		return model, nil
 	}
@@ -405,6 +425,13 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		model.Preview = PreviewState{}
 		return model, []Intent{{Kind: IntentPreviewCancel}}
 	}
+	if key == KeyJobs {
+		model.ShowJobs = !model.ShowJobs
+		if model.ShowJobs {
+			return model, []Intent{{Kind: IntentJobList}}
+		}
+		return model, nil
+	}
 	if key == KeyTab {
 		if model.Active == Left {
 			model.Active = Right
@@ -436,6 +463,27 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	}
 
 	switch key {
+	case KeyCopy, KeyCut:
+		entry := pane.visibleEntry(pane.Cursor)
+		if entry.Kind != domain.EntryFile || entry.Location.Path == "" {
+			model.Notice = "Stage 2 capture requires one regular file"
+			return model, nil
+		}
+		clipboard := transfer.ClipboardCopy
+		if key == KeyCut {
+			clipboard = transfer.ClipboardCut
+		}
+		return model, []Intent{{Kind: IntentTransferCapture, Pane: model.Active, Location: entry.Location, Clipboard: clipboard}}
+	case KeyPaste:
+		if !model.Clipboard.Ready {
+			model.Notice = "copy/cut clipboard is empty"
+			return model, nil
+		}
+		return model, []Intent{{
+			Kind: IntentCreateCopyJob, Pane: model.Active, Location: pane.Location,
+			Clipboard: model.Clipboard.Kind, Source: model.Clipboard.Reference,
+			Name: path.Base(string(model.Clipboard.Reference.Location.Path)),
+		}}
 	case KeySave:
 		model.Mode = ModeWorkspace
 		model.workspaceName = nil
