@@ -268,6 +268,22 @@ func TestExplicitOverwriteCanRenewADeletedDestinationAsExpectedAbsent(t *testing
 	}
 }
 
+func TestPersistentSessionRoundTripRestoresDecisionInputsAndOptimisticVersion(t *testing.T) {
+	session := observeLocalOnly(t)
+	persisted := session.Persistent()
+	restored, err := RestorePersistent(persisted)
+	if err != nil {
+		t.Fatalf("RestorePersistent(): %v", err)
+	}
+	if restored.ID() != session.ID() || restored.Purpose() != session.Purpose() || restored.Version() != session.Version() || restored.State() != session.State() ||
+		restored.CurrentLocalSHA256() != session.CurrentLocalSHA256() || !equalPrecondition(restored.Baseline().ExpectedRemote, session.Baseline().ExpectedRemote) {
+		t.Fatalf("restored session = %#v, want %#v", restored.Persistent(), persisted)
+	}
+	if _, _, err := restored.Decide(restored.Version(), Decision{Kind: DecisionUpload}); err != nil {
+		t.Fatalf("restored session cannot make original decision: %v", err)
+	}
+}
+
 func TestOverwriteRejectsUnknownRenewalAndWrongState(t *testing.T) {
 	localOnly := observeLocalOnly(t)
 	if _, _, err := localOnly.Decide(localOnly.Version(), Decision{Kind: DecisionOverwrite, ObservedRemote: RemoteObservation{Status: RemoteUnknown}}); err == nil {

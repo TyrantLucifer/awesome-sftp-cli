@@ -369,6 +369,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
 	current.ChecksumHex = hex.EncodeToString(hasher.Sum(nil))
+	if plan.Version == 2 && current.ChecksumHex != plan.ExpectedSourceSHA256 {
+		return Result{Final: plan.Final, Bytes: current.Offset, SHA256: current.ChecksumHex, PartRetained: true}, planError(domain.CodeConflict, "verify_sync_back_source", plan.Source.Location, "materialization content differs from frozen edit digest", domain.RetryAfterConflict)
+	}
 	current.Phase = PhaseTransferred
 	if err := worker.journal.Save(ctx, current); err != nil {
 		return Result{}, err
@@ -422,6 +425,14 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	if finalErr != nil && !domain.IsCode(finalErr, domain.CodeNotFound) {
 		return Result{}, finalErr
 	}
+	if plan.Version == 2 && !destinationPreconditionMatches(plan.ExpectedDestination, finalExists, finalEntry) {
+		checkpoint.Phase = PhaseWaitingConflict
+		checkpoint.Outcome = OutcomeWaitingConflict
+		if err := worker.journal.Save(ctx, checkpoint); err != nil {
+			return Result{}, err
+		}
+		return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
+	}
 	if finalExists {
 		switch plan.ConflictPolicy {
 		case ConflictAsk:
@@ -461,7 +472,12 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 		ExpectedSource: &partEntry.Fingerprint,
 	}
 	if renameRequest.Replace {
-		renameRequest.ExpectedDestination = &finalEntry.Fingerprint
+		if plan.Version == 2 {
+			expected := cloneFingerprint(plan.ExpectedDestination.Fingerprint)
+			renameRequest.ExpectedDestination = &expected
+		} else {
+			renameRequest.ExpectedDestination = &finalEntry.Fingerprint
+		}
 	}
 	_, renameErr := destination.Rename(ctx, renameRequest)
 	if renameErr != nil {
@@ -491,10 +507,19 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 func validateExecution(plan Plan) error {
 	validSourceKind := plan.Source.Kind == domain.EntryFile || plan.Source.Kind == domain.EntryDirectory ||
 		(plan.Kind == OperationDelete && plan.Source.Kind == domain.EntrySymlink)
-	if plan.Version != 1 || plan.JobID == "" || !validSourceKind ||
+	if (plan.Version != 1 && plan.Version != 2) || plan.JobID == "" || !validSourceKind ||
 		plan.SourceEndpoint.ID != plan.Source.Location.EndpointID || plan.DestinationEndpoint.ID != plan.Part.EndpointID ||
 		plan.Part.EndpointID == "" || plan.Final.EndpointID != plan.Part.EndpointID || plan.Part.Path == plan.Final.Path {
 		return errors.New("execute transfer: invalid frozen plan")
+	}
+	if plan.Version == 1 {
+		if plan.Origin != "" || plan.EditSessionID != "" || plan.ExpectedDestination != nil || plan.OriginalDestinationPrecondition != nil || plan.ExpectedSourceSHA256 != "" {
+			return errors.New("execute transfer: Plan Version 1 contains sync-back fields")
+		}
+	} else if plan.Origin != OriginSyncBack || validateLowerHexIdentity(plan.EditSessionID, 32) != nil ||
+		plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile || plan.ConflictPolicy != ConflictOverwrite ||
+		validateLowerHexIdentity(plan.ExpectedSourceSHA256, 64) != nil || !validDestinationPrecondition(plan.ExpectedDestination) || !validDestinationPrecondition(plan.OriginalDestinationPrecondition) {
+		return errors.New("execute transfer: invalid sync-back Plan Version 2")
 	}
 	if plan.BufferBytes == 0 || plan.BufferBytes > 4*1024*1024 {
 		return errors.New("execute transfer: buffer budget is outside 1..4MiB")
@@ -531,6 +556,42 @@ func validateExecution(plan Plan) error {
 		}
 	} else if plan.Kind != OperationCopy && plan.Kind != OperationMove {
 		return errors.New("execute transfer: operation kind is invalid")
+	}
+	return nil
+}
+
+func destinationPreconditionMatches(expected *DestinationPrecondition, exists bool, entry domain.Entry) bool {
+	if expected == nil {
+		return false
+	}
+	if expected.Presence == DestinationAbsent {
+		return !exists
+	}
+	return exists && expected.Presence == DestinationPresent && entry.Kind == expected.Kind && reflect.DeepEqual(entry.Fingerprint, expected.Fingerprint)
+}
+
+func validDestinationPrecondition(expected *DestinationPrecondition) bool {
+	if expected == nil {
+		return false
+	}
+	switch expected.Presence {
+	case DestinationAbsent:
+		return expected.Kind == "" && expected.Fingerprint.Strength() == domain.FingerprintWeak
+	case DestinationPresent:
+		return expected.Kind == domain.EntryFile && expected.Fingerprint.Strength() != domain.FingerprintWeak
+	default:
+		return false
+	}
+}
+
+func validateLowerHexIdentity(value string, length int) error {
+	if len(value) != length {
+		return errors.New("invalid lowercase hex identity")
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' && character < 'a' || character > 'f' {
+			return errors.New("invalid lowercase hex identity")
+		}
 	}
 	return nil
 }

@@ -2,7 +2,9 @@ package transfer
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -356,6 +358,65 @@ func TestWorkerConflictPoliciesAreRecheckedAtCommit(t *testing.T) {
 			}
 			if !test.wantPart && !domain.IsCode(partErr, domain.CodeNotFound) {
 				t.Fatalf("part remains: %v", partErr)
+			}
+		})
+	}
+}
+
+func TestSyncBackPlanUsesFrozenDestinationPreconditionAndRetainsPartOnConflict(t *testing.T) {
+	tests := []struct {
+		name     string
+		baseline bool
+	}{
+		{name: "expected present changed", baseline: true},
+		{name: "expected absent appeared", baseline: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkerFixture(t, []byte("edited payload"), ConflictOverwrite)
+			fixture.plan.Version = 2
+			fixture.plan.Origin = OriginSyncBack
+			fixture.plan.EditSessionID = strings.Repeat("4", 32)
+			fixture.plan.ExpectedSourceSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte("edited payload")))
+			fixture.plan.ExpectedDestination = &DestinationPrecondition{Presence: DestinationAbsent}
+			fixture.plan.OriginalDestinationPrecondition = &DestinationPrecondition{Presence: DestinationAbsent}
+			if test.baseline {
+				if err := os.WriteFile(filepath.Join(fixture.destinationRoot, "final"), []byte("remote baseline"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				entry, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final})
+				if err != nil {
+					t.Fatal(err)
+				}
+				fixture.plan.ExpectedDestination = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint}
+				fixture.plan.OriginalDestinationPrecondition = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint}
+			}
+			journal := newMemoryJournal()
+			journal.afterSave = func(checkpoint Checkpoint) {
+				if checkpoint.Phase != PhaseVerified {
+					return
+				}
+				if test.baseline {
+					if err := os.WriteFile(filepath.Join(fixture.destinationRoot, "final"), []byte("remote racer"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				} else {
+					if err := os.WriteFile(filepath.Join(fixture.destinationRoot, "final"), []byte("remote racer"), 0o600); err != nil {
+						t.Fatal(err)
+					}
+				}
+				journal.afterSave = nil
+			}
+			result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+			if err != nil {
+				t.Fatalf("Execute(sync-back): %v", err)
+			}
+			if result.Outcome != OutcomeWaitingConflict || !result.PartRetained {
+				t.Fatalf("sync-back result = %#v", result)
+			}
+			assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("remote racer"))
+			if _, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Part}); err != nil {
+				t.Fatalf("conflicting sync-back removed part: %v", err)
 			}
 		})
 	}

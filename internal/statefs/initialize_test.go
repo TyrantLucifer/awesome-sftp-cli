@@ -16,23 +16,23 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
 )
 
-func TestResolveCompiledStateDefaultsToFrozenVersion2Head(t *testing.T) {
+func TestResolveCompiledStateDefaultsToFrozenVersion3Head(t *testing.T) {
 	t.Parallel()
 
 	migrations, contracts, err := resolveCompiledState(nil, nil)
 	if err != nil {
 		t.Fatalf("resolveCompiledState(default): %v", err)
 	}
-	wantMigrations := []migration.Migration{migration.Version1(), migration.Version2()}
+	wantMigrations := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
 	if !reflect.DeepEqual(migrations, wantMigrations) {
-		t.Fatalf("default migrations = %#v, want Version 1 and Version 2", migrations)
+		t.Fatalf("default migrations = %#v, want Version 1 through Version 3", migrations)
 	}
-	if len(contracts) != 2 || !bytes.Equal(contracts[1], migration.Version1SchemaContract()) || !bytes.Equal(contracts[2], migration.Version2SchemaContract()) {
-		t.Fatalf("default schema contracts do not exactly match the two frozen contracts")
+	if len(contracts) != 3 || !bytes.Equal(contracts[1], migration.Version1SchemaContract()) || !bytes.Equal(contracts[2], migration.Version2SchemaContract()) || !bytes.Equal(contracts[3], migration.Version3SchemaContract()) {
+		t.Fatalf("default schema contracts do not exactly match the three frozen contracts")
 	}
 }
 
-func TestInitializePristineStateMigratesToVersion2WithRandomAttemptAndOneBackup(t *testing.T) {
+func TestInitializePristineStateMigratesToVersion3WithRandomAttemptAndOneBackup(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -48,17 +48,17 @@ func TestInitializePristineStateMigratesToVersion2WithRandomAttemptAndOneBackup(
 	if err != nil {
 		t.Fatalf("Initialize(pristine default): %v", err)
 	}
-	if !report.Bootstrapped || report.SchemaHead != 2 {
-		t.Fatalf("initialize report = %#v, want bootstrapped Version 2", report)
+	if !report.Bootstrapped || report.SchemaHead != 3 {
+		t.Fatalf("initialize report = %#v, want bootstrapped Version 3", report)
 	}
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		t.Fatalf("reserve Version 2 connection: %v", err)
 	}
-	migrations := []migration.Migration{migration.Version1(), migration.Version2()}
-	contracts := map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract()}
-	if err := migration.ValidateHead(ctx, connection, migrations, contracts, 2); err != nil {
-		t.Fatalf("validate default Version 2 head: %v", err)
+	migrations := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
+	contracts := map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract(), 3: migration.Version3SchemaContract()}
+	if err := migration.ValidateHead(ctx, connection, migrations, contracts, 3); err != nil {
+		t.Fatalf("validate default Version 3 head: %v", err)
 	}
 	var attemptID, backupBasename, journalMode string
 	if err := connection.QueryRowContext(ctx, "SELECT attempt_id, backup_basename FROM migration_backups WHERE status='verified'").Scan(&attemptID, &backupBasename); err != nil {
@@ -99,7 +99,7 @@ func TestInitializePristineStateMigratesToVersion2WithRandomAttemptAndOneBackup(
 	if err != nil {
 		t.Fatalf("Initialize(reopen Version 2): %v", err)
 	}
-	if reopenReport.Bootstrapped || reopenReport.SchemaHead != 2 {
+	if reopenReport.Bootstrapped || reopenReport.SchemaHead != 3 {
 		t.Fatalf("reopen report = %#v", reopenReport)
 	}
 	var backups int
@@ -115,6 +115,41 @@ func TestInitializePristineStateMigratesToVersion2WithRandomAttemptAndOneBackup(
 	}
 	if !os.SameFile(backupBefore, backupAfter) {
 		t.Fatal("reopen replaced the verified migration backup")
+	}
+}
+
+func TestInitializeUpgradesFrozenVersion2HeadToVersion3WithSeparateRollbackBackup(t *testing.T) {
+	ctx := context.Background()
+	root := privateTempDir(t)
+	path := filepath.Join(root, "amsftp.db")
+	v2 := initializeVersion2WithExplicitSet(t, ctx, root, path, time.Unix(1_150, 0), strings.Repeat("2", 32))
+	if err := v2.Close(); err != nil {
+		t.Fatal(err)
+	}
+	database, report, err := Initialize(ctx, InitializeConfig{
+		Root: root, DatabasePath: path, Random: strings.NewReader(strings.Repeat("v", probeRandomBytes)),
+		Now: time.Unix(1_151, 0), MigrationAttemptID: strings.Repeat("3", 32),
+	})
+	if err != nil {
+		t.Fatalf("upgrade Version 2 to Version 3: %v", err)
+	}
+	defer database.Close()
+	if report.SchemaHead != 3 {
+		t.Fatalf("upgrade report = %#v", report)
+	}
+	var backups int
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM migration_backups WHERE status='verified'").Scan(&backups); err != nil || backups != 2 {
+		t.Fatalf("verified rollback backups = %d, error=%v", backups, err)
+	}
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	if err := migration.ValidateHead(ctx, connection,
+		[]migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()},
+		map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract(), 3: migration.Version3SchemaContract()}, 3); err != nil {
+		t.Fatalf("validate upgraded Version 3 head: %v", err)
 	}
 }
 
@@ -200,6 +235,7 @@ func TestInitializePersistedNonterminalVersion2AttemptsRequireExplicitResumeAndR
 			_, _, err = Initialize(ctx, InitializeConfig{
 				Root: root, DatabasePath: path,
 				Random: strings.NewReader(strings.Repeat("p", probeRandomBytes)), Now: time.Unix(1_202, 0),
+				Migrations: migrations, SchemaContracts: contracts,
 			})
 			if !errors.Is(err, ErrExplicitMigrationResumeRequired) {
 				t.Fatalf("Initialize(implicit %s resume) error = %v", tt.name, err)
@@ -216,6 +252,7 @@ func TestInitializePersistedNonterminalVersion2AttemptsRequireExplicitResumeAndR
 				Root: root, DatabasePath: path,
 				Random: strings.NewReader(strings.Repeat("q", probeRandomBytes)), Now: time.Unix(1_203, 0),
 				ExplicitMigrationResume: true,
+				Migrations:              migrations, SchemaContracts: contracts,
 			})
 			if err != nil {
 				t.Fatalf("Initialize(explicit %s resume): %v", tt.name, err)

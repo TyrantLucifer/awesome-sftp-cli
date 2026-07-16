@@ -171,6 +171,20 @@ type Session struct {
 	frozen       bool
 }
 
+// PersistentSession is the bounded, body-free representation required to
+// reconstruct the edit state machine after daemon or client restart.
+type PersistentSession struct {
+	ID           SessionID         `json:"id"`
+	Purpose      Purpose           `json:"purpose"`
+	Version      Version           `json:"version"`
+	State        State             `json:"state"`
+	Baseline     Baseline          `json:"baseline"`
+	CurrentLocal SHA256            `json:"current_local_sha256,omitempty"`
+	LastRemote   RemoteObservation `json:"last_remote"`
+	Evaluation   Evaluation        `json:"evaluation"`
+	Frozen       bool              `json:"frozen"`
+}
+
 func ParseSessionID(value string) (SessionID, error) {
 	if err := validateLowerHex("edit session ID", value, sessionIDHexLength); err != nil {
 		return "", err
@@ -217,6 +231,46 @@ func (session Session) LastRemoteObservation() RemoteObservation {
 	return cloneRemoteObservation(session.lastRemote)
 }
 func (session Session) Evaluation() Evaluation { return session.evaluation }
+
+func (session Session) Persistent() PersistentSession {
+	return PersistentSession{
+		ID: session.id, Purpose: session.purpose, Version: session.version, State: session.state,
+		Baseline: cloneBaseline(session.baseline), CurrentLocal: session.currentLocal,
+		LastRemote: cloneRemoteObservation(session.lastRemote), Evaluation: session.evaluation, Frozen: session.frozen,
+	}
+}
+
+func RestorePersistent(value PersistentSession) (Session, error) {
+	base, err := NewSession(NewSessionRequest{ID: value.ID, Purpose: value.Purpose, Baseline: value.Baseline})
+	if err != nil {
+		return Session{}, fmt.Errorf("restore edit session: %w", err)
+	}
+	if value.Version < 1 || !knownState(value.State) {
+		return Session{}, fmt.Errorf("restore edit session: invalid version or state")
+	}
+	if value.CurrentLocal != "" {
+		if _, err := ParseSHA256(string(value.CurrentLocal)); err != nil {
+			return Session{}, fmt.Errorf("restore edit session: %w", err)
+		}
+	}
+	base.version = value.Version
+	base.state = value.State
+	base.currentLocal = value.CurrentLocal
+	base.lastRemote = cloneRemoteObservation(value.LastRemote)
+	base.evaluation = value.Evaluation
+	base.frozen = value.Frozen
+	return base, nil
+}
+
+func knownState(value State) bool {
+	switch value {
+	case StateReady, StateObserving, StateNoChanges, StateAwaitingUploadConfirmation, StateRemoteChanged,
+		StateConflict, StateRecoveryRequired, StateSyncBackFrozen, StateSkipped:
+		return true
+	default:
+		return false
+	}
+}
 
 func (session Session) BeginObservation(expectedVersion Version) (Session, error) {
 	if err := session.requireVersion(expectedVersion); err != nil {

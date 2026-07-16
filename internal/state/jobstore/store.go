@@ -17,15 +17,16 @@ import (
 )
 
 const (
-	maxEncodedRowBytes  = 256 * 1024
-	planWALBudget       = uint64(1024 * 1024)
-	jobWALBudget        = uint64(512 * 1024)
-	stepWALBudget       = uint64(1024 * 1024)
-	checkpointWALBudget = uint64(512 * 1024)
-	conflictWALBudget   = uint64(512 * 1024)
-	eventWALBudget      = uint64(512 * 1024)
-	dedupWALBudget      = uint64(512 * 1024)
-	maxJobSteps         = 5
+	maxEncodedRowBytes   = 256 * 1024
+	planWALBudget        = uint64(1024 * 1024)
+	jobWALBudget         = uint64(512 * 1024)
+	stepWALBudget        = uint64(1024 * 1024)
+	checkpointWALBudget  = uint64(512 * 1024)
+	conflictWALBudget    = uint64(512 * 1024)
+	eventWALBudget       = uint64(512 * 1024)
+	dedupWALBudget       = uint64(512 * 1024)
+	editBindingWALBudget = uint64(512 * 1024)
+	maxJobSteps          = 5
 )
 
 var (
@@ -62,6 +63,16 @@ type CreateRequest struct {
 	Now             time.Time
 	Steps           []Step
 	InitialConflict *ConflictSeed
+	EditSession     *EditSessionBinding
+}
+
+// EditSessionBinding moves a durable dirty edit session into uploading while
+// binding it to the newly-created Job in the same BEGIN IMMEDIATE transaction.
+type EditSessionBinding struct {
+	SessionID       string
+	ExpectedVersion int64
+	EventID         string
+	EventKind       string
 }
 
 type ConflictSeed struct {
@@ -227,7 +238,7 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 	}
 	var snapshot Snapshot
 	duplicate := false
-	err := store.immediate(ctx, createWALBudgets(len(request.Steps), request.InitialConflict != nil), func(connection *sql.Conn, writer *transactionWriter) error {
+	err := store.immediate(ctx, createWALBudgets(len(request.Steps), request.InitialConflict != nil, request.EditSession != nil), func(connection *sql.Conn, writer *transactionWriter) error {
 		var operation, response string
 		err := connection.QueryRowContext(ctx, "SELECT operation, response_json FROM request_dedup WHERE request_id=?", request.RequestID).Scan(&operation, &response)
 		if err == nil {
@@ -263,6 +274,33 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 		if conflict := request.InitialConflict; conflict != nil {
 			if _, err := writer.ExecContext(ctx, "INSERT INTO job_conflicts(job_id, conflict_index, step_index, class, state, source_json, destination_json, resolution, apply_scope, created_at_unix, resolved_at_unix) VALUES(?, 0, ?, ?, 'waiting', ?, ?, NULL, NULL, ?, NULL)", request.JobID, conflict.StepIndex, conflict.Class, conflict.SourceJSON, conflict.DestinationJSON, request.Now.Unix()); err != nil {
 				return fmt.Errorf("create Job conflict: %w", err)
+			}
+		}
+		if binding := request.EditSession; binding != nil {
+			var durableDetails int
+			if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM edit_session_details WHERE session_id=?", binding.SessionID).Scan(&durableDetails); err != nil {
+				return fmt.Errorf("bind edit session recovery details: %w", err)
+			}
+			if durableDetails != 1 {
+				return errors.New("bind edit session recovery details: session is not fully reconstructible")
+			}
+			result, err := writer.ExecContext(ctx, "UPDATE edit_sessions SET state='uploading',state_version=state_version+1,updated_at_unix=? WHERE session_id=? AND state_version=? AND local_state='dirty' AND state IN ('awaiting_decision','conflict')", request.Now.Unix(), binding.SessionID, binding.ExpectedVersion)
+			if err != nil {
+				return fmt.Errorf("bind edit session state: %w", err)
+			}
+			changed, err := result.RowsAffected()
+			if err != nil || changed != 1 {
+				return errors.New("bind edit session state: row not found or version changed")
+			}
+			var sequence int64
+			if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(sequence),0)+1 FROM edit_session_events WHERE session_id=?", binding.SessionID).Scan(&sequence); err != nil {
+				return fmt.Errorf("bind edit session event sequence: %w", err)
+			}
+			if _, err := writer.ExecContext(ctx, "INSERT INTO edit_session_events(session_id,sequence,event_id,kind,error_code,created_at_unix) VALUES(?,?,?,?,NULL,?)", binding.SessionID, sequence, binding.EventID, binding.EventKind, request.Now.Unix()); err != nil {
+				return fmt.Errorf("bind edit session event: %w", err)
+			}
+			if _, err := writer.ExecContext(ctx, "INSERT INTO edit_session_jobs(session_id,job_id,created_at_unix) VALUES(?,?,?)", binding.SessionID, request.JobID, request.Now.Unix()); err != nil {
+				return fmt.Errorf("bind edit session Job: %w", err)
 			}
 		}
 		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, 1, ?, 'job_created', '{}', ?)", request.JobID, request.EventID, request.Now.Unix()); err != nil {
@@ -953,14 +991,17 @@ func (store *Store) immediate(ctx context.Context, budgets []uint64, operation f
 	return nil
 }
 
-func createWALBudgets(stepCount int, conflict bool) []uint64 {
-	budgets := make([]uint64, 0, stepCount+5)
+func createWALBudgets(stepCount int, conflict, editBinding bool) []uint64 {
+	budgets := make([]uint64, 0, stepCount+8)
 	budgets = append(budgets, planWALBudget, jobWALBudget)
 	for range stepCount {
 		budgets = append(budgets, stepWALBudget)
 	}
 	if conflict {
 		budgets = append(budgets, conflictWALBudget)
+	}
+	if editBinding {
+		budgets = append(budgets, editBindingWALBudget, eventWALBudget, editBindingWALBudget)
 	}
 	return append(budgets, eventWALBudget, dedupWALBudget)
 }
@@ -984,7 +1025,7 @@ func validateCreate(request CreateRequest) error {
 	if request.Now.Unix() <= 0 || len(request.Steps) == 0 || len(request.Steps) > maxJobSteps {
 		return fmt.Errorf("create Job: invalid time or step count outside 1..%d", maxJobSteps)
 	}
-	if err := wal.ValidateTransactionBudgets(createWALBudgets(len(request.Steps), request.InitialConflict != nil)); err != nil {
+	if err := wal.ValidateTransactionBudgets(createWALBudgets(len(request.Steps), request.InitialConflict != nil, request.EditSession != nil)); err != nil {
 		return fmt.Errorf("create Job: %w", err)
 	}
 	values := []string{request.Kind, request.SourceJSON, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass}
@@ -1022,6 +1063,34 @@ func validateCreate(request CreateRequest) error {
 		}
 		if err := validateEncodedValues(conflict.Class, conflict.SourceJSON, conflict.DestinationJSON); err != nil {
 			return fmt.Errorf("create Job: %w", err)
+		}
+	}
+	if binding := request.EditSession; binding != nil {
+		if err := validateLowerHex(binding.SessionID, 32); err != nil || binding.ExpectedVersion < 1 || len(binding.EventID) < 1 || len(binding.EventID) > 128 || !eventKindPattern.MatchString(binding.EventKind) {
+			return errors.New("create Job: invalid edit session binding")
+		}
+		if request.DestinationJSON == nil {
+			return errors.New("create Job: edit session binding requires a Plan Version 2 payload")
+		}
+		var metadata struct {
+			Version       int    `json:"version"`
+			Origin        string `json:"origin"`
+			EditSessionID string `json:"edit_session_id"`
+		}
+		if err := json.Unmarshal([]byte(*request.DestinationJSON), &metadata); err != nil || metadata.Version != 2 || metadata.Origin != "sync_back" || metadata.EditSessionID != binding.SessionID {
+			return errors.New("create Job: edit session binding disagrees with Plan Version 2 sync-back payload")
+		}
+	}
+	return nil
+}
+
+func validateLowerHex(value string, length int) error {
+	if len(value) != length {
+		return errors.New("invalid lowercase hex identity")
+	}
+	for _, character := range value {
+		if character < '0' || character > '9' && character < 'a' || character > 'f' {
+			return errors.New("invalid lowercase hex identity")
 		}
 	}
 	return nil

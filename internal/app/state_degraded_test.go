@@ -256,7 +256,7 @@ func addNewerSchemaHistory(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("open database for newer history: %v", err)
 	}
-	compiledTarget := len([]migration.Migration{migration.Version1(), migration.Version2()})
+	compiledTarget := len([]migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()})
 	if _, err := database.Exec("INSERT INTO schema_migrations(version, name, sha256, applied_at) VALUES(?, 'future', ?, '2026-07-16T00:50:00Z')", compiledTarget+1, strings.Repeat("a", 64)); err != nil {
 		_ = database.Close()
 		t.Fatalf("insert newer history: %v", err)

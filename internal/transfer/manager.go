@@ -9,11 +9,17 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 )
 
 const defaultQueuedJobs = 128
+
+type SyncBackIntent struct {
+	SyncBack edit.SyncBackRequest `json:"sync_back"`
+	Source   FileRef              `json:"source"`
+}
 
 type ManagerConfig struct {
 	Store         *jobstore.Store
@@ -189,6 +195,61 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 		}
 	} else if release != nil {
 		release()
+	}
+	return snapshot, nil
+}
+
+func (manager *Manager) CreateSyncBack(ctx context.Context, intent SyncBackIntent) (jobstore.Snapshot, error) {
+	if !manager.isStarted() {
+		return jobstore.Snapshot{}, errors.New("create sync-back Job: transfer manager is not started")
+	}
+	requestID, err := domain.NewRequestID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	jobID, err := domain.NewJobID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	eventID, err := domain.NewEventID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	bindingEventID, err := domain.NewEventID(manager.generator)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	planID, err := manager.generator.New("plan_")
+	if err != nil {
+		return jobstore.Snapshot{}, fmt.Errorf("create sync-back Job: generate plan ID: %w", err)
+	}
+	plan, create, err := manager.planner.FreezeSyncBack(ctx, SyncBackFreezeRequest{
+		SyncBack: intent.SyncBack, Source: intent.Source, RequestID: requestID, PlanID: planID, JobID: jobID,
+		EventID: eventID, BindingEventID: string(bindingEventID), Now: manager.now(),
+	})
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	var release func()
+	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
+		release, err = acquirer.Acquire(ctx, plan)
+		if err != nil {
+			return jobstore.Snapshot{}, err
+		}
+	}
+	snapshot, _, err := manager.store.Create(ctx, create)
+	if err != nil {
+		if release != nil {
+			release()
+		}
+		return jobstore.Snapshot{}, err
+	}
+	if release != nil {
+		manager.retainLease(snapshot.JobID, release)
+	}
+	if err := manager.enqueue(plan.JobID); err != nil {
+		manager.releaseLease(snapshot.JobID)
+		return jobstore.Snapshot{}, err
 	}
 	return snapshot, nil
 }

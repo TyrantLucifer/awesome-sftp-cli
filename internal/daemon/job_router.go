@@ -14,6 +14,7 @@ const (
 	JobCapture         = "transfer.capture"
 	JobCaptureDelete   = "transfer.capture_delete"
 	JobCreateCopy      = "job.create_copy"
+	JobCreateSyncBack  = "job.create_sync_back"
 	JobCreateDelete    = "job.create_delete"
 	JobList            = "job.list"
 	JobEvents          = "job.events"
@@ -27,6 +28,7 @@ type TransferService interface {
 	Capture(context.Context, domain.Location) (transfer.FileRef, error)
 	CaptureDelete(context.Context, domain.Location) (transfer.FileRef, error)
 	CreateCopy(context.Context, transfer.Intent) (jobstore.Snapshot, error)
+	CreateSyncBack(context.Context, transfer.SyncBackIntent) (jobstore.Snapshot, error)
 	CreateDelete(context.Context, transfer.DeleteIntent) (jobstore.Snapshot, error)
 	JobViews(context.Context, int) ([]transfer.JobView, error)
 	Events(context.Context, domain.JobID, int64, int) ([]jobstore.EventRecord, error)
@@ -50,6 +52,10 @@ type JobCreateCopyRequest struct {
 
 type JobCreateDeleteRequest struct {
 	Intent transfer.DeleteIntent `json:"intent"`
+}
+
+type JobCreateSyncBackRequest struct {
+	Intent transfer.SyncBackIntent `json:"intent"`
 }
 
 type JobSnapshotResponse struct {
@@ -111,6 +117,13 @@ func (session *providerSession) handleJob(ctx context.Context, name string, payl
 			return nil, invalidArgument("decode copy Job request", err)
 		}
 		snapshot, err := session.transfer.CreateCopy(ctx, request.Intent)
+		return JobSnapshotResponse{Snapshot: snapshot}, err
+	case JobCreateSyncBack:
+		var request JobCreateSyncBackRequest
+		if err := decodePayload(payload, &request); err != nil {
+			return nil, invalidArgument("decode sync-back Job request", err)
+		}
+		snapshot, err := session.transfer.CreateSyncBack(ctx, request.Intent)
 		return JobSnapshotResponse{Snapshot: snapshot}, err
 	case JobCreateDelete:
 		var request JobCreateDeleteRequest
