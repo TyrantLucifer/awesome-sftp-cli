@@ -390,8 +390,10 @@ func TestSyncBackPlanUsesFrozenDestinationPreconditionAndRetainsPartOnConflict(t
 				if err != nil {
 					t.Fatal(err)
 				}
-				fixture.plan.ExpectedDestination = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint}
-				fixture.plan.OriginalDestinationPrecondition = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint}
+				remoteSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("remote baseline")))
+				fixture.plan.ExpectedDestination = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: edit.SHA256(remoteSHA)}
+				fixture.plan.OriginalDestinationPrecondition = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: edit.SHA256(remoteSHA)}
+				fixture.plan.PreservedDestination = childLocation(fixture.plan.DestinationDirectory, ".final.amsftp-original-"+string(fixture.plan.JobID))
 			}
 			journal := newMemoryJournal()
 			journal.afterSave = func(checkpoint Checkpoint) {
@@ -424,7 +426,7 @@ func TestSyncBackPlanUsesFrozenDestinationPreconditionAndRetainsPartOnConflict(t
 	}
 }
 
-func TestSyncBackStrongContentPreconditionRejectsSameFingerprintRewrite(t *testing.T) {
+func TestSyncBackPreservesRemoteRewriteAfterStrongVerification(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("edited payload"), ConflictOverwrite)
 	fixture.plan.Version = 2
 	fixture.plan.Origin = OriginSyncBack
@@ -441,37 +443,187 @@ func TestSyncBackStrongContentPreconditionRejectsSameFingerprintRewrite(t *testi
 	remoteSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("remote-a")))
 	fixture.plan.ExpectedDestination = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: edit.SHA256(remoteSHA)}
 	fixture.plan.OriginalDestinationPrecondition = &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: edit.SHA256(remoteSHA)}
-	journal := newMemoryJournal()
-	journal.afterSave = func(checkpoint Checkpoint) {
-		if checkpoint.Phase != PhaseVerified {
-			return
-		}
-		if err := os.WriteFile(finalPath, []byte("remote-b"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if entry.Fingerprint.ModifiedAt == nil {
-			t.Fatal("fixture fingerprint has no modification time")
-		}
-		if err := os.Chtimes(finalPath, *entry.Fingerprint.ModifiedAt, *entry.Fingerprint.ModifiedAt); err != nil {
-			t.Fatal(err)
-		}
-		current, statErr := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final})
-		if statErr != nil {
-			t.Fatal(statErr)
-		}
-		if !reflect.DeepEqual(current.Fingerprint, entry.Fingerprint) {
-			t.Fatalf("test did not preserve fingerprint: current %#v baseline %#v", current.Fingerprint, entry.Fingerprint)
-		}
-		journal.afterSave = nil
+	fixture.plan.PreservedDestination = childLocation(fixture.plan.DestinationDirectory, ".final.amsftp-original-"+string(fixture.plan.JobID))
+	preservedPath := filepath.Join(fixture.destinationRoot, strings.TrimPrefix(string(fixture.plan.PreservedDestination.Path), "/"))
+	fixture.resolver[fixture.destination.Descriptor().ID] = &sameFingerprintRewriteOnRenameProvider{
+		mutableTestProvider: fixture.destination,
+		rewrite: func() {
+			if err := os.WriteFile(preservedPath, []byte("remote-b"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if entry.Fingerprint.ModifiedAt == nil {
+				t.Fatal("fixture fingerprint has no modification time")
+			}
+			if err := os.Chtimes(preservedPath, *entry.Fingerprint.ModifiedAt, *entry.Fingerprint.ModifiedAt); err != nil {
+				t.Fatal(err)
+			}
+			current, statErr := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.PreservedDestination})
+			if statErr != nil {
+				t.Fatal(statErr)
+			}
+			if !reflect.DeepEqual(current.Fingerprint, entry.Fingerprint) {
+				t.Fatalf("test did not preserve fingerprint: current %#v baseline %#v", current.Fingerprint, entry.Fingerprint)
+			}
+		},
 	}
+	journal := newMemoryJournal()
 	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+	if err != nil {
+		t.Fatalf("Execute(sync-back): %v", err)
+	}
+	if result.Outcome != OutcomeCompleted || result.PreservedDestination != fixture.plan.PreservedDestination {
+		t.Fatalf("sync-back result = %#v", result)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("edited payload"))
+	assertWorkerBytes(t, fixture.destination, fixture.plan.PreservedDestination, []byte("remote-b"))
+}
+
+func TestSyncBackRestoresAndConflictsWhenRemoteChangesBeforePreservation(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("edited payload"), ConflictOverwrite)
+	fixture.plan.Version = 2
+	fixture.plan.Origin = OriginSyncBack
+	fixture.plan.EditSessionID = strings.Repeat("4", 32)
+	fixture.plan.ExpectedSourceSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte("edited payload")))
+	finalPath := filepath.Join(fixture.destinationRoot, "final")
+	if err := os.WriteFile(finalPath, []byte("remote-a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("remote-a")))
+	precondition := &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: edit.SHA256(remoteSHA)}
+	fixture.plan.ExpectedDestination = precondition
+	fixture.plan.OriginalDestinationPrecondition = precondition
+	fixture.plan.PreservedDestination = childLocation(fixture.plan.DestinationDirectory, ".final.amsftp-original-"+string(fixture.plan.JobID))
+	fixture.resolver[fixture.destination.Descriptor().ID] = &sameFingerprintRewriteOnPreserveProvider{
+		mutableTestProvider: fixture.destination,
+		rewrite: func() {
+			if err := os.WriteFile(finalPath, []byte("remote-b"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chtimes(finalPath, *entry.Fingerprint.ModifiedAt, *entry.Fingerprint.ModifiedAt); err != nil {
+				t.Fatal(err)
+			}
+		},
+	}
+	result, err := NewWorker(fixture.resolver, newMemoryJournal()).Execute(context.Background(), fixture.plan, nil)
 	if err != nil {
 		t.Fatalf("Execute(sync-back): %v", err)
 	}
 	if result.Outcome != OutcomeWaitingConflict || !result.PartRetained {
 		t.Fatalf("sync-back result = %#v", result)
 	}
+	if result.PreservedDestination.Path != "" {
+		t.Fatalf("restored conflict falsely reported a preserved path: %#v", result)
+	}
 	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("remote-b"))
+}
+
+func TestSyncBackReportsPreservedOriginalWhenPublicationFails(t *testing.T) {
+	fixture := syncBackWorkerFixture(t)
+	wrapped := &failRenameAfterPreserveProvider{mutableTestProvider: fixture.destination}
+	fixture.resolver[fixture.destination.Descriptor().ID] = wrapped
+	result, err := NewWorker(fixture.resolver, newMemoryJournal()).Execute(context.Background(), fixture.plan, nil)
+	if err == nil || !domain.IsCode(err, domain.CodeTransportInterrupted) {
+		t.Fatalf("Execute error = %v, want transport interruption", err)
+	}
+	if result.PreservedDestination != fixture.plan.PreservedDestination || result.PreservationUnknown {
+		t.Fatalf("failure result = %#v", result)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.PreservedDestination, []byte("remote-a"))
+}
+
+func TestSyncBackRejectsTamperedPreservationPath(t *testing.T) {
+	fixture := syncBackWorkerFixture(t)
+	fixture.plan.PreservedDestination = childLocation(fixture.plan.DestinationDirectory, ".attacker-chosen")
+	if _, err := NewWorker(fixture.resolver, newMemoryJournal()).Execute(context.Background(), fixture.plan, nil); err == nil || !strings.Contains(err.Error(), "invalid sync-back Plan Version 2") {
+		t.Fatalf("tampered preservation plan error = %v", err)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("remote-a"))
+}
+
+func TestSyncBackRejectsSlashContainingJobIDBeforeDerivingPaths(t *testing.T) {
+	fixture := syncBackWorkerFixture(t)
+	fixture.plan.JobID = "job_aaaaaaaaaaaaaaaaaaaaa/a"
+	fixture.plan.Part = childLocation(fixture.plan.DestinationDirectory, ".final.part-"+string(fixture.plan.JobID))
+	fixture.plan.PreservedDestination = childLocation(fixture.plan.DestinationDirectory, ".final.amsftp-original-"+string(fixture.plan.JobID))
+	if _, err := NewWorker(fixture.resolver, newMemoryJournal()).Execute(context.Background(), fixture.plan, nil); err == nil || !strings.Contains(err.Error(), "invalid frozen Job ID") {
+		t.Fatalf("slash-containing Job ID error = %v", err)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, []byte("remote-a"))
+}
+
+func syncBackWorkerFixture(t *testing.T) workerFixture {
+	t.Helper()
+	fixture := newWorkerFixture(t, []byte("edited payload"), ConflictOverwrite)
+	fixture.plan.Version = 2
+	fixture.plan.Origin = OriginSyncBack
+	fixture.plan.EditSessionID = strings.Repeat("4", 32)
+	fixture.plan.ExpectedSourceSHA256 = fmt.Sprintf("%x", sha256.Sum256([]byte("edited payload")))
+	if err := os.WriteFile(filepath.Join(fixture.destinationRoot, "final"), []byte("remote-a"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	entry, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: fixture.plan.Final})
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteSHA := fmt.Sprintf("%x", sha256.Sum256([]byte("remote-a")))
+	precondition := &DestinationPrecondition{Presence: DestinationPresent, Kind: entry.Kind, Fingerprint: entry.Fingerprint, ContentSHA256: edit.SHA256(remoteSHA)}
+	fixture.plan.ExpectedDestination = precondition
+	fixture.plan.OriginalDestinationPrecondition = precondition
+	fixture.plan.PreservedDestination = childLocation(fixture.plan.DestinationDirectory, ".final.amsftp-original-"+string(fixture.plan.JobID))
+	return fixture
+}
+
+type sameFingerprintRewriteOnRenameProvider struct {
+	mutableTestProvider
+	rewrite func()
+	once    sync.Once
+}
+
+type failRenameAfterPreserveProvider struct{ mutableTestProvider }
+
+func (provider *failRenameAfterPreserveProvider) PreserveDestination(ctx context.Context, request providerapi.PreserveDestinationRequest) (providerapi.PreserveDestinationResult, error) {
+	preserver := provider.mutableTestProvider.(providerapi.DestinationPreserver)
+	return preserver.PreserveDestination(ctx, request)
+}
+
+func (provider *failRenameAfterPreserveProvider) Rename(_ context.Context, request providerapi.RenameRequest) (providerapi.RenameResult, error) {
+	location := request.Destination
+	return providerapi.RenameResult{}, &domain.OpError{
+		Code: domain.CodeTransportInterrupted, Operation: "rename", EndpointID: location.EndpointID, Location: &location,
+		Message: "injected publication failure", Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone,
+	}
+}
+
+type sameFingerprintRewriteOnPreserveProvider struct {
+	mutableTestProvider
+	rewrite func()
+	once    sync.Once
+}
+
+func (provider *sameFingerprintRewriteOnPreserveProvider) PreserveDestination(ctx context.Context, request providerapi.PreserveDestinationRequest) (providerapi.PreserveDestinationResult, error) {
+	provider.once.Do(provider.rewrite)
+	preserver, ok := provider.mutableTestProvider.(providerapi.DestinationPreserver)
+	if !ok {
+		return providerapi.PreserveDestinationResult{}, errors.New("test destination has no preservation facet")
+	}
+	return preserver.PreserveDestination(ctx, request)
+}
+
+func (provider *sameFingerprintRewriteOnRenameProvider) Rename(ctx context.Context, request providerapi.RenameRequest) (providerapi.RenameResult, error) {
+	provider.once.Do(provider.rewrite)
+	return provider.mutableTestProvider.Rename(ctx, request)
+}
+
+func (provider *sameFingerprintRewriteOnRenameProvider) PreserveDestination(ctx context.Context, request providerapi.PreserveDestinationRequest) (providerapi.PreserveDestinationResult, error) {
+	preserver, ok := provider.mutableTestProvider.(providerapi.DestinationPreserver)
+	if !ok {
+		return providerapi.PreserveDestinationResult{}, errors.New("test destination has no preservation facet")
+	}
+	return preserver.PreserveDestination(ctx, request)
 }
 
 func TestWorkerProvesCommitAfterRenameResponseIsLost(t *testing.T) {

@@ -2,6 +2,7 @@ package fake
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
@@ -1400,6 +1401,62 @@ func (p *Provider) Rename(
 		Atomic:   !effect.NonAtomicRename,
 		Replaced: destinationExists,
 	}, nil
+}
+
+func (p *Provider) PreserveDestination(ctx context.Context, request providerapi.PreserveDestinationRequest) (providerapi.PreserveDestinationResult, error) {
+	if err := p.checkContext(ctx, "preserve_destination", &request.Source); err != nil {
+		return providerapi.PreserveDestinationResult{}, err
+	}
+	if err := providerapi.ValidatePreserveDestinationRequest(p.endpoint.ID, request); err != nil {
+		return providerapi.PreserveDestinationResult{}, err
+	}
+	if _, err := p.recordOperation(ctx, OperationRename, &request.Source); err != nil {
+		return providerapi.PreserveDestinationResult{}, err
+	}
+	sourceParentPath, sourceName, _ := parentPath(request.Source.Path)
+	backupParentPath, backupName, _ := parentPath(request.Backup.Path)
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	sourceParent, err := resolveNode(p.root, sourceParentPath, true)
+	if err != nil || sourceParent.kind != domain.EntryDirectory {
+		if err == nil {
+			err = errTreeNotDirectory
+		}
+		return providerapi.PreserveDestinationResult{}, p.lookupError("preserve_destination", &request.Source, err)
+	}
+	backupParent, err := resolveNode(p.root, backupParentPath, true)
+	if err != nil || backupParent.kind != domain.EntryDirectory {
+		if err == nil {
+			err = errTreeNotDirectory
+		}
+		return providerapi.PreserveDestinationResult{}, p.lookupError("preserve_destination", &request.Backup, err)
+	}
+	sourceNode, sourceExists := sourceParent.children[sourceName]
+	backupNode, backupExists := backupParent.children[backupName]
+	if backupExists {
+		if sourceExists || !reflect.DeepEqual(request.ExpectedFingerprint, p.fingerprintLocked(backupNode)) ||
+			int64(len(backupNode.data)) != request.ExpectedSize || fmt.Sprintf("%x", sha256.Sum256(backupNode.data)) != request.ExpectedSHA256 {
+			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "preserved destination identity does not match", domain.RetryAfterConflict, nil)
+		}
+		return providerapi.PreserveDestinationResult{BackupPresent: true}, nil
+	}
+	if !sourceExists || sourceNode.kind != domain.EntryFile || !reflect.DeepEqual(request.ExpectedFingerprint, p.fingerprintLocked(sourceNode)) {
+		return providerapi.PreserveDestinationResult{}, p.opError(domain.CodeConflict, "preserve_destination", &request.Source, "source fingerprint does not match", domain.RetryAfterConflict, nil)
+	}
+	delete(sourceParent.children, sourceName)
+	sourceNode.name = backupName
+	backupParent.children[backupName] = sourceNode
+	p.bumpDirectoryLocked(sourceParent)
+	if sourceParent != backupParent {
+		p.bumpDirectoryLocked(backupParent)
+	}
+	if int64(len(sourceNode.data)) > request.MaxBytes || int64(len(sourceNode.data)) != request.ExpectedSize || fmt.Sprintf("%x", sha256.Sum256(sourceNode.data)) != request.ExpectedSHA256 {
+		delete(backupParent.children, backupName)
+		sourceNode.name = sourceName
+		sourceParent.children[sourceName] = sourceNode
+		return providerapi.PreserveDestinationResult{SourceRestored: true}, p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "content changed while being preserved", domain.RetryAfterConflict, nil)
+	}
+	return providerapi.PreserveDestinationResult{BackupPresent: true}, nil
 }
 
 func (p *Provider) Remove(ctx context.Context, request providerapi.RemoveRequest) error {

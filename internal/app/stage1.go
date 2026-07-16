@@ -1686,6 +1686,9 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 		view = builtinpreview.ViewMetadata
 	}
 	if view == builtinpreview.ViewMetadata {
+		// Metadata previews do not require a content fingerprint, but reducer
+		// request isolation still requires the source location to be bound.
+		identity.Source.Location = location
 		if source, freezeErr := builtinpreview.FreezeSource(location, entry.Fingerprint); freezeErr == nil {
 			identity.Source = source
 		}

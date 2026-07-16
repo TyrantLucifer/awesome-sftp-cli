@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -186,6 +187,93 @@ func TestForegroundFailureTerminatesAndReapsStartedProcessBeforeResume(t *testin
 	}
 	if slices.Index(calls, "terminate") > slices.Index(calls, "wait") || slices.Index(calls, "wait") > slices.Index(calls, "resume") {
 		t.Fatalf("calls = %q, want terminate -> wait -> resume", calls)
+	}
+}
+
+func TestForegroundFailureRestoresPromptlyWhenPostSpawnCleanupStalls(t *testing.T) {
+	for _, testCase := range []struct {
+		name           string
+		stallTerminate bool
+		stallWait      bool
+	}{
+		{name: "terminate stalls", stallTerminate: true},
+		{name: "wait stalls", stallWait: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			recorder := &callRecorder{}
+			screen := newFakeScreen(recorder, NewSnapshot("ui", Size{Columns: 90, Rows: 30}))
+			platform := newFakePlatform(recorder)
+			foregroundErr := errors.New("foreground transfer failed")
+			platform.fail["give_foreground"] = foregroundErr
+			controller, err := NewController(screen, platform)
+			if err != nil {
+				t.Fatalf("NewController() error = %v", err)
+			}
+			controller.postSpawnCleanupTimeout = 20 * time.Millisecond
+
+			process := &fakeProcess{
+				recorder: recorder, processGroup: 39, result: Result{Kind: ExitSignaled, Signal: "KILL"},
+				waitStarted: make(chan struct{}), waitFinished: make(chan struct{}),
+			}
+			if testCase.stallTerminate {
+				process.terminateStarted = make(chan struct{})
+				process.releaseTerminate = make(chan struct{})
+			}
+			if testCase.stallWait {
+				process.releaseWait = make(chan struct{})
+			}
+
+			runDone := make(chan error, 1)
+			go func() {
+				_, runErr := controller.Run(context.Background(), LauncherFunc(func(context.Context) (Process, error) {
+					return process, nil
+				}))
+				runDone <- runErr
+			}()
+			if testCase.stallTerminate {
+				<-process.terminateStarted
+			} else {
+				<-process.waitStarted
+			}
+
+			select {
+			case runErr := <-runDone:
+				if !errors.Is(runErr, foregroundErr) || !strings.Contains(runErr.Error(), "cleanup exceeded") {
+					t.Fatalf("Run() error = %v, want foreground and bounded cleanup errors", runErr)
+				}
+			case <-time.After(500 * time.Millisecond):
+				t.Fatal("Run() did not restore the TUI after bounded post-spawn cleanup")
+			}
+			if got := controller.State(); got != StateActiveTUI {
+				t.Fatalf("State() = %q, want %q", got, StateActiveTUI)
+			}
+			calls := recorder.snapshot()
+			if count(calls, "resume") != 1 {
+				t.Fatalf("calls = %q, want one prompt resume", calls)
+			}
+			if _, secondErr := controller.Run(context.Background(), LauncherFunc(func(context.Context) (Process, error) {
+				t.Fatal("a second process started while cleanup was still pending")
+				return nil, nil
+			})); !errors.Is(secondErr, ErrBusy) {
+				t.Fatalf("second Run() error = %v, want ErrBusy while cleanup is pending", secondErr)
+			}
+
+			if testCase.stallTerminate {
+				close(process.releaseTerminate)
+				select {
+				case <-process.waitStarted:
+				case <-time.After(500 * time.Millisecond):
+					t.Fatal("background cleanup did not proceed to reap after terminate returned")
+				}
+			} else {
+				close(process.releaseWait)
+			}
+			select {
+			case <-process.waitFinished:
+			case <-time.After(500 * time.Millisecond):
+				t.Fatal("background cleanup worker did not finish after the stalled process was released")
+			}
+		})
 	}
 }
 
@@ -741,13 +829,16 @@ func (platform *fakePlatform) RestoreTerminal(TerminalState) error {
 }
 
 type fakeProcess struct {
-	recorder     *callRecorder
-	processGroup int
-	result       Result
-	waitErr      error
-	waitStarted  chan struct{}
-	releaseWait  chan struct{}
-	terminated   bool
+	recorder         *callRecorder
+	processGroup     int
+	result           Result
+	waitErr          error
+	terminateStarted chan struct{}
+	releaseTerminate chan struct{}
+	waitStarted      chan struct{}
+	waitFinished     chan struct{}
+	releaseWait      chan struct{}
+	terminated       bool
 }
 
 func (process *fakeProcess) ProcessGroup() int { return process.processGroup }
@@ -755,6 +846,12 @@ func (process *fakeProcess) ProcessGroup() int { return process.processGroup }
 func (process *fakeProcess) Terminate() error {
 	process.recorder.add("terminate")
 	process.terminated = true
+	if process.terminateStarted != nil {
+		close(process.terminateStarted)
+	}
+	if process.releaseTerminate != nil {
+		<-process.releaseTerminate
+	}
 	return nil
 }
 
@@ -765,6 +862,9 @@ func (process *fakeProcess) Wait() (Result, error) {
 	}
 	if process.releaseWait != nil {
 		<-process.releaseWait
+	}
+	if process.waitFinished != nil {
+		close(process.waitFinished)
 	}
 	return process.result, process.waitErr
 }

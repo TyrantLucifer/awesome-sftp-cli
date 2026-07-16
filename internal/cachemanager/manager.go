@@ -5,6 +5,7 @@
 package cachemanager
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -161,14 +162,15 @@ func (manager *Manager) PublishComplete(ctx context.Context, request PublishRequ
 }
 
 type HandoffRequest struct {
-	EntryID           cache.EntryID
-	MaterializationID cache.MaterializationID
-	ReferenceID       cache.ReferenceID
-	LeaseID           cache.LeaseID
-	OwnerKind         cache.LeaseOwnerKind
-	OwnerID           string
-	Pinned            bool
-	Process           *cache.ProcessIdentity
+	EntryID                    cache.EntryID
+	MaterializationID          cache.MaterializationID
+	ReferenceID                cache.ReferenceID
+	LeaseID                    cache.LeaseID
+	OwnerKind                  cache.LeaseOwnerKind
+	OwnerID                    string
+	Pinned                     bool
+	Process                    *cache.ProcessIdentity
+	RequireUniquePinnedOffline bool
 }
 
 type HandoffResult struct {
@@ -263,6 +265,14 @@ func (manager *Manager) PrepareHandoff(ctx context.Context, request HandoffReque
 	if err != nil {
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff entry: %w", err)
 	}
+	if request.RequireUniquePinnedOffline {
+		if entry.Policy != cache.PolicyPinnedOffline || !entry.Pinned || entry.Freshness != cache.EntryUnknown {
+			return HandoffResult{}, fmt.Errorf("prepare pinned offline cache handoff: selected entry is not pinned and unknown")
+		}
+		if err := manager.requireUniquePinnedOfflineEntryLocked(ctx, entry); err != nil {
+			return HandoffResult{}, err
+		}
+	}
 	blob, err := manager.catalog.GetBlob(ctx, entry.BlobID)
 	if err != nil {
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff blob: %w", err)
@@ -296,6 +306,24 @@ func (manager *Manager) PrepareHandoff(ctx context.Context, request HandoffReque
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff catalog: %w", err)
 	}
 	return HandoffResult{Path: filesystemResult.Info.Path, Materialization: materialization, Reference: reference, Lease: lease}, nil
+}
+
+func (manager *Manager) requireUniquePinnedOfflineEntryLocked(ctx context.Context, selected cache.Entry) error {
+	entries, err := manager.catalog.ListEntries(ctx)
+	if err != nil {
+		return fmt.Errorf("prepare pinned offline cache handoff catalog: %w", err)
+	}
+	matches := 0
+	for _, entry := range entries {
+		if entry.EndpointID == selected.EndpointID && bytes.Equal(entry.CanonicalPath, selected.CanonicalPath) &&
+			entry.WorkspaceID == selected.WorkspaceID && entry.Policy == cache.PolicyPinnedOffline && entry.Pinned {
+			matches++
+		}
+	}
+	if matches != 1 {
+		return fmt.Errorf("%w: %d fingerprints match the selected location", ErrPinnedOfflineAmbiguous, matches)
+	}
+	return nil
 }
 
 func (manager *Manager) ReleaseHandoff(ctx context.Context, request ReleaseHandoffRequest) error {
@@ -336,7 +364,7 @@ func (manager *Manager) Reconcile(ctx context.Context, maxVisited int) (Reconcil
 	if err != nil {
 		return ReconcileReport{}, fmt.Errorf("reconcile cache filesystem: %w", err)
 	}
-	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	snapshot, err := manager.catalog.LoadSnapshotBounded(ctx, maxVisited)
 	if err != nil {
 		return ReconcileReport{Filesystem: filesystem, NeedsAttention: true}, fmt.Errorf("reconcile cache catalog: %w", err)
 	}
@@ -415,7 +443,7 @@ func (manager *Manager) Reconcile(ctx context.Context, maxVisited int) (Reconcil
 }
 
 func (manager *Manager) PlanQuota(ctx context.Context) (cache.EvictionPlan, error) {
-	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	snapshot, err := manager.catalog.LoadSnapshotBounded(ctx, maxLifecycleVisited)
 	if err != nil {
 		return cache.EvictionPlan{}, err
 	}

@@ -359,6 +359,7 @@ func (s *providerSession) prepareCacheMaterialization(ctx context.Context, reque
 	handoff, err := s.cache.PrepareHandoff(ctx, cachemanager.HandoffRequest{
 		EntryID: entry.ID, MaterializationID: materializationID, ReferenceID: referenceID, LeaseID: leaseID,
 		OwnerKind: request.OwnerKind, OwnerID: request.OwnerID, Pinned: request.Pinned, Process: request.Process,
+		RequireUniquePinnedOffline: offline,
 	})
 	if err != nil {
 		if errors.Is(err, cachemanager.ErrQuotaUnsatisfied) {

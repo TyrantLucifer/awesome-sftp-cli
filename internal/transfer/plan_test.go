@@ -67,6 +67,9 @@ func TestFreezeSyncBackCreatesPlanV2WithOriginalDestinationPreconditionAndBindin
 	if plan.ExpectedDestination.ContentSHA256 != edit.SHA256(strings.Repeat("b", 64)) {
 		t.Fatalf("content precondition = %q", plan.ExpectedDestination.ContentSHA256)
 	}
+	if plan.PreservedDestination.EndpointID != target.EndpointID || !strings.Contains(string(plan.PreservedDestination.Path), ".amsftp-original-") {
+		t.Fatalf("preserved destination = %#v", plan.PreservedDestination)
+	}
 	if syncRequest.SessionVersion > edit.Version(math.MaxInt64) {
 		t.Fatalf("test session version %d exceeds int64", syncRequest.SessionVersion)
 	}

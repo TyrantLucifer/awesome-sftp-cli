@@ -131,6 +131,7 @@ type Plan struct {
 	RequestedName                   string                   `json:"requested_name"`
 	Final                           domain.Location          `json:"final"`
 	Part                            domain.Location          `json:"part"`
+	PreservedDestination            domain.Location          `json:"preserved_destination,omitempty"`
 	SourceCapability                CapabilityBinding        `json:"source_capability"`
 	DestinationCapability           CapabilityBinding        `json:"destination_capability"`
 	Route                           Route                    `json:"route"`
@@ -444,11 +445,23 @@ func (planner *Planner) FreezeSyncBack(ctx context.Context, request SyncBackFree
 	} else if exists {
 		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeAlreadyExists, "plan_sync_back", part, "job part location already exists", domain.RetryAfterConflict)
 	}
+	var preserved domain.Location
+	if expected.Presence == DestinationPresent {
+		if _, ok := destinationProvider.(providerapi.DestinationPreserver); !ok {
+			return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeUnsupported, "plan_sync_back", request.SyncBack.Target, "destination cannot preserve the replaced remote version", domain.RetryAfterReplan)
+		}
+		preserved = childLocation(destinationDirectory, "."+path.Base(string(request.SyncBack.Target.Path))+".amsftp-original-"+string(request.JobID))
+		if exists, err := locationExists(ctx, destinationProvider, preserved); err != nil {
+			return Plan{}, jobstore.CreateRequest{}, err
+		} else if exists {
+			return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeAlreadyExists, "plan_sync_back", preserved, "job preservation location already exists", domain.RetryAfterConflict)
+		}
+	}
 	plan := Plan{
 		Version: 2, Origin: OriginSyncBack, EditSessionID: string(request.SyncBack.SessionID), ExpectedDestination: &expected, OriginalDestinationPrecondition: &original,
 		ExpectedSourceSHA256: string(request.SyncBack.LocalSHA256), PlanID: request.PlanID, JobID: request.JobID, Kind: OperationCopy,
 		SourceEndpoint: sourceProvider.Descriptor(), DestinationEndpoint: destinationProvider.Descriptor(), Source: cloneFileRef(request.Source),
-		DestinationDirectory: destinationDirectory, RequestedName: path.Base(string(request.SyncBack.Target.Path)), Final: request.SyncBack.Target, Part: part,
+		DestinationDirectory: destinationDirectory, RequestedName: path.Base(string(request.SyncBack.Target.Path)), Final: request.SyncBack.Target, Part: part, PreservedDestination: preserved,
 		SourceCapability:      CapabilityBinding{Revision: sourceSnapshot.Capabilities.Revision, Capability: sourceCapability},
 		DestinationCapability: CapabilityBinding{Revision: destinationSnapshot.Capabilities.Revision, Capability: destinationCapability},
 		Route:                 chooseRoute(sourceProvider.Descriptor(), destinationProvider.Descriptor()), Verification: VerifySHA256,

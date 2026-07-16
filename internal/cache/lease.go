@@ -123,3 +123,22 @@ func (manager *LeaseManager) Classify(lease Lease) LeaseProtection {
 		return LeaseProtectedUncertain
 	}
 }
+
+// ClassifyProcess reports whether a process-bound lease still has a live
+// owner, independently of heartbeat expiry. Callers must apply their own
+// owner-kind policy before treating a gone process as reclaimable.
+func (manager *LeaseManager) ClassifyProcess(lease Lease) LeaseProtection {
+	if manager == nil || manager.clock == nil || manager.processes == nil || lease.Validate() != nil || lease.State != LeaseActive || lease.Process == nil {
+		return LeaseProtectedUncertain
+	}
+	switch manager.processes.Classify(*lease.Process) {
+	case ProcessMatches:
+		return LeaseProtectedLiveProcess
+	case ProcessGone, ProcessBirthMismatch:
+		return LeaseReclaimable
+	case ProcessUncertain:
+		return LeaseProtectedUncertain
+	default:
+		return LeaseProtectedUncertain
+	}
+}

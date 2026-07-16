@@ -109,35 +109,32 @@ func TestPreviewLocationRunsConfiguredExternalFallbackUnderAReleasedCacheLease(t
 
 func TestPreviewLocationRendersObjectMetadataWithoutContentRead(t *testing.T) {
 	for _, testCase := range []struct {
-		name       string
-		kind       domain.EntryKind
-		symlink    *domain.SymlinkInfo
-		wantTarget string
-		view       builtinpreview.ViewMode
+		name        string
+		kind        domain.EntryKind
+		symlink     *domain.SymlinkInfo
+		fingerprint func() domain.Fingerprint
+		wantTarget  string
+		view        builtinpreview.ViewMode
 	}{
-		{name: "directory", kind: domain.EntryDirectory, view: builtinpreview.ViewAuto},
-		{name: "symlink", kind: domain.EntrySymlink, symlink: &domain.SymlinkInfo{RawTarget: "../actual"}, wantTarget: "link target: ../actual", view: builtinpreview.ViewAuto},
-		{name: "binary file metadata", kind: domain.EntryFile, view: builtinpreview.ViewMetadata},
+		{name: "directory with empty fingerprint", kind: domain.EntryDirectory, fingerprint: func() domain.Fingerprint { return domain.Fingerprint{} }, view: builtinpreview.ViewAuto},
+		{name: "symlink with empty fingerprint", kind: domain.EntrySymlink, symlink: &domain.SymlinkInfo{RawTarget: "../actual"}, fingerprint: func() domain.Fingerprint { return domain.Fingerprint{} }, wantTarget: "link target: ../actual", view: builtinpreview.ViewAuto},
+		{name: "file with weak fingerprint", kind: domain.EntryFile, fingerprint: func() domain.Fingerprint { size := uint64(0); return domain.Fingerprint{Size: &size} }, view: builtinpreview.ViewMetadata},
+		{name: "file with empty fingerprint", kind: domain.EntryFile, fingerprint: func() domain.Fingerprint { return domain.Fingerprint{} }, view: builtinpreview.ViewMetadata},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			location, _ := domain.NewLocation("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", "/srv/item")
 			modified := time.Date(2026, 7, 16, 1, 2, 3, 0, time.UTC)
 			mode := uint32(0o755)
-			version := "version-1"
-			fingerprint := domain.Fingerprint{VersionID: &version}
-			if testCase.kind == domain.EntryDirectory {
-				fingerprint = domain.Fingerprint{}
-			}
 			fixture := &previewMetadataFixture{entry: domain.Entry{
 				Location: location, Name: "item", Kind: testCase.kind,
 				Metadata:    domain.Metadata{Mode: &mode, ModifiedAt: &modified},
-				Fingerprint: fingerprint, Symlink: testCase.symlink,
+				Fingerprint: testCase.fingerprint(), Symlink: testCase.symlink,
 			}}
-			identity := tui.PreviewRequestIdentity{RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", UIGeneration: 11, Mode: builtinpreview.ReadHead}
+			identity := tui.PreviewRequestIdentity{RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", Pane: tui.Left, UIGeneration: 11, Mode: builtinpreview.ReadHead}
 			actions := make(chan tui.Action, 3)
 			previewLocation(context.Background(), fixture, identity, testCase.view, location, "workspace", cache.PolicyLRU, nil, builtinpreview.ImageCapabilityProof{}, actions)
 			begin, ok := (<-actions).(tui.BeginPreview)
-			if !ok || begin.View != builtinpreview.ViewMetadata || testCase.kind == domain.EntrySymlink && begin.Identity.Source.Location != location {
+			if !ok || begin.View != builtinpreview.ViewMetadata || begin.Identity.Source.Location != location {
 				t.Fatalf("begin = %#v", begin)
 			}
 			chunk, ok := (<-actions).(tui.PreviewChunk)
@@ -146,6 +143,12 @@ func TestPreviewLocationRendersObjectMetadataWithoutContentRead(t *testing.T) {
 			}
 			if fixture.reads != 0 || fixture.materializes != 0 {
 				t.Fatalf("metadata preview read/materialized content: %#v", fixture)
+			}
+			model := tui.NewModel(tui.PaneState{}, tui.PaneState{})
+			model, _ = tui.Reduce(model, begin)
+			model, _ = tui.Reduce(model, chunk)
+			if model.Preview.Identity != begin.Identity || model.Preview.Loading || model.Preview.Kind != string(builtinpreview.KindMetadata) || !strings.Contains(model.Preview.DisplayText(), "canonical path: "+string(location.Path)) {
+				t.Fatalf("reduced metadata preview = %#v, text = %q", model.Preview, model.Preview.DisplayText())
 			}
 		})
 	}

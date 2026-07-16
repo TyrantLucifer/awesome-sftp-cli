@@ -19,6 +19,7 @@ import (
 const (
 	statementWALBudget = uint64(1024 * 1024)
 	fingerprintCodec   = "amsftp-canonical-v1"
+	maxListResults     = 1_000_000
 )
 
 type Store struct {
@@ -73,7 +74,27 @@ func (store *Store) Publish(ctx context.Context, blob cache.Blob, entry cache.En
 			return fmt.Errorf("publish cache blob %q: %w", blob.ID, err)
 		}
 		strength, algorithm, encoded := encodeFingerprint(entry.Fingerprint)
-		if _, err := writer.ExecContext(ctx, "INSERT INTO cache_entries(entry_id,endpoint_id,path_bytes,fingerprint_strength,fingerprint_size,modified_unix_nano,modified_precision,file_id,version_id,hash_algorithm,hash_hex,freshness,policy,workspace_id,pinned,blob_sha256,complete,created_at_unix,last_access_unix) VALUES(?,?,?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?)", entry.ID, entry.EndpointID, entry.CanonicalPath, strength, algorithm, encoded, entry.Freshness, entry.Policy, string(entry.WorkspaceID), boolInt(entry.Pinned), entry.BlobID, 1, unix(entry.CreatedAt), unix(entry.LastAccessAt)); err != nil {
+		result, err = writer.ExecContext(ctx, `INSERT INTO cache_entries(entry_id,endpoint_id,path_bytes,fingerprint_strength,fingerprint_size,modified_unix_nano,modified_precision,file_id,version_id,hash_algorithm,hash_hex,freshness,policy,workspace_id,pinned,blob_sha256,complete,created_at_unix,last_access_unix)
+			VALUES(?,?,?,?,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?,?,?,?)
+			ON CONFLICT(entry_id) DO UPDATE SET
+				freshness=excluded.freshness,
+				policy=excluded.policy,
+				pinned=excluded.pinned,
+				last_access_unix=max(cache_entries.last_access_unix,excluded.last_access_unix)
+			WHERE cache_entries.endpoint_id=excluded.endpoint_id
+				AND cache_entries.path_bytes=excluded.path_bytes
+				AND cache_entries.fingerprint_strength=excluded.fingerprint_strength
+				AND cache_entries.fingerprint_size IS excluded.fingerprint_size
+				AND cache_entries.modified_unix_nano IS excluded.modified_unix_nano
+				AND cache_entries.modified_precision IS excluded.modified_precision
+				AND cache_entries.file_id IS excluded.file_id
+				AND cache_entries.version_id IS excluded.version_id
+				AND cache_entries.hash_algorithm IS excluded.hash_algorithm
+				AND cache_entries.hash_hex IS excluded.hash_hex
+				AND cache_entries.workspace_id=excluded.workspace_id
+				AND cache_entries.blob_sha256=excluded.blob_sha256
+				AND cache_entries.complete=1 AND excluded.complete=1`, entry.ID, entry.EndpointID, entry.CanonicalPath, strength, algorithm, encoded, entry.Freshness, entry.Policy, string(entry.WorkspaceID), boolInt(entry.Pinned), entry.BlobID, 1, unix(entry.CreatedAt), unix(entry.LastAccessAt))
+		if err := requireOne("publish cache entry", result, err); err != nil {
 			return fmt.Errorf("publish cache entry %q: %w", entry.ID, err)
 		}
 		return nil
@@ -85,6 +106,15 @@ func (store *Store) GetBlob(ctx context.Context, id cache.BlobID) (cache.Blob, e
 		return cache.Blob{}, fmt.Errorf("get cache blob: %w", err)
 	}
 	return scanBlob(store.database.QueryRowContext(ctx, blobSelect+" WHERE sha256=?", id))
+}
+
+// MarkEntryUnknown records that an otherwise complete cache entry was reused
+// without a live remote freshness observation.
+func (store *Store) MarkEntryUnknown(ctx context.Context, id cache.EntryID) error {
+	if _, err := cache.ParseEntryID(string(id)); err != nil {
+		return fmt.Errorf("mark cache entry freshness unknown: %w", err)
+	}
+	return store.updateOne(ctx, "mark cache entry freshness unknown", "UPDATE cache_entries SET freshness='unknown' WHERE entry_id=? AND complete=1", id)
 }
 
 func (store *Store) ListBlobs(ctx context.Context) ([]cache.Blob, error) {
@@ -270,12 +300,19 @@ func (store *Store) RemoveReference(ctx context.Context, id cache.ReferenceID) e
 	return store.updateOne(ctx, "remove cache reference", "DELETE FROM cache_references WHERE reference_id=?", id)
 }
 
-func (store *Store) ListReferences(ctx context.Context) ([]cache.Reference, error) {
-	return listReferences(ctx, store.database)
+func (store *Store) ListReferences(ctx context.Context, limit int) ([]cache.Reference, error) {
+	if err := validateListLimit(limit); err != nil {
+		return nil, fmt.Errorf("list cache references: %w", err)
+	}
+	return queryReferences(ctx, store.database, referenceSelect+" ORDER BY reference_id LIMIT ?", limit)
 }
 
 func listReferences(ctx context.Context, source queryer) ([]cache.Reference, error) {
-	rows, err := source.QueryContext(ctx, referenceSelect+" ORDER BY reference_id")
+	return queryReferences(ctx, source, referenceSelect+" ORDER BY reference_id")
+}
+
+func queryReferences(ctx context.Context, source queryer, query string, args ...any) ([]cache.Reference, error) {
+	rows, err := source.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list cache references: %w", err)
 	}
@@ -292,6 +329,22 @@ func listReferences(ctx context.Context, source queryer) ([]cache.Reference, err
 		return nil, fmt.Errorf("list cache references: %w", err)
 	}
 	return result, nil
+}
+
+// ListPreviewReferences returns at most limit exact preview reachability
+// references. A limit of two lets lifecycle callers distinguish an exact
+// reference from ambiguous catalog state without an unbounded scan.
+func (store *Store) ListPreviewReferences(ctx context.Context, ownerID string, materializationID cache.MaterializationID, limit int) ([]cache.Reference, error) {
+	if ownerID == "" || len(ownerID) > 128 {
+		return nil, fmt.Errorf("list preview cache references: invalid owner ID")
+	}
+	if _, err := cache.ParseMaterializationID(string(materializationID)); err != nil {
+		return nil, fmt.Errorf("list preview cache references: %w", err)
+	}
+	if err := validateListLimit(limit); err != nil {
+		return nil, fmt.Errorf("list preview cache references: %w", err)
+	}
+	return queryReferences(ctx, store.database, referenceSelect+" WHERE owner_kind='preview' AND owner_id=? AND materialization_id=? ORDER BY reference_id LIMIT ?", ownerID, materializationID, limit)
 }
 
 func (store *Store) AcquireLease(ctx context.Context, item cache.Lease) error {
@@ -429,8 +482,11 @@ func (store *Store) ReleaseHandoff(ctx context.Context, request ReleaseHandoffRe
 	})
 }
 
-func (store *Store) ListLeases(ctx context.Context) ([]cache.Lease, error) {
-	return listLeases(ctx, store.database)
+func (store *Store) ListLeases(ctx context.Context, limit int) ([]cache.Lease, error) {
+	if err := validateListLimit(limit); err != nil {
+		return nil, fmt.Errorf("list cache leases: %w", err)
+	}
+	return queryLeases(ctx, store.database, leaseSelect+" ORDER BY lease_id LIMIT ?", limit)
 }
 
 func (store *Store) GetLease(ctx context.Context, id cache.LeaseID) (cache.Lease, error) {
@@ -441,7 +497,11 @@ func (store *Store) GetLease(ctx context.Context, id cache.LeaseID) (cache.Lease
 }
 
 func listLeases(ctx context.Context, source queryer) ([]cache.Lease, error) {
-	rows, err := source.QueryContext(ctx, leaseSelect+" ORDER BY lease_id")
+	return queryLeases(ctx, source, leaseSelect+" ORDER BY lease_id")
+}
+
+func queryLeases(ctx context.Context, source queryer, query string, args ...any) ([]cache.Lease, error) {
+	rows, err := source.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list cache leases: %w", err)
 	}
@@ -460,9 +520,33 @@ func listLeases(ctx context.Context, source queryer) ([]cache.Lease, error) {
 	return result, nil
 }
 
-func (store *Store) LoadSnapshot(ctx context.Context) (result cache.Snapshot, returnErr error) {
+// ListActivePreviewLeasesAfter pages only the leases startup cleanup is
+// authorized to reclaim. Released and durable editor/opener leases cannot
+// pin the cursor at the front of every batch.
+func (store *Store) ListActivePreviewLeasesAfter(ctx context.Context, after cache.LeaseID, limit int) ([]cache.Lease, error) {
+	if after != "" {
+		if _, err := cache.ParseLeaseID(string(after)); err != nil {
+			return nil, fmt.Errorf("list active preview cache leases: %w", err)
+		}
+	}
+	if err := validateListLimit(limit); err != nil {
+		return nil, fmt.Errorf("list active preview cache leases: %w", err)
+	}
+	return queryLeases(ctx, store.database, leaseSelect+" WHERE state='active' AND owner_kind='preview' AND lease_id>? ORDER BY lease_id LIMIT ?", after, limit)
+}
+
+func (store *Store) LoadSnapshot(ctx context.Context) (cache.Snapshot, error) {
+	return store.LoadSnapshotBounded(ctx, maxListResults)
+}
+
+// LoadSnapshotBounded refuses the catalog before allocating record slices
+// when the transaction snapshot contains more than maxRecords rows in total.
+func (store *Store) LoadSnapshotBounded(ctx context.Context, maxRecords int) (result cache.Snapshot, returnErr error) {
 	if store == nil || store.database == nil {
 		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: nil database")
+	}
+	if err := validateListLimit(maxRecords); err != nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: %w", err)
 	}
 	connection, err := store.database.Conn(ctx)
 	if err != nil {
@@ -479,6 +563,18 @@ func (store *Store) LoadSnapshot(ctx context.Context) (result cache.Snapshot, re
 			returnErr = errors.Join(returnErr, rollbackErr)
 		}
 	}()
+	var recordCount int64
+	if err := connection.QueryRowContext(ctx, `SELECT
+		(SELECT COUNT(*) FROM cache_blobs) +
+		(SELECT COUNT(*) FROM cache_entries) +
+		(SELECT COUNT(*) FROM cache_materializations) +
+		(SELECT COUNT(*) FROM cache_references) +
+		(SELECT COUNT(*) FROM cache_leases)`).Scan(&recordCount); err != nil {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: count records: %w", err)
+	}
+	if recordCount < 0 || recordCount > int64(maxRecords) {
+		return cache.Snapshot{}, fmt.Errorf("load cache snapshot: catalog has %d records, limit is %d", recordCount, maxRecords)
+	}
 	blobs, err := listBlobs(ctx, connection)
 	if err != nil {
 		return cache.Snapshot{}, err
@@ -512,6 +608,13 @@ func (store *Store) LoadSnapshot(ctx context.Context) (result cache.Snapshot, re
 
 type queryer interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}
+
+func validateListLimit(limit int) error {
+	if limit <= 0 || limit > maxListResults {
+		return fmt.Errorf("limit must be between 1 and %d", maxListResults)
+	}
+	return nil
 }
 
 func (store *Store) updateOne(ctx context.Context, label, query string, args ...any) error {

@@ -1,6 +1,7 @@
 package cachemanager
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -168,13 +169,16 @@ func (manager *Manager) admitLocked(ctx context.Context, admission cache.Admissi
 		if _, err := manager.recoverPendingEvictionsLocked(ctx, manager.limits.MaxCandidates); err != nil {
 			return fmt.Errorf("admit cache content recover pending: %w", err)
 		}
-		snapshot, err := manager.catalog.LoadSnapshot(ctx)
+		snapshot, err := manager.catalog.LoadSnapshotBounded(ctx, maxLifecycleVisited)
 		if err != nil {
 			return fmt.Errorf("admit cache content load snapshot: %w", err)
 		}
 		candidate, err := normalizeAdmission(snapshot, admission)
 		if err != nil {
 			return err
+		}
+		if candidate.Blob == nil && candidate.Entry == nil && candidate.Materialization == nil {
+			return nil
 		}
 		plan, err := cache.PlanAdmission(snapshot, candidate, manager.limits, manager.leaseState)
 		if err != nil {
@@ -204,13 +208,16 @@ func (manager *Manager) admitLocked(ctx context.Context, admission cache.Admissi
 			return quotaAdmissionError(plan, batch+1)
 		}
 	}
-	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	snapshot, err := manager.catalog.LoadSnapshotBounded(ctx, maxLifecycleVisited)
 	if err != nil {
 		return fmt.Errorf("admit cache content final snapshot: %w", err)
 	}
 	candidate, err := normalizeAdmission(snapshot, admission)
 	if err != nil {
 		return err
+	}
+	if candidate.Blob == nil && candidate.Entry == nil && candidate.Materialization == nil {
+		return nil
 	}
 	plan, err := cache.PlanAdmission(snapshot, candidate, manager.limits, manager.leaseState)
 	if err != nil {
@@ -223,18 +230,31 @@ func (manager *Manager) admitLocked(ctx context.Context, admission cache.Admissi
 }
 
 func normalizeAdmission(snapshot cache.Snapshot, admission cache.Admission) (cache.Admission, error) {
-	if admission.Blob == nil {
-		return admission, nil
+	if admission.Blob != nil {
+		for _, existing := range snapshot.Blobs {
+			if existing.ID != admission.Blob.ID {
+				continue
+			}
+			if existing.Size != admission.Blob.Size || existing.State != cache.BlobPublished {
+				return cache.Admission{}, fmt.Errorf("admit cache content: blob %q conflicts with catalog identity", existing.ID)
+			}
+			admission.Blob = nil
+			break
+		}
 	}
-	for _, existing := range snapshot.Blobs {
-		if existing.ID != admission.Blob.ID {
-			continue
+	if admission.Entry != nil {
+		for _, existing := range snapshot.Entries {
+			if existing.ID != admission.Entry.ID {
+				continue
+			}
+			if existing.EndpointID != admission.Entry.EndpointID || !bytes.Equal(existing.CanonicalPath, admission.Entry.CanonicalPath) ||
+				!bytes.Equal(existing.Fingerprint.Canonical, admission.Entry.Fingerprint.Canonical) || existing.BlobID != admission.Entry.BlobID ||
+				existing.WorkspaceID != admission.Entry.WorkspaceID {
+				return cache.Admission{}, fmt.Errorf("admit cache content: entry %q conflicts with catalog identity", existing.ID)
+			}
+			admission.Entry = nil
+			break
 		}
-		if existing.Size != admission.Blob.Size || existing.State != cache.BlobPublished {
-			return cache.Admission{}, fmt.Errorf("admit cache content: blob %q conflicts with catalog identity", existing.ID)
-		}
-		admission.Blob = nil
-		break
 	}
 	return admission, nil
 }

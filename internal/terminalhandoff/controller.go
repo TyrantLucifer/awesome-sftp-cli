@@ -5,9 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"time"
 )
 
 var ErrBusy = errors.New("terminal handoff is already in progress")
+
+const defaultPostSpawnCleanupTimeout = 2 * time.Second
 
 type State string
 
@@ -121,13 +124,15 @@ func (function LauncherFunc) Start(ctx context.Context) (Process, error) {
 }
 
 type Controller struct {
-	screen   Screen
-	platform Platform
+	screen                  Screen
+	platform                Platform
+	postSpawnCleanupTimeout time.Duration
 
-	mu      sync.Mutex
-	state   State
-	busy    bool
-	session *handoffSession
+	mu             sync.Mutex
+	state          State
+	busy           bool
+	cleanupPending bool
+	session        *handoffSession
 }
 
 type handoffSession struct {
@@ -153,7 +158,10 @@ func NewController(screen Screen, platform Platform) (*Controller, error) {
 	if platform == nil {
 		return nil, errors.New("create terminal handoff controller: platform is nil")
 	}
-	return &Controller{screen: screen, platform: platform, state: StateActiveTUI}, nil
+	return &Controller{
+		screen: screen, platform: platform, postSpawnCleanupTimeout: defaultPostSpawnCleanupTimeout,
+		state: StateActiveTUI,
+	}, nil
 }
 
 func (controller *Controller) State() State {
@@ -234,14 +242,14 @@ func (controller *Controller) Run(ctx context.Context, launcher Launcher) (resul
 		controller.markAbnormal(session)
 		return Result{}, errors.Join(
 			fmt.Errorf("start external process: invalid process group %d", processGroup),
-			terminateAndReap(process),
+			controller.terminateAndReap(process),
 		)
 	}
 	if foregroundErr := controller.platform.GiveForeground(processGroup); foregroundErr != nil {
 		controller.markAbnormal(session)
 		return Result{}, errors.Join(
 			fmt.Errorf("give external process terminal foreground: %w", foregroundErr),
-			terminateAndReap(process),
+			controller.terminateAndReap(process),
 		)
 	}
 	controller.setState(session, StateExternalForeground)
@@ -258,10 +266,38 @@ func (controller *Controller) Run(ctx context.Context, launcher Launcher) (resul
 	return result, nil
 }
 
-func terminateAndReap(process Process) error {
-	terminateErr := process.Terminate()
-	_, waitErr := process.Wait()
-	return errors.Join(terminateErr, waitErr)
+func (controller *Controller) terminateAndReap(process Process) error {
+	timeout := controller.postSpawnCleanupTimeout
+	if timeout <= 0 {
+		timeout = defaultPostSpawnCleanupTimeout
+	}
+	controller.mu.Lock()
+	if controller.cleanupPending {
+		controller.mu.Unlock()
+		return errors.New("post-spawn cleanup is already pending")
+	}
+	controller.cleanupPending = true
+	controller.mu.Unlock()
+	cleanupDone := make(chan error, 1)
+	go func() {
+		defer func() {
+			controller.mu.Lock()
+			controller.cleanupPending = false
+			controller.mu.Unlock()
+		}()
+		terminateErr := process.Terminate()
+		_, waitErr := process.Wait()
+		cleanupDone <- errors.Join(terminateErr, waitErr)
+	}()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case cleanupErr := <-cleanupDone:
+		return cleanupErr
+	case <-timer.C:
+		return fmt.Errorf("post-spawn cleanup exceeded %s; termination and reap continue in background", timeout)
+	}
 }
 
 func (controller *Controller) Resize(size Size) error {
@@ -308,7 +344,7 @@ func (controller *Controller) Cleanup() error {
 func (controller *Controller) begin() (*handoffSession, error) {
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	if controller.busy {
+	if controller.busy || controller.cleanupPending {
 		return nil, ErrBusy
 	}
 	session := &handoffSession{

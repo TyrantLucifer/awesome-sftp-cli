@@ -65,6 +65,36 @@ func TestPublishCompleteBindsLocationFingerprintAndDeduplicatedContent(t *testin
 	}
 }
 
+func TestPublishCompleteIsIdempotentForTheExactLocationFingerprint(t *testing.T) {
+	manager, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("unchanged content")
+	request := PublishRequest{
+		Location: testLocation(t, "/same"), SourceFingerprint: testSourceFingerprint(uint64(len(content))),
+		WorkspaceID: "workspace", Policy: cache.PolicyLRU, Source: bytes.NewReader(content),
+		MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	}
+	first, err := manager.PublishComplete(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Source = bytes.NewReader(content)
+	second, err := manager.PublishComplete(ctx, request)
+	if err != nil {
+		t.Fatalf("repeat exact publication: %v", err)
+	}
+	if second.Entry.ID != first.Entry.ID || second.Blob.ID != first.Blob.ID || !second.Deduplicated {
+		t.Fatalf("repeat publication = %#v, first = %#v", second, first)
+	}
+	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Entries) != 1 || len(snapshot.Blobs) != 1 {
+		t.Fatalf("repeat publication duplicated catalog state: %#v", snapshot)
+	}
+}
+
 func TestPublishCompleteRejectsShortOrWeakSourceWithoutCatalogRows(t *testing.T) {
 	manager, files := newManager(t)
 	request := PublishRequest{

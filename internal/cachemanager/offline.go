@@ -42,6 +42,12 @@ func (manager *Manager) ResolvePinnedOffline(ctx context.Context, request Pinned
 	if _, err := domain.NewLocation(request.Location.EndpointID, request.Location.Path); err != nil || request.WorkspaceID == "" {
 		return PinnedOfflineResult{}, fmt.Errorf("resolve pinned offline entry: invalid location or workspace")
 	}
+	manager.admissionMu.Lock()
+	defer manager.admissionMu.Unlock()
+	return manager.resolvePinnedOfflineLocked(ctx, request)
+}
+
+func (manager *Manager) resolvePinnedOfflineLocked(ctx context.Context, request PinnedOfflineRequest) (PinnedOfflineResult, error) {
 	entries, err := manager.catalog.ListEntries(ctx)
 	if err != nil {
 		return PinnedOfflineResult{}, fmt.Errorf("resolve pinned offline entry catalog: %w", err)
@@ -85,6 +91,10 @@ func (manager *Manager) ResolvePinnedOffline(ctx context.Context, request Pinned
 	if err != nil {
 		return PinnedOfflineResult{}, err
 	}
+	if err := manager.catalog.MarkEntryUnknown(ctx, candidate.ID); err != nil {
+		return PinnedOfflineResult{}, fmt.Errorf("resolve pinned offline entry freshness: %w", err)
+	}
+	candidate.Freshness = cache.EntryUnknown
 	return PinnedOfflineResult{Entry: *candidate, SourceFingerprint: source}, nil
 }
 

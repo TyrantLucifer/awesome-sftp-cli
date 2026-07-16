@@ -50,6 +50,9 @@ func TestStoreRoundTripsCompleteCatalogAndReopens(t *testing.T) {
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("snapshot = %#v, want %#v", got, want)
 	}
+	if _, err := store.LoadSnapshotBounded(ctx, 4); err == nil || !strings.Contains(err.Error(), "catalog has 5 records") {
+		t.Fatalf("LoadSnapshotBounded below record count error = %v", err)
+	}
 
 	reopened, err := New(ctx, database)
 	if err != nil {
@@ -125,7 +128,7 @@ func TestLeaseOwnerTranslationsRoundTrip(t *testing.T) {
 			t.Fatalf("owner %q SQL = %q, %v", owner, encoded, err)
 		}
 	}
-	got, err := store.ListLeases(ctx)
+	got, err := store.ListLeases(ctx, len(wantOwners))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +139,7 @@ func TestLeaseOwnerTranslationsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestForeignKeysDuplicatesAndUnpersistableKindsFail(t *testing.T) {
+func TestForeignKeysAndUnpersistableKindsFail(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	database := newVersion2Database(t, ctx)
@@ -148,8 +151,8 @@ func TestForeignKeysDuplicatesAndUnpersistableKindsFail(t *testing.T) {
 	if err := store.Publish(ctx, blob, entry); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.Publish(ctx, blob, entry); err == nil {
-		t.Fatal("duplicate publish accepted")
+	if err := store.Publish(ctx, blob, entry); err != nil {
+		t.Fatalf("idempotent exact publish: %v", err)
 	}
 	reference.OwnerKind = cache.ReferenceOwnerStage2Part
 	if err := store.AddReference(ctx, reference); err == nil || !strings.Contains(err.Error(), "not persistable") {
@@ -374,9 +377,41 @@ func TestConcurrentDuplicateReferenceLeavesOneRow(t *testing.T) {
 	if successes != 1 {
 		t.Fatalf("successful duplicate inserts = %d, want 1", successes)
 	}
-	refs, err := store.ListReferences(ctx)
+	refs, err := store.ListReferences(ctx, 1)
 	if err != nil || len(refs) != 1 {
 		t.Fatalf("references = %#v, %v", refs, err)
+	}
+}
+
+func TestReferenceAndLeaseListsEnforceCallerBounds(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	database := newVersion2Database(t, ctx)
+	store := newStore(t, ctx, database)
+	blob, entry, materialization, reference, lease := validGraph()
+	must(t, store.Publish(ctx, blob, entry))
+	must(t, store.CreateMaterialization(ctx, materialization))
+	for index := range 3 {
+		reference.ID = cache.ReferenceID(fmt.Sprintf("%032x", index+1))
+		reference.OwnerID = fmt.Sprintf("reference-%d", index)
+		lease.ID = cache.LeaseID(fmt.Sprintf("%032x", index+4))
+		lease.OwnerID = fmt.Sprintf("lease-%d", index)
+		must(t, store.AddReference(ctx, reference))
+		must(t, store.AcquireLease(ctx, lease))
+	}
+	refs, err := store.ListReferences(ctx, 2)
+	if err != nil || len(refs) != 2 {
+		t.Fatalf("references = %d, %v; want 2", len(refs), err)
+	}
+	leases, err := store.ListLeases(ctx, 2)
+	if err != nil || len(leases) != 2 {
+		t.Fatalf("leases = %d, %v; want 2", len(leases), err)
+	}
+	if _, err := store.ListReferences(ctx, 0); err == nil {
+		t.Fatal("zero reference bound accepted")
+	}
+	if _, err := store.ListLeases(ctx, 0); err == nil {
+		t.Fatal("zero lease bound accepted")
 	}
 }
 

@@ -10,7 +10,9 @@ import (
 	"hash"
 	"io"
 	"math"
+	"path"
 	"reflect"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
@@ -20,6 +22,8 @@ var (
 	ErrPaused   = errors.New("transfer paused")
 	ErrCanceled = errors.New("transfer canceled")
 )
+
+const preservationTimeout = 15 * time.Minute
 
 type PartialItemsError struct{ Failed uint64 }
 
@@ -90,17 +94,19 @@ func (function ControlFunc) Action(checkpoint Checkpoint) ControlAction {
 }
 
 type Result struct {
-	Outcome           Outcome
-	Final             domain.Location
-	Bytes             uint64
-	SHA256            string
-	PartRetained      bool
-	Items             uint64
-	Succeeded         uint64
-	Skipped           uint64
-	Failed            uint64
-	Manifest          []ItemResult
-	ManifestTruncated uint64
+	Outcome              Outcome
+	Final                domain.Location
+	Bytes                uint64
+	SHA256               string
+	PartRetained         bool
+	PreservedDestination domain.Location
+	PreservationUnknown  bool
+	Items                uint64
+	Succeeded            uint64
+	Skipped              uint64
+	Failed               uint64
+	Manifest             []ItemResult
+	ManifestTruncated    uint64
 }
 
 type ItemStatus string
@@ -166,7 +172,11 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		return Result{}, errors.New("execute transfer: checkpoint belongs to another Job")
 	}
 	if checkpoint != nil && checkpoint.Phase == PhaseCommitted {
-		return Result{Outcome: checkpoint.Outcome, Final: checkpoint.Final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex}, nil
+		result := Result{Outcome: checkpoint.Outcome, Final: checkpoint.Final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex}
+		if plan.PreservedDestination.Path != "" {
+			result.PreservedDestination = plan.PreservedDestination
+		}
+		return result, nil
 	}
 
 	buffer := make([]byte, int(plan.BufferBytes))
@@ -411,9 +421,33 @@ func (worker *Worker) closeAndRefreshCheckpoint(ctx context.Context, destination
 	return nil
 }
 
-func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider providerapi.Provider, destination providerapi.MutableProvider, checkpoint Checkpoint, buffer []byte) (Result, error) {
+func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider providerapi.Provider, destination providerapi.MutableProvider, checkpoint Checkpoint, buffer []byte) (result Result, returnErr error) {
+	preserved := false
+	preservationUnknown := false
+	defer func() {
+		if returnErr != nil && result.PreservedDestination.Path == "" && (preserved || preservationUnknown) {
+			result.PreservedDestination = plan.PreservedDestination
+			result.PreservationUnknown = preservationUnknown
+		}
+	}()
 	partEntry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
 	if err != nil {
+		if checkpoint.Phase == PhaseCommitting && domain.IsCode(err, domain.CodeNotFound) {
+			proved, proofErr := proveCommitted(ctx, destinationProvider, plan.Final, checkpoint.ChecksumHex, buffer)
+			if proofErr == nil && proved {
+				checkpoint.Phase = PhaseCommitted
+				checkpoint.Outcome = OutcomeCompleted
+				checkpoint.Final = plan.Final
+				if saveErr := worker.journal.Save(ctx, checkpoint); saveErr != nil {
+					return Result{}, saveErr
+				}
+				result := Result{Outcome: OutcomeCompleted, Final: plan.Final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex}
+				if plan.PreservedDestination.Path != "" {
+					result.PreservedDestination = plan.PreservedDestination
+				}
+				return result, nil
+			}
+		}
 		return Result{}, err
 	}
 	if !reflect.DeepEqual(partEntry.Fingerprint, checkpoint.PartFingerprint) {
@@ -425,20 +459,13 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	if finalErr != nil && !domain.IsCode(finalErr, domain.CodeNotFound) {
 		return Result{}, finalErr
 	}
-	if plan.Version == 2 && !destinationPreconditionMatches(plan.ExpectedDestination, finalExists, finalEntry) {
-		checkpoint.Phase = PhaseWaitingConflict
-		checkpoint.Outcome = OutcomeWaitingConflict
-		if err := worker.journal.Save(ctx, checkpoint); err != nil {
-			return Result{}, err
+	if plan.Version == 2 && plan.ExpectedDestination.Presence == DestinationPresent {
+		_, backupErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.PreservedDestination})
+		backupExists := backupErr == nil
+		if backupErr != nil && !domain.IsCode(backupErr, domain.CodeNotFound) {
+			return Result{}, backupErr
 		}
-		return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
-	}
-	if plan.Version == 2 && finalExists && plan.ExpectedDestination.ContentSHA256 != "" {
-		contentSHA, hashErr := verifyFile(ctx, destinationProvider, final, plan.ExpectedDestination.Fingerprint, buffer)
-		if hashErr != nil {
-			return Result{}, hashErr
-		}
-		if contentSHA != string(plan.ExpectedDestination.ContentSHA256) {
+		if !backupExists && !destinationPreconditionMatches(plan.ExpectedDestination, finalExists, finalEntry) {
 			checkpoint.Phase = PhaseWaitingConflict
 			checkpoint.Outcome = OutcomeWaitingConflict
 			if err := worker.journal.Save(ctx, checkpoint); err != nil {
@@ -446,6 +473,76 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 			}
 			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
 		}
+		if !backupExists {
+			contentSHA, hashErr := verifyFile(ctx, destinationProvider, final, plan.ExpectedDestination.Fingerprint, buffer)
+			if hashErr != nil {
+				return Result{}, hashErr
+			}
+			if contentSHA != string(plan.ExpectedDestination.ContentSHA256) {
+				checkpoint.Phase = PhaseWaitingConflict
+				checkpoint.Outcome = OutcomeWaitingConflict
+				if err := worker.journal.Save(ctx, checkpoint); err != nil {
+					return Result{}, err
+				}
+				return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
+			}
+		}
+		preserver, ok := destinationProvider.(providerapi.DestinationPreserver)
+		if !ok {
+			return Result{}, planError(domain.CodeUnsupported, "commit_copy", final, "destination cannot preserve the replaced remote version", domain.RetryAfterReplan)
+		}
+		expectedSize := int64(*plan.ExpectedDestination.Fingerprint.Size) //nolint:gosec // validated below the 2 GiB preservation ceiling
+		preserveCtx, cancelPreserve := context.WithTimeout(ctx, preservationTimeout)
+		preserveResult, preserveErr := preserver.PreserveDestination(preserveCtx, providerapi.PreserveDestinationRequest{
+			Source: final, Backup: plan.PreservedDestination, ExpectedFingerprint: plan.ExpectedDestination.Fingerprint,
+			ExpectedSHA256: string(plan.ExpectedDestination.ContentSHA256), ExpectedSize: expectedSize, MaxBytes: 2 * 1024 * 1024 * 1024,
+		})
+		cancelPreserve()
+		preserved = preserveResult.BackupPresent
+		preservationUnknown = preserveResult.EffectUnknown
+		if preserveErr != nil {
+			if domain.IsCode(preserveErr, domain.CodeConflict) {
+				checkpoint.Phase = PhaseWaitingConflict
+				checkpoint.Outcome = OutcomeWaitingConflict
+				if saveErr := worker.journal.Save(ctx, checkpoint); saveErr != nil {
+					return Result{}, saveErr
+				}
+				conflictResult := Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}
+				if preserved || preservationUnknown {
+					conflictResult.PreservedDestination = plan.PreservedDestination
+					conflictResult.PreservationUnknown = preservationUnknown
+				}
+				return conflictResult, nil
+			}
+			return Result{}, preserveErr
+		}
+		if !preserved {
+			return Result{}, planError(domain.CodeIntegrityFailed, "commit_copy", plan.PreservedDestination, "provider did not confirm preserved destination", domain.RetryNever)
+		}
+		finalEntry, finalErr = destinationProvider.Stat(ctx, providerapi.StatRequest{Location: final})
+		finalExists = finalErr == nil
+		if finalErr != nil && !domain.IsCode(finalErr, domain.CodeNotFound) {
+			return Result{}, finalErr
+		}
+		if finalExists {
+			proved, proofErr := proveCommitted(ctx, destinationProvider, final, checkpoint.ChecksumHex, buffer)
+			if proofErr != nil || !proved {
+				checkpoint.Phase = PhaseWaitingConflict
+				checkpoint.Outcome = OutcomeWaitingConflict
+				if err := worker.journal.Save(ctx, checkpoint); err != nil {
+					return Result{}, err
+				}
+				return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true, PreservedDestination: plan.PreservedDestination}, nil
+			}
+		}
+	}
+	if plan.Version == 2 && plan.ExpectedDestination.Presence == DestinationAbsent && !destinationPreconditionMatches(plan.ExpectedDestination, finalExists, finalEntry) {
+		checkpoint.Phase = PhaseWaitingConflict
+		checkpoint.Outcome = OutcomeWaitingConflict
+		if err := worker.journal.Save(ctx, checkpoint); err != nil {
+			return Result{}, err
+		}
+		return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
 	}
 	if finalExists {
 		switch plan.ConflictPolicy {
@@ -495,6 +592,14 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	}
 	_, renameErr := destination.Rename(ctx, renameRequest)
 	if renameErr != nil {
+		if plan.Version == 2 && plan.Origin == OriginSyncBack && (domain.IsCode(renameErr, domain.CodeConflict) || domain.IsCode(renameErr, domain.CodeAlreadyExists)) {
+			checkpoint.Phase = PhaseWaitingConflict
+			checkpoint.Outcome = OutcomeWaitingConflict
+			if err := worker.journal.Save(ctx, checkpoint); err != nil {
+				return Result{}, err
+			}
+			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
+		}
 		proved, proofErr := proveCommitted(ctx, destinationProvider, final, checkpoint.ChecksumHex, buffer)
 		if proofErr != nil || !proved {
 			return Result{}, renameErr
@@ -515,16 +620,23 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	}
 	_, partErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
 	partRetained := partErr == nil
-	return Result{Outcome: OutcomeCompleted, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: partRetained}, nil
+	result = Result{Outcome: OutcomeCompleted, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: partRetained}
+	if preserved {
+		result.PreservedDestination = plan.PreservedDestination
+	}
+	return result, nil
 }
 
 func validateExecution(plan Plan) error {
 	validSourceKind := plan.Source.Kind == domain.EntryFile || plan.Source.Kind == domain.EntryDirectory ||
 		(plan.Kind == OperationDelete && plan.Source.Kind == domain.EntrySymlink)
-	if (plan.Version != 1 && plan.Version != 2) || plan.JobID == "" || !validSourceKind ||
+	if (plan.Version != 1 && plan.Version != 2) || !validSourceKind ||
 		plan.SourceEndpoint.ID != plan.Source.Location.EndpointID || plan.DestinationEndpoint.ID != plan.Part.EndpointID ||
 		plan.Part.EndpointID == "" || plan.Final.EndpointID != plan.Part.EndpointID || plan.Part.Path == plan.Final.Path {
 		return errors.New("execute transfer: invalid frozen plan")
+	}
+	if _, err := domain.ParseJobID(string(plan.JobID)); err != nil {
+		return errors.New("execute transfer: invalid frozen Job ID")
 	}
 	if plan.Version == 1 {
 		if plan.Origin != "" || plan.EditSessionID != "" || plan.ExpectedDestination != nil || plan.OriginalDestinationPrecondition != nil || plan.ExpectedSourceSHA256 != "" {
@@ -532,7 +644,11 @@ func validateExecution(plan Plan) error {
 		}
 	} else if plan.Origin != OriginSyncBack || validateLowerHexIdentity(plan.EditSessionID, 32) != nil ||
 		plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile || plan.ConflictPolicy != ConflictOverwrite ||
-		validateLowerHexIdentity(plan.ExpectedSourceSHA256, 64) != nil || !validDestinationPrecondition(plan.ExpectedDestination) || !validDestinationPrecondition(plan.OriginalDestinationPrecondition) {
+		validateLowerHexIdentity(plan.ExpectedSourceSHA256, 64) != nil || !validDestinationPrecondition(plan.ExpectedDestination) || !validDestinationPrecondition(plan.OriginalDestinationPrecondition) ||
+		plan.DestinationDirectory != (domain.Location{EndpointID: plan.Final.EndpointID, Path: domain.CanonicalPath(path.Dir(string(plan.Final.Path)))}) ||
+		plan.Part != childLocation(plan.DestinationDirectory, "."+path.Base(string(plan.Final.Path))+".part-"+string(plan.JobID)) ||
+		(plan.ExpectedDestination.Presence == DestinationPresent && plan.PreservedDestination != childLocation(plan.DestinationDirectory, "."+path.Base(string(plan.Final.Path))+".amsftp-original-"+string(plan.JobID))) ||
+		(plan.ExpectedDestination.Presence == DestinationAbsent && plan.PreservedDestination.Path != "") {
 		return errors.New("execute transfer: invalid sync-back Plan Version 2")
 	}
 	if plan.BufferBytes == 0 || plan.BufferBytes > 4*1024*1024 {
@@ -593,7 +709,8 @@ func validDestinationPrecondition(expected *DestinationPrecondition) bool {
 		return expected.Kind == "" && expected.Fingerprint.Strength() == domain.FingerprintWeak && expected.ContentSHA256 == ""
 	case DestinationPresent:
 		return expected.Kind == domain.EntryFile && expected.Fingerprint.Strength() != domain.FingerprintWeak &&
-			(expected.ContentSHA256 == "" || validateLowerHexIdentity(string(expected.ContentSHA256), 64) == nil)
+			expected.Fingerprint.Size != nil && *expected.Fingerprint.Size <= 2*1024*1024*1024 &&
+			validateLowerHexIdentity(string(expected.ContentSHA256), 64) == nil
 	default:
 		return false
 	}

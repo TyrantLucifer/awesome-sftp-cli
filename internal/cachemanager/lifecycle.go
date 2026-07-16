@@ -57,9 +57,17 @@ func (manager *Manager) RunStartupLifecycle(ctx context.Context, request Startup
 	if len(remaining) != 0 {
 		return result, fmt.Errorf("run cache startup lifecycle: pending eviction recovery exceeded %d batches", request.MaxBatches)
 	}
-	result.ReclaimedHandoffs, err = manager.reclaimStalePreviewHandoffs(ctx, manager.limits.MaxCandidates)
-	if err != nil {
-		return result, fmt.Errorf("run cache startup lifecycle reclaim stale preview handoffs: %w", err)
+	var after cache.LeaseID
+	for batch := 0; batch < request.MaxBatches; batch++ {
+		reclaimed, next, done, reclaimErr := manager.reclaimDeadPreviewHandoffBatch(ctx, after, manager.limits.MaxCandidates)
+		result.ReclaimedHandoffs += reclaimed
+		if reclaimErr != nil {
+			return result, fmt.Errorf("run cache startup lifecycle reclaim dead preview handoffs: %w", reclaimErr)
+		}
+		if done {
+			break
+		}
+		after = next
 	}
 	reconcile, err := manager.Reconcile(ctx, request.MaxVisited)
 	result.Reconcile = reconcile
@@ -86,66 +94,55 @@ func (manager *Manager) RunStartupLifecycle(ctx context.Context, request Startup
 	return result, nil
 }
 
-func (manager *Manager) reclaimStalePreviewHandoffs(ctx context.Context, limit int) (int, error) {
+func (manager *Manager) reclaimDeadPreviewHandoffBatch(ctx context.Context, after cache.LeaseID, limit int) (int, cache.LeaseID, bool, error) {
 	if manager.leaseState == nil || limit <= 0 {
-		return 0, fmt.Errorf("reclaim stale preview handoffs: invalid manager or limit")
+		return 0, after, false, fmt.Errorf("reclaim dead preview handoffs: invalid manager or limit")
 	}
-	leases, err := manager.catalog.ListLeases(ctx)
+	manager.admissionMu.Lock()
+	defer manager.admissionMu.Unlock()
+	leases, err := manager.catalog.ListActivePreviewLeasesAfter(ctx, after, limit)
 	if err != nil {
-		return 0, err
-	}
-	references, err := manager.catalog.ListReferences(ctx)
-	if err != nil {
-		return 0, err
+		return 0, after, false, err
 	}
 	reclaimed := 0
 	for _, lease := range leases {
-		if reclaimed >= limit {
-			break
-		}
 		if lease.State != cache.LeaseActive || lease.OwnerKind != cache.LeaseOwnerPreview ||
-			lease.Target.MaterializationID == "" || manager.leaseState.Classify(lease) != cache.LeaseReclaimable {
+			lease.Target.MaterializationID == "" || manager.leaseState.ClassifyProcess(lease) != cache.LeaseReclaimable {
 			continue
 		}
-		var exact *cache.Reference
-		ambiguous := false
-		for index := range references {
-			reference := &references[index]
-			if reference.OwnerKind != cache.ReferenceOwnerPreview || reference.OwnerID != lease.OwnerID ||
-				reference.Target != lease.Target {
-				continue
-			}
-			if exact != nil {
-				ambiguous = true
-				break
-			}
-			exact = reference
+		references, err := manager.catalog.ListPreviewReferences(ctx, lease.OwnerID, lease.Target.MaterializationID, 2)
+		if err != nil {
+			return reclaimed, after, false, err
 		}
-		if exact == nil || ambiguous {
+		if len(references) != 1 {
 			continue
 		}
 		current, err := manager.catalog.GetLease(ctx, lease.ID)
 		if err != nil {
-			return reclaimed, err
+			return reclaimed, after, false, err
 		}
 		if current.State != cache.LeaseActive || current.OwnerKind != cache.LeaseOwnerPreview ||
 			current.OwnerID != lease.OwnerID || current.Target != lease.Target ||
-			manager.leaseState.Classify(current) != cache.LeaseReclaimable {
+			manager.leaseState.ClassifyProcess(current) != cache.LeaseReclaimable {
 			continue
 		}
 		if err := manager.catalog.ReleaseHandoff(ctx, cachestore.ReleaseHandoffRequest{
 			MaterializationID: current.Target.MaterializationID,
-			ReferenceID:       exact.ID,
+			ReferenceID:       references[0].ID,
 			LeaseID:           current.ID,
 			OwnerKind:         current.OwnerKind,
 			OwnerID:           current.OwnerID,
 			ReleasedAt:        manager.now(),
 		}); err != nil {
-			return reclaimed, err
+			return reclaimed, after, false, err
 		}
 		reclaimed++
 	}
-	return reclaimed, nil
+	if len(leases) == 0 {
+		return reclaimed, after, true, nil
+	}
+	next := leases[len(leases)-1].ID
+	return reclaimed, next, len(leases) < limit, nil
 }
 
 type ClearScope string
@@ -192,6 +189,8 @@ func (manager *Manager) ClearEligible(ctx context.Context, request ClearRequest)
 	default:
 		return ClearResult{}, fmt.Errorf("clear eligible cache: invalid scope %q", request.Scope)
 	}
+	manager.admissionMu.Lock()
+	defer manager.admissionMu.Unlock()
 	reconcile, err := manager.Reconcile(ctx, request.MaxVisited)
 	if err != nil {
 		return ClearResult{Status: reconcile}, errors.Join(ErrCacheNeedsAttention, err)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -187,7 +188,9 @@ func TestStartupLifecycleReclaimsOnlyDeadPreviewHandoffs(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	manager.clock = fixedClock{now: preview.Lease.GraceUntil.Add(time.Second)}
+	// A preview child that is already gone is safe to reclaim immediately. It
+	// must not retain cache reachability until the generic lease expiry.
+	manager.clock = fixedClock{now: preview.Lease.HeartbeatAt.Add(time.Second)}
 	manager.processes = lifecycleProcessClassifier{status: cache.ProcessGone}
 	manager.leaseState, _ = cache.NewLeaseManager(manager.clock, manager.processes, cache.DefaultLeaseExpiry, cache.DefaultOpenerGrace)
 	if _, err := manager.RunStartupLifecycle(ctx, StartupLifecycleRequest{MaxVisited: 100, MaxBatches: 2}); err != nil {
@@ -206,6 +209,70 @@ func TestStartupLifecycleReclaimsOnlyDeadPreviewHandoffs(t *testing.T) {
 	}
 	if _, err := manager.catalog.BeginEviction(ctx, cache.MaterializationEviction(editor.Materialization.ID), manager.now()); !errors.Is(err, cachestore.ErrEvictionProtected) {
 		t.Fatalf("dead editor materialization eviction error = %v, want protected", err)
+	}
+}
+
+func TestStartupLifecycleReclaimsDeadPreviewsAcrossBoundedBatches(t *testing.T) {
+	manager, _ := newManager(t)
+	ctx := context.Background()
+	manager.limits.MaxCandidates = 1
+	identity := cache.ProcessIdentity{PID: 72, BirthID: "birth-72"}
+	manager.processes = lifecycleProcessClassifier{status: cache.ProcessMatches}
+	manager.leaseState, _ = cache.NewLeaseManager(manager.clock, manager.processes, cache.DefaultLeaseExpiry, cache.DefaultOpenerGrace)
+
+	var previews []HandoffResult
+	for index, suffix := range []string{"4", "5"} {
+		published := publishLifecycleEntry(t, manager, cache.PolicyPinnedOffline, true, fmt.Sprintf("bounded-preview-%d", index))
+		handoff, err := manager.PrepareHandoff(ctx, HandoffRequest{
+			EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat(suffix, 32)),
+			ReferenceID: cache.ReferenceID(strings.Repeat(string(rune('6'+index)), 32)),
+			LeaseID:     cache.LeaseID(strings.Repeat(string(rune('8'+index)), 32)),
+			OwnerKind:   cache.LeaseOwnerPreview, OwnerID: fmt.Sprintf("preview-owner-%d", index), Process: &identity,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		previews = append(previews, handoff)
+	}
+	manager.processes = lifecycleProcessClassifier{status: cache.ProcessGone}
+	manager.leaseState, _ = cache.NewLeaseManager(manager.clock, manager.processes, cache.DefaultLeaseExpiry, cache.DefaultOpenerGrace)
+
+	result, err := manager.RunStartupLifecycle(ctx, StartupLifecycleRequest{MaxVisited: 100, MaxBatches: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ReclaimedHandoffs != 2 {
+		t.Fatalf("reclaimed handoffs = %d, want 2", result.ReclaimedHandoffs)
+	}
+	for _, preview := range previews {
+		lease, err := manager.catalog.GetLease(ctx, preview.Lease.ID)
+		if err != nil || lease.State != cache.LeaseReleased {
+			t.Fatalf("preview lease = %#v, %v; want released", lease, err)
+		}
+	}
+}
+
+func TestClearEligibleSerializesWithAdmission(t *testing.T) {
+	manager, _ := newManager(t)
+	ctx := context.Background()
+	manager.admissionMu.Lock()
+	started := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		close(started)
+		_, err := manager.ClearEligible(ctx, ClearRequest{Scope: ClearAll, MaxTargets: 1, MaxVisited: 100})
+		done <- err
+	}()
+	<-started
+	select {
+	case err := <-done:
+		manager.admissionMu.Unlock()
+		t.Fatalf("clear completed while admission was locked: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	manager.admissionMu.Unlock()
+	if err := <-done; err != nil {
+		t.Fatal(err)
 	}
 }
 

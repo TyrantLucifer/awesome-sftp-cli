@@ -32,16 +32,17 @@ type cursorState struct {
 	fingerprint domain.Fingerprint
 }
 type Provider struct {
-	mu         sync.Mutex
-	endpoint   domain.Endpoint
-	snapshot   domain.EndpointSnapshot
-	client     *pkgsftp.Client
-	root       string
-	cursors    map[providerapi.PageCursor]*cursorState
-	next       uint64
-	maxCursors int
-	closed     bool
-	close      func() error
+	mu           sync.Mutex
+	endpoint     domain.Endpoint
+	snapshot     domain.EndpointSnapshot
+	client       *pkgsftp.Client
+	root         string
+	cursors      map[providerapi.PageCursor]*cursorState
+	next         uint64
+	maxCursors   int
+	closed       bool
+	close        func() error
+	preserveSlot chan struct{}
 }
 
 var _ providerapi.Provider = (*Provider)(nil)
@@ -81,7 +82,7 @@ func New(config Config) (*Provider, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Provider{endpoint: config.Endpoint, snapshot: domain.EndpointSnapshot{EndpointID: config.Endpoint.ID, SessionID: config.SessionID, State: domain.StateReady, Capabilities: capabilities, ObservedAt: time.Now()}, client: config.Client, root: root, close: config.Close, cursors: make(map[providerapi.PageCursor]*cursorState), maxCursors: maximum}, nil
+	return &Provider{endpoint: config.Endpoint, snapshot: domain.EndpointSnapshot{EndpointID: config.Endpoint.ID, SessionID: config.SessionID, State: domain.StateReady, Capabilities: capabilities, ObservedAt: time.Now()}, client: config.Client, root: root, close: config.Close, cursors: make(map[providerapi.PageCursor]*cursorState), maxCursors: maximum, preserveSlot: make(chan struct{}, 1)}, nil
 }
 func (p *Provider) Descriptor() domain.Endpoint { return p.endpoint }
 func (p *Provider) Snapshot(ctx context.Context) (domain.EndpointSnapshot, error) {

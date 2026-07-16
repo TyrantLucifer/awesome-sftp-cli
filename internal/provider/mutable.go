@@ -16,6 +16,29 @@ type MutableProvider interface {
 	Remove(context.Context, RemoveRequest) error
 }
 
+// DestinationPreserver is the narrow sync-back facet used before replacing an
+// existing file. It atomically moves the path to a job-owned no-replace backup
+// before verifying content, so every byte visible at the move boundary remains
+// reachable even when an external writer races the edit commit.
+type DestinationPreserver interface {
+	PreserveDestination(context.Context, PreserveDestinationRequest) (PreserveDestinationResult, error)
+}
+
+type PreserveDestinationResult struct {
+	BackupPresent  bool
+	SourceRestored bool
+	EffectUnknown  bool
+}
+
+type PreserveDestinationRequest struct {
+	Source              domain.Location
+	Backup              domain.Location
+	ExpectedFingerprint domain.Fingerprint
+	ExpectedSHA256      string
+	ExpectedSize        int64
+	MaxBytes            int64
+}
+
 // TrashProvider is an optional mutation facet. Callers may use it only when
 // the same frozen capability snapshot explicitly advertises "trash".
 type TrashProvider interface {
