@@ -17,6 +17,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
@@ -203,6 +204,33 @@ func TestDaemonKeepsStage1ReadOnlyWhenPersistentStateIsUnsafe(t *testing.T) {
 	}
 }
 
+func TestDaemonExplicitMigrationResumeReturnsStateFailureInsteadOfServingDegraded(t *testing.T) {
+	paths, purpose := degradedStatePaths(t)
+	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
+		t.Fatalf("prepare state directory: %v", err)
+	}
+	database, _, err := statefs.Initialize(context.Background(), statefs.InitializeConfig{
+		Root: paths.StateDir, DatabasePath: paths.DatabaseFile, Now: time.Unix(2_400, 0),
+	})
+	if err != nil {
+		t.Fatalf("initialize explicit-resume fixture: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close explicit-resume fixture: %v", err)
+	}
+	addNewerSchemaHistory(t, paths.DatabaseFile)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err = runDaemonWithPathsAndOptions(ctx, paths, purpose, daemonOptions{explicitMigrationResume: true})
+	if err == nil || !strings.Contains(err.Error(), "explicit migration resume") {
+		t.Fatalf("runDaemonWithPathsAndOptions(explicit invalid state) error = %v", err)
+	}
+	if _, err := os.Lstat(paths.ControlSocket); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("explicit resume failure created control socket: %v", err)
+	}
+}
+
 func corruptProjectDatabase(t *testing.T, path string) {
 	t.Helper()
 	file, err := os.OpenFile(path, os.O_RDWR, 0) //nolint:gosec // exact test-owned database path
@@ -228,7 +256,8 @@ func addNewerSchemaHistory(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("open database for newer history: %v", err)
 	}
-	if _, err := database.Exec("INSERT INTO schema_migrations(version, name, sha256, applied_at) VALUES(2, 'future', ?, '2026-07-16T00:50:00Z')", strings.Repeat("a", 64)); err != nil {
+	compiledTarget := len([]migration.Migration{migration.Version1(), migration.Version2()})
+	if _, err := database.Exec("INSERT INTO schema_migrations(version, name, sha256, applied_at) VALUES(?, 'future', ?, '2026-07-16T00:50:00Z')", compiledTarget+1, strings.Repeat("a", 64)); err != nil {
 		_ = database.Close()
 		t.Fatalf("insert newer history: %v", err)
 	}

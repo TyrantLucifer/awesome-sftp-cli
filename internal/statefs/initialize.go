@@ -396,7 +396,10 @@ func openRuntimeDatabase(ctx context.Context, path string, migrations []migratio
 
 func resolveCompiledState(migrations []migration.Migration, contracts map[uint64][]byte) ([]migration.Migration, map[uint64][]byte, error) {
 	if len(migrations) == 0 && contracts == nil {
-		return []migration.Migration{migration.Version1()}, map[uint64][]byte{1: migration.Version1SchemaContract()}, nil
+		return []migration.Migration{migration.Version1(), migration.Version2()}, map[uint64][]byte{
+			1: migration.Version1SchemaContract(),
+			2: migration.Version2SchemaContract(),
+		}, nil
 	}
 	if len(migrations) == 0 || contracts == nil {
 		return nil, nil, fmt.Errorf("initialize state: migrations and schema contracts must be supplied together")

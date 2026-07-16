@@ -21,10 +21,10 @@ func TestUpgradeDatabaseRunsOneFrozenAttemptAcrossMultiplePendingVersions(t *tes
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("i", probeRandomBytes+16)), Now: time.Unix(700, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}
@@ -78,10 +78,10 @@ func TestUpgradeDatabaseRequiresExplicitResumeForRunningAttemptAndReusesBackup(t
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("j", probeRandomBytes+16)), Now: time.Unix(800, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}
@@ -154,8 +154,8 @@ func TestUpgradeDatabaseRequiresExplicitResumeForRunningAttemptAndReusesBackup(t
 
 func coordinatorFixture(t *testing.T, ctx context.Context) ([]migration.Migration, map[uint64][]byte) {
 	t.Helper()
-	v2 := migration.Migration{Version: 2, Name: "second", Statements: []string{"CREATE TABLE coordinator_second(id INTEGER PRIMARY KEY) STRICT"}, MaxMigrationWalBytes: 1 << 20}
-	v3 := migration.Migration{Version: 3, Name: "third", Statements: []string{"ALTER TABLE coordinator_second ADD COLUMN note TEXT"}, MaxMigrationWalBytes: 1 << 20}
+	v2 := migration.Version2()
+	v3 := migration.Migration{Version: 3, Name: "third", Statements: []string{"CREATE TABLE coordinator_third(id INTEGER PRIMARY KEY, note TEXT) STRICT"}, MaxMigrationWalBytes: 1 << 20}
 	migrations := []migration.Migration{migration.Version1(), v2, v3}
 	contracts := map[uint64][]byte{1: migration.Version1SchemaContract()}
 	root := testkit.PersistentTempDir(t)

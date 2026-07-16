@@ -167,8 +167,9 @@ func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
 	rightPane.Sort = tui.SortState{Key: tui.SortModified, Descending: true}
 	rightPane.ShowHidden = true
 	model.Panes[tui.Right] = rightPane
+	model.Drawer = tui.DrawerState{Mode: tui.DrawerLog, Focus: tui.FocusPane, Rows: 8}
 	now := time.Date(2026, 7, 15, 12, 30, 0, 0, time.UTC)
-	document, err := workspaceDocument(model, now)
+	document, err := workspaceDocument(model, now, workspace.CachePinnedOffline)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -181,11 +182,46 @@ func TestWorkspaceDocumentCapturesStableTwoPaneState(t *testing.T) {
 	if document.Panes[1].Sort.Key != workspace.SortModified || document.Panes[1].Sort.Direction != workspace.SortDescending || !document.Panes[1].ShowHidden {
 		t.Fatalf("remote pane preferences = %#v", document.Panes[1])
 	}
+	if document.Layout.Drawer != (workspace.DrawerState{Mode: workspace.DrawerLog, Focus: workspace.FocusPane, Rows: 8}) || document.CachePolicy != workspace.CachePinnedOffline {
+		t.Fatalf("workspace drawer/cache = %#v/%q", document.Layout.Drawer, document.CachePolicy)
+	}
 	restored := tui.NewPaneState(domain.Endpoint{ID: rightID, Kind: domain.EndpointSSH, SSHHostAlias: "prod"}, rightLocation)
 	applyWorkspacePanePreferences(&restored, document.Panes[1])
 	if restored.Sort != rightPane.Sort || !restored.ShowHidden {
 		t.Fatalf("restored preferences = %#v", restored)
 	}
+}
+
+func TestApplyWorkspaceLayoutRestoresDrawerWithoutSensitiveContent(t *testing.T) {
+	model := testModelForWorkspaceLayout(t)
+	applyWorkspaceLayout(&model, workspace.LayoutState{
+		ActivePane: 1,
+		Drawer:     workspace.DrawerState{Mode: workspace.DrawerJobs, Focus: workspace.FocusDrawer, Rows: 7},
+	})
+	if model.Active != tui.Right || model.Drawer != (tui.DrawerState{Mode: tui.DrawerJobs, Focus: tui.FocusDrawer, Rows: 7}) {
+		t.Fatalf("restored layout = active:%v drawer:%#v", model.Active, model.Drawer)
+	}
+	if len(model.Jobs) != 0 || len(model.Diagnostics) != 0 || len(model.Preview.Data) != 0 {
+		t.Fatalf("workspace restored transient drawer bodies: %#v", model)
+	}
+}
+
+func testModelForWorkspaceLayout(t *testing.T) tui.Model {
+	t.Helper()
+	leftID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	rightID := domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+	left, err := domain.NewLocation(leftID, "/left")
+	if err != nil {
+		t.Fatal(err)
+	}
+	right, err := domain.NewLocation(rightID, "/right")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tui.NewModel(
+		tui.NewPaneState(domain.Endpoint{ID: leftID, Kind: domain.EndpointLocal}, left),
+		tui.NewPaneState(domain.Endpoint{ID: rightID, Kind: domain.EndpointLocal}, right),
+	)
 }
 
 func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {

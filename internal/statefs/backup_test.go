@@ -20,10 +20,10 @@ func TestCreateMigrationBackupSanitizesPublishesAndCatalogsOnlineSnapshot(t *tes
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("b", probeRandomBytes+16)), Now: time.Unix(100, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}
@@ -115,10 +115,10 @@ func TestCreateMigrationBackupNeverReplacesExistingDestination(t *testing.T) {
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("c", probeRandomBytes+16)), Now: time.Unix(200, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}
@@ -174,10 +174,10 @@ func TestCreateMigrationBackupRejectsForgedAttemptBeforePathUse(t *testing.T) {
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("f", probeRandomBytes+16)), Now: time.Unix(250, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}
@@ -210,10 +210,10 @@ func TestCreateMigrationBackupRebuildsExactPartialTempAfterCrash(t *testing.T) {
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("d", probeRandomBytes+16)), Now: time.Unix(300, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}
@@ -264,10 +264,10 @@ func TestCreateMigrationBackupReusesVerifiedPublishedFinalAfterCrash(t *testing.
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("e", probeRandomBytes+16)), Now: time.Unix(400, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}
@@ -348,10 +348,10 @@ func TestVerifySanitizedBackupRejectsExtraMigrationHistory(t *testing.T) {
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("g", probeRandomBytes+16)), Now: time.Unix(500, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}
@@ -404,10 +404,10 @@ func TestCreateMigrationBackupVerifiesTheAttemptOriginalHead(t *testing.T) {
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
-	database, _, err := Initialize(ctx, InitializeConfig{
+	database, _, err := Initialize(ctx, withVersion1CompiledState(InitializeConfig{
 		Root: root, DatabasePath: path,
 		Random: strings.NewReader(strings.Repeat("h", probeRandomBytes+16)), Now: time.Unix(600, 0),
-	})
+	}))
 	if err != nil {
 		t.Fatalf("initialize source: %v", err)
 	}

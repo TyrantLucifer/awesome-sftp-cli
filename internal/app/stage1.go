@@ -130,6 +130,9 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 			}
 		}
 	}
+	if options.explicitMigrationResume && stateOpenErr != nil {
+		return fmt.Errorf("explicit migration resume failed: %w", stateOpenErr)
+	}
 	if stateDatabase != nil {
 		defer func() {
 			returnErr = errors.Join(returnErr, stateDatabase.Close())
@@ -480,10 +483,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		applyWorkspacePanePreferences(&right, restored.Panes[1])
 	}
 	model := tui.NewModel(left, right)
+	cachePolicy := workspace.CacheEphemeral
 	if restored != nil {
-		if restored.Layout.ActivePane == int(tui.Right) {
-			model.Active = tui.Right
-		}
+		applyWorkspaceLayout(&model, restored.Layout)
+		cachePolicy = restored.CachePolicy
 		for index, paneState := range restored.Panes {
 			model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.PaneID(index), Query: paneState.Filter})
 		}
@@ -547,7 +550,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}()
 			return
 		case tui.IntentWorkspaceSave:
-			document, documentErr := workspaceDocument(model, time.Now().UTC())
+			document, documentErr := workspaceDocument(model, time.Now().UTC(), cachePolicy)
 			if documentErr != nil {
 				actions <- tui.WorkspaceSaveResult{Name: intent.Name, Message: "workspace save failed: " + documentErr.Error()}
 				return
@@ -1030,12 +1033,14 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	}
 }
 
-func workspaceDocument(model tui.Model, updatedAt time.Time) (workspace.Document, error) {
+func workspaceDocument(model tui.Model, updatedAt time.Time, cachePolicy workspace.CachePolicy) (workspace.Document, error) {
 	document := workspace.Document{
 		SchemaVersion: workspace.SchemaVersion,
 		UpdatedAt:     updatedAt.UTC(),
-		Layout:        workspace.LayoutState{ActivePane: int(model.Active)},
-		CachePolicy:   workspace.CacheEphemeral,
+		Layout: workspace.LayoutState{ActivePane: int(model.Active), Drawer: workspace.DrawerState{
+			Mode: workspace.DrawerMode(model.Drawer.Mode), Focus: workspace.FocusTarget(model.Drawer.Focus), Rows: model.Drawer.Rows,
+		}},
+		CachePolicy: cachePolicy,
 	}
 	for index, paneState := range model.Panes {
 		endpoint := workspace.EndpointRef{Kind: paneState.Endpoint.Kind}
@@ -1058,6 +1063,19 @@ func workspaceDocument(model tui.Model, updatedAt time.Time) (workspace.Document
 		return workspace.Document{}, err
 	}
 	return document, nil
+}
+
+func applyWorkspaceLayout(model *tui.Model, layout workspace.LayoutState) {
+	if layout.ActivePane == int(tui.Right) {
+		model.Active = tui.Right
+	} else {
+		model.Active = tui.Left
+	}
+	model.Drawer = tui.DrawerState{
+		Mode:  tui.DrawerMode(layout.Drawer.Mode),
+		Focus: tui.FocusTarget(layout.Drawer.Focus),
+		Rows:  layout.Drawer.Rows,
+	}
 }
 
 func applyWorkspacePanePreferences(target *tui.PaneState, saved workspace.Pane) {
