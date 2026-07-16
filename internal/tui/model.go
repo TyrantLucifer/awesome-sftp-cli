@@ -328,6 +328,8 @@ type PreviewState struct {
 	Loading    bool
 	Truncated  bool
 	Binary     bool
+	Kind       string
+	Summary    string
 	Message    string
 }
 
@@ -575,6 +577,9 @@ type PreviewChunk struct {
 	Data       []byte
 	Done       bool
 	Truncated  bool
+	Rendered   bool
+	Kind       string
+	Summary    string
 	Message    string
 }
 type AuthChallengeReceived struct {

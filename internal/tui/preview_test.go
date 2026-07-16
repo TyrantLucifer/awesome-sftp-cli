@@ -64,6 +64,19 @@ func TestPreviewPreservesLineStructureWhileSanitizingEachLine(t *testing.T) {
 	}
 }
 
+func TestPreviewPreservesRenderedBinaryFallbackAndSummary(t *testing.T) {
+	model := testModel(t)
+	file := model.Panes[Left].visibleEntry(1).Location
+	model, _ = Reduce(model, BeginPreview{Generation: 9, Location: file})
+	model, _ = Reduce(model, PreviewChunk{
+		Generation: 9, Data: []byte("1  00000000  00 ff"), Done: true,
+		Rendered: true, Kind: "binary", Summary: "partial preview: bytes 0..2", Truncated: true,
+	})
+	if model.Preview.Binary || model.Preview.Kind != "binary" || model.Preview.Summary == "" || !strings.Contains(model.Preview.DisplayText(), "00000000") {
+		t.Fatalf("preview = %#v text=%q", model.Preview, model.Preview.DisplayText())
+	}
+}
+
 func TestEscapeClosesAndCancelsPreview(t *testing.T) {
 	model := testModel(t)
 	file := model.Panes[Left].visibleEntry(1).Location

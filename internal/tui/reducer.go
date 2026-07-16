@@ -228,7 +228,11 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		}
 		preview.BytesRead = len(preview.Data)
 		preview.Truncated = preview.Truncated || action.Truncated || len(action.Data) > remaining
-		preview.Binary = preview.Binary || bytes.IndexByte(action.Data, 0) >= 0
+		preview.Binary = preview.Binary || !action.Rendered && bytes.IndexByte(action.Data, 0) >= 0
+		if action.Kind != "" {
+			preview.Kind = action.Kind
+		}
+		preview.Summary = action.Summary
 		preview.Message = action.Message
 		if action.Done || preview.Truncated || action.Message != "" {
 			preview.Loading = false

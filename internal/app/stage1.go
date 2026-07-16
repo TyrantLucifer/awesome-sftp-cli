@@ -22,6 +22,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
@@ -1435,5 +1436,19 @@ func previewLocation(ctx context.Context, client *daemon.Client, generation uint
 		actions <- tui.PreviewChunk{Generation: generation, Done: true, Message: err.Error()}
 		return
 	}
-	actions <- tui.PreviewChunk{Generation: generation, Data: data, Done: true, Truncated: !response.EOF}
+	result := builtinpreview.Render(builtinpreview.Request{
+		Path: string(location.Path), Data: data, Complete: response.EOF,
+	}, builtinpreview.DefaultLimits())
+	summary := result.Summary
+	if result.Warning != "" {
+		if summary != "" {
+			summary += "; "
+		}
+		summary += result.Warning
+	}
+	actions <- tui.PreviewChunk{
+		Generation: generation, Data: []byte(result.Text), Done: true,
+		Truncated: result.Truncated || result.Partial, Rendered: true,
+		Kind: string(result.Kind), Summary: summary,
+	}
 }

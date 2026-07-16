@@ -273,11 +273,17 @@ func drawerTabLabel(active DrawerMode) string {
 
 func renderPreviewDrawer(surface Surface, preview PreviewState, y, width, rows int) {
 	header := string(preview.Location.Path)
+	if preview.Kind != "" {
+		header += " [" + preview.Kind + "]"
+	}
 	if preview.Loading {
 		header += " [loading]"
 	}
 	if preview.Truncated {
 		header += " [truncated]"
+	}
+	if preview.Summary != "" {
+		header += " " + SanitizeTerminalText(preview.Summary)
 	}
 	surface.PutClipped(0, y, width, header, StylePreview)
 	if rows <= 1 {
