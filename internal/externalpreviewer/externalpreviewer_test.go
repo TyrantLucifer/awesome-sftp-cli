@@ -387,11 +387,17 @@ func mustReadFile(t *testing.T, path string) []byte {
 	for {
 		// #nosec G304 -- path is a test-owned helper capture path.
 		value, err := os.ReadFile(path)
-		if err == nil {
+		if err == nil && len(value) > 0 {
 			return value
 		}
-		if !errors.Is(err, os.ErrNotExist) || time.Now().After(deadline) {
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
 			t.Fatal(err)
+		}
+		if time.Now().After(deadline) {
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Fatalf("test-owned helper file %q remained empty", path)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
