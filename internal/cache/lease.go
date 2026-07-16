@@ -65,10 +65,17 @@ func (manager *LeaseManager) Heartbeat(lease Lease) (Lease, error) {
 	if lease.State != LeaseActive {
 		return Lease{}, fmt.Errorf("heartbeat cache lease %q: lease is not active", lease.ID)
 	}
+	grace := lease.GraceUntil.Sub(lease.ExpiresAt)
+	if grace < 0 {
+		grace = 0
+	}
+	if grace > manager.grace {
+		grace = manager.grace
+	}
 	now := manager.clock.Now()
 	lease.HeartbeatAt = now
 	lease.ExpiresAt = now.Add(manager.expiry)
-	lease.GraceUntil = lease.ExpiresAt.Add(manager.grace)
+	lease.GraceUntil = lease.ExpiresAt.Add(grace)
 	return lease, nil
 }
 

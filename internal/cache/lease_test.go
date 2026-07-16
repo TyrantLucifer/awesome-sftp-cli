@@ -32,6 +32,36 @@ func TestLeaseHeartbeatUsesInjectedClock(t *testing.T) {
 	}
 }
 
+func TestLeaseHeartbeatPreservesOwnerSpecificGrace(t *testing.T) {
+	t.Parallel()
+
+	start := time.Date(2026, 7, 16, 9, 0, 0, 0, time.UTC)
+	clock := &manualClock{now: start.Add(30 * time.Second)}
+	manager, err := NewLeaseManager(clock, nil, 2*time.Minute, 15*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	editor := validLease(start)
+	editor.OwnerKind = LeaseOwnerEditor
+	editor.GraceUntil = editor.ExpiresAt
+	opener := validLease(start)
+
+	editor, err = manager.Heartbeat(editor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	opener, err = manager.Heartbeat(opener)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !editor.GraceUntil.Equal(editor.ExpiresAt) {
+		t.Fatalf("editor heartbeat acquired opener grace: expiry=%v grace=%v", editor.ExpiresAt, editor.GraceUntil)
+	}
+	if got := opener.GraceUntil.Sub(opener.ExpiresAt); got != 15*time.Minute {
+		t.Fatalf("opener grace = %v", got)
+	}
+}
+
 func TestLeaseClassificationRequiresPIDAndBirthIdentity(t *testing.T) {
 	t.Parallel()
 
@@ -110,7 +140,7 @@ func TestReleasedLeaseIsImmediatelyReclaimable(t *testing.T) {
 
 func validLease(start time.Time) Lease {
 	return Lease{
-		ID: testLeaseID('a'), OwnerKind: LeaseOwnerEditor, OwnerID: "editor-1",
+		ID: testLeaseID('a'), OwnerKind: LeaseOwnerOpener, OwnerID: "opener-1",
 		DaemonInstanceID: "daemon-1", Target: BlobTarget(testBlobID('b')), State: LeaseActive,
 		HeartbeatAt: start, ExpiresAt: start.Add(2 * time.Minute), GraceUntil: start.Add(17 * time.Minute),
 	}
