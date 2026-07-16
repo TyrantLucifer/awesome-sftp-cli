@@ -474,9 +474,13 @@ func (store *Store) Transition(ctx context.Context, request TransitionRequest) (
 	if err := validateTransitionRequest(request); err != nil {
 		return Snapshot{}, false, err
 	}
+	boundEdit, err := store.hasEditBinding(ctx, request.JobID)
+	if err != nil {
+		return Snapshot{}, false, err
+	}
 	var snapshot Snapshot
 	duplicate := false
-	err := store.immediate(ctx, []uint64{jobWALBudget, eventWALBudget}, func(connection *sql.Conn, writer *transactionWriter) error {
+	err = store.immediate(ctx, transitionWALBudgets(boundEdit && request.To == job.StateCompleted), func(connection *sql.Conn, writer *transactionWriter) error {
 		var eventJobID domain.JobID
 		var eventKind, payload string
 		err := connection.QueryRowContext(ctx, "SELECT job_id, kind, payload_json FROM job_events WHERE event_id=?", request.EventID).Scan(&eventJobID, &eventKind, &payload)
@@ -518,6 +522,11 @@ func (store *Store) Transition(ctx context.Context, request TransitionRequest) (
 		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, ?, ?, ?, ?, ?)", request.JobID, current.NextEventSequence, request.EventID, request.EventKind, request.PayloadJSON, request.Now.Unix()); err != nil {
 			return fmt.Errorf("transition Job event: %w", err)
 		}
+		if boundEdit && request.To == job.StateCompleted {
+			if err := finalizeCompletedSyncBack(ctx, connection, writer, request); err != nil {
+				return err
+			}
+		}
 		snapshot, err = getSnapshot(ctx, connection, request.JobID)
 		return err
 	})
@@ -525,6 +534,82 @@ func (store *Store) Transition(ctx context.Context, request TransitionRequest) (
 		return Snapshot{}, false, err
 	}
 	return snapshot, duplicate, nil
+}
+
+func (store *Store) hasEditBinding(ctx context.Context, jobID domain.JobID) (bool, error) {
+	var tableCount int
+	if err := store.database.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name='edit_session_jobs'").Scan(&tableCount); err != nil {
+		return false, fmt.Errorf("transition Job: inspect edit binding schema: %w", err)
+	}
+	if tableCount == 0 {
+		return false, nil
+	}
+	var count int
+	if err := store.database.QueryRowContext(ctx, "SELECT count(*) FROM edit_session_jobs WHERE job_id=?", jobID).Scan(&count); err != nil {
+		return false, fmt.Errorf("transition Job: inspect edit binding: %w", err)
+	}
+	if count < 0 || count > 1 {
+		return false, fmt.Errorf("transition Job: invalid edit binding count %d", count)
+	}
+	return count == 1, nil
+}
+
+func transitionWALBudgets(finalizeEdit bool) []uint64 {
+	budgets := []uint64{jobWALBudget, eventWALBudget}
+	if finalizeEdit {
+		budgets = append(budgets, editBindingWALBudget, eventWALBudget, editBindingWALBudget, editBindingWALBudget, editBindingWALBudget)
+	}
+	return budgets
+}
+
+func finalizeCompletedSyncBack(ctx context.Context, connection *sql.Conn, writer *transactionWriter, request TransitionRequest) error {
+	var sessionID, materializationID, referenceID, leaseID, purpose string
+	if err := connection.QueryRowContext(ctx, `SELECT s.session_id,s.materialization_id,d.reference_id,d.lease_id,d.purpose
+		FROM edit_session_jobs j JOIN edit_sessions s ON s.session_id=j.session_id JOIN edit_session_details d ON d.session_id=s.session_id
+		WHERE j.job_id=? AND s.state='uploading' AND s.local_state='dirty'`, request.JobID).Scan(&sessionID, &materializationID, &referenceID, &leaseID, &purpose); err != nil {
+		return fmt.Errorf("finalize sync-back edit binding: %w", err)
+	}
+	ownerKind := "edit"
+	if purpose == "opener" {
+		ownerKind = "open"
+	} else if purpose != "editor" {
+		return fmt.Errorf("finalize sync-back edit binding: invalid purpose %q", purpose)
+	}
+	result, err := writer.ExecContext(ctx, "UPDATE edit_sessions SET local_state='clean',remote_state='unchanged',state='completed',state_version=state_version+1,updated_at_unix=? WHERE session_id=? AND state='uploading' AND local_state='dirty'", request.Now.Unix(), sessionID)
+	if err := requireExactRow("finalize sync-back edit session", result, err); err != nil {
+		return err
+	}
+	var sequence int64
+	if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(sequence),0)+1 FROM edit_session_events WHERE session_id=?", sessionID).Scan(&sequence); err != nil {
+		return fmt.Errorf("finalize sync-back edit event sequence: %w", err)
+	}
+	if _, err := writer.ExecContext(ctx, "INSERT INTO edit_session_events(session_id,sequence,event_id,kind,error_code,created_at_unix) VALUES(?,?,?,'sync_back_completed',NULL,?)", sessionID, sequence, request.EventID, request.Now.Unix()); err != nil {
+		return fmt.Errorf("finalize sync-back edit event: %w", err)
+	}
+	result, err = writer.ExecContext(ctx, "UPDATE cache_materializations SET state='clean',updated_at_unix=max(updated_at_unix,?),last_access_unix=max(last_access_unix,?) WHERE materialization_id=? AND state='dirty'", request.Now.Unix(), request.Now.Unix(), materializationID)
+	if err := requireExactRow("finalize sync-back materialization", result, err); err != nil {
+		return err
+	}
+	result, err = writer.ExecContext(ctx, "UPDATE cache_leases SET heartbeat_at_unix=max(heartbeat_at_unix,?),expires_at_unix=max(expires_at_unix,?),grace_until_unix=max(grace_until_unix,expires_at_unix,?),state='released' WHERE lease_id=? AND materialization_id=? AND owner_kind=? AND owner_id=? AND state='active'", request.Now.Unix(), request.Now.Unix(), request.Now.Unix(), leaseID, materializationID, ownerKind, sessionID)
+	if err := requireExactRow("finalize sync-back lease", result, err); err != nil {
+		return err
+	}
+	result, err = writer.ExecContext(ctx, "DELETE FROM cache_references WHERE reference_id=? AND materialization_id=? AND owner_kind=? AND owner_id=?", referenceID, materializationID, ownerKind, sessionID)
+	return requireExactRow("finalize sync-back reference", result, err)
+}
+
+func requireExactRow(label string, result sql.Result, err error) error {
+	if err != nil {
+		return fmt.Errorf("%s: %w", label, err)
+	}
+	changed, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("%s row count: %w", label, err)
+	}
+	if changed != 1 {
+		return fmt.Errorf("%s: expected one row, changed %d", label, changed)
+	}
+	return nil
 }
 
 func (store *Store) Get(ctx context.Context, jobID domain.JobID) (Snapshot, error) {
