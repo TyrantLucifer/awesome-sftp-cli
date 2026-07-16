@@ -544,7 +544,7 @@ func entryKind(mode os.FileMode) domain.EntryKind {
 func metadata(info os.FileInfo) domain.Metadata {
 	size := uint64(max(info.Size(), 0))
 	mode := uint32(info.Mode())
-	modified := info.ModTime()
+	modified := info.ModTime().UTC()
 	precision := domain.TimePrecision("nanosecond")
 	uid, gid, id := platformMetadata(info)
 	return domain.Metadata{

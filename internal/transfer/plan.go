@@ -82,6 +82,8 @@ type Plan struct {
 	PlanID                string            `json:"plan_id"`
 	JobID                 domain.JobID      `json:"job_id"`
 	Kind                  OperationKind     `json:"kind"`
+	SourceEndpoint        domain.Endpoint   `json:"source_endpoint"`
+	DestinationEndpoint   domain.Endpoint   `json:"destination_endpoint"`
 	Source                FileRef           `json:"source"`
 	DestinationDirectory  domain.Location   `json:"destination_directory"`
 	RequestedName         string            `json:"requested_name"`
@@ -107,6 +109,10 @@ type FreezeRequest struct {
 
 type Resolver interface {
 	Resolve(domain.EndpointID) (providerapi.Provider, error)
+}
+
+type PlanAcquirer interface {
+	Acquire(context.Context, Plan) (release func(), err error)
 }
 
 type MapResolver map[domain.EndpointID]providerapi.Provider
@@ -225,6 +231,8 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		PlanID:               request.PlanID,
 		JobID:                request.JobID,
 		Kind:                 kind,
+		SourceEndpoint:       sourceProvider.Descriptor(),
+		DestinationEndpoint:  destinationProvider.Descriptor(),
 		Source:               cloneFileRef(request.Intent.Source),
 		DestinationDirectory: request.Intent.DestinationDirectory,
 		RequestedName:        request.Intent.Name,
@@ -433,7 +441,7 @@ func cloneFingerprint(value domain.Fingerprint) domain.Fingerprint {
 		clone.Size = &owned
 	}
 	if value.ModifiedAt != nil {
-		owned := *value.ModifiedAt
+		owned := value.ModifiedAt.UTC()
 		clone.ModifiedAt = &owned
 	}
 	if value.ModifiedPrecision != nil {

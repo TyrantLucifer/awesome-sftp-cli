@@ -28,6 +28,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/sshconfig"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
@@ -36,6 +37,7 @@ import (
 
 const daemonReadyTimeout = 5 * time.Second
 const authenticationTimeout = 2 * time.Minute
+const durableLocalEndpointID domain.EndpointID = "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func DefaultHandlers() Handlers {
 	unsupported := func(context.Context, []string, io.Writer, io.Writer) error {
@@ -75,6 +77,7 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	defer lock.Close()
 	generator := &domain.RandomGenerator{}
 	var stateDatabase *sql.DB
+	var jobStore *jobstore.Store
 	var stateOpenErr error
 	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
 		stateOpenErr = fmt.Errorf("prepare persistent state: %w", err)
@@ -93,6 +96,9 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 			}
 			if err == nil {
 				err = store.CheckpointIdle(ctx)
+			}
+			if err == nil {
+				jobStore = store
 			}
 			if err != nil {
 				stateOpenErr = fmt.Errorf("recover durable Jobs: %w", err)
@@ -147,15 +153,11 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	defer func() { _ = listener.Close(); _ = os.Remove(paths.ControlSocket) }()
-	endpointID, err := domain.NewEndpointID(generator)
-	if err != nil {
-		return err
-	}
 	sessionID, err := domain.NewSessionID(generator)
 	if err != nil {
 		return err
 	}
-	local, err := localfs.New(localfs.Config{Endpoint: domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal, DisplayName: "local"}, SessionID: sessionID, Root: "/"})
+	local, err := localfs.New(localfs.Config{Endpoint: domain.Endpoint{ID: durableLocalEndpointID, Kind: domain.EndpointLocal, DisplayName: "local"}, SessionID: sessionID, Root: "/"})
 	if err != nil {
 		return err
 	}
@@ -175,8 +177,11 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	sessions.SetAuthBroker(authBroker)
-	sessions.SetSSHConnector(func(connectCtx context.Context, hostAlias string) (provider.Provider, error) {
-		attempt, err := authBroker.BeginAttempt(connectCtx, hostAlias, authenticationTimeout)
+	connectEndpoint := func(connectCtx context.Context, endpoint domain.Endpoint) (provider.Provider, error) {
+		if endpoint.Kind != domain.EndpointSSH || endpoint.ID == "" || endpoint.SSHHostAlias == "" {
+			return nil, sshConnectStageError("invalid frozen SSH endpoint", domain.CodeInvalidArgument, domain.RetryNever, nil)
+		}
+		attempt, err := authBroker.BeginAttempt(connectCtx, endpoint.SSHHostAlias, authenticationTimeout)
 		if err != nil {
 			return nil, sshConnectStageError("start authentication attempt", domain.CodeInternal, domain.RetryNever, err)
 		}
@@ -192,28 +197,45 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		if err != nil {
 			return nil, sshConnectStageError("prepare OpenSSH authentication", domain.CodeInternal, domain.RetryNever, err)
 		}
-		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: hostAlias, Environment: environment, Redact: []string{string(attempt.Token())}})
+		transport, err := openssh.Dial(connectCtx, openssh.Config{HostAlias: endpoint.SSHHostAlias, Environment: environment, Redact: []string{string(attempt.Token())}})
 		if err != nil {
 			code, retry := classifySSHConnectError(err)
 			return nil, sshConnectStageError(sshConnectMessage(code), code, retry, err)
-		}
-		remoteEndpointID, err := domain.NewEndpointID(generator)
-		if err != nil {
-			_ = transport.Close()
-			return nil, sshConnectStageError("create SSH endpoint", domain.CodeInternal, domain.RetryNever, err)
 		}
 		remoteSessionID, err := domain.NewSessionID(generator)
 		if err != nil {
 			_ = transport.Close()
 			return nil, sshConnectStageError("create SSH provider session", domain.CodeInternal, domain.RetryNever, err)
 		}
-		implementation, err := sftpprovider.New(sftpprovider.Config{Endpoint: domain.Endpoint{ID: remoteEndpointID, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias}, SessionID: remoteSessionID, Client: transport.Client(), Close: transport.Close})
+		implementation, err := sftpprovider.New(sftpprovider.Config{Endpoint: endpoint, SessionID: remoteSessionID, Client: transport.Client(), Close: transport.Close})
 		if err != nil {
 			_ = transport.Close()
 			return nil, sshConnectStageError("initialize SSH provider", domain.CodeInternal, domain.RetryNever, err)
 		}
 		return implementation, nil
+	}
+	sessions.SetSSHConnector(func(connectCtx context.Context, hostAlias string) (provider.Provider, error) {
+		remoteEndpointID, err := domain.NewEndpointID(generator)
+		if err != nil {
+			return nil, sshConnectStageError("create SSH endpoint", domain.CodeInternal, domain.RetryNever, err)
+		}
+		return connectEndpoint(connectCtx, domain.Endpoint{ID: remoteEndpointID, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias})
 	})
+	sessions.SetEndpointConnector(connectEndpoint)
+	if jobStore != nil {
+		manager, err := transfer.NewManager(transfer.ManagerConfig{
+			Store: jobStore, Resolver: sessions, Generator: generator, MaxConcurrent: 4, MaxQueued: 128,
+		})
+		if err != nil {
+			return err
+		}
+		if err := manager.Start(ctx); err != nil {
+			manager.Close()
+			return err
+		}
+		defer manager.Close()
+		sessions.SetTransferService(manager)
+	}
 	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: logger, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {

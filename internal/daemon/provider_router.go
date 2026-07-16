@@ -15,6 +15,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
 )
 
@@ -36,19 +37,35 @@ const (
 )
 
 type SSHConnector func(context.Context, string) (providerapi.Provider, error)
+type EndpointConnector func(context.Context, domain.Endpoint) (providerapi.Provider, error)
 
 type ProviderSessions struct {
-	providers    map[domain.EndpointID]providerapi.Provider
-	maxReadBytes uint32
-	connectSSH   SSHConnector
-	authBroker   *auth.Broker
-	workspace    *workspace.Store
-	nextOwner    atomic.Uint64
+	mu              sync.Mutex
+	providers       map[domain.EndpointID]providerapi.Provider
+	endpoints       map[domain.EndpointID]*endpointLease
+	maxReadBytes    uint32
+	connectSSH      SSHConnector
+	connectEndpoint EndpointConnector
+	authBroker      *auth.Broker
+	workspace       *workspace.Store
+	transfer        TransferService
+	nextOwner       atomic.Uint64
 }
 
-func (s *ProviderSessions) SetSSHConnector(connector SSHConnector)   { s.connectSSH = connector }
-func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)        { s.authBroker = broker }
-func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store) { s.workspace = store }
+type endpointLease struct {
+	implementation providerapi.Provider
+	permanent      bool
+	sessions       int
+	jobs           int
+}
+
+func (s *ProviderSessions) SetSSHConnector(connector SSHConnector) { s.connectSSH = connector }
+func (s *ProviderSessions) SetEndpointConnector(connector EndpointConnector) {
+	s.connectEndpoint = connector
+}
+func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)          { s.authBroker = broker }
+func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store)   { s.workspace = store }
+func (s *ProviderSessions) SetTransferService(service TransferService) { s.transfer = service }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	if len(providers) == 0 {
@@ -71,7 +88,11 @@ func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) 
 		}
 		indexed[descriptor.ID] = implementation
 	}
-	return &ProviderSessions{providers: indexed, maxReadBytes: maxReadBytes}, nil
+	endpoints := make(map[domain.EndpointID]*endpointLease, len(indexed))
+	for id, implementation := range indexed {
+		endpoints[id] = &endpointLease{implementation: implementation, permanent: true}
+	}
+	return &ProviderSessions{providers: indexed, endpoints: endpoints, maxReadBytes: maxReadBytes}, nil
 }
 
 func (s *ProviderSessions) NewSession() Session {
@@ -80,12 +101,14 @@ func (s *ProviderSessions) NewSession() Session {
 		providers[id] = implementation
 	}
 	session := &providerSession{
+		owner:        s,
 		providers:    providers,
 		maxReadBytes: s.maxReadBytes,
 		connectSSH:   s.connectSSH,
 		owned:        make([]providerapi.Provider, 0),
 		cursors:      make(map[cursorKey]providerapi.Provider),
 		workspace:    s.workspace,
+		transfer:     s.transfer,
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -106,6 +129,7 @@ type cursorDiscarder interface {
 type providerSession struct {
 	mu sync.Mutex
 
+	owner        *ProviderSessions
 	providers    map[domain.EndpointID]providerapi.Provider
 	maxReadBytes uint32
 	cursors      map[cursorKey]providerapi.Provider
@@ -115,6 +139,7 @@ type providerSession struct {
 	authBroker   *auth.Broker
 	authOwner    auth.OwnerID
 	workspace    *workspace.Store
+	transfer     TransferService
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -137,6 +162,8 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.loadWorkspace(payload)
 	case WorkspaceSave:
 		return s.saveWorkspace(payload)
+	case JobCapture, JobCreateCopy, JobList, JobEvents, JobPause, JobResume, JobCancel:
+		return s.handleJob(ctx, name, payload)
 	case ProviderConnectSSH:
 		return s.connect(ctx, payload)
 	case ProviderRelease:
@@ -246,9 +273,7 @@ func (s *providerSession) Close() error {
 		}
 	}
 	for _, implementation := range owned {
-		if closer, ok := implementation.(interface{ Close() error }); ok {
-			result = errors.Join(result, closer.Close())
-		}
+		result = errors.Join(result, s.owner.releaseSession(implementation.Descriptor().ID))
 	}
 	return result
 }
@@ -357,6 +382,13 @@ func (s *providerSession) connect(ctx context.Context, payload json.RawMessage) 
 		}
 		return nil, invalidArgument("duplicate SSH endpoint", nil)
 	}
+	if err := s.owner.attachSession(implementation); err != nil {
+		s.mu.Unlock()
+		if closer, ok := implementation.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		return nil, err
+	}
 	s.providers[descriptor.ID] = implementation
 	s.owned = append(s.owned, implementation)
 	s.mu.Unlock()
@@ -417,13 +449,141 @@ func (s *providerSession) release(payload json.RawMessage) (any, error) {
 			result = errors.Join(result, discarder.DiscardCursor(cursor))
 		}
 	}
-	if closer, ok := implementation.(interface{ Close() error }); ok {
-		result = errors.Join(result, closer.Close())
-	}
+	result = errors.Join(result, s.owner.releaseSession(endpointID))
 	if result != nil {
 		return nil, internalError("release SSH endpoint", result)
 	}
 	return ipc.ProviderReleaseResponse{}, nil
+}
+
+func (s *ProviderSessions) Resolve(endpointID domain.EndpointID) (providerapi.Provider, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	entry := s.endpoints[endpointID]
+	if entry == nil {
+		return nil, &domain.OpError{Code: domain.CodeNotFound, Message: "endpoint is not registered", EndpointID: endpointID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone}
+	}
+	return entry.implementation, nil
+}
+
+// Acquire retains both frozen endpoints until the returned release function is
+// called. Each endpoint is counted once when source and destination coincide.
+func (s *ProviderSessions) Acquire(ctx context.Context, plan transfer.Plan) (func(), error) {
+	descriptors := []domain.Endpoint{plan.SourceEndpoint}
+	if plan.DestinationEndpoint.ID != plan.SourceEndpoint.ID {
+		descriptors = append(descriptors, plan.DestinationEndpoint)
+	}
+	for _, descriptor := range descriptors {
+		if err := s.ensureEndpoint(ctx, descriptor); err != nil {
+			return nil, err
+		}
+	}
+	s.mu.Lock()
+	for _, descriptor := range descriptors {
+		entry := s.endpoints[descriptor.ID]
+		if entry == nil || entry.implementation.Descriptor() != descriptor {
+			s.mu.Unlock()
+			return nil, &domain.OpError{Code: domain.CodeNotFound, Message: "frozen endpoint is not attached", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone}
+		}
+	}
+	for _, descriptor := range descriptors {
+		s.endpoints[descriptor.ID].jobs++
+	}
+	s.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			for _, descriptor := range descriptors {
+				_ = s.releaseJob(descriptor.ID)
+			}
+		})
+	}, nil
+}
+
+func (s *ProviderSessions) ensureEndpoint(ctx context.Context, descriptor domain.Endpoint) error {
+	s.mu.Lock()
+	entry := s.endpoints[descriptor.ID]
+	connector := s.connectEndpoint
+	s.mu.Unlock()
+	if entry != nil {
+		if entry.implementation.Descriptor() != descriptor {
+			return &domain.OpError{Code: domain.CodeConflict, Message: "endpoint ID has different frozen identity", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterConflict}, Effect: domain.EffectNone}
+		}
+		return nil
+	}
+	if connector == nil {
+		return &domain.OpError{Code: domain.CodeNotFound, Message: "frozen endpoint is not attached", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone}
+	}
+	implementation, err := connector(ctx, descriptor)
+	if err != nil {
+		return err
+	}
+	if implementation == nil || implementation.Descriptor() != descriptor {
+		if closer, ok := implementation.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		return &domain.OpError{Code: domain.CodeIntegrityFailed, Message: "endpoint connector returned different identity", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	s.mu.Lock()
+	if current := s.endpoints[descriptor.ID]; current != nil {
+		s.mu.Unlock()
+		if closer, ok := implementation.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		if current.implementation.Descriptor() != descriptor {
+			return &domain.OpError{Code: domain.CodeConflict, Message: "endpoint changed during reconnect", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterConflict}, Effect: domain.EffectNone}
+		}
+		return nil
+	}
+	s.endpoints[descriptor.ID] = &endpointLease{implementation: implementation}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *ProviderSessions) attachSession(implementation providerapi.Provider) error {
+	descriptor := implementation.Descriptor()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, exists := s.endpoints[descriptor.ID]; exists {
+		return invalidArgument("duplicate SSH endpoint", nil)
+	}
+	s.endpoints[descriptor.ID] = &endpointLease{implementation: implementation, sessions: 1}
+	return nil
+}
+
+func (s *ProviderSessions) releaseSession(endpointID domain.EndpointID) error {
+	return s.release(endpointID, true)
+}
+
+func (s *ProviderSessions) releaseJob(endpointID domain.EndpointID) error {
+	return s.release(endpointID, false)
+}
+
+func (s *ProviderSessions) release(endpointID domain.EndpointID, session bool) error {
+	s.mu.Lock()
+	entry := s.endpoints[endpointID]
+	if entry == nil || entry.permanent {
+		s.mu.Unlock()
+		return nil
+	}
+	if session {
+		if entry.sessions > 0 {
+			entry.sessions--
+		}
+	} else if entry.jobs > 0 {
+		entry.jobs--
+	}
+	if entry.sessions > 0 || entry.jobs > 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	delete(s.endpoints, endpointID)
+	implementation := entry.implementation
+	s.mu.Unlock()
+	if closer, ok := implementation.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
+	return nil
 }
 
 func (s *providerSession) snapshot(ctx context.Context, payload json.RawMessage) (any, error) {

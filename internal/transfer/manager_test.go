@@ -144,6 +144,72 @@ func TestManagerPauseAndResumeAreDurableJobControls(t *testing.T) {
 	}
 }
 
+func TestManagerCancelRetainsPartAndReplaysOrderedEvents(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("cancel-and-retain"), ConflictAsk)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	gatedSource := &gatedReadProvider{Provider: fixture.source, started: started, release: release}
+	resolver := MapResolver{
+		fixture.source.Descriptor().ID:      gatedSource,
+		fixture.destination.Descriptor().ID: fixture.destination,
+	}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(1_800_000_400, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatalf("NewManager(): %v", err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatalf("Start(): %v", err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatalf("CreateCopy(): %v", err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not reach gated source read")
+	}
+	if _, err := manager.Cancel(context.Background(), created.JobID); err != nil {
+		t.Fatalf("Cancel(): %v", err)
+	}
+	close(release)
+	canceled := waitForTerminal(t, manager, created.JobID)
+	if canceled.State != job.StateCanceled || !canceled.CancelRequested {
+		t.Fatalf("canceled snapshot = %#v", canceled)
+	}
+	record, err := store.GetPlan(context.Background(), created.JobID)
+	if err != nil {
+		t.Fatalf("GetPlan(): %v", err)
+	}
+	plan, err := DecodePlan(record, created.JobID)
+	if err != nil {
+		t.Fatalf("DecodePlan(): %v", err)
+	}
+	if _, err := fixture.destination.Stat(context.Background(), providerapi.StatRequest{Location: plan.Part}); err != nil {
+		t.Fatalf("canceled part is not retained: %v", err)
+	}
+	events, err := manager.Events(context.Background(), created.JobID, 0, 20)
+	if err != nil {
+		t.Fatalf("Events(): %v", err)
+	}
+	if len(events) < 4 || events[len(events)-2].Kind != "job_cancel_requested" || events[len(events)-1].Kind != "job_canceled" {
+		t.Fatalf("events = %#v", events)
+	}
+	replayed, err := manager.Events(context.Background(), created.JobID, events[len(events)-2].Sequence, 20)
+	if err != nil || len(replayed) != 1 || replayed[0].EventID != events[len(events)-1].EventID {
+		t.Fatalf("replayed events = (%#v, %v)", replayed, err)
+	}
+}
+
 func waitForTerminal(t *testing.T, manager *Manager, jobID domain.JobID) jobstore.Snapshot {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

@@ -158,6 +158,10 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 	return snapshot, nil
 }
 
+func (manager *Manager) Capture(ctx context.Context, location domain.Location) (FileRef, error) {
+	return manager.planner.Capture(ctx, location)
+}
+
 func (manager *Manager) Wait(ctx context.Context, jobID domain.JobID) (jobstore.Snapshot, error) {
 	return manager.waitUntil(ctx, jobID, func(state job.State) bool { return state.Terminal() })
 }
@@ -210,6 +214,29 @@ func (manager *Manager) Resume(ctx context.Context, jobID domain.JobID) (jobstor
 		return jobstore.Snapshot{}, err
 	}
 	return queued, nil
+}
+
+func (manager *Manager) Cancel(ctx context.Context, jobID domain.JobID) (jobstore.Snapshot, error) {
+	snapshot, err := manager.store.Get(ctx, jobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
+	if snapshot.State.Terminal() {
+		return snapshot, nil
+	}
+	if snapshot.State == job.StateRunning || snapshot.State == job.StateVerifying {
+		value := true
+		return manager.updateControl(ctx, snapshot, nil, &value, "job_cancel_requested")
+	}
+	return manager.transitionTerminal(snapshot, job.StateCanceled, "job_canceled", "canceled before execution", map[string]string{"reason": "user"})
+}
+
+func (manager *Manager) Events(ctx context.Context, jobID domain.JobID, afterSequence int64, limit int) ([]jobstore.EventRecord, error) {
+	return manager.store.ListEvents(ctx, jobID, afterSequence, limit)
+}
+
+func (manager *Manager) Jobs(ctx context.Context, limit int) ([]jobstore.Snapshot, error) {
+	return manager.store.List(ctx, limit)
 }
 
 func (manager *Manager) waitUntil(ctx context.Context, jobID domain.JobID, done func(job.State) bool) (jobstore.Snapshot, error) {
@@ -291,19 +318,25 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	if err != nil || snapshot.State != job.StateQueued {
 		return
 	}
-	snapshot, err = manager.transition(snapshot, job.StateRunning, "job_started", map[string]any{})
-	if err != nil {
-		return
-	}
 	record, err := manager.store.GetPlan(manager.ctx, jobID)
 	if err != nil {
-		manager.fail(snapshot, err)
 		return
 	}
 	plan, err := DecodePlan(record, jobID)
 	if err != nil {
-		manager.fail(snapshot, err)
 		return
+	}
+	snapshot, err = manager.transition(snapshot, job.StateRunning, "job_started", map[string]any{})
+	if err != nil {
+		return
+	}
+	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
+		release, acquireErr := acquirer.Acquire(manager.ctx, plan)
+		if acquireErr != nil {
+			manager.handleExecutionError(snapshot, acquireErr)
+			return
+		}
+		defer release()
 	}
 	journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
 	result, executeErr := NewWorker(manager.resolver, journal).Execute(manager.ctx, plan, manager.control(jobID))

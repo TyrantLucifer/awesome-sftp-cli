@@ -441,7 +441,9 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 }
 
 func validateExecution(plan Plan) error {
-	if plan.Version != 1 || plan.JobID == "" || plan.Source.Kind != domain.EntryFile || plan.Part.EndpointID == "" || plan.Final.EndpointID != plan.Part.EndpointID || plan.Part.Path == plan.Final.Path {
+	if plan.Version != 1 || plan.JobID == "" || plan.Source.Kind != domain.EntryFile ||
+		plan.SourceEndpoint.ID != plan.Source.Location.EndpointID || plan.DestinationEndpoint.ID != plan.Part.EndpointID ||
+		plan.Part.EndpointID == "" || plan.Final.EndpointID != plan.Part.EndpointID || plan.Part.Path == plan.Final.Path {
 		return errors.New("execute transfer: invalid frozen plan")
 	}
 	if plan.BufferBytes == 0 || plan.BufferBytes > 4*1024*1024 {

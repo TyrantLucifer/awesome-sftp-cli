@@ -332,13 +332,13 @@ func (p *Provider) entryFromInfo(location domain.Location, name string, info os.
 	}
 	size := uint64(max(info.Size(), 0))
 	mode := uint32(info.Mode())
-	modified := info.ModTime()
+	modified := info.ModTime().UTC()
 	precision := domain.TimePrecision("second")
 	return domain.Entry{Location: location, Name: name, Kind: kind, Metadata: domain.Metadata{Size: &size, Mode: &mode, ModifiedAt: &modified, ModifiedPrecision: &precision}, Fingerprint: fingerprint(info)}
 }
 func fingerprint(info os.FileInfo) domain.Fingerprint {
 	size := uint64(max(info.Size(), 0))
-	modified := info.ModTime()
+	modified := info.ModTime().UTC()
 	precision := domain.TimePrecision("second")
 	return domain.Fingerprint{Size: &size, ModifiedAt: &modified, ModifiedPrecision: &precision}
 }

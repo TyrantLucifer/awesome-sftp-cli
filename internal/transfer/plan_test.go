@@ -65,6 +65,9 @@ func TestCaptureAndFreezeCopyOwnImmutableFileReferenceAndPolicy(t *testing.T) {
 	if plan.Kind != OperationCopy || plan.Route != RouteLocal || plan.Verification != VerifySHA256 || plan.BufferBytes != DefaultBufferBytes {
 		t.Fatalf("Plan = %#v", plan)
 	}
+	if plan.SourceEndpoint != source.Descriptor() || plan.DestinationEndpoint != destination.Descriptor() {
+		t.Fatalf("frozen endpoints = %#v/%#v", plan.SourceEndpoint, plan.DestinationEndpoint)
+	}
 	if plan.Part.EndpointID != plan.Final.EndpointID || filepath.Dir(string(plan.Part.Path)) != filepath.Dir(string(plan.Final.Path)) {
 		t.Fatalf("part/final are not in one directory: part=%#v final=%#v", plan.Part, plan.Final)
 	}
@@ -106,6 +109,14 @@ func TestDecodePlanRejectsIndexedColumnMismatch(t *testing.T) {
 	_, err := DecodePlan(jobstore.PlanRecord{DestinationJSON: &encoded}, planTestJobID)
 	if err == nil {
 		t.Fatal("DecodePlan() error = nil, want invalid durable plan")
+	}
+}
+
+func TestCloneFingerprintCanonicalizesTimestampLocation(t *testing.T) {
+	modified := time.Date(2026, time.July, 16, 7, 0, 0, 123, time.FixedZone("UTC alias", 0))
+	cloned := cloneFingerprint(domain.Fingerprint{ModifiedAt: &modified})
+	if cloned.ModifiedAt == nil || cloned.ModifiedAt.Location() != time.UTC || !cloned.ModifiedAt.Equal(modified) {
+		t.Fatalf("cloned modified time = %#v, want same instant in UTC", cloned.ModifiedAt)
 	}
 }
 

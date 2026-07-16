@@ -15,6 +15,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 func TestProviderSessionRoutesListStatAndBoundedRead(t *testing.T) {
@@ -223,6 +224,80 @@ func TestProviderSessionReleasesOwnedSSHEndpoint(t *testing.T) {
 	}
 	if _, err := session.Handle(context.Background(), ProviderRelease, releasePayload); !domain.IsCode(err, domain.CodeNotFound) {
 		t.Fatalf("second release error = %v, want not_found", err)
+	}
+}
+
+func TestProviderSessionJobLeaseOutlivesClientAndClosesAfterRelease(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	remote := &closingProvider{Provider: local, descriptor: domain.Endpoint{ID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Kind: domain.EndpointSSH, DisplayName: "work", SSHHostAlias: "work"}, closed: make(chan struct{})}
+	factory.SetSSHConnector(func(context.Context, string) (providerapi.Provider, error) { return remote, nil })
+	session := factory.NewSession()
+	connectPayload, err := json.Marshal(ipc.ProviderConnectSSHRequest{HostAlias: "work"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Handle(context.Background(), ProviderConnectSSH, connectPayload); err != nil {
+		t.Fatal(err)
+	}
+	releaseLease, err := factory.Acquire(context.Background(), transfer.Plan{
+		SourceEndpoint: remote.descriptor, DestinationEndpoint: local.Descriptor(),
+	})
+	if err != nil {
+		t.Fatalf("Acquire(): %v", err)
+	}
+	if err := session.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-remote.closed:
+		t.Fatal("client close disposed an endpoint retained by a Job")
+	default:
+	}
+	if resolved, err := factory.Resolve(remote.descriptor.ID); err != nil || resolved != remote {
+		t.Fatalf("Resolve() = (%T, %v), want retained remote", resolved, err)
+	}
+	releaseLease()
+	select {
+	case <-remote.closed:
+	case <-time.After(time.Second):
+		t.Fatal("last Job lease did not close detached SSH provider")
+	}
+}
+
+func TestProviderSessionsAcquireRehydratesFrozenEndpointDescriptor(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor := domain.Endpoint{ID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Kind: domain.EndpointSSH, DisplayName: "work", SSHHostAlias: "work"}
+	remote := &closingProvider{Provider: local, descriptor: descriptor, closed: make(chan struct{})}
+	var requested domain.Endpoint
+	factory.SetEndpointConnector(func(_ context.Context, endpoint domain.Endpoint) (providerapi.Provider, error) {
+		requested = endpoint
+		return remote, nil
+	})
+	releaseLease, err := factory.Acquire(context.Background(), transfer.Plan{
+		SourceEndpoint: descriptor, DestinationEndpoint: local.Descriptor(),
+	})
+	if err != nil {
+		t.Fatalf("Acquire(): %v", err)
+	}
+	if requested != descriptor {
+		t.Fatalf("connector endpoint = %#v, want %#v", requested, descriptor)
+	}
+	if resolved, err := factory.Resolve(descriptor.ID); err != nil || resolved != remote {
+		t.Fatalf("Resolve() = (%T, %v), want rehydrated remote", resolved, err)
+	}
+	releaseLease()
+	select {
+	case <-remote.closed:
+	case <-time.After(time.Second):
+		t.Fatal("rehydrated endpoint was not closed after Job release")
 	}
 }
 
