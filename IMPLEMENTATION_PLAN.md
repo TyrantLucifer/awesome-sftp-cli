@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not Started。Stage 2 的 ADR-0008 精确 SQLite 依赖准入与 M2.1 持久状态机骨架已通过本地及 Hosted ext4/XFS/ENOSPC 门禁；当前按顺序进入 M2.2 单文件复制、冲突与提交。
+Stage 0–1 已完成；Stage 2 的 M2.1–M2.3 已由 exact-SHA Hosted evidence 完成，M2.4 implementation 已进入最终门禁；Stage 3–6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -116,9 +116,9 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Tests**: 大树 synthetic queue、100GB sparse、双临时 sshd、单边断线、慢读/慢写、取消、restart、race 与峰值资源记录。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: Frozen directory plans, bounded million-entry streaming discovery, 100 GiB synthetic bounded checkpoint, conservative symlink/depth/root boundaries, durable daemon restart, same-remote and real two-sshd remote A→B directory relay pass locally. Default queue/page/depth are 64/256/128; fresh/resume buffer ceilings are 256/512 KiB per directory Job. Bounded per-item manifests and aggregate counts isolate permission failures into durable retry_wait; resume revalidates successes and retries missing items. Next gate is exact-candidate Hosted native and real-sshd evidence.
+**Current checkpoint**: Exact SHA `eb4f152f305812f30e7573a690e570e8ca41b96b` passed both complete Hosted runs `29484442378` and `29484446997`, closing directory/dual-remote, resource, retry, native, auth and provenance gates.
 
 ### M2.4: Move、rename、删除与恢复闭环
 
@@ -128,7 +128,9 @@ Stage 0–1 已完成；Stage 2 已进入 In Progress，Stage 3–6 保持 Not S
 
 **Tests**: rename/delete 后置条件、source-changed、commit/delete response lost、partial directory move、trash/no-trash、危险路径、repeat/count、无客户端等待、crash/fault matrix 与真实 macOS/Linux PTY。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
+
+**Current checkpoint**: implementation commits `cf10e2031ff4929b5b8bc6882aad473445841f7d` and `29592921b24039a568677e4974541d9656c8f952`, followed by Hosted test synchronization through `0b779a15ec48590bbc6f426426d3f15c18a9e335`, deliver frozen source-delete capability, atomic-rename gating/postconditions, copy-delete source retention, bounded directory source deletion, explicit/trash delete, symlink no-follow, unknown-response proof, commit→delete restart recovery, multi/directory clipboard, count/repeat reconfirmation, `D` two-stage confirmation, `r`, IPC routes and local PTY copy/move/rename/delete/reattach. Complete local gates pass; exact final Hosted and closeout gates remain before status can become Complete.
 
 ## Stage 3: Preview, Edit & Cache
 

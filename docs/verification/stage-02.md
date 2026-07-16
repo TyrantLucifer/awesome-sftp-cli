@@ -6,7 +6,7 @@
 - **Branch**: `codex/stage2-durable-transfers`
 - **Stage 1 merge baseline**: commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`
 - **Baseline Hosted run**: [29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) — exact merge commit, successful
-- **Current milestone**: M2.2 single-file copy, conflict and commit
+- **Current milestone**: M2.4 final evidence closeout
 
 Stage 2 delivers durable transfers only. It must preserve Stage 1 local/SFTP browsing, authentication, workspace recovery and read-only diagnostics. If persistent state cannot be opened safely, all mutation routes remain disabled.
 
@@ -91,7 +91,7 @@ Local command ledger:
 - **Status**: Complete
 - **Gate**: satisfied by the M2.1 local and exact-SHA Hosted native evidence above.
 - **Required MVP**: user-visible local and temporary-sshd single-file copy steps plus real execution evidence.
-- **Current implementation checkpoint**: the shared `MutableProvider` contract now runs against Fake, LocalFS and protocol SFTP. LocalFS mutations use Go's rooted filesystem handle so parent symlinks cannot escape the configured root; final no-replace publication uses an atomic hard-link appearance followed by separately observable part cleanup. SFTP exposes `write` only when the current server session advertises both `fsync@openssh.com` and `hardlink@openssh.com`; weak servers retain read-only capability instead of receiving an unsafe fallback. Frozen `FileRef`/Intent/Plan tests cover source identity, capability revisions, local/SFTP relay routes, conflict policy and caller mutation after freeze. The complete immutable Plan, including its original requested name and endpoint descriptors, is persisted and cross-checked before daemon restart execution. The bounded worker writes only the same-directory Job part, persists SHA-256/checkpoint state, rereads for verification, rechecks the final at commit, and proves postconditions after an indeterminate rename response. A bounded daemon-owned manager owns client-independent contexts, reloads queued work, retains frozen endpoint leases before returning a queued Job, rehydrates exact descriptors after restart, and releases leases after execution. Initial and commit-time conflicts are durable rows; opening or resolving a conflict atomically changes Job state and emits the matching event. Overwrite, skip, auto-rename and Job-local apply-all resolutions resume the immutable plan, while pause, cancel, auth resume and retry-wait resume remain durable controls. `y` and `d` capture immutable source refs, `p` creates the Job against the current destination, and `J` opens a bounded Jobs view with state, phase, source/final, items, bytes, waiting reason, terminal summary and controls. Cut currently completes honestly as `completed_with_source_retained` because the M2.4 source-delete step is not yet implemented.
+- **Current implementation checkpoint**: the shared `MutableProvider` contract now runs against Fake, LocalFS and protocol SFTP. LocalFS mutations use Go's rooted filesystem handle so parent symlinks cannot escape the configured root; final no-replace publication uses an atomic hard-link appearance followed by separately observable part cleanup. SFTP exposes `write` only when the current server session advertises both `fsync@openssh.com` and `hardlink@openssh.com`; weak servers retain read-only capability instead of receiving an unsafe fallback. Frozen `FileRef`/Intent/Plan tests cover source identity, capability revisions, local/SFTP relay routes, conflict policy and caller mutation after freeze. The complete immutable Plan, including its original requested name and endpoint descriptors, is persisted and cross-checked before daemon restart execution. The bounded worker writes only the same-directory Job part, persists SHA-256/checkpoint state, rereads for verification, rechecks the final at commit, and proves postconditions after an indeterminate rename response. A bounded daemon-owned manager owns client-independent contexts, reloads queued work, retains frozen endpoint leases before returning a queued Job, rehydrates exact descriptors after restart, and releases leases after execution. Initial and commit-time conflicts are durable rows; opening or resolving a conflict atomically changes Job state and emits the matching event. Overwrite, skip, auto-rename and Job-local apply-all resolutions resume the immutable plan, while pause, cancel, auth resume and retry-wait resume remain durable controls. `y` and `d` capture immutable source refs, `p` creates the Job against the current destination, and `J` opens a bounded Jobs view with state, phase, source/final, items, bytes, waiting reason, terminal summary and controls. M2.4 now executes cut as the safe move sequence or reports `completed_with_source_retained` with its exact source-retention reason.
 - **Focused evidence**: `make check`, `make lint`, `go test ./internal/state/jobstore ./internal/transfer ./internal/daemon ./internal/tui ./internal/app`, and `go test -race ./internal/state/jobstore ./internal/transfer ./internal/daemon` pass. Exact SHA `e5b5cd287b1519b235d8444262cc83fdfa76ed51` passed both complete Hosted runs [29479576412](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29479576412) and [29479579080](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29479579080), closing the cross-platform checkpoint fingerprint repair. The user-visible TUI checkpoint `274b0ecd69cdc8a8117718997add18c4760c9080` then passed both complete Hosted runs [29480204995](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29480204995) and [29480207927](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29480207927). The guarded real-OpenSSH fixture performs both local→SFTP and SFTP→local worker copies and requires the real server's durable write capability.
 - **Hosted completion gate**: exact SHA `811ce6b90364446612721ba7cb809a284d633521` passed both complete runs [29482708033](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29482708033) and [29482709588](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29482709588), including quality's real sshd PTY proof, auth/recovery, native, oldstable, race, reproducibility and provenance comparison.
 
@@ -108,15 +108,15 @@ The native PTY harness drives the product keys rather than calling the worker di
 | `go test ./internal/integration -run TestStage2LocalPTYCopyAndDurableJobsReattachMVP -count=1 -v` | PASS |
 | `AMSFTP_REAL_SSHD=1 go test ./internal/integration -run TestStage2TemporarySSHDPTYUploadDownloadMVP -count=1 -v` | PASS: real temporary-sshd local→SFTP upload and SFTP→local download through the same PTY flow |
 
-The quality workflow now runs the local PTY proof in `make check` and explicitly runs both the original protocol fixture and the Stage 2 temporary-sshd PTY proof with `AMSFTP_REAL_SSHD=1`. Hosted promotion is pending the exact pushed SHA.
+The quality workflow runs the local PTY proof in `make check` and explicitly runs both the original protocol fixture and the Stage 2 temporary-sshd PTY proof with `AMSFTP_REAL_SSHD=1`; exact M2.2 Hosted promotion is complete in runs 29482708033 and 29482709588.
 
-The first Hosted MVP candidate `286528c` exposed two test-fixture defects: raw PTY byte matching could not reconstruct tcell cursor-addressed text on macOS, and the Linux test binary lived below an ancestor rejected by the production executable-integrity policy. The harness now reuses the Stage 1 VT observer and installs the same binary inside the workflow's private `0700` persistent root. Both local and temporary-sshd PTY tests pass after the repair. The same candidate's Stage 1 recovery job failed once waiting for daemon replacement; its immediate predecessor `78130ce` passed that complete auth/recovery job, so the exact repair candidate must rerun it before promotion.
+The first Hosted MVP candidate `286528c` exposed two test-fixture defects: raw PTY byte matching could not reconstruct tcell cursor-addressed text on macOS, and the Linux test binary lived below an ancestor rejected by the production executable-integrity policy. The harness now reuses the Stage 1 VT observer and installs the same binary inside the workflow's private `0700` persistent root. Both local and temporary-sshd PTY tests pass after the repair. The same candidate's Stage 1 recovery job failed once waiting for daemon replacement; exact completion SHA `811ce6b90364446612721ba7cb809a284d633521` subsequently reran and passed the complete push and PR matrices.
 
 ### M2.3 — Directory copy and dual-remote relay
 
-- **Status**: In Progress
+- **Status**: Complete
 - **Gate**: satisfied by exact SHA `811ce6b90364446612721ba7cb809a284d633521` and both complete Hosted runs above.
-- **Next action**: freeze a directory-root plan, then prove bounded streaming discovery before adding recursive mutation.
+- **Completion basis**: exact implementation SHA and both Hosted completion runs are recorded below.
 
 **Implementation checkpoint**: directory `FileRef` capture freezes the root identity and a `64`-item queue, `256`-entry page and `128`-level recursion budget without enumerating the tree. Discovery streams through a bounded channel, validates every child remains a direct descendant of the listed directory, emits symlinks without following them, rejects depth exhaustion and same-endpoint destinations inside the source root, and cancels the producer on early consumer exit. The directory worker creates directories on demand and runs every regular file through the existing same-directory part→SHA-256 verify→commit worker. Its restart checkpoint records the owned root, current item, aggregate bytes/items and phase; restart revalidates already published children by content, cleans only the Job-owned incomplete part and continues. The same code path covers local, same-remote and remote A→B through Provider streams; no complete local relay file exists.
 
@@ -133,12 +133,42 @@ Resource and route evidence:
 
 The expanded real-sshd loop also exposed a close race where Go may report the session's own command cancellation as `context.Canceled`; a focused RED test now classifies only Close-owned cancellation as expected, and the complete real fixture passed ten consecutive runs.
 
-Per-item results retain source, destination, status, bytes and stable error code for the first 256 entries, plus complete succeeded/skipped/failed/item counts and an explicit truncation count. This keeps event/checkpoint payloads bounded for million-entry Jobs while preserving actionable failures. Permission failures are isolated and enter durable `retry_wait`; transport/auth/conflict failures still stop at their dedicated state. Resume revalidates already committed children by content and retries the missing failed items without overwriting proven successes. Exact-candidate Hosted promotion is the remaining M2.3 gate.
+Per-item results retain source, destination, status, bytes and stable error code for the first 256 entries, plus complete succeeded/skipped/failed/item counts and an explicit truncation count. This keeps event/checkpoint payloads bounded for million-entry Jobs while preserving actionable failures. Permission failures are isolated and enter durable `retry_wait`; transport/auth/conflict failures still stop at their dedicated state. Resume revalidates already committed children by content and retries the missing failed items without overwriting proven successes. Exact-candidate Hosted promotion completed in the two runs below.
+
+**Hosted completion gate**: exact SHA `eb4f152f305812f30e7573a690e570e8ca41b96b` passed both complete runs [29484442378](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29484442378) and [29484446997](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29484446997), including real dual-sshd quality, auth/recovery, all native/oldstable legs, race, build and provenance comparison.
 
 ### M2.4 — Move, rename, delete and recovery closeout
 
-- **Status**: Not Started
-- **Gate**: M2.3 complete with bounded directory/relay resource evidence.
+- **Status**: In Progress
+- **Gate**: satisfied by exact SHA `eb4f152f305812f30e7573a690e570e8ca41b96b` and both Hosted runs above.
+- **Implementation candidate**: commits `cf10e2031ff4929b5b8bc6882aad473445841f7d` and `29592921b24039a568677e4974541d9656c8f952`, with Hosted test synchronization through `0b779a15ec48590bbc6f426426d3f15c18a9e335`.
+- **Remaining gate**: final documentation/feature reconciliation, complete local gate, exact final SHA Hosted green, cold-start audit and PR Ready transition.
+
+The Planner now freezes a source `write`/delete capability for every cut in addition to source read and destination write. Same-Endpoint moves select the zero-stream rename path only when that exact snapshot explicitly advertises `atomic_rename`; the executor requires `Atomic=true` and proves source absence plus the frozen destination fingerprint. Standard LocalFS/SFTP do not advertise this stronger operation and therefore use the generic copy→SHA-256 verify→commit→source identity/capability revalidation→conditional delete→absence proof sequence.
+
+File and directory source changes, capability changes, incomplete per-item verification, symlink-containing directory trees and unproved deletes preserve the verified destination and finish as `completed_with_source_retained`. Directory moves reread every source and destination regular file through the frozen buffer before bounded bottom-up deletion. A daemon stop while the destination is committed and source `Remove` is blocked leaves both copies; restart pauses/reconciles the Job, and explicit resume revalidates before completing deletion. Unknown delete responses are accepted only after a not-found postcondition.
+
+Explicit delete is a separate durable Plan/Job route. It rejects empty/root/unsupported/stale identities, requires source read plus write capability, and uses three persisted steps (`verify_source`, `delete`, `verify_absent`). A `trash` route is selected only when a frozen capability and optional Provider facet both exist; otherwise the Plan is `irreversible_delete`. Recursive deletion uses the same frozen page/depth budgets, validates every descendant and deletes a symlink without following it. Current LocalFS/SFTP advertise no reliable trash; the test Provider proves the capability-aware route.
+
+The TUI now captures single, directory, visual/marked and counted multi-selection FileRefs. `d` remains cut only; cut paste shows a move confirmation, `D` shows frozen-scope and second irreversible confirmations, and `r` accepts exactly one source plus one plain name. Counted paste is capped at 1,024 Job intents. `.` repeats frozen identities, but cut/rename reopens move confirmation and delete restarts both confirmations. High-level capture/create-delete RPCs preserve the Planner→Job-only mutation boundary; raw Provider mutation remains unavailable over RPC.
+
+Focused evidence:
+
+| Fixture / command | Result |
+|---|---|
+| `TestManagerCutDeletesSourceOnlyAfterVerifiedCommit` | PASS: source disappears only after committed final SHA-256 proof. |
+| `TestManagerMoveRetainsSourceWhenItChangesAfterCommit` | PASS: changed source yields `completed_with_source_retained`. |
+| `TestManagerDirectoryMoveVerifiesEveryItemBeforeBoundedSourceDelete` | PASS: nested items are content-verified before bounded bottom-up deletion. |
+| `TestManagerUsesFrozenAtomicRenameFastPathWithoutStreaming` | PASS: explicit capability, atomic/postcondition proof and zero read/write streams. |
+| `TestManagerMoveProvesDeleteAfterResponseLoss` and `TestManagerExplicitDeleteProvesUnknownResponseByPostcondition` | PASS: unknown responses are reconciled by stat, not replayed blindly. |
+| `TestManagerRestartBetweenCommitAndSourceDeleteRetainsThenFinishes` | PASS: source retained across stop, restart/resume completes after revalidation. |
+| `TestManagerPrefersAdvertisedTrashWithoutIrreversibleConfirmation` | PASS: capability+facet selects trash; no-trash requires irreversible confirmation. |
+| `TestManagerRecursiveDeleteIsBoundedAndNeverFollowsSymlink` and `TestManagerDeletesFrozenSymlinkWithoutFollowingTarget` | PASS: bounded tree removal and link-only delete. |
+| TUI reducer/tcell suites | PASS: `d`/`D`, single/multi/directory, count, repeat, move/delete reconfirmation and rename input. |
+| `go test ./internal/integration -run TestStage2LocalPTYCopyAndDurableJobsReattachMVP -count=1 -v` | PASS: native PTY copy, confirmed cut/paste move, rename, two-confirmation delete, final/source postconditions and durable Jobs reattach. |
+| `make check` | PASS on the implementation worktree; includes full unit/contract/docs and the local PTY workflow. |
+
+The PTY fixture initially selected the first sorted entry rather than the named entry after adding more operations; two test-only call-site corrections aligned each operation with the visible cursor. The third run passed without weakening product assertions. No M2.4 issue exceeded the three-attempt limit.
 
 ## Failure and repair ledger
 
@@ -160,25 +190,46 @@ Per-item results retain source, destination, status, bytes and stable error code
 | Hosted persistent-test root | Superseded Hosted runs [29474663746](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29474663746) and [29474661816](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29474661816) reached the intended Linux trust check with new state fixtures beneath sticky `/tmp`; quality, Linux native and Linux oldstable jobs correctly rejected the writable ancestor even though the workflow had provisioned `/var/lib/amsftp-tests/<euid>`. | Reused the repository's existing `testkit.PersistentTempDir` for every new fixture that represents persistent state, preserving the production rejection while selecting the workflow's owner-private root on Linux. | Exact replacement SHA `1ec9097448d0ec40d32f0a87aeeb822e5651d381` passed the complete Hosted matrix in [run 29475259444](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475259444). |
 | Native disk-full lint | The first lint pass on the environment-gated XFS filler test correctly treated cleanup paths derived from the fixture environment as tainted. | Documented the exact path proof at each removal: the environment root must first pass the production XFS validator and both removed paths are fixed direct children. | Second lint pass completed with zero issues; both Linux native jobs then passed real XFS ENOSPC execution in Hosted run 29476167115. |
 | M2.1 Hosted auth timing | In run 29476167115, quality and both Linux native legs passed, but the unrelated auth job observed the host-key-changed RPC failure before its asynchronous diagnostic record became visible. All auth cases themselves had passed, and the expected record appeared in the emitted log immediately after the assertion. | No state-foundation code or auth assertion was weakened; record the timing failure and require the next candidate's complete Hosted matrix to rerun it. | M2.1's required exact-SHA native gate is green; whole-run green remains an overall Stage 2 final gate. |
+| First M2.4 Hosted lint | Both push and PR runs for `29592921b24039a568677e4974541d9656c8f952` reached the intended quality gate and reported only two `gosec G304` findings on fixed child reads in private temporary test roots. All jobs preceding lint passed. | Added the repository-standard `#nosec G304` proof at the exact reads; no production path, assertion or fixture behavior changed. | Local `make lint` passes with zero issues; replacement Hosted runs are pending. |
+| M2.4 PR auth observation | Push run 29487538801 for `c2d1413f531728b075b3fcaab2cb3d2526d2029b` was completely green. Its PR twin 29487541087 repeated the previously recorded host-key diagnostic timing failure: the failure-mode Expect script waited a fixed second, quit the client and unconditionally recorded bounded failure before the async endpoint request necessarily returned/logged. | The fixture now waits for the actual `connect … failed:` TUI result before quitting. Server order already logs failure before writing that response, so the subsequent log assertion is causally synchronized without a longer sleep. | `bash -n` passes; replacement Hosted auth is pending. |
+| M2.4 oldstable WAL-idle observation | The same PR twin saw `TestManagerNeverPersistsProviderErrorDetails` call `CheckpointIdle` while the Job worker goroutine had published terminal state but had not necessarily returned from all manager work. A 100-run exact-Go-1.25.12 focused loop did not reproduce. | Close/wait the Manager after inspecting durable terminal events and before asserting WAL idle. This establishes the test's stated precondition without retrying or weakening WAL guard behavior. | Exact Go 1.25.12 focused test passes 100/100; lint is clean; replacement Hosted oldstable is pending. |
 | First M2.2 lint pass | Race tests passed, while lint found two rooted LocalFS opens, two checked checkpoint offset conversions and three single-value helper parameters. | Replaced path-string mutation with `os.Root`, centralized the MaxInt64 conversion, and removed the redundant helper parameters without weakening errors or effects. | The next focused test and lint pass completed with zero issues. |
 | M2.2 Hosted close-time part identity | Both push and PR runs for exact SHA `9e878a86a67765f440deb89039e59044a0ac6b45` failed the same restart test on Linux and macOS: the write checkpoint was captured before the pause path's deferred close, while those filesystems finalized part metadata at close and made the persisted fingerprint stale. | Added a deterministic provider fixture that changes the real part mtime on write-handle close, then changed pause/cancel to sync, close, restat, validate size and durably refresh the part fingerprint before returning. | The reproducer changed RED→GREEN; the original database/worker restart test passed 100 consecutive local runs. Replacement Hosted evidence remains pending the next push. |
 | M2.2 Hosted timestamp representation | Replacement SHA `5637d464154cc230500a035977e2e687f504f980` proved the close-order repair but exposed the remaining cross-environment cause: JSON reload produced UTC timestamp locations while provider fingerprints on UTC-configured Hosted runners carried `time.Local`; `reflect.DeepEqual` rejected equal instants, which also blocked manager plan reload. | Added an explicit fixed-zone alias RED, canonicalized fingerprint timestamps to UTC at Fake/LocalFS/SFTP and frozen-plan boundaries, and reran the restart test 100 times plus all transfer tests ten times under `TZ=UTC`. | Third/final repair SHA `e5b5cd287b1519b235d8444262cc83fdfa76ed51` passed both full Hosted runs 29479576412 and 29479579080. |
 
 No issue exceeded three attempts.
 
+## Independent cold-start audit
+
+An independent read-only agent started only from `docs/README.md`. Its first pass correctly found that final local results were not yet bound to an immutable commit/tree, that historical M2.2/M2.3 paragraphs retained obsolete pending instructions, that `PROJECT_STATE.md` bundled multiple next actions, and that two cross-stage Level-0 rows plus the executable-role testing guide were stale. The documentation was reconciled without changing implementation claims.
+
+The same agent then repeated the cold start from the documentation map and reported zero High, Medium or Low content findings. It recovered Stage 2/M2.4 lifecycle, all milestone states, V1 `init` head, migration checksum `281a5d34c0ebdd06de26fd1098fbf3efd7c8a7e283f5328ea218d1ca8dfb19f9`, 24,495-byte schema contract digest `659edd23b5bc332b488a171c920815daffef6223ef2d3859215ba177c3d55e64`, Provider capability differences, worker/queue/buffer/WAL ceilings, million-entry/100 GiB/two-sshd fixtures, exact validation ledger, deferred Stage 3–6 scope and one next action. It also confirmed staging empty, `git diff --check` clean, no apparent secret filename/content, and only the documented ignored `.idea/`, `.superpowers/`, `coverage/`, and `dist/` roots. The remaining immutable candidate binding is the explicit next mechanical step, not a documentation contradiction.
+
 ## Final gate ledger
 
 The following remain open until exact-candidate evidence is recorded:
 
-- [ ] `make docs-check`
-- [ ] `make check`
-- [ ] `make lint`
-- [ ] `make supply-chain`
-- [ ] `make ci`
-- [ ] `go test -race ./...`
-- [ ] `GOTOOLCHAIN=go1.25.12 make check`
-- [ ] Stage 2 SQLite, migration, Provider mutation, Planner, Job, IPC/event, transfer, conflict, recovery, PTY and performance suites.
-- [ ] Four-target build and reproducibility/provenance comparison.
-- [ ] Native APFS/ext4/XFS, two-sshd, ProxyCommand, Kerberos, crash/fault, sparse-file/large-tree and secret/pollution evidence.
-- [ ] Independent cold-start audit from `docs/README.md`.
+- [x] `make docs-check`
+- [x] `make check`
+- [x] `make lint`
+- [x] `make supply-chain`
+- [x] `make ci`
+- [x] `go test -race ./...`
+- [x] `GOTOOLCHAIN=go1.25.12 make check`
+- [x] Stage 2 SQLite, migration, Provider mutation, Planner, Job, IPC/event, transfer, conflict, recovery, PTY and performance suites.
+- [x] Four-target build and reproducibility/provenance comparison.
+- [x] Native APFS/ext4/XFS, two-sshd, ProxyCommand, Kerberos, crash/fault, sparse-file/large-tree and secret checks; final candidate pollution manifest remains part of the last clean-tree audit.
+- [x] Independent cold-start audit from `docs/README.md`; reconciliation re-audit reports zero High/Medium/Low findings.
 - [ ] Exact final SHA Hosted CI green and PR Ready for review.
+
+Final local candidate commands on native macOS arm64/APFS with Go 1.26.5, using external `/tmp/amsftp-stage2-final-{build,coverage,coverage-oldstable}` outputs:
+
+| Command | Result |
+|---|---|
+| `make docs-check` | PASS |
+| `make check` | PASS; full unit/contract/docs, local PTY copy/move/rename/delete/reattach and module gates |
+| `make lint` | PASS; zero issues after the test-root trust annotation repair |
+| `make supply-chain` | PASS; zero reachable/imported vulnerabilities, one previously admitted required-module-only finding, actionlint clean |
+| `go test -race ./...` | PASS |
+| `GOTOOLCHAIN=go1.25.12 make check COVERAGE_DIR=/tmp/amsftp-stage2-final-coverage-oldstable` | PASS |
+| `make ci BUILD_DIR=/tmp/amsftp-stage2-final-build COVERAGE_DIR=/tmp/amsftp-stage2-final-coverage` | PASS; check, lint, race, four fuzz smokes, supply chain and darwin/linux × arm64/amd64 CGO-disabled builds |

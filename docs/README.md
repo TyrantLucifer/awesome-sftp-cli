@@ -19,6 +19,7 @@ This repository treats documentation as part of the product contract. A feature 
 - [Local testing and quality gates](development/testing.md) documents the repeatable Make entrypoints, exact toolchains, and platform matrix.
 - [Dependency and supply-chain policy](security/dependency-policy.md) defines dependency review, pinned tools, and immutable CI actions.
 - [Read-only Explorer guide](user/read-only-explorer.md) documents the current Stage 1 launch, OpenSSH reuse, keys, workspaces, recovery, and diagnostics behavior.
+- [Durable Transfers guide](user/durable-transfers.md) documents Stage 2 clipboard, move, rename, delete, conflict, Jobs, part, and recovery behavior.
 
 ## Required reading order for a new session
 
@@ -28,7 +29,7 @@ Read only as far as needed, in this order:
 2. the active stage in `IMPLEMENTATION_PLAN.md`
 3. `docs/product/feature-matrix.md`
 4. the active `docs/stages/NN-*.md`
-5. the latest completed `docs/verification/stage-NN.md` until the active stage creates its own verification record (currently Stage 1)
+5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 2)
 6. ADRs and interfaces linked by that stage
 7. the complete worktree status/manifest plus the last green validation commands recorded in the verification record and `PROJECT_STATE.md`
 

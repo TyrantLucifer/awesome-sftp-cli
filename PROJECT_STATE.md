@@ -3,7 +3,7 @@
 - **Updated**: 2026-07-16
 - **Lifecycle**: Stage 2 durable transfers In Progress
 - **Active stage**: Stage 2 — Durable Transfers
-- **Current milestone**: M2.3 — Directory copy and dual-remote relay
+- **Current milestone**: M2.4 — Move, rename, delete and recovery closeout
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
@@ -13,7 +13,9 @@ Stage 1 is complete at merge commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, 
 
 M2.2 is complete. It has shared Fake/LocalFS/SFTP mutation contracts, frozen single-file plans, a bounded SHA-256 part/verify/commit worker, real SQLite checkpoint resume, daemon-owned scheduling, pre-return endpoint leases, exact-descriptor restart rehydration, durable conflicts, controls, `y`/`d`/`p`, and a bounded polling `J` Jobs view. Short I/O, disconnect/resume, permission, resource exhaustion, commit-response loss, abrupt-handle recovery and secret-zero-persistence fixtures pass. Exact SHA `811ce6b90364446612721ba7cb809a284d633521` passed complete Hosted runs [29482708033](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29482708033) and [29482709588](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29482709588), including real local and bidirectional temporary-sshd PTY workflows plus Stage 1 auth/recovery.
 
-M2.3 is now In Progress. Frozen directory-root plans carry hard queue/page/depth budgets; the million-entry synthetic discovery, 100 GiB synthetic bounded checkpoint, nested copy, conservative symlink handling, daemon restart, same-remote and two-independent-sshd remote A→B relay tests pass locally. The default discovery budgets are 64 queued items, 256 entries per Provider page and depth 128; a fresh directory stream holds one 256 KiB buffer and recovery has a fixed 512 KiB validation+stream ceiling. A 256-entry bounded result manifest plus full aggregate/truncation counts drives durable failed-item `retry_wait`; repaired resume revalidates successful children and copies only missing failures. Exact-candidate Hosted native/real-sshd evidence remains the milestone gate.
+M2.3 is complete. Frozen directory-root plans carry hard queue/page/depth budgets; the million-entry synthetic discovery, 100 GiB synthetic bounded checkpoint, nested copy, conservative symlink handling, daemon restart, same-remote and two-independent-sshd remote A→B relay tests pass. The default discovery budgets are 64 queued items, 256 entries per Provider page and depth 128; fresh/recovery buffer ceilings are 256/512 KiB. Bounded results and selective retry are durable. Exact SHA `eb4f152f305812f30e7573a690e570e8ca41b96b` passed complete Hosted runs [29484442378](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29484442378) and [29484446997](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29484446997).
+
+M2.4 implementation is complete and its final evidence closeout is In Progress. Same-Endpoint rename is selected only by an explicit frozen `atomic_rename` capability and proved postconditions; all other moves use copy→verify→commit→source revalidation→conditional delete. Source change/capability loss/unproved directory verification/delete uncertainty ends as `completed_with_source_retained`. `D` has frozen-scope plus irreversible confirmation, `r` is a durable same-Endpoint move, reliable advertised trash is preferred, symlinks are never followed, and count/`.` cannot bypass move/delete confirmation. The native PTY drives copy, confirmed cut/paste move, rename, two-confirmation delete and Jobs reattach. Implementation and Hosted synchronization commits through `0b779a15ec48590bbc6f426426d3f15c18a9e335` are pushed; exact final Hosted promotion and documentation/feature-matrix closeout remain.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -41,11 +43,11 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Push the M2.3 candidate and require exact-SHA Hosted native/real-sshd evidence before M2.4.
+Commit the reconciled closeout documentation to freeze the exact candidate identity.
 
 ## Current risks
 
-- M2.1 is complete; M2.2 must preserve its single-writer, bounded-WAL and fail-closed guarantees while adding Provider mutation contracts and transfer execution.
+- M2.1–M2.3 are exact-SHA complete; M2.4 must preserve their single-writer, bounded-WAL, bounded-memory and fail-closed guarantees through final promotion.
 - APFS can be exercised locally, but ext4/XFS database semantics require native Linux Hosted fixtures; cross-builds are not acceptance evidence.
 - Hosted run 29476167115's state-relevant quality and both Linux native jobs passed; its unrelated auth job hit a pre-existing asynchronous host-key diagnostic timing race, so the current closeout candidate must rerun the complete matrix before its evidence is promoted.
 - Stage 2 touches persistent user state and destructive file operations, so every milestone remains fail-closed to the verified Stage 1 read-only surface until its evidence is complete.
@@ -80,7 +82,7 @@ The accepted final pre-Hosted local closeout checkpoint is tree `5d598eea00fac2b
 - GUI opener behavior differs by platform. Stage 3 must implement platform adapters and validate lease/change detection on both macOS and Linux.
 - Seven user-owned JetBrains files are present under ignored `.idea/`: `.gitignore`, `awesome-mac-sftp.iml`, `go.imports.xml`, `misc.xml`, `modules.xml`, `vcs.xml` and `workspace.xml`. They are preserved local IDE metadata and are not product-candidate content. Ignored `.superpowers/`, `coverage/` and `dist/` are respectively disposable coordination output and reproducible validation artifacts; none are tracked.
 - Final platform-security fixtures cover real Darwin deny/direct/inherited ACLs, Linux access/default ACL xattrs, cross-process locking and a root-gated hostile-other-UID socket peer. Local race, exact Go 1.25.12, docs and actionlint checks pass, and all four native Hosted jobs passed in run 29417470068; DAEM-002/SEC-001 are Verified.
-- Stage 1 is a production-grade read-only explorer slice, not a production-ready 1.0 release. Copy, move, upload, rename, delete, durable jobs and SQLite persistence remain Stage 2; external editing/cache remains Stage 3; recursive search/helper remains Stage 4; direct transfer and scale hardening remain Stage 5; release readiness remains Stage 6.
+- Stage 1 remains the fail-closed Explorer baseline. Stage 2 now adds copy, move, upload, rename, delete, durable Jobs and SQLite persistence but does not claim 1.0 production readiness; external editing/cache remains Stage 3, recursive search/helper Stage 4, direct transfer/scale hardening Stage 5, and release readiness Stage 6.
 
 ## Working-tree policy
 
