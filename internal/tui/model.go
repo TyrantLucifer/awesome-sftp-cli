@@ -8,6 +8,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
@@ -322,6 +323,7 @@ func cloneMarks(marks map[domain.Location]struct{}) map[domain.Location]struct{}
 
 type PreviewState struct {
 	Generation uint64
+	Identity   PreviewRequestIdentity
 	Location   domain.Location
 	Data       []byte
 	BytesRead  int
@@ -331,6 +333,18 @@ type PreviewState struct {
 	Kind       string
 	Summary    string
 	Message    string
+}
+
+type PreviewRequestIdentity struct {
+	RequestID          domain.RequestID
+	Pane               PaneID
+	EndpointSession    domain.SessionID
+	EndpointGeneration uint64
+	Source             builtinpreview.FrozenSource
+	Mode               builtinpreview.ReadMode
+	Offset             uint64
+	RequestedLimit     uint64
+	UIGeneration       uint64
 }
 
 type DrawerMode string
@@ -478,6 +492,8 @@ type Intent struct {
 	Name                  string
 	Endpoint              domain.Endpoint
 	EndpointID            domain.EndpointID
+	EndpointSession       domain.SessionID
+	EndpointGeneration    uint64
 	Connection            domain.ConnectionState
 	CapabilityGeneration  uint64
 	Capabilities          domain.CapabilitySnapshot
@@ -575,9 +591,11 @@ type SetFilter struct {
 type BeginPreview struct {
 	Generation uint64
 	Location   domain.Location
+	Identity   PreviewRequestIdentity
 }
 type PreviewChunk struct {
 	Generation uint64
+	Identity   PreviewRequestIdentity
 	Data       []byte
 	Done       bool
 	Truncated  bool

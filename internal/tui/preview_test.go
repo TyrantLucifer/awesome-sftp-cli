@@ -4,7 +4,54 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 )
+
+func TestPreviewRejectsEveryFullIdentityMismatch(t *testing.T) {
+	model := testModel(t)
+	identity := previewTestIdentity(t, 7)
+	model, _ = Reduce(model, BeginPreview{Generation: 7, Location: identity.Source.Location, Identity: identity})
+
+	mutations := []func(*PreviewRequestIdentity){
+		func(value *PreviewRequestIdentity) { value.RequestID = "req_bbbbbbbbbbbbbbbbbbbbbbbbbb" },
+		func(value *PreviewRequestIdentity) { value.Pane = Right },
+		func(value *PreviewRequestIdentity) { value.EndpointSession = "sess_bbbbbbbbbbbbbbbbbbbbbbbbbb" },
+		func(value *PreviewRequestIdentity) { value.EndpointGeneration++ },
+		func(value *PreviewRequestIdentity) { value.Mode = builtinpreview.ReadTail },
+		func(value *PreviewRequestIdentity) { value.Offset++ },
+		func(value *PreviewRequestIdentity) { value.RequestedLimit-- },
+		func(value *PreviewRequestIdentity) { value.UIGeneration++ },
+	}
+	for _, mutate := range mutations {
+		other := identity
+		mutate(&other)
+		model, _ = Reduce(model, PreviewChunk{Generation: 7, Identity: other, Data: []byte("stale"), Done: true})
+	}
+	if model.Preview.BytesRead != 0 {
+		t.Fatalf("mismatched identities wrote %d bytes", model.Preview.BytesRead)
+	}
+	model, _ = Reduce(model, PreviewChunk{Generation: 7, Identity: identity, Data: []byte("current"), Done: true})
+	if got := model.Preview.DisplayText(); got != "current" {
+		t.Fatalf("current identity text = %q", got)
+	}
+}
+
+func previewTestIdentity(t *testing.T, generation uint64) PreviewRequestIdentity {
+	t.Helper()
+	location := domain.Location{EndpointID: leftEndpointID, Path: "/left/file.txt"}
+	size := uint64(7)
+	source, err := builtinpreview.FreezeSource(location, domain.Fingerprint{Size: &size})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return PreviewRequestIdentity{
+		RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", Pane: Left,
+		EndpointSession: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", EndpointGeneration: 3,
+		Source: source, Mode: builtinpreview.ReadHead, RequestedLimit: builtinpreview.ReadChunkBytes, UIGeneration: generation,
+	}
+}
 
 func TestPreviewModelEnforcesHardByteLimitAndIgnoresStaleChunks(t *testing.T) {
 	model := testModel(t)

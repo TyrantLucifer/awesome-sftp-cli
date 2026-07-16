@@ -213,10 +213,13 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		if action.Generation == 0 {
 			return model, nil
 		}
-		model.Preview = PreviewState{Generation: action.Generation, Location: action.Location, Loading: true}
+		if action.Identity.RequestID != "" && (action.Identity.UIGeneration != action.Generation || action.Identity.Source.Location != action.Location || !validPane(action.Identity.Pane)) {
+			return model, nil
+		}
+		model.Preview = PreviewState{Generation: action.Generation, Identity: action.Identity, Location: action.Location, Loading: true}
 		return model, nil
 	case PreviewChunk:
-		if model.Preview.Generation != action.Generation {
+		if model.Preview.Generation != action.Generation || !previewIdentityMatches(model.Preview.Identity, action.Identity) {
 			return model, nil
 		}
 		preview := model.Preview
@@ -379,6 +382,13 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 	default:
 		return model, nil
 	}
+}
+
+func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
+	if expected.RequestID == "" && actual.RequestID == "" {
+		return true
+	}
+	return expected == actual
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
@@ -764,9 +774,7 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		}
 		model.Drawer.Mode = DrawerPreview
 		model.Drawer.Focus = FocusDrawer
-		return model, []Intent{{
-			Kind: IntentPreview, Pane: model.Active, Location: entry.Location, Limit: PreviewByteLimit,
-		}}
+		return model, []Intent{previewIntent(model.Active, pane, entry)}
 	case KeyVisual, KeyVisualLine:
 		if len(pane.visible) != 0 {
 			pane.visualAnchor = pane.visibleEntry(pane.Cursor).Location
@@ -905,7 +913,7 @@ func previewOpenIntents(model Model, switching bool) []Intent {
 	if !switching && model.Preview.Generation != 0 {
 		intents = append(intents, Intent{Kind: IntentPreviewCancel})
 	}
-	return append(intents, Intent{Kind: IntentPreview, Pane: model.Active, Location: entry.Location, Limit: PreviewByteLimit})
+	return append(intents, previewIntent(model.Active, pane, entry))
 }
 
 func previewRefreshIntents(model Model) []Intent {
@@ -913,9 +921,16 @@ func previewRefreshIntents(model Model) []Intent {
 	pane := model.Panes[model.Active]
 	entry := pane.visibleEntry(pane.Cursor)
 	if entry.Kind == domain.EntryFile && entry.Location.Path != "" {
-		intents = append(intents, Intent{Kind: IntentPreview, Pane: model.Active, Location: entry.Location, Limit: PreviewByteLimit})
+		intents = append(intents, previewIntent(model.Active, pane, entry))
 	}
 	return intents
+}
+
+func previewIntent(paneID PaneID, pane PaneState, entry domain.Entry) Intent {
+	return Intent{
+		Kind: IntentPreview, Pane: paneID, Location: entry.Location, Limit: PreviewByteLimit,
+		EndpointSession: pane.Capabilities.Revision.SessionID, EndpointGeneration: pane.Capabilities.Revision.Generation,
+	}
 }
 
 func validPane(pane PaneID) bool {
