@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
 )
 
 func TestInitializeBootstrapsVersion1AndReopensExistingState(t *testing.T) {
@@ -75,6 +77,58 @@ func TestInitializeRejectsForeignFinalBeforeProbeWrites(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, content) {
 		t.Fatalf("foreign content changed: %q", got)
+	}
+}
+
+func TestInitializeUpgradesThenReopensOnlyTheImmutableValidatedTarget(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := privateTempDir(t)
+	path := filepath.Join(root, "amsftp.db")
+	initial, _, err := Initialize(ctx, InitializeConfig{
+		Root: root, DatabasePath: path,
+		Random: strings.NewReader(strings.Repeat("k", probeRandomBytes+16)), Now: time.Unix(900, 0),
+	})
+	if err != nil {
+		t.Fatalf("initialize version 1: %v", err)
+	}
+	if err := initial.Close(); err != nil {
+		t.Fatalf("close version 1 runtime: %v", err)
+	}
+	migrations, contracts := coordinatorFixture(t, ctx)
+	upgraded, report, err := Initialize(ctx, InitializeConfig{
+		Root: root, DatabasePath: path,
+		Random: strings.NewReader(strings.Repeat("l", probeRandomBytes)), Now: time.Unix(901, 0),
+		Migrations: migrations, SchemaContracts: contracts,
+		MigrationAttemptID: "99999999999999999999999999999999",
+	})
+	if err != nil {
+		t.Fatalf("Initialize(upgrade): %v", err)
+	}
+	defer func() {
+		if err := upgraded.Close(); err != nil {
+			t.Errorf("close upgraded runtime: %v", err)
+		}
+	}()
+	if report.Bootstrapped || report.SchemaHead != 3 {
+		t.Fatalf("upgrade initialize report = %#v", report)
+	}
+	connection, err := upgraded.Conn(ctx)
+	if err != nil {
+		t.Fatalf("reserve reopened target connection: %v", err)
+	}
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("close reopened target connection: %v", err)
+		}
+	}()
+	if err := migration.ValidateHead(ctx, connection, migrations, contracts, 3); err != nil {
+		t.Fatalf("validate reopened target: %v", err)
+	}
+	var attempts int
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_attempts").Scan(&attempts); err != nil || attempts != 0 {
+		t.Fatalf("reopened target attempts = %d, error=%v", attempts, err)
 	}
 }
 

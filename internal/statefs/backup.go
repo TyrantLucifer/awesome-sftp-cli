@@ -19,10 +19,19 @@ import (
 )
 
 type BackupConfig struct {
-	Root      string
-	Source    *sql.DB
-	Attempt   migration.Attempt
-	CreatedAt time.Time
+	Root            string
+	Source          *sql.DB
+	Attempt         migration.Attempt
+	CreatedAt       time.Time
+	Migrations      []migration.Migration
+	SchemaContracts map[uint64][]byte
+}
+
+type backupExpectation struct {
+	attemptID       string
+	originalHead    uint64
+	migrations      []migration.Migration
+	schemaContracts map[uint64][]byte
 }
 
 type backupSourceConnection interface {
@@ -52,6 +61,10 @@ func CreateMigrationBackup(ctx context.Context, config BackupConfig) (path strin
 	if err != nil {
 		return "", digest, err
 	}
+	expectation, err := resolveBackupExpectation(config)
+	if err != nil {
+		return "", digest, err
+	}
 	root := filepath.Clean(config.Root)
 	finalPath := filepath.Join(root, wantBasename)
 	if filepath.Dir(finalPath) != root || filepath.Base(finalPath) != wantBasename {
@@ -75,7 +88,7 @@ func CreateMigrationBackup(ctx context.Context, config BackupConfig) (path strin
 		if tempExists {
 			return "", digest, fmt.Errorf("create migration backup: final and temporary destinations both exist")
 		}
-		return resumePublishedBackup(ctx, config, finalPath)
+		return resumePublishedBackup(ctx, config, expectation, finalPath)
 	}
 	if tempExists {
 		if err := cleanupBackupTemp(tempPath); err != nil {
@@ -108,6 +121,10 @@ func CreateMigrationBackup(ctx context.Context, config BackupConfig) (path strin
 	sourceConnection, err := config.Source.Conn(ctx)
 	if err != nil {
 		return "", digest, fmt.Errorf("create migration backup: reserve source connection: %w", err)
+	}
+	if err := migration.ValidateHead(ctx, sourceConnection, expectation.migrations, expectation.schemaContracts, expectation.originalHead); err != nil {
+		_ = sourceConnection.Close()
+		return "", digest, fmt.Errorf("create migration backup: validate source head: %w", err)
 	}
 	var destinationConnection driver.Conn
 	err = sourceConnection.Raw(func(raw any) error {
@@ -156,7 +173,7 @@ func CreateMigrationBackup(ctx context.Context, config BackupConfig) (path strin
 	if err := destinationConnection.Close(); err != nil {
 		return "", digest, fmt.Errorf("create migration backup: close destination connection: %w", err)
 	}
-	if err := verifySanitizedBackup(ctx, tempPath, attempt.AttemptID); err != nil {
+	if err := verifySanitizedBackupForAttempt(ctx, tempPath, expectation); err != nil {
 		return "", digest, err
 	}
 	if err := validatePrivateRegular(tempPath); err != nil {
@@ -209,10 +226,37 @@ func validateBackupAttempt(attempt migration.Attempt) (string, error) {
 		return "", fmt.Errorf("create migration backup: invalid attempt migration-set digest")
 	}
 	wantBasename := ".amsftp-backup-v1-" + attempt.AttemptID + ".sqlite3"
-	if attempt.Status != migration.AttemptPreparing || attempt.OriginalHead != 1 || attempt.CurrentHead != attempt.OriginalHead || attempt.TargetHead <= attempt.OriginalHead || attempt.BackupSHA256 != nil || attempt.ErrorKind != nil || attempt.ReservedBackupBasename != wantBasename {
-		return "", fmt.Errorf("create migration backup: invalid attempt: not the exact unbacked Version 1 preparing singleton")
+	if attempt.Status != migration.AttemptPreparing || attempt.OriginalHead <= 0 || attempt.CurrentHead != attempt.OriginalHead || attempt.TargetHead <= attempt.OriginalHead || attempt.BackupSHA256 != nil || attempt.ErrorKind != nil || attempt.ReservedBackupBasename != wantBasename {
+		return "", fmt.Errorf("create migration backup: invalid attempt: not an exact unbacked preparing singleton")
 	}
 	return wantBasename, nil
+}
+
+func resolveBackupExpectation(config BackupConfig) (backupExpectation, error) {
+	attempt := config.Attempt
+	if attempt.OriginalHead <= 0 {
+		return backupExpectation{}, fmt.Errorf("create migration backup: invalid original head")
+	}
+	migrations := config.Migrations
+	contracts := config.SchemaContracts
+	if len(migrations) == 0 && contracts == nil && attempt.OriginalHead == 1 {
+		migrations = []migration.Migration{migration.Version1()}
+		contracts = map[uint64][]byte{1: migration.Version1SchemaContract()}
+	}
+	if err := migration.ValidateSet(migrations); err != nil {
+		return backupExpectation{}, fmt.Errorf("create migration backup: invalid compiled migrations: %w", err)
+	}
+	originalHead := uint64(attempt.OriginalHead) //nolint:gosec // positivity checked above
+	if originalHead > uint64(len(migrations)) {  //nolint:gosec // len is non-negative
+		return backupExpectation{}, fmt.Errorf("create migration backup: original head %d exceeds compiled target", originalHead)
+	}
+	if len(contracts[originalHead]) == 0 {
+		return backupExpectation{}, fmt.Errorf("create migration backup: schema contract for original head %d is missing", originalHead)
+	}
+	return backupExpectation{
+		attemptID: attempt.AttemptID, originalHead: originalHead,
+		migrations: migrations, schemaContracts: contracts,
+	}, nil
 }
 
 func markBackupAttemptFailed(database *sql.DB, attemptID string) error {
@@ -243,12 +287,12 @@ func markBackupAttemptFailed(database *sql.DB, attemptID string) error {
 	return nil
 }
 
-func resumePublishedBackup(ctx context.Context, config BackupConfig, finalPath string) (string, [sha256.Size]byte, error) {
+func resumePublishedBackup(ctx context.Context, config BackupConfig, expectation backupExpectation, finalPath string) (string, [sha256.Size]byte, error) {
 	var digest [sha256.Size]byte
 	if err := validatePrivateRegular(finalPath); err != nil {
 		return "", digest, fmt.Errorf("create migration backup: validate published final: %w", err)
 	}
-	if err := verifySanitizedBackup(ctx, finalPath, config.Attempt.AttemptID); err != nil {
+	if err := verifySanitizedBackupForAttempt(ctx, finalPath, expectation); err != nil {
 		return "", digest, fmt.Errorf("create migration backup: verify published final: %w", err)
 	}
 	backupFile, err := os.Open(finalPath) //nolint:gosec // exact validated attempt-derived final
@@ -358,6 +402,14 @@ func sanitizeBackupDestination(ctx context.Context, connection driver.Conn, atte
 }
 
 func verifySanitizedBackup(ctx context.Context, path, attemptID string) error {
+	return verifySanitizedBackupForAttempt(ctx, path, backupExpectation{
+		attemptID: attemptID, originalHead: 1,
+		migrations:      []migration.Migration{migration.Version1()},
+		schemaContracts: map[uint64][]byte{1: migration.Version1SchemaContract()},
+	})
+}
+
+func verifySanitizedBackupForAttempt(ctx context.Context, path string, expectation backupExpectation) error {
 	database, err := sql.Open("sqlite", durabilityURI(path, false))
 	if err != nil {
 		return fmt.Errorf("create migration backup: reopen sanitized destination: %w", err)
@@ -368,7 +420,7 @@ func verifySanitizedBackup(ctx context.Context, path, attemptID string) error {
 		_ = database.Close()
 		return fmt.Errorf("create migration backup: reserve sanitized destination: %w", err)
 	}
-	validationErr := validateBackupVersion1(ctx, connection, attemptID, true)
+	validationErr := validateBackupHead(ctx, connection, expectation, true)
 	if validationErr == nil {
 		var busy, logFrames, checkpointed int64
 		validationErr = connection.QueryRowContext(ctx, "PRAGMA wal_checkpoint(TRUNCATE)").Scan(&busy, &logFrames, &checkpointed)
@@ -386,10 +438,10 @@ func verifySanitizedBackup(ctx context.Context, path, attemptID string) error {
 			return fmt.Errorf("create migration backup: sanitized destination sidecar %s remains", suffix)
 		}
 	}
-	return verifyImmutableBackup(ctx, path, attemptID)
+	return verifyImmutableBackup(ctx, path, expectation)
 }
 
-func verifyImmutableBackup(ctx context.Context, path, attemptID string) error {
+func verifyImmutableBackup(ctx context.Context, path string, expectation backupExpectation) error {
 	uri := &url.URL{Scheme: "file", Path: path}
 	query := uri.Query()
 	query.Set("immutable", "1")
@@ -405,7 +457,7 @@ func verifyImmutableBackup(ctx context.Context, path, attemptID string) error {
 		_ = database.Close()
 		return fmt.Errorf("create migration backup: reserve immutable final: %w", err)
 	}
-	validationErr := validateBackupVersion1(ctx, connection, attemptID, false)
+	validationErr := validateBackupHead(ctx, connection, expectation, false)
 	closeConnectionErr := connection.Close()
 	closeDatabaseErr := database.Close()
 	if err := errors.Join(validationErr, closeConnectionErr, closeDatabaseErr); err != nil {
@@ -414,7 +466,7 @@ func verifyImmutableBackup(ctx context.Context, path, attemptID string) error {
 	return nil
 }
 
-func validateBackupVersion1(ctx context.Context, connection *sql.Conn, attemptID string, requireMaxPageCount bool) error {
+func validateBackupHead(ctx context.Context, connection *sql.Conn, expectation backupExpectation, requireMaxPageCount bool) error {
 	expectations := []struct {
 		name string
 		want int64
@@ -432,30 +484,14 @@ func validateBackupVersion1(ctx context.Context, connection *sql.Conn, attemptID
 	for _, expectation := range expectations {
 		var got int64
 		if err := connection.QueryRowContext(ctx, "PRAGMA "+expectation.name).Scan(&got); err != nil {
-			return fmt.Errorf("backup Version 1 PRAGMA %s: %w", expectation.name, err)
+			return fmt.Errorf("backup head PRAGMA %s: %w", expectation.name, err)
 		}
 		if got != expectation.want {
-			return fmt.Errorf("backup Version 1 PRAGMA %s = %d, want %d", expectation.name, got, expectation.want)
+			return fmt.Errorf("backup head PRAGMA %s = %d, want %d", expectation.name, got, expectation.want)
 		}
 	}
-	var version int64
-	var name, checksum string
-	if err := connection.QueryRowContext(ctx, "SELECT version, name, sha256 FROM schema_migrations").Scan(&version, &name, &checksum); err != nil {
-		return fmt.Errorf("backup Version 1 history: %w", err)
-	}
-	wantChecksum, err := migration.Checksum(migration.Version1())
-	if err != nil {
-		return err
-	}
-	if version != 1 || name != "init" || checksum != hex.EncodeToString(wantChecksum[:]) {
-		return fmt.Errorf("backup Version 1 history does not match")
-	}
-	var historyRows int64
-	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM schema_migrations").Scan(&historyRows); err != nil {
-		return fmt.Errorf("backup Version 1 history row count: %w", err)
-	}
-	if historyRows != 1 {
-		return fmt.Errorf("backup Version 1 history rows = %d, want 1", historyRows)
+	if err := migration.ValidateHead(ctx, connection, expectation.migrations, expectation.schemaContracts, expectation.originalHead); err != nil {
+		return fmt.Errorf("backup migration head: %w", err)
 	}
 	var attempts, holds int64
 	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_attempts").Scan(&attempts); err != nil {
@@ -464,7 +500,7 @@ func validateBackupVersion1(ctx context.Context, connection *sql.Conn, attemptID
 	if attempts != 0 {
 		return fmt.Errorf("backup active attempts = %d, want 0", attempts)
 	}
-	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_control WHERE singleton=1 AND upgrade_hold=1 AND hold_reason='restored_backup' AND hold_attempt_id=?", attemptID).Scan(&holds); err != nil {
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_control WHERE singleton=1 AND upgrade_hold=1 AND hold_reason='restored_backup' AND hold_attempt_id=?", expectation.attemptID).Scan(&holds); err != nil {
 		return fmt.Errorf("backup restore holds: %w", err)
 	}
 	if holds != 1 {
@@ -486,7 +522,7 @@ func validateBackupVersion1(ctx context.Context, connection *sql.Conn, attemptID
 	if foreignErr != nil || violated {
 		return fmt.Errorf("backup foreign_key_check violation=%t: %w", violated, foreignErr)
 	}
-	return migration.ValidateVersion1SchemaContract(ctx, connection)
+	return nil
 }
 
 func queryDriverInteger(ctx context.Context, connection driver.Conn, query string) (int64, error) {

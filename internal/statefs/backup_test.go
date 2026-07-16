@@ -397,3 +397,95 @@ func TestVerifySanitizedBackupRejectsExtraMigrationHistory(t *testing.T) {
 		t.Fatal("verifySanitizedBackup(extra history) error = nil")
 	}
 }
+
+func TestCreateMigrationBackupVerifiesTheAttemptOriginalHead(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	root := privateTempDir(t)
+	path := filepath.Join(root, "amsftp.db")
+	database, _, err := Initialize(ctx, InitializeConfig{
+		Root: root, DatabasePath: path,
+		Random: strings.NewReader(strings.Repeat("h", probeRandomBytes+16)), Now: time.Unix(600, 0),
+	})
+	if err != nil {
+		t.Fatalf("initialize source: %v", err)
+	}
+	defer func() {
+		if err := database.Close(); err != nil {
+			t.Errorf("close source database: %v", err)
+		}
+	}()
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		t.Fatalf("reserve source connection: %v", err)
+	}
+	defer func() {
+		if err := connection.Close(); err != nil {
+			t.Errorf("close source connection: %v", err)
+		}
+	}()
+
+	v2 := migration.Migration{Version: 2, Name: "second", Statements: []string{"CREATE TABLE second_backup_head(id INTEGER PRIMARY KEY) STRICT"}, MaxMigrationWalBytes: 1 << 20}
+	v3 := migration.Migration{Version: 3, Name: "third", Statements: []string{"ALTER TABLE second_backup_head ADD COLUMN note TEXT"}, MaxMigrationWalBytes: 1 << 20}
+	firstRequest := migration.AttemptRequest{
+		AttemptID: "55555555555555555555555555555555", OriginalHead: 1, TargetHead: 2,
+		MigrationSetDigest: sha256.Sum256([]byte("first upgrade")),
+	}
+	firstAttempt, _, err := migration.PrepareAttempt(ctx, connection, firstRequest)
+	if err != nil {
+		t.Fatalf("prepare first attempt: %v", err)
+	}
+	if _, _, err := CreateMigrationBackup(ctx, BackupConfig{Root: root, Source: database, Attempt: firstAttempt, CreatedAt: time.Unix(601, 0)}); err != nil {
+		t.Fatalf("create first backup: %v", err)
+	}
+	if _, err := migration.MarkAttemptRunning(ctx, connection, firstRequest.AttemptID); err != nil {
+		t.Fatalf("mark first attempt running: %v", err)
+	}
+	if err := (migration.Runner{AttemptID: firstRequest.AttemptID}).Apply(ctx, connection, v2, "2026-07-16T00:10:00Z"); err != nil {
+		t.Fatalf("apply version 2: %v", err)
+	}
+	if err := migration.ClearCompletedAttempt(ctx, connection, firstRequest); err != nil {
+		t.Fatalf("clear first attempt: %v", err)
+	}
+	contract2, err := migration.BuildSchemaContract(ctx, connection, 2)
+	if err != nil {
+		t.Fatalf("build version 2 contract: %v", err)
+	}
+
+	secondRequest := migration.AttemptRequest{
+		AttemptID: "66666666666666666666666666666666", OriginalHead: 2, TargetHead: 3,
+		MigrationSetDigest: sha256.Sum256([]byte("second upgrade")),
+	}
+	secondAttempt, _, err := migration.PrepareAttempt(ctx, connection, secondRequest)
+	if err != nil {
+		t.Fatalf("prepare second attempt: %v", err)
+	}
+	backupPath, _, err := CreateMigrationBackup(ctx, BackupConfig{
+		Root: root, Source: database, Attempt: secondAttempt, CreatedAt: time.Unix(602, 0),
+		Migrations: []migration.Migration{migration.Version1(), v2, v3},
+		SchemaContracts: map[uint64][]byte{
+			1: migration.Version1SchemaContract(),
+			2: contract2,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateMigrationBackup(head 2): %v", err)
+	}
+	backup, err := sql.Open("sqlite", "file:"+backupPath+"?mode=ro")
+	if err != nil {
+		t.Fatalf("open head 2 backup: %v", err)
+	}
+	defer func() {
+		if err := backup.Close(); err != nil {
+			t.Errorf("close head 2 backup: %v", err)
+		}
+	}()
+	var rows, head int64
+	if err := backup.QueryRowContext(ctx, "SELECT count(*), max(version) FROM schema_migrations").Scan(&rows, &head); err != nil {
+		t.Fatalf("read head 2 backup history: %v", err)
+	}
+	if rows != 2 || head != 2 {
+		t.Fatalf("head 2 backup history = %d/%d, want 2/2", rows, head)
+	}
+}

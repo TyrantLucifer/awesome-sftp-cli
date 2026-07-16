@@ -27,10 +27,14 @@ const (
 )
 
 type InitializeConfig struct {
-	Root         string
-	DatabasePath string
-	Random       io.Reader
-	Now          time.Time
+	Root                    string
+	DatabasePath            string
+	Random                  io.Reader
+	Now                     time.Time
+	Migrations              []migration.Migration
+	SchemaContracts         map[uint64][]byte
+	MigrationAttemptID      string
+	ExplicitMigrationResume bool
 }
 
 type InitializeReport struct {
@@ -45,6 +49,10 @@ func Initialize(ctx context.Context, config InitializeConfig) (*sql.DB, Initiali
 		return nil, InitializeReport{}, fmt.Errorf("initialize state: database must be a direct child of the state root")
 	}
 	filesystem, err := ValidateRoot(config.Root)
+	if err != nil {
+		return nil, InitializeReport{}, err
+	}
+	migrations, contracts, err := resolveCompiledState(config.Migrations, config.SchemaContracts)
 	if err != nil {
 		return nil, InitializeReport{}, err
 	}
@@ -63,7 +71,7 @@ func Initialize(ctx context.Context, config InitializeConfig) (*sql.DB, Initiali
 		}
 	}
 	if identity.Kind == IdentityProject && !identity.HasSidecars {
-		if err := validateImmutableVersion1(ctx, config.DatabasePath); err != nil {
+		if _, err := validateImmutableState(ctx, config.DatabasePath, migrations, contracts, false); err != nil {
 			return nil, InitializeReport{}, err
 		}
 	}
@@ -77,10 +85,49 @@ func Initialize(ctx context.Context, config InitializeConfig) (*sql.DB, Initiali
 		}
 		report.Bootstrapped = true
 	}
-	database, err := openRuntimeDatabase(ctx, config.DatabasePath)
+	database, err := openRuntimeDatabase(ctx, config.DatabasePath, migrations, contracts)
 	if err != nil {
 		return nil, InitializeReport{}, err
 	}
+	now := config.Now
+	if now.IsZero() {
+		now = time.Now()
+	}
+	upgradeReport, err := UpgradeDatabase(ctx, UpgradeConfig{
+		Root: config.Root, DatabasePath: config.DatabasePath, Database: database,
+		Migrations: migrations, SchemaContracts: contracts,
+		AttemptID: config.MigrationAttemptID, Now: now, ExplicitResume: config.ExplicitMigrationResume,
+	})
+	if err != nil {
+		_ = database.Close()
+		return nil, InitializeReport{}, err
+	}
+	finalConnection, err := database.Conn(ctx)
+	if err != nil {
+		_ = database.Close()
+		return nil, InitializeReport{}, fmt.Errorf("initialize state: reserve final-check connection: %w", err)
+	}
+	finalErr := finalConnectionChecks(ctx, finalConnection)
+	closeConnectionErr := finalConnection.Close()
+	closeDatabaseErr := database.Close()
+	if err := errors.Join(finalErr, closeConnectionErr, closeDatabaseErr); err != nil {
+		return nil, InitializeReport{}, fmt.Errorf("initialize state: quiesce upgraded database: %w", err)
+	}
+	if err := requireDatabaseSidecarsAbsent(config.DatabasePath); err != nil {
+		return nil, InitializeReport{}, err
+	}
+	validatedHead, err := validateImmutableState(ctx, config.DatabasePath, migrations, contracts, true)
+	if err != nil {
+		return nil, InitializeReport{}, err
+	}
+	if validatedHead != upgradeReport.TargetHead {
+		return nil, InitializeReport{}, fmt.Errorf("initialize state: immutable head %d, want target %d", validatedHead, upgradeReport.TargetHead)
+	}
+	database, err = openRuntimeDatabase(ctx, config.DatabasePath, migrations, contracts)
+	if err != nil {
+		return nil, InitializeReport{}, err
+	}
+	report.SchemaHead = validatedHead
 	return database, report, nil
 }
 
@@ -298,7 +345,7 @@ func cleanupBootstrapGeneration(root, generationID string, removeIntent bool) er
 	return syncDirectory(root)
 }
 
-func openRuntimeDatabase(ctx context.Context, path string) (*sql.DB, error) {
+func openRuntimeDatabase(ctx context.Context, path string, migrations []migration.Migration, contracts map[uint64][]byte) (*sql.DB, error) {
 	database, err := sql.Open("sqlite", durabilityURI(path, true))
 	if err != nil {
 		return nil, fmt.Errorf("open runtime state: %w", err)
@@ -321,7 +368,7 @@ func openRuntimeDatabase(ctx context.Context, path string) (*sql.DB, error) {
 		_ = database.Close()
 		return nil, fmt.Errorf("open runtime state: journal mode %q, want wal", journalMode)
 	}
-	if err := validateConnectionVersion1(ctx, connection, true); err != nil {
+	if _, err := validateConnectionState(ctx, connection, migrations, contracts, true, false); err != nil {
 		_ = connection.Close()
 		_ = database.Close()
 		return nil, fmt.Errorf("open runtime state: %w", err)
@@ -331,6 +378,117 @@ func openRuntimeDatabase(ctx context.Context, path string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open runtime state: close initializer: %w", err)
 	}
 	return database, nil
+}
+
+func resolveCompiledState(migrations []migration.Migration, contracts map[uint64][]byte) ([]migration.Migration, map[uint64][]byte, error) {
+	if len(migrations) == 0 && contracts == nil {
+		return []migration.Migration{migration.Version1()}, map[uint64][]byte{1: migration.Version1SchemaContract()}, nil
+	}
+	if len(migrations) == 0 || contracts == nil {
+		return nil, nil, fmt.Errorf("initialize state: migrations and schema contracts must be supplied together")
+	}
+	if _, err := migration.SchemaContractDigests(migrations, contracts); err != nil {
+		return nil, nil, fmt.Errorf("initialize state: %w", err)
+	}
+	return migrations, contracts, nil
+}
+
+func validateImmutableState(ctx context.Context, path string, migrations []migration.Migration, contracts map[uint64][]byte, requireFinal bool) (uint64, error) {
+	uri := &url.URL{Scheme: "file", Path: path}
+	query := uri.Query()
+	query.Set("immutable", "1")
+	query.Set("mode", "ro")
+	uri.RawQuery = query.Encode()
+	database, err := sql.Open("sqlite", uri.String())
+	if err != nil {
+		return 0, fmt.Errorf("validate immutable state: open: %w", err)
+	}
+	database.SetMaxOpenConns(1)
+	connection, err := database.Conn(ctx)
+	if err != nil {
+		_ = database.Close()
+		return 0, fmt.Errorf("validate immutable state: reserve connection: %w", err)
+	}
+	head, validationErr := validateConnectionState(ctx, connection, migrations, contracts, false, requireFinal)
+	closeConnectionErr := connection.Close()
+	closeDatabaseErr := database.Close()
+	if err := errors.Join(validationErr, closeConnectionErr, closeDatabaseErr); err != nil {
+		return 0, fmt.Errorf("validate immutable state: %w", err)
+	}
+	return head, nil
+}
+
+func validateConnectionState(ctx context.Context, connection *sql.Conn, migrations []migration.Migration, contracts map[uint64][]byte, requireMaxPageCount, requireFinal bool) (uint64, error) {
+	expectations := []struct {
+		name string
+		want int64
+	}{
+		{name: "application_id", want: int64(applicationID)},
+		{name: "user_version", want: 0},
+		{name: "page_size", want: int64(statePageSize)},
+	}
+	if requireMaxPageCount {
+		expectations = append(expectations, struct {
+			name string
+			want int64
+		}{name: "max_page_count", want: 2_097_152})
+	}
+	for _, expectation := range expectations {
+		var got int64
+		if err := connection.QueryRowContext(ctx, "PRAGMA "+expectation.name).Scan(&got); err != nil {
+			return 0, fmt.Errorf("validate state: read PRAGMA %s: %w", expectation.name, err)
+		}
+		if got != expectation.want {
+			return 0, fmt.Errorf("validate state: PRAGMA %s = %d, want %d", expectation.name, got, expectation.want)
+		}
+	}
+	head, err := readMigrationHead(ctx, connection)
+	if err != nil {
+		return 0, err
+	}
+	if err := migration.ValidateHead(ctx, connection, migrations, contracts, head); err != nil {
+		return 0, err
+	}
+	var controlRows, attemptRows int64
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_control WHERE singleton=1 AND ((upgrade_hold=0 AND hold_reason IS NULL AND hold_attempt_id IS NULL) OR (upgrade_hold=1 AND hold_reason='restored_backup' AND hold_attempt_id IS NOT NULL AND length(hold_attempt_id)=32 AND hold_attempt_id NOT GLOB '*[^0-9a-f]*'))").Scan(&controlRows); err != nil || controlRows != 1 {
+		return 0, fmt.Errorf("validate state: migration control rows = %d: %w", controlRows, err)
+	}
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_attempts").Scan(&attemptRows); err != nil {
+		return 0, fmt.Errorf("validate state: active attempt count: %w", err)
+	}
+	if attemptRows < 0 || attemptRows > 1 || (requireFinal && attemptRows != 0) {
+		return 0, fmt.Errorf("validate state: active attempt rows = %d", attemptRows)
+	}
+	if requireFinal {
+		if err := requireUpgradeHoldClear(ctx, connection); err != nil {
+			return 0, err
+		}
+	}
+	var quick string
+	if err := connection.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&quick); err != nil || quick != "ok" {
+		return 0, fmt.Errorf("validate state: quick_check = %q: %w", quick, err)
+	}
+	foreignRows, err := connection.QueryContext(ctx, "PRAGMA foreign_key_check")
+	if err != nil {
+		return 0, fmt.Errorf("validate state: foreign_key_check: %w", err)
+	}
+	violated := foreignRows.Next()
+	if err := errors.Join(foreignRows.Err(), foreignRows.Close()); err != nil {
+		return 0, fmt.Errorf("validate state: foreign_key_check rows: %w", err)
+	}
+	if violated {
+		return 0, fmt.Errorf("validate state: foreign key violation")
+	}
+	return head, nil
+}
+
+func requireDatabaseSidecarsAbsent(path string) error {
+	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
+		if _, err := os.Lstat(path + suffix); !errors.Is(err, os.ErrNotExist) {
+			return fmt.Errorf("initialize state: sidecar %s remains after quiesce: %w", suffix, err)
+		}
+	}
+	return nil
 }
 
 func validateImmutableVersion1(ctx context.Context, path string) error {
