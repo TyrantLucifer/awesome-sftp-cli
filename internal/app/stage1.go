@@ -2,7 +2,9 @@ package app
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -17,9 +19,13 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachemanager"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
@@ -27,6 +33,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/sshconfig"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
@@ -196,6 +203,31 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return err
 	}
 	sessions.SetDiagnosticSource(diagnosticRecords)
+	if stateDatabase != nil && paths.CacheDir != "" {
+		cacheErr := platform.PreparePrivateDirectory(paths.CacheDir, platform.ValidatePersistent)
+		var files *cachefs.Store
+		if cacheErr == nil {
+			files, cacheErr = cachefs.Initialize(paths.CacheDir)
+		}
+		var catalog *cachestore.Store
+		if cacheErr == nil {
+			catalog, cacheErr = cachestore.New(ctx, stateDatabase)
+		}
+		var cacheManager *cachemanager.Manager
+		if cacheErr == nil {
+			cacheManager, cacheErr = cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), cache.DefaultLimits())
+		}
+		var report cachemanager.ReconcileReport
+		if cacheErr == nil {
+			report, cacheErr = cacheManager.Reconcile(ctx, 10_000)
+		}
+		if cacheErr != nil {
+			logger.Error("content cache unavailable; browsing and durable Jobs remain enabled", diagnostic.Component("cache"), diagnostic.Event("cache_unavailable"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
+		} else {
+			sessions.SetCacheManager(cacheManager)
+			logger.Info("content cache initialized", diagnostic.Component("cache"), diagnostic.Event("cache_initialized"), slog.Bool("needs_attention", report.NeedsAttention), slog.Int("verified_blobs", len(report.Filesystem.VerifiedBlobs)), slog.Int("verified_entries", len(report.Filesystem.VerifiedEntries)), slog.Int("verified_materializations", len(report.Filesystem.VerifiedMaterializations)))
+		}
+	}
 	if stateOpenErr == nil {
 		workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
 		if err != nil {
@@ -278,6 +310,11 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return err
 	}
 	return daemon.Serve(ctx, listener, server)
+}
+
+func cacheDaemonID(sessionID domain.SessionID) string {
+	digest := sha256.Sum256([]byte(sessionID))
+	return hex.EncodeToString(digest[:16])
 }
 
 func sshConnectMessage(code domain.Code) string {

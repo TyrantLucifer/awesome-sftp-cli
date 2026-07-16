@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachemanager"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
@@ -51,6 +52,7 @@ type ProviderSessions struct {
 	workspace       *workspace.Store
 	transfer        TransferService
 	diagnostics     DiagnosticSource
+	cache           *cachemanager.Manager
 	nextOwner       atomic.Uint64
 }
 
@@ -65,10 +67,11 @@ func (s *ProviderSessions) SetSSHConnector(connector SSHConnector) { s.connectSS
 func (s *ProviderSessions) SetEndpointConnector(connector EndpointConnector) {
 	s.connectEndpoint = connector
 }
-func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)           { s.authBroker = broker }
-func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store)    { s.workspace = store }
-func (s *ProviderSessions) SetTransferService(service TransferService)  { s.transfer = service }
-func (s *ProviderSessions) SetDiagnosticSource(source DiagnosticSource) { s.diagnostics = source }
+func (s *ProviderSessions) SetAuthBroker(broker *auth.Broker)             { s.authBroker = broker }
+func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store)      { s.workspace = store }
+func (s *ProviderSessions) SetTransferService(service TransferService)    { s.transfer = service }
+func (s *ProviderSessions) SetDiagnosticSource(source DiagnosticSource)   { s.diagnostics = source }
+func (s *ProviderSessions) SetCacheManager(manager *cachemanager.Manager) { s.cache = manager }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	if len(providers) == 0 {
@@ -113,6 +116,7 @@ func (s *ProviderSessions) NewSession() Session {
 		workspace:    s.workspace,
 		transfer:     s.transfer,
 		diagnostics:  s.diagnostics,
+		cache:        s.cache,
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -145,6 +149,7 @@ type providerSession struct {
 	workspace    *workspace.Store
 	transfer     TransferService
 	diagnostics  DiagnosticSource
+	cache        *cachemanager.Manager
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {

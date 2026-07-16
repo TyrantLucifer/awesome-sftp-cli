@@ -235,7 +235,7 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 		t.Fatal(err)
 	}
 	persistent := testkit.PersistentTempDir(t)
-	paths := platform.Paths{StateDir: filepath.Join(persistent, "state"), LogFile: filepath.Join(persistent, "log", "daemon.jsonl"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
+	paths := platform.Paths{StateDir: filepath.Join(persistent, "state"), LogFile: filepath.Join(persistent, "log", "daemon.jsonl"), CacheDir: filepath.Join(persistent, "cache"), RuntimeDir: base, ControlSocket: filepath.Join(base, "control-v1.sock"), LockFile: filepath.Join(base, "daemon.lock")}
 	purpose := platform.ValidateRuntimeFallback
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -262,6 +262,12 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Kind != "local" {
 		t.Fatalf("endpoints = %#v", endpoints.Endpoints)
+	}
+	for _, cachePath := range []string{paths.CacheDir, filepath.Join(paths.CacheDir, "content-v1", "blobs", "sha256")} {
+		metadata, statErr := os.Lstat(cachePath)
+		if statErr != nil || !metadata.IsDir() || metadata.Mode().Perm() != 0o700 {
+			t.Fatalf("cache path %q = %#v, %v", cachePath, metadata, statErr)
+		}
 	}
 	var diagnostics daemon.DiagnosticListResponse
 	if err := client.Call(context.Background(), daemon.DiagnosticList, daemon.DiagnosticListRequest{Limit: 256}, &diagnostics); err != nil {

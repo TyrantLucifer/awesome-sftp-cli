@@ -182,6 +182,42 @@ func (store *Store) ListMaterializations(ctx context.Context) ([]cache.Materiali
 	return listMaterializations(ctx, store.database)
 }
 
+// PrepareHandoff atomically makes one already-durable filesystem
+// materialization reachable and leased before an external process can observe
+// its path. Filesystem publication remains cachefs-owned and must complete
+// before this catalog transaction begins.
+func (store *Store) PrepareHandoff(ctx context.Context, item cache.Materialization, reference cache.Reference, lease cache.Lease) error {
+	if err := validateMaterialization(item); err != nil {
+		return fmt.Errorf("prepare cache handoff: %w", err)
+	}
+	if err := validateReference(reference); err != nil {
+		return fmt.Errorf("prepare cache handoff: %w", err)
+	}
+	if err := validateLease(lease, false); err != nil {
+		return fmt.Errorf("prepare cache handoff: %w", err)
+	}
+	if reference.Target != cache.MaterializationTarget(item.ID) || lease.Target != cache.MaterializationTarget(item.ID) {
+		return fmt.Errorf("prepare cache handoff: reference and lease must target materialization %q", item.ID)
+	}
+	owner, err := encodeLeaseOwner(lease.OwnerKind)
+	if err != nil {
+		return fmt.Errorf("prepare cache handoff: %w", err)
+	}
+	pid, birth := processValues(lease.Process)
+	return store.write(ctx, 3, func(_ *sql.Conn, writer *transactionWriter) error {
+		if _, err := writer.ExecContext(ctx, "INSERT INTO cache_materializations(materialization_id,entry_id,baseline_blob_sha256,basename,size_bytes,current_sha256,state,pinned,created_at_unix,updated_at_unix,last_access_unix) VALUES(?,?,?,?,?,?,?,?,?,?,?)", item.ID, item.EntryID, item.BaselineBlobID, materializationBasename(item.ID), item.Size, item.CurrentBlobID, item.State, boolInt(item.Pinned), unix(item.CreatedAt), unix(item.LastAccessAt), unix(item.LastAccessAt)); err != nil {
+			return fmt.Errorf("prepare cache handoff materialization %q: %w", item.ID, err)
+		}
+		if _, err := writer.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,blob_sha256,materialization_id,created_at_unix) VALUES(?,?,?,NULL,?,?)", reference.ID, reference.OwnerKind, reference.OwnerID, item.ID, unix(reference.CreatedAt)); err != nil {
+			return fmt.Errorf("prepare cache handoff reference %q: %w", reference.ID, err)
+		}
+		if _, err := writer.ExecContext(ctx, "INSERT INTO cache_leases(lease_id,blob_sha256,materialization_id,owner_kind,owner_id,daemon_instance_id,owner_pid,process_birth_identity,heartbeat_at_unix,expires_at_unix,grace_until_unix,state) VALUES(?,NULL,?,?,?,?,?,?,?,?,?,'active')", lease.ID, item.ID, owner, lease.OwnerID, lease.DaemonInstanceID, pid, birth, unix(lease.HeartbeatAt), unix(lease.ExpiresAt), unix(lease.GraceUntil)); err != nil {
+			return fmt.Errorf("prepare cache handoff lease %q: %w", lease.ID, err)
+		}
+		return nil
+	})
+}
+
 func listMaterializations(ctx context.Context, source queryer) ([]cache.Materialization, error) {
 	rows, err := source.QueryContext(ctx, materializationSelect+" ORDER BY materialization_id")
 	if err != nil {

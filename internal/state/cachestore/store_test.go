@@ -193,6 +193,42 @@ func TestTouchUpdateReleaseAndRemove(t *testing.T) {
 	}
 }
 
+func TestPrepareHandoffAtomicallyCreatesMaterializationReferenceAndLease(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t, ctx, newVersion2Database(t, ctx))
+	blob, entry, materialization, reference, lease := validGraph()
+	reference.Target = cache.MaterializationTarget(materialization.ID)
+	must(t, store.Publish(ctx, blob, entry))
+	if err := store.PrepareHandoff(ctx, materialization, reference, lease); err != nil {
+		t.Fatalf("PrepareHandoff() error = %v", err)
+	}
+	snapshot, err := store.LoadSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Materializations) != 1 || len(snapshot.References) != 1 || len(snapshot.Leases) != 1 {
+		t.Fatalf("snapshot = %#v", snapshot)
+	}
+
+	second := materialization
+	second.ID = cache.MaterializationID(strings.Repeat("9", 32))
+	secondReference := reference
+	secondReference.ID = cache.ReferenceID(strings.Repeat("8", 32))
+	secondReference.Target = cache.MaterializationTarget(second.ID)
+	duplicateLease := lease
+	duplicateLease.Target = cache.MaterializationTarget(second.ID)
+	if err := store.PrepareHandoff(ctx, second, secondReference, duplicateLease); err == nil {
+		t.Fatal("PrepareHandoff() accepted a duplicate lease")
+	}
+	snapshot, err = store.LoadSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Materializations) != 1 || len(snapshot.References) != 1 || len(snapshot.Leases) != 1 {
+		t.Fatalf("failed handoff left partial rows: %#v", snapshot)
+	}
+}
+
 func TestConcurrentDuplicateReferenceLeavesOneRow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
