@@ -4,6 +4,7 @@ package app
 
 import (
 	"errors"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -39,26 +40,34 @@ func (state *terminalImageCapabilityState) Reprobe(environment []string) {
 }
 
 func probeTerminalImageCapability(environment []string) builtinpreview.ImageCapabilityProof {
+	proof, _ := probeTerminalImageCapabilityResult(environment)
+	return proof
+}
+
+func probeTerminalImageCapabilityResult(environment []string) (builtinpreview.ImageCapabilityProof, error) {
 	protocol := imageProbeCandidate(environmentValues(environment))
 	if protocol == builtinpreview.ImageProtocolNone {
-		return builtinpreview.ImageCapabilityProof{}
+		return builtinpreview.ImageCapabilityProof{}, errors.New("terminal image probe: no protocol candidate")
 	}
 	query, err := builtinpreview.ImageCapabilityProbe(protocol)
 	if err != nil {
-		return builtinpreview.ImageCapabilityProof{}
+		return builtinpreview.ImageCapabilityProof{}, err
 	}
 	descriptor, err := unix.Open("/dev/tty", unix.O_RDWR|unix.O_CLOEXEC|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
-		return builtinpreview.ImageCapabilityProof{}
+		return builtinpreview.ImageCapabilityProof{}, fmt.Errorf("terminal image probe: open controlling terminal: %w", err)
 	}
 	defer unix.Close(descriptor)
 	foregroundProcessGroup, err := unix.IoctlGetInt(descriptor, unix.TIOCGPGRP)
-	if err != nil || foregroundProcessGroup != unix.Getpgrp() {
-		return builtinpreview.ImageCapabilityProof{}
+	if err != nil {
+		return builtinpreview.ImageCapabilityProof{}, fmt.Errorf("terminal image probe: inspect foreground process group: %w", err)
+	}
+	if foregroundProcessGroup != unix.Getpgrp() {
+		return builtinpreview.ImageCapabilityProof{}, errors.New("terminal image probe: process does not own the foreground terminal")
 	}
 	original, err := getProbeTermios(descriptor)
 	if err != nil {
-		return builtinpreview.ImageCapabilityProof{}
+		return builtinpreview.ImageCapabilityProof{}, fmt.Errorf("terminal image probe: read termios: %w", err)
 	}
 	raw := *original
 	raw.Iflag &^= unix.BRKINT | unix.ICRNL | unix.INPCK | unix.ISTRIP | unix.IXON
@@ -68,21 +77,21 @@ func probeTerminalImageCapability(environment []string) builtinpreview.ImageCapa
 	raw.Cc[unix.VMIN] = 0
 	raw.Cc[unix.VTIME] = 1
 	if err := setProbeTermios(descriptor, &raw); err != nil {
-		return builtinpreview.ImageCapabilityProof{}
+		return builtinpreview.ImageCapabilityProof{}, fmt.Errorf("terminal image probe: enter bounded raw mode: %w", err)
 	}
 	defer func() { _ = setProbeTermios(descriptor, original) }()
 	if err := writeProbe(descriptor, query); err != nil {
-		return builtinpreview.ImageCapabilityProof{}
+		return builtinpreview.ImageCapabilityProof{}, fmt.Errorf("terminal image probe: write query: %w", err)
 	}
 	response, err := readProbeResponse(descriptor, terminalImageProbeTimeout)
 	if err != nil {
-		return builtinpreview.ImageCapabilityProof{}
+		return builtinpreview.ImageCapabilityProof{}, fmt.Errorf("terminal image probe: read response: %w", err)
 	}
 	proof, err := builtinpreview.ConfirmImageCapability(protocol, response)
 	if err != nil {
-		return builtinpreview.ImageCapabilityProof{}
+		return builtinpreview.ImageCapabilityProof{}, err
 	}
-	return proof
+	return proof, nil
 }
 
 func imageProbeCandidate(environment map[string]string) builtinpreview.ImageProtocol {
@@ -150,8 +159,14 @@ func readProbeResponse(descriptor int, timeout time.Duration) ([]byte, error) {
 		if err != nil {
 			return nil, err
 		}
-		if read <= 0 {
-			return nil, errors.New("terminal image probe ended before a response")
+		if read == 0 {
+			// VMIN=0 permits a zero-byte TTY read before the terminal reply is
+			// available (observed on native Darwin). The absolute deadline still
+			// bounds this loop; zero bytes are not proof that the TTY was closed.
+			continue
+		}
+		if read < 0 {
+			return nil, errors.New("terminal image probe returned an invalid read count")
 		}
 		response = append(response, buffer[:read]...)
 		if len(response) > 256 {
