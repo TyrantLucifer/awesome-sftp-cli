@@ -115,14 +115,23 @@ func runShellIntent(ctx context.Context, intent tui.Intent, environment []string
 	if err != nil {
 		return "shell failed after terminal recovery: " + err.Error()
 	}
+	return formatShellResult(result, intent.Endpoint.Kind == domain.EndpointSSH && !intent.ShellHome)
+}
+
+func formatShellResult(result terminalhandoff.Result, offerHomeRetry bool) string {
+	var message string
 	switch result.Kind {
 	case terminalhandoff.ExitNormal:
-		return "shell exited; pane refreshed"
+		message = "shell exited; pane refreshed"
 	case terminalhandoff.ExitNonZero:
-		return fmt.Sprintf("shell exited %d; pane refreshed", result.ExitCode)
+		message = fmt.Sprintf("shell exited %d; pane refreshed", result.ExitCode)
 	case terminalhandoff.ExitSignaled:
-		return "shell terminated by " + result.Signal + "; pane refreshed"
+		message = "shell terminated by " + result.Signal + "; pane refreshed"
 	default:
-		return "shell lost its terminal; pane refreshed"
+		message = "shell lost its terminal; pane refreshed"
 	}
+	if offerHomeRetry && result.Kind != terminalhandoff.ExitNormal {
+		message += "; press gS for an explicit home shell"
+	}
+	return message
 }

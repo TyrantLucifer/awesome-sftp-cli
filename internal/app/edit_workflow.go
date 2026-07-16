@@ -11,10 +11,14 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
+	"reflect"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cacheprocess"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
@@ -49,16 +53,28 @@ type liveEditSession struct {
 	target        domain.Location
 	lastExit      terminalhandoff.Result
 	prepared      preparedExternalEdit
+	recovery      editstore.RecoveryRecord
+	process       *cache.ProcessIdentity
+}
+
+type recoverableEdit struct {
+	record     editstore.RecoveryRecord
+	path       string
+	usable     bool
+	diagnostic string
 }
 
 type editCoordinator struct {
-	client        editRPCCaller
-	localEndpoint domain.EndpointID
-	workspaceID   cache.WorkspaceID
-	policy        cache.Policy
-	now           func() time.Time
-	prepare       externalEditPreparer
-	sessions      map[edit.SessionID]*liveEditSession
+	client                      editRPCCaller
+	localEndpoint               domain.EndpointID
+	workspaceID                 cache.WorkspaceID
+	policy                      cache.Policy
+	now                         func() time.Time
+	prepare                     externalEditPreparer
+	sessions                    map[edit.SessionID]*liveEditSession
+	recoverable                 map[edit.SessionID]recoverableEdit
+	recoveryMaterializationPath func(cache.MaterializationID) (string, error)
+	heartbeatEvery              time.Duration
 }
 
 func newEditCoordinator(client editRPCCaller, localEndpoint domain.EndpointID, workspaceID cache.WorkspaceID, policy cache.Policy, prepare externalEditPreparer) (*editCoordinator, error) {
@@ -70,7 +86,199 @@ func newEditCoordinator(client editRPCCaller, localEndpoint domain.EndpointID, w
 	default:
 		return nil, fmt.Errorf("create edit coordinator: invalid cache policy %q", policy)
 	}
-	return &editCoordinator{client: client, localEndpoint: localEndpoint, workspaceID: workspaceID, policy: policy, now: time.Now, prepare: prepare, sessions: make(map[edit.SessionID]*liveEditSession)}, nil
+	return &editCoordinator{client: client, localEndpoint: localEndpoint, workspaceID: workspaceID, policy: policy, now: time.Now, prepare: prepare, sessions: make(map[edit.SessionID]*liveEditSession), recoverable: make(map[edit.SessionID]recoverableEdit), heartbeatEvery: cache.DefaultLeaseHeartbeat}, nil
+}
+
+// ConfigureRecoveryCacheRoot installs the deterministic, read-only resolver
+// used to reopen an exact durable materialization after a client restart.
+func (coordinator *editCoordinator) ConfigureRecoveryCacheRoot(cacheRoot string) error {
+	if coordinator == nil || !filepath.IsAbs(cacheRoot) || filepath.Clean(cacheRoot) != cacheRoot {
+		return errors.New("configure edit recovery: cache root must be canonical and absolute")
+	}
+	coordinator.recoveryMaterializationPath = func(id cache.MaterializationID) (string, error) {
+		parsed, err := cache.ParseMaterializationID(string(id))
+		if err != nil {
+			return "", err
+		}
+		return filepath.Join(cacheRoot, cachefs.ContentRootName, "materializations", string(parsed), "content"), nil
+	}
+	return nil
+}
+
+func (coordinator *editCoordinator) Recoverable(ctx context.Context, limit int) tui.Action {
+	if limit < 1 || limit > tui.MaxRecoverableEditSessions {
+		return tui.EditRecoveryLoaded{Message: "list recoverable edits failed: limit must be in [1,64]"}
+	}
+	var response daemon.EditSessionRecoverableResponse
+	if err := coordinator.client.Call(ctx, daemon.EditSessionRecoverable, daemon.EditSessionRecoverableRequest{Limit: limit}, &response); err != nil {
+		return tui.EditRecoveryLoaded{Message: "list recoverable edits failed: " + clientErrorMessage(err)}
+	}
+	coordinator.recoverable = make(map[edit.SessionID]recoverableEdit, len(response.Sessions))
+	items := make([]tui.EditRecoveryItem, 0, len(response.Sessions))
+	for _, record := range response.Sessions {
+		recovery, item := coordinator.inspectRecoverable(record)
+		items = append(items, item)
+		if item.SessionID != "" {
+			coordinator.recoverable[item.SessionID] = recovery
+		}
+	}
+	return tui.EditRecoveryLoaded{Count: len(items), Sessions: items}
+}
+
+func (coordinator *editCoordinator) inspectRecoverable(record editstore.RecoveryRecord) (recoverableEdit, tui.EditRecoveryItem) {
+	item := tui.EditRecoveryItem{Location: record.Target, Lifecycle: string(record.State), UpdatedAt: record.UpdatedAt, Decision: record.DecisionKind}
+	sessionID, idErr := edit.ParseSessionID(record.SessionID)
+	if idErr == nil {
+		item.SessionID = sessionID
+	}
+	machine, machineErr := edit.RestorePersistent(record.Persistent)
+	if machineErr == nil {
+		item.Purpose, item.State = machine.Purpose(), machine.State()
+		if item.Location.EndpointID == "" {
+			item.Location = machine.Baseline().Target
+		}
+	}
+	recovery := recoverableEdit{record: record}
+	fail := func(message string) (recoverableEdit, tui.EditRecoveryItem) {
+		recovery.diagnostic = boundedRecoveryDiagnostic(message)
+		item.Diagnostic = recovery.diagnostic
+		return recovery, item
+	}
+	if idErr != nil || machineErr != nil || machine.ID() != sessionID {
+		return fail("durable edit machine metadata is invalid")
+	}
+	baseline := machine.Baseline()
+	if baseline.SourceEntryID != record.SourceEntryID || baseline.MaterializationID != record.MaterializationID || baseline.Target.EndpointID == "" {
+		return fail("durable edit and cache identities disagree")
+	}
+	if _, err := cache.ParseEntryID(string(record.SourceEntryID)); err != nil {
+		return fail("durable cache entry identity is invalid")
+	}
+	if _, err := cache.ParseMaterializationID(string(record.MaterializationID)); err != nil {
+		return fail("durable materialization identity is invalid")
+	}
+	if _, err := cache.ParseReferenceID(string(record.ReferenceID)); err != nil {
+		return fail("durable cache reference identity is invalid")
+	}
+	if _, err := cache.ParseLeaseID(string(record.LeaseID)); err != nil {
+		return fail("durable cache lease identity is invalid")
+	}
+	if coordinator.recoveryMaterializationPath == nil {
+		return fail("client cache root is unavailable; session remains retained")
+	}
+	path, err := coordinator.recoveryMaterializationPath(record.MaterializationID)
+	if err != nil || !filepath.IsAbs(path) || filepath.Clean(path) != path {
+		return fail("exact materialization path could not be resolved")
+	}
+	recovery.path = path
+	currentSHA, _, err := hashRegularFile(path)
+	if err != nil {
+		return fail("exact materialization is unavailable: " + err.Error())
+	}
+	switch machine.State() {
+	case edit.StateReady, edit.StateObserving:
+	case edit.StateNoChanges, edit.StateAwaitingUploadConfirmation, edit.StateRemoteChanged, edit.StateConflict, edit.StateSyncBackFrozen:
+		if machine.CurrentLocalSHA256() == "" || currentSHA != machine.CurrentLocalSHA256() {
+			return fail("materialization changed after the durable observation; automatic recovery is refused")
+		}
+	default:
+		return fail("durable lifecycle requires manual retention and inspection")
+	}
+	if !recoverableLifecycleMatches(record.State, machine.State()) {
+		return fail("durable lifecycle and edit machine state disagree")
+	}
+	if record.State == editstore.StateUploading {
+		return fail("sync-back is already bound to a durable Job; inspect Jobs before retrying")
+	}
+	if machine.State() == edit.StateSyncBackFrozen {
+		switch record.DecisionKind {
+		case edit.DecisionUpload:
+			if record.Target != baseline.Target || !reflect.DeepEqual(record.ExpectedRemote, baseline.ExpectedRemote) || record.AuditReason != "" {
+				return fail("prepared upload metadata disagrees with the durable baseline")
+			}
+		case edit.DecisionSaveAs:
+			if record.ExpectedRemote != (edit.RemotePrecondition{Presence: edit.ExpectedAbsent}) || record.AuditReason != "" {
+				return fail("prepared save-as metadata is invalid")
+			}
+		case edit.DecisionOverwrite:
+			if record.Target != baseline.Target || record.ExpectedRemote.Presence != edit.ExpectedPresent || len(record.AuditReason) < 1 || len(record.AuditReason) > 256 || strings.IndexFunc(record.AuditReason, func(value rune) bool { return value < 0x20 || value == 0x7f }) >= 0 {
+				return fail("prepared overwrite metadata is invalid")
+			}
+		default:
+			return fail("prepared sync-back decision metadata is invalid")
+		}
+	}
+	recovery.usable, item.Usable = true, true
+	return recovery, item
+}
+
+func recoverableLifecycleMatches(lifecycle editstore.State, state edit.State) bool {
+	switch state {
+	case edit.StateReady:
+		return lifecycle == editstore.StatePreparing || lifecycle == editstore.StateEditing
+	case edit.StateObserving:
+		return lifecycle == editstore.StateObserving
+	case edit.StateNoChanges, edit.StateAwaitingUploadConfirmation, edit.StateRemoteChanged:
+		return lifecycle == editstore.StateAwaitingDecision
+	case edit.StateConflict:
+		return lifecycle == editstore.StateConflict
+	case edit.StateSyncBackFrozen:
+		return lifecycle == editstore.StateAwaitingDecision || lifecycle == editstore.StateConflict || lifecycle == editstore.StateUploading
+	default:
+		return false
+	}
+}
+
+func (coordinator *editCoordinator) Resume(_ context.Context, sessionID edit.SessionID, pane tui.PaneID) tui.Action {
+	if pane != tui.Left && pane != tui.Right {
+		return tui.EditSessionFailed{Message: "resume edit session: invalid pane; recovery metadata retained"}
+	}
+	if live := coordinator.sessions[sessionID]; live != nil {
+		return recoveredSessionAction(live, "edit session is already rebound in this client")
+	}
+	recovery, ok := coordinator.recoverable[sessionID]
+	if !ok || !recovery.usable {
+		message := "recoverable session is not loaded; recovery metadata retained"
+		if ok && recovery.diagnostic != "" {
+			message = recovery.diagnostic
+		}
+		return tui.EditSessionFailed{Pane: pane, Location: recovery.record.Target, Message: "resume edit session: " + message}
+	}
+	machine, err := edit.RestorePersistent(recovery.record.Persistent)
+	if err != nil {
+		return tui.EditSessionFailed{Pane: pane, Location: recovery.record.Target, Message: "resume edit session: durable machine is invalid; recovery metadata retained"}
+	}
+	ownerKind := cache.LeaseOwnerEditor
+	if machine.Purpose() == edit.PurposeOpener {
+		ownerKind = cache.LeaseOwnerOpener
+	}
+	baseline := machine.Baseline()
+	live := &liveEditSession{
+		machine: machine, recordVersion: recovery.record.StateVersion,
+		materialized: daemon.CacheMaterializeResponse{EntryID: recovery.record.SourceEntryID, MaterializationID: recovery.record.MaterializationID,
+			ReferenceID: recovery.record.ReferenceID, LeaseID: recovery.record.LeaseID, Path: recovery.path, SourceFingerprint: ipc.EncodeFingerprint(baseline.ExpectedRemote.Fingerprint)},
+		ownerKind: ownerKind, ownerID: string(sessionID), pane: pane, target: baseline.Target, recovery: recovery.record,
+	}
+	coordinator.sessions[sessionID] = live
+	return recoveredSessionAction(live, "cold-start edit session rebound to its exact retained materialization; no upload was started")
+}
+
+func recoveredSessionAction(live *liveEditSession, message string) tui.Action {
+	state := live.machine.State()
+	if state == edit.StateObserving {
+		state = edit.StateReady
+		message += "; Enter completes the interrupted observation"
+	}
+	return tui.EditSessionObserved{SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: state, Message: message, Decision: live.recovery.DecisionKind}
+}
+
+func boundedRecoveryDiagnostic(message string) string {
+	const limit = 240
+	runes := []rune(message)
+	if len(runes) > limit {
+		return string(runes[:limit]) + "…"
+	}
+	return message
 }
 
 func (coordinator *editCoordinator) Begin(ctx context.Context, intent tui.Intent) tui.Action {
@@ -128,7 +336,7 @@ func (coordinator *editCoordinator) Begin(ctx context.Context, intent tui.Intent
 	if err != nil {
 		return tui.EditSessionFailed{Pane: intent.Pane, Location: intent.Location, Message: "persist edit session: " + clientErrorMessage(err)}
 	}
-	live := &liveEditSession{machine: machine, recordVersion: created.Session.StateVersion, materialized: materialized, ownerKind: ownerKind, ownerID: string(sessionID), pane: intent.Pane, target: intent.Location}
+	live := &liveEditSession{machine: machine, recordVersion: created.Session.StateVersion, materialized: materialized, ownerKind: ownerKind, ownerID: string(sessionID), pane: intent.Pane, target: intent.Location, process: &processIdentity}
 	coordinator.sessions[sessionID] = live
 	releaseOnFailure = false
 	live.prepared, err = coordinator.prepare(ctx, materialized.Path, purpose)
@@ -145,13 +353,75 @@ func (coordinator *editCoordinator) Launch(ctx context.Context, sessionID edit.S
 	}
 	run := live.prepared.run
 	live.prepared.run = nil
-	result, err := run(ctx)
+	result, heartbeatErr, err := coordinator.runWithHeartbeat(ctx, live, run)
 	live.lastExit = result
 	launchMessage := externalExitMessage(live.lastExit, err)
+	if heartbeatErr != nil {
+		launchMessage += "; cache lease heartbeat failed: " + clientErrorMessage(heartbeatErr)
+	}
 	if live.machine.Purpose() == edit.PurposeOpener {
 		return tui.EditSessionObserved{SessionID: sessionID, Pane: live.pane, Location: live.target, State: edit.StateReady, Message: launchMessage + "; lease retained until explicit change check"}
 	}
 	return coordinator.observe(ctx, live, launchMessage)
+}
+
+func (coordinator *editCoordinator) runWithHeartbeat(ctx context.Context, live *liveEditSession, run func(context.Context) (terminalhandoff.Result, error)) (terminalhandoff.Result, error, error) {
+	if live.process == nil || coordinator.heartbeatEvery <= 0 {
+		result, err := run(ctx)
+		return result, nil, err
+	}
+	done := make(chan struct{})
+	heartbeatErrors := make(chan error, 1)
+	heartbeatFinished := make(chan struct{})
+	go func() {
+		defer close(heartbeatFinished)
+		ticker := time.NewTicker(coordinator.heartbeatEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := coordinator.heartbeat(ctx, live); err != nil {
+					select {
+					case heartbeatErrors <- err:
+					default:
+					}
+					return
+				}
+			}
+		}
+	}()
+	result, err := run(ctx)
+	close(done)
+	<-heartbeatFinished
+	select {
+	case heartbeatErr := <-heartbeatErrors:
+		return result, heartbeatErr, err
+	default:
+		return result, nil, err
+	}
+}
+
+func (coordinator *editCoordinator) Heartbeat(ctx context.Context) error {
+	for _, live := range coordinator.sessions {
+		if live.process != nil {
+			if err := coordinator.heartbeat(ctx, live); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (coordinator *editCoordinator) heartbeat(ctx context.Context, live *liveEditSession) error {
+	var response daemon.CacheHeartbeatResponse
+	return coordinator.client.Call(ctx, daemon.CacheHeartbeat, daemon.CacheHeartbeatRequest{
+		MaterializationID: live.materialized.MaterializationID, LeaseID: live.materialized.LeaseID,
+		OwnerKind: live.ownerKind, OwnerID: live.ownerID, Process: *live.process,
+	}, &response)
 }
 
 func (coordinator *editCoordinator) Check(ctx context.Context, sessionID edit.SessionID) tui.Action {
@@ -163,12 +433,16 @@ func (coordinator *editCoordinator) Check(ctx context.Context, sessionID edit.Se
 }
 
 func (coordinator *editCoordinator) observe(ctx context.Context, live *liveEditSession, message string) tui.Action {
-	next, err := live.machine.BeginObservation(live.machine.Version())
-	if err != nil {
-		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "begin edit observation: " + err.Error()}
-	}
-	if err := coordinator.transition(ctx, live, next, editstore.LocalUnknown, editstore.RemoteUnknown, editstore.StateObserving, "observation_started", "", edit.Decision{}, nil); err != nil {
-		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "persist edit observation: " + clientErrorMessage(err)}
+	if live.machine.State() == edit.StateReady {
+		next, err := live.machine.BeginObservation(live.machine.Version())
+		if err != nil {
+			return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "begin edit observation: " + err.Error()}
+		}
+		if err := coordinator.transition(ctx, live, next, editstore.LocalUnknown, editstore.RemoteUnknown, editstore.StateObserving, "observation_started", "", edit.Decision{}, nil); err != nil {
+			return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "persist edit observation: " + clientErrorMessage(err)}
+		}
+	} else if live.machine.State() != edit.StateObserving {
+		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "edit check is not valid for durable state " + string(live.machine.State()) + "; recovery metadata retained"}
 	}
 	local, _ := observeLocal(live.materialized.Path)
 	remote := coordinator.observeRemote(ctx, live.target)
@@ -201,6 +475,12 @@ func (coordinator *editCoordinator) Decide(ctx context.Context, intent tui.Inten
 	if live == nil {
 		return tui.EditSessionFailed{Pane: intent.Pane, Location: intent.Location, Message: "edit decision failed: session is not active; retained recovery metadata is unchanged"}
 	}
+	if live.machine.State() == edit.StateSyncBackFrozen {
+		if intent.EditDecision == "" || intent.EditDecision != live.recovery.DecisionKind {
+			return tui.EditSessionObserved{SessionID: live.machine.ID(), Pane: live.pane, Location: live.target, State: live.machine.State(), Decision: live.recovery.DecisionKind, Message: "prepared sync-back requires explicit confirmation of the retained decision"}
+		}
+		return coordinator.enqueueFrozenSyncBack(ctx, live)
+	}
 	decision := edit.Decision{Kind: intent.EditDecision, SaveAsTarget: intent.SaveAsTarget, ObservedRemote: live.machine.LastRemoteObservation()}
 	if decision.Kind == edit.DecisionOverwrite {
 		decision.AuditReason = "user explicitly confirmed overwrite after concurrent remote change"
@@ -226,6 +506,26 @@ func (coordinator *editCoordinator) Decide(ctx context.Context, intent tui.Inten
 	if err := coordinator.transition(ctx, live, next, localState, remoteState, lifecycle, "sync_back_frozen", "", decision, syncBack); err != nil {
 		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "persist frozen sync-back: " + clientErrorMessage(err)}
 	}
+	return coordinator.createSyncBackJob(ctx, live, *syncBack)
+}
+
+func (coordinator *editCoordinator) enqueueFrozenSyncBack(ctx context.Context, live *liveEditSession) tui.Action {
+	details := live.recovery.Details
+	machine := live.machine
+	request := edit.SyncBackRequest{
+		PlanVersion: edit.SyncBackPlanVersion, Origin: edit.SyncBackOrigin, SessionID: machine.ID(), SessionVersion: machine.Version(),
+		SourceEntryID: machine.Baseline().SourceEntryID, MaterializationID: machine.Baseline().MaterializationID,
+		Target: details.Target, LocalSHA256: machine.CurrentLocalSHA256(), Decision: details.DecisionKind,
+		OriginalDestinationPrecondition: machine.Baseline().ExpectedRemote, DestinationPrecondition: details.ExpectedRemote,
+	}
+	if details.DecisionKind == edit.DecisionOverwrite {
+		request.Renewal = &edit.PreconditionRenewal{Reason: details.AuditReason, FromVersion: machine.Version() - 1, ToVersion: machine.Version(),
+			Previous: machine.Baseline().ExpectedRemote, Renewed: details.ExpectedRemote}
+	}
+	return coordinator.createSyncBackJob(ctx, live, request)
+}
+
+func (coordinator *editCoordinator) createSyncBackJob(ctx context.Context, live *liveEditSession, syncBack edit.SyncBackRequest) tui.Action {
 	localLocation, err := domain.NewLocation(coordinator.localEndpoint, domain.CanonicalPath(live.materialized.Path))
 	if err != nil {
 		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "capture sync-back source: " + err.Error()}
@@ -235,7 +535,7 @@ func (coordinator *editCoordinator) Decide(ctx context.Context, intent tui.Inten
 		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "capture sync-back source: " + clientErrorMessage(err)}
 	}
 	var created daemon.JobSnapshotResponse
-	if err := coordinator.client.Call(ctx, daemon.JobCreateSyncBack, daemon.JobCreateSyncBackRequest{Intent: transfer.SyncBackIntent{SyncBack: *syncBack, Source: captured.Reference}}, &created); err != nil {
+	if err := coordinator.client.Call(ctx, daemon.JobCreateSyncBack, daemon.JobCreateSyncBackRequest{Intent: transfer.SyncBackIntent{SyncBack: syncBack, Source: captured.Reference}}, &created); err != nil {
 		return tui.EditSessionFailed{Pane: live.pane, Location: live.target, Message: "create sync-back Job: " + clientErrorMessage(err)}
 	}
 	delete(coordinator.sessions, live.machine.ID())

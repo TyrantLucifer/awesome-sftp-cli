@@ -229,15 +229,16 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		if cacheErr == nil {
 			cacheManager, cacheErr = cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), cache.DefaultLimits())
 		}
-		var report cachemanager.ReconcileReport
+		var lifecycle cachemanager.StartupLifecycleResult
 		if cacheErr == nil {
-			report, cacheErr = cacheManager.Reconcile(ctx, 10_000)
+			lifecycle, cacheErr = cacheManager.RunStartupLifecycle(ctx, cachemanager.StartupLifecycleRequest{MaxVisited: 10_000, MaxBatches: 64})
 		}
 		if cacheErr != nil {
 			logger.Error("content cache unavailable; browsing and durable Jobs remain enabled", diagnostic.Component("cache"), diagnostic.Event("cache_unavailable"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
 		} else {
 			sessions.SetCacheManager(cacheManager)
-			logger.Info("content cache initialized", diagnostic.Component("cache"), diagnostic.Event("cache_initialized"), slog.Bool("needs_attention", report.NeedsAttention), slog.Int("verified_blobs", len(report.Filesystem.VerifiedBlobs)), slog.Int("verified_entries", len(report.Filesystem.VerifiedEntries)), slog.Int("verified_materializations", len(report.Filesystem.VerifiedMaterializations)))
+			report := lifecycle.Reconcile
+			logger.Info("content cache initialized", diagnostic.Component("cache"), diagnostic.Event("cache_initialized"), slog.Bool("needs_attention", report.NeedsAttention), slog.Int("recovered_evictions", len(lifecycle.Recovered)), slog.Int("quota_evictions", len(lifecycle.Quota.Deleted)), slog.Int("verified_blobs", len(report.Filesystem.VerifiedBlobs)), slog.Int("verified_entries", len(report.Filesystem.VerifiedEntries)), slog.Int("verified_materializations", len(report.Filesystem.VerifiedMaterializations)))
 		}
 	}
 	if stateOpenErr == nil {
@@ -551,6 +552,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
+	if err := editFlow.ConfigureRecoveryCacheRoot(paths.CacheDir); err != nil {
+		return err
+	}
 	runCtx, stop := context.WithCancel(ctx)
 	authClient, err := connectDaemon(runCtx, paths, purpose)
 	if err != nil {
@@ -604,20 +608,11 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		case tui.IntentEditDecision:
 			actions <- editFlow.Decide(runCtx, intent)
 			return
+		case tui.IntentEditResume:
+			actions <- editFlow.Resume(runCtx, intent.EditSessionID, intent.Pane)
+			return
 		case tui.IntentEditRecoverable:
-			activeClient := client
-			go func() {
-				var response daemon.EditSessionRecoverableResponse
-				listErr := activeClient.Call(runCtx, daemon.EditSessionRecoverable, daemon.EditSessionRecoverableRequest{Limit: 64}, &response)
-				result := tui.EditRecoveryLoaded{Count: len(response.Sessions)}
-				if listErr != nil {
-					result.Message = "list recoverable edits failed: " + clientErrorMessage(listErr)
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
+			actions <- editFlow.Recoverable(runCtx, tui.MaxRecoverableEditSessions)
 			return
 		case tui.IntentConnectEndpoint:
 			select {
@@ -991,6 +986,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	startIntent(tui.Intent{Kind: tui.IntentEditRecoverable})
 	jobRefreshTicker := time.NewTicker(500 * time.Millisecond)
 	defer jobRefreshTicker.Stop()
+	leaseHeartbeatTicker := time.NewTicker(cache.DefaultLeaseHeartbeat)
+	defer leaseHeartbeatTicker.Stop()
 	for {
 		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
 		screen.Show()
@@ -1002,6 +999,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				startIntent(tui.Intent{Kind: tui.IntentJobList})
 			} else if model.Drawer.Mode == tui.DrawerLog {
 				startIntent(tui.Intent{Kind: tui.IntentDiagnosticList, Limit: 256})
+			}
+		case <-leaseHeartbeatTicker.C:
+			if err := editFlow.Heartbeat(runCtx); err != nil {
+				model.Notice = "cache lease heartbeat failed; durable edit recovery remains retained: " + clientErrorMessage(err)
 			}
 		case err := <-authErrors:
 			if authFailureLostDaemon(err, func() error {

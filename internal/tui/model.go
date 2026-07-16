@@ -4,6 +4,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
@@ -40,6 +41,7 @@ const (
 	ModeEditDecision      Mode = "edit_decision"
 	ModeEditSaveAs        Mode = "edit_save_as"
 	ModeEditLaunchConfirm Mode = "edit_launch_confirm"
+	ModeEditRecovery      Mode = "edit_recovery"
 )
 
 type SortKey string
@@ -394,6 +396,7 @@ type EditDecisionState struct {
 	Location  domain.Location
 	State     edit.State
 	Message   string
+	Decision  edit.DecisionKind
 }
 
 type EditLaunchState struct {
@@ -402,6 +405,25 @@ type EditLaunchState struct {
 	Pane      PaneID
 	Location  domain.Location
 	Command   string
+}
+
+const MaxRecoverableEditSessions = 64
+
+type EditRecoveryItem struct {
+	SessionID  edit.SessionID
+	Purpose    edit.Purpose
+	Location   domain.Location
+	State      edit.State
+	Lifecycle  string
+	UpdatedAt  time.Time
+	Decision   edit.DecisionKind
+	Usable     bool
+	Diagnostic string
+}
+
+type EditRecoveryState struct {
+	Items  []EditRecoveryItem
+	Cursor int
 }
 
 func (p PreviewState) DisplayText() string {
@@ -430,6 +452,7 @@ type Model struct {
 	Auth               AuthState
 	EditDecision       EditDecisionState
 	EditLaunch         EditLaunchState
+	EditRecovery       EditRecoveryState
 	Clipboard          ClipboardState
 	Jobs               []transfer.JobView
 	Diagnostics        []diagnostic.Record
@@ -508,6 +531,7 @@ const (
 	IntentEditCheck          IntentKind = "edit_check"
 	IntentEditLaunch         IntentKind = "edit_launch"
 	IntentEditRecoverable    IntentKind = "edit_recoverable"
+	IntentEditResume         IntentKind = "edit_resume"
 	IntentRunCommand         IntentKind = "run_command"
 	IntentShell              IntentKind = "shell"
 )
@@ -583,6 +607,7 @@ const (
 	KeyRepeat                Key = "repeat"
 	KeyEdit                  Key = "edit"
 	KeyOpenExternal          Key = "open_external"
+	KeyEditRecovery          Key = "edit_recovery"
 	KeyCommand               Key = "command"
 	KeyPreviewDrawer         Key = "preview_drawer"
 	KeyJobs                  Key = "jobs"
@@ -725,6 +750,7 @@ type EditSessionObserved struct {
 	Location  domain.Location
 	State     edit.State
 	Message   string
+	Decision  edit.DecisionKind
 }
 
 type EditLaunchReady struct {
@@ -747,8 +773,9 @@ type EditSessionFailed struct {
 }
 
 type EditRecoveryLoaded struct {
-	Count   int
-	Message string
+	Count    int
+	Sessions []EditRecoveryItem
+	Message  string
 }
 
 func (KeyPress) isAction()              {}

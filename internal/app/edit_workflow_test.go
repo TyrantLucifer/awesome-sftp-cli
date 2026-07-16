@@ -102,6 +102,28 @@ func TestOpenerRetainsLeaseUntilExplicitChangeCheck(t *testing.T) {
 	}
 }
 
+func TestEditWorkflowHeartbeatsTheExactLiveProcessLease(t *testing.T) {
+	fixture := newEditRPCFixture(t)
+	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyLRU, func(context.Context, string, edit.Purpose) (preparedExternalEdit, error) {
+		return preparedExternalEdit{command: "/usr/bin/vi file", run: func(context.Context) (terminalhandoff.Result, error) {
+			return terminalhandoff.Result{Kind: terminalhandoff.ExitNormal}, nil
+		}}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	action := coordinator.Begin(context.Background(), tui.Intent{Kind: tui.IntentEdit, Pane: tui.Left, Location: fixture.target})
+	if _, ok := action.(tui.EditLaunchReady); !ok {
+		t.Fatalf("Begin() = %#v", action)
+	}
+	if err := coordinator.Heartbeat(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fixture.heartbeats != 1 {
+		t.Fatalf("heartbeats = %d", fixture.heartbeats)
+	}
+}
+
 func TestEditWorkflowTreatsConcurrentRemoteReplacementAsConflict(t *testing.T) {
 	fixture := newEditRPCFixture(t)
 	replacement := "replacement-version"
@@ -126,6 +148,155 @@ func TestEditWorkflowTreatsConcurrentRemoteReplacementAsConflict(t *testing.T) {
 	}
 }
 
+func TestColdStartRecoveryRebindsExactHandoffAndRequiresExplicitSyncBack(t *testing.T) {
+	fixture := newEditRPCFixture(t)
+	baselineSHA, _, err := hashRegularFile(fixture.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := edit.NewSession(edit.NewSessionRequest{ID: "55555555555555555555555555555555", Purpose: edit.PurposeEditor, Baseline: edit.Baseline{
+		SourceEntryID:     "1111111111111111111111111111111111111111111111111111111111111111",
+		MaterializationID: "22222222222222222222222222222222", Target: fixture.target,
+		ExpectedRemote: edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: domain.EntryFile, Fingerprint: fixture.baseline}, LocalSHA256: baselineSHA,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err = machine.BeginObservation(machine.Version())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(fixture.path, []byte("recovered local edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changedSHA, _, err := hashRegularFile(fixture.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, _, err = machine.Observe(machine.Version(), edit.PostEditorObservation{
+		Local:  edit.LocalObservation{Status: edit.LocalPresent, SHA256: changedSHA},
+		Remote: edit.RemoteObservation{Status: edit.RemotePresent, Kind: domain.EntryFile, Fingerprint: fixture.baseline},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.recoveries = []editstore.RecoveryRecord{{
+		Record: editstore.Record{SessionID: string(machine.ID()), SourceEntryID: machine.Baseline().SourceEntryID, MaterializationID: machine.Baseline().MaterializationID,
+			LocalState: editstore.LocalDirty, RemoteState: editstore.RemoteUnchanged, State: editstore.StateAwaitingDecision, StateVersion: 3},
+		Details: editstore.Details{ReferenceID: "33333333333333333333333333333333", LeaseID: "44444444444444444444444444444444",
+			Persistent: machine.Persistent(), Target: fixture.target, ExpectedRemote: machine.Baseline().ExpectedRemote},
+	}}
+	fixture.version = 3
+	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyEphemeral, func(context.Context, string, edit.Purpose) (preparedExternalEdit, error) {
+		return preparedExternalEdit{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator.recoveryMaterializationPath = func(id cache.MaterializationID) (string, error) {
+		if id != machine.Baseline().MaterializationID {
+			t.Fatalf("materialization ID = %q", id)
+		}
+		return fixture.path, nil
+	}
+	loaded, ok := coordinator.Recoverable(context.Background(), 64).(tui.EditRecoveryLoaded)
+	if !ok || len(loaded.Sessions) != 1 || !loaded.Sessions[0].Usable {
+		t.Fatalf("Recoverable() = %#v", loaded)
+	}
+	resumed := coordinator.Resume(context.Background(), machine.ID(), tui.Left)
+	observed, ok := resumed.(tui.EditSessionObserved)
+	if !ok || observed.State != edit.StateAwaitingUploadConfirmation || fixture.jobCreates != 0 {
+		t.Fatalf("Resume() = %#v, jobs = %d", resumed, fixture.jobCreates)
+	}
+	created := coordinator.Decide(context.Background(), tui.Intent{Kind: tui.IntentEditDecision, Pane: tui.Left, Location: fixture.target, EditSessionID: machine.ID(), EditDecision: edit.DecisionUpload})
+	if _, ok := created.(tui.JobCreated); !ok || fixture.jobCreates != 1 {
+		t.Fatalf("Decide() = %#v, jobs = %d", created, fixture.jobCreates)
+	}
+}
+
+func TestColdStartRecoveryRetainsUnusableMaterializationWithDiagnostic(t *testing.T) {
+	fixture := newEditRPCFixture(t)
+	fixture.recoveries = []editstore.RecoveryRecord{{
+		Record: editstore.Record{SessionID: "55555555555555555555555555555555", SourceEntryID: "1111111111111111111111111111111111111111111111111111111111111111", MaterializationID: "22222222222222222222222222222222", State: editstore.StateRecovery, StateVersion: 3},
+	}}
+	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyLRU, func(context.Context, string, edit.Purpose) (preparedExternalEdit, error) {
+		return preparedExternalEdit{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded := coordinator.Recoverable(context.Background(), 64).(tui.EditRecoveryLoaded)
+	if len(loaded.Sessions) != 1 || loaded.Sessions[0].Usable || loaded.Sessions[0].Diagnostic == "" {
+		t.Fatalf("unusable recovery = %#v", loaded.Sessions)
+	}
+	if action := coordinator.Resume(context.Background(), "55555555555555555555555555555555", tui.Left); action == nil {
+		t.Fatal("unusable recovery returned no diagnostic action")
+	} else if failed, ok := action.(tui.EditSessionFailed); !ok || failed.Message == "" {
+		t.Fatalf("Resume() = %#v", action)
+	}
+}
+
+func TestColdStartFrozenSyncBackQueuesOnlyAfterExactPersistedDecision(t *testing.T) {
+	fixture := newEditRPCFixture(t)
+	baselineSHA, _, err := hashRegularFile(fixture.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, err := edit.NewSession(edit.NewSessionRequest{ID: "66666666666666666666666666666666", Purpose: edit.PurposeEditor, Baseline: edit.Baseline{
+		SourceEntryID:     "1111111111111111111111111111111111111111111111111111111111111111",
+		MaterializationID: "22222222222222222222222222222222", Target: fixture.target,
+		ExpectedRemote: edit.RemotePrecondition{Presence: edit.ExpectedPresent, Kind: domain.EntryFile, Fingerprint: fixture.baseline}, LocalSHA256: baselineSHA,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, _ = machine.BeginObservation(machine.Version())
+	if err := os.WriteFile(fixture.path, []byte("frozen local edit"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	changedSHA, _, _ := hashRegularFile(fixture.path)
+	machine, _, err = machine.Observe(machine.Version(), edit.PostEditorObservation{
+		Local:  edit.LocalObservation{Status: edit.LocalPresent, SHA256: changedSHA},
+		Remote: edit.RemoteObservation{Status: edit.RemotePresent, Kind: domain.EntryFile, Fingerprint: fixture.baseline},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	machine, frozen, err := machine.Decide(machine.Version(), edit.Decision{Kind: edit.DecisionUpload})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.recoveries = []editstore.RecoveryRecord{{
+		Record: editstore.Record{SessionID: string(machine.ID()), SourceEntryID: machine.Baseline().SourceEntryID, MaterializationID: machine.Baseline().MaterializationID,
+			LocalState: editstore.LocalDirty, RemoteState: editstore.RemoteUnchanged, State: editstore.StateAwaitingDecision, StateVersion: 4},
+		Details: editstore.Details{ReferenceID: "33333333333333333333333333333333", LeaseID: "44444444444444444444444444444444",
+			Persistent: machine.Persistent(), Target: frozen.Target, ExpectedRemote: frozen.DestinationPrecondition, DecisionKind: edit.DecisionUpload},
+	}}
+	coordinator, err := newEditCoordinator(fixture, fixture.localEndpoint, "workspace", cache.PolicyLRU, func(context.Context, string, edit.Purpose) (preparedExternalEdit, error) {
+		return preparedExternalEdit{}, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator.recoveryMaterializationPath = func(cache.MaterializationID) (string, error) { return fixture.path, nil }
+	loaded := coordinator.Recoverable(context.Background(), 64).(tui.EditRecoveryLoaded)
+	if len(loaded.Sessions) != 1 || !loaded.Sessions[0].Usable {
+		t.Fatalf("Recoverable() = %#v", loaded)
+	}
+	action := coordinator.Resume(context.Background(), machine.ID(), tui.Left)
+	if observed, ok := action.(tui.EditSessionObserved); !ok || observed.State != edit.StateSyncBackFrozen || observed.Decision != edit.DecisionUpload {
+		t.Fatalf("Resume() = %#v", action)
+	}
+	action = coordinator.Decide(context.Background(), tui.Intent{Kind: tui.IntentEditDecision, EditSessionID: machine.ID(), EditDecision: edit.DecisionOverwrite})
+	if _, ok := action.(tui.EditSessionObserved); !ok || fixture.jobCreates != 0 {
+		t.Fatalf("wrong confirmation = %#v, jobs = %d", action, fixture.jobCreates)
+	}
+	action = coordinator.Decide(context.Background(), tui.Intent{Kind: tui.IntentEditDecision, EditSessionID: machine.ID(), EditDecision: edit.DecisionUpload})
+	if _, ok := action.(tui.JobCreated); !ok || fixture.jobCreates != 1 || fixture.boundVersion != machine.Version() {
+		t.Fatalf("exact confirmation = %#v, jobs = %d version = %d", action, fixture.jobCreates, fixture.boundVersion)
+	}
+}
+
 type editRPCFixture struct {
 	t                 *testing.T
 	path              string
@@ -136,10 +307,12 @@ type editRPCFixture struct {
 	routes            []string
 	version           int64
 	releases          int
+	heartbeats        int
 	jobCreates        int
 	frozenVersion     edit.Version
 	boundVersion      edit.Version
 	frozenExpected    edit.RemotePrecondition
+	recoveries        []editstore.RecoveryRecord
 }
 
 func newEditRPCFixture(t *testing.T) *editRPCFixture {
@@ -163,6 +336,8 @@ func (fixture *editRPCFixture) Call(_ context.Context, route string, request any
 	fixture.t.Helper()
 	fixture.routes = append(fixture.routes, route)
 	switch route {
+	case daemon.EditSessionRecoverable:
+		response.(*daemon.EditSessionRecoverableResponse).Sessions = append([]editstore.RecoveryRecord(nil), fixture.recoveries...)
 	case daemon.CacheMaterialize:
 		got := request.(daemon.CacheMaterializeRequest)
 		if got.OwnerID == "" || got.OwnerKind == "" || got.Process == nil || got.Process.PID <= 0 || got.Process.BirthID == "" {
@@ -173,6 +348,13 @@ func (fixture *editRPCFixture) Call(_ context.Context, route string, request any
 			ReferenceID: "33333333333333333333333333333333", LeaseID: "44444444444444444444444444444444",
 			Path: fixture.path, SourceFingerprint: ipc.EncodeFingerprint(fixture.baseline),
 		}
+	case daemon.CacheHeartbeat:
+		got := request.(daemon.CacheHeartbeatRequest)
+		if got.MaterializationID == "" || got.LeaseID == "" || got.OwnerID == "" || got.Process.PID <= 0 || got.Process.BirthID == "" {
+			fixture.t.Fatalf("heartbeat = %#v", got)
+		}
+		fixture.heartbeats++
+		response.(*daemon.CacheHeartbeatResponse).Renewed = true
 	case daemon.EditSessionCreate:
 		got := request.(daemon.EditSessionCreateRequest).Request
 		if got.Details.Persistent.Version != 1 || got.State != editstore.StateEditing {

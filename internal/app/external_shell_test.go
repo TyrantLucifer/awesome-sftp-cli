@@ -2,6 +2,7 @@ package app
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/terminalhandoff"
@@ -48,5 +49,24 @@ func TestTCellHandoffScreenMapsControllerPhasesWithoutDoubleResume(t *testing.T)
 	want := []string{"show_cursor", "show", "suspend", "resume", "sync", "sync"}
 	if !reflect.DeepEqual(native.calls, want) {
 		t.Fatalf("calls = %#v, want %#v", native.calls, want)
+	}
+}
+
+func TestRemoteCurrentDirectoryShellFailureOffersExplicitHomeRetry(t *testing.T) {
+	for _, result := range []terminalhandoff.Result{
+		{Kind: terminalhandoff.ExitNonZero, ExitCode: 17},
+		{Kind: terminalhandoff.ExitSignaled, Signal: "terminated"},
+		{Kind: terminalhandoff.ExitPTYLoss},
+	} {
+		message := formatShellResult(result, true)
+		if !strings.Contains(message, "press gS for an explicit home shell") {
+			t.Fatalf("formatShellResult(%#v) = %q", result, message)
+		}
+	}
+	if message := formatShellResult(terminalhandoff.Result{Kind: terminalhandoff.ExitNormal}, true); strings.Contains(message, "gS") {
+		t.Fatalf("normal current-directory shell = %q", message)
+	}
+	if message := formatShellResult(terminalhandoff.Result{Kind: terminalhandoff.ExitNonZero, ExitCode: 17}, false); strings.Contains(message, "gS") {
+		t.Fatalf("home shell failure = %q", message)
 	}
 }

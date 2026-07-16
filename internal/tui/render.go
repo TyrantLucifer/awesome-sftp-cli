@@ -211,7 +211,40 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeEditLaunchConfirm {
 		renderEditLaunchModal(surface, model, width, height)
 	}
+	if model.Mode == ModeEditRecovery {
+		renderEditRecoveryModal(surface, model, width, height)
+	}
 	return stats
+}
+
+func renderEditRecoveryModal(surface Surface, model Model, width, height int) {
+	items := model.EditRecovery.Items
+	if len(items) == 0 || width < 24 || height < 7 {
+		return
+	}
+	modalWidth := min(width-4, 96)
+	visibleRows := min(len(items), max(1, min(8, height-6)))
+	start := max(0, min(model.EditRecovery.Cursor-visibleRows/2, len(items)-visibleRows))
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, (height-(visibleRows+4))/2)
+	surface.PutClipped(x, y, modalWidth, fmt.Sprintf(" Recoverable edits (%d) ", len(items)), StyleActiveHeader)
+	for row := 0; row < visibleRows; row++ {
+		item := items[start+row]
+		marker := "  "
+		style := StylePlain
+		if start+row == model.EditRecovery.Cursor {
+			marker, style = "> ", StyleCursor
+		}
+		availability := "ready"
+		if !item.Usable {
+			availability = "retained: " + item.Diagnostic
+		}
+		line := fmt.Sprintf("%s%s %s %s · %s", marker, item.SessionID, item.Purpose, item.Location.Path, availability)
+		surface.PutClipped(x, y+1+row, modalWidth, line, style)
+	}
+	selected := items[model.EditRecovery.Cursor]
+	surface.PutClipped(x, y+1+visibleRows, modalWidth, fmt.Sprintf("state:%s durable:%s", selected.State, selected.Lifecycle), StyleStatus)
+	surface.PutClipped(x, y+2+visibleRows, modalWidth, "j/k select · Enter resume/check · K inspect remote · Esc retain", StylePlain)
 }
 
 func renderEditDecisionModal(surface Surface, model Model, width, height int) {
@@ -239,6 +272,8 @@ func renderEditDecisionModal(surface Surface, model Model, width, height int) {
 		instruction = "Remote changed: Enter refresh · x skip · Esc retain"
 	case "conflict":
 		instruction = "Conflict: K inspect remote · w overwrite · a save as · x skip · Esc retain"
+	case "sync_back_frozen":
+		instruction = "Prepared sync-back: Enter queue exact plan · K inspect remote · Esc retain"
 	default:
 		instruction = "Observation uncertain: x abandon · Esc retain for recovery"
 	}

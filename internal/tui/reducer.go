@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"path"
+	"sort"
 	"strings"
 	"unicode/utf8"
 
@@ -435,7 +436,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		}
 		model.EditDecision = EditDecisionState{
 			Active: true, SessionID: action.SessionID, Pane: action.Pane,
-			Location: action.Location, State: action.State, Message: action.Message,
+			Location: action.Location, State: action.State, Message: action.Message, Decision: action.Decision,
 		}
 		model.Mode = ModeEditDecision
 		model.Notice = action.Message
@@ -455,10 +456,22 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		model.Notice = action.Message
 		return model, nil
 	case EditRecoveryLoaded:
-		if action.Count < 0 {
+		if action.Count < 0 || len(action.Sessions) > MaxRecoverableEditSessions {
 			return model, nil
 		}
+		items := append([]EditRecoveryItem(nil), action.Sessions...)
+		sort.SliceStable(items, func(left, right int) bool {
+			if !items[left].UpdatedAt.Equal(items[right].UpdatedAt) {
+				return items[left].UpdatedAt.After(items[right].UpdatedAt)
+			}
+			return items[left].SessionID < items[right].SessionID
+		})
+		model.EditRecovery = EditRecoveryState{Items: items}
 		model.RecoverableEdits = action.Count
+		if len(items) != 0 {
+			model.RecoverableEdits = len(items)
+			model.Mode = ModeEditRecovery
+		}
 		if action.Message != "" {
 			model.Notice = action.Message
 		} else if action.Count > 0 {
@@ -486,6 +499,41 @@ func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
+	if model.Mode == ModeEditRecovery {
+		if len(model.EditRecovery.Items) == 0 {
+			model.Mode = ModeNormal
+			return model, nil
+		}
+		switch key {
+		case KeyEscape:
+			model.Mode = ModeNormal
+			model.Notice = "recoverable edits retained; press E to reopen recovery"
+			return model, nil
+		case KeyDown:
+			model.EditRecovery.Cursor = min(model.EditRecovery.Cursor+1, len(model.EditRecovery.Items)-1)
+			return model, nil
+		case KeyUp:
+			model.EditRecovery.Cursor = max(model.EditRecovery.Cursor-1, 0)
+			return model, nil
+		case KeyPreviewDrawer:
+			item := model.EditRecovery.Items[model.EditRecovery.Cursor]
+			pane := recoveryPane(model, item.Location)
+			paneState := model.Panes[pane]
+			return model, []Intent{{Kind: IntentPreview, Pane: pane, Location: item.Location,
+				EndpointSession: paneState.Capabilities.Revision.SessionID, EndpointGeneration: paneState.Capabilities.Revision.Generation}}
+		case KeySubmit:
+			item := model.EditRecovery.Items[model.EditRecovery.Cursor]
+			if !item.Usable {
+				model.Notice = "recovery retained: " + item.Diagnostic
+				return model, nil
+			}
+			pane := recoveryPane(model, item.Location)
+			model.Mode = ModeNormal
+			return model, []Intent{{Kind: IntentEditResume, Pane: pane, Location: item.Location, EditSessionID: item.SessionID}}
+		default:
+			return model, nil
+		}
+	}
 	if model.Mode == ModeEditLaunchConfirm {
 		switch key {
 		case KeyEscape:
@@ -501,6 +549,15 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		default:
 			return model, nil
 		}
+	}
+	if key == KeyEditRecovery {
+		if len(model.EditRecovery.Items) == 0 {
+			model.Notice = "no recoverable edit sessions"
+			return model, nil
+		}
+		model.EditRecovery.Cursor = min(model.EditRecovery.Cursor, len(model.EditRecovery.Items)-1)
+		model.Mode = ModeEditRecovery
+		return model, nil
 	}
 	if model.Mode == ModeEditSaveAs {
 		switch key {
@@ -564,6 +621,10 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 				return finishEditDecision(model, edit.DecisionUpload, domain.Location{}, false)
 			case edit.StateRemoteChanged:
 				return finishEditDecision(model, edit.DecisionSkip, domain.Location{}, true)
+			case edit.StateSyncBackFrozen:
+				if model.EditDecision.Decision != "" {
+					return finishEditDecision(model, model.EditDecision.Decision, domain.Location{}, false)
+				}
 			}
 		}
 		return model, nil
@@ -1030,6 +1091,15 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		}
 	}
 	return model, nil
+}
+
+func recoveryPane(model Model, location domain.Location) PaneID {
+	for _, pane := range []PaneID{Left, Right} {
+		if model.Panes[pane].Endpoint.ID == location.EndpointID {
+			return pane
+		}
+	}
+	return model.Active
 }
 
 func finishEditDecision(model Model, decision edit.DecisionKind, saveAs domain.Location, refresh bool) (Model, []Intent) {

@@ -2,10 +2,49 @@ package tui
 
 import (
 	"testing"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 )
+
+func TestColdStartRecoveryChooserIsBoundedSelectableAndExplicit(t *testing.T) {
+	model := editTestModel(t)
+	oversized := make([]EditRecoveryItem, MaxRecoverableEditSessions+1)
+	unchanged, intents := Reduce(model, EditRecoveryLoaded{Sessions: oversized})
+	if unchanged.Mode != ModeNormal || len(unchanged.EditRecovery.Items) != 0 || len(intents) != 0 {
+		t.Fatalf("oversized recovery list was accepted: mode %q items %d", unchanged.Mode, len(unchanged.EditRecovery.Items))
+	}
+	first := EditRecoveryItem{
+		SessionID: "11111111111111111111111111111111", Purpose: edit.PurposeEditor,
+		Location: model.Panes[Left].Entries[0].Location, State: edit.StateAwaitingUploadConfirmation,
+		Lifecycle: "awaiting_decision", UpdatedAt: time.Unix(20, 0), Usable: true,
+	}
+	second := EditRecoveryItem{
+		SessionID: "22222222222222222222222222222222", Purpose: edit.PurposeOpener,
+		Location: model.Panes[Left].Entries[0].Location, State: edit.StateRecoveryRequired,
+		Lifecycle: "recovery", UpdatedAt: time.Unix(10, 0), Diagnostic: "local bytes could not be revalidated",
+	}
+	model, intents = Reduce(model, EditRecoveryLoaded{Sessions: []EditRecoveryItem{second, first}})
+	if model.Mode != ModeEditRecovery || len(intents) != 0 || len(model.EditRecovery.Items) != 2 || model.EditRecovery.Items[0].SessionID != first.SessionID {
+		t.Fatalf("loaded recovery = mode %q state %#v intents %#v", model.Mode, model.EditRecovery, intents)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	if model.Mode != ModeNormal || len(intents) != 1 || intents[0].Kind != IntentEditResume || intents[0].EditSessionID != first.SessionID {
+		t.Fatalf("resume = mode %q intents %#v", model.Mode, intents)
+	}
+
+	model, _ = Reduce(model, KeyPress{Key: KeyEditRecovery})
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	if len(intents) != 0 || model.Mode != ModeEditRecovery || model.Notice == "" {
+		t.Fatalf("unusable recovery = mode %q notice %q intents %#v", model.Mode, model.Notice, intents)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeyPreviewDrawer})
+	if len(intents) != 1 || intents[0].Kind != IntentPreview || intents[0].Location != second.Location {
+		t.Fatalf("inspect recovery = %#v", intents)
+	}
+}
 
 func TestEditObservationRequiresExplicitUploadDecision(t *testing.T) {
 	model := editTestModel(t)
