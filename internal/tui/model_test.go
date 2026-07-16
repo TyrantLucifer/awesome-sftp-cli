@@ -91,6 +91,25 @@ func TestReducerEmitsOnlyReadOnlyNavigationIntents(t *testing.T) {
 	}
 }
 
+func TestReducerRoutesEditorAndOpenerOnlyForRegularFiles(t *testing.T) {
+	for _, test := range []struct {
+		key  Key
+		kind IntentKind
+	}{{KeyEdit, IntentEdit}, {KeyOpenExternal, IntentOpenExternal}} {
+		model := testModel(t)
+		model, intents := Reduce(model, KeyPress{Key: test.key})
+		if len(intents) != 0 || model.Notice == "" {
+			t.Fatalf("directory action = intents %#v notice %q", intents, model.Notice)
+		}
+		model, _ = Reduce(model, KeyPress{Key: KeyDown})
+		model, intents = Reduce(model, KeyPress{Key: test.key})
+		intent := assertSingleIntent(t, intents, test.kind, "/left/file.txt")
+		if intent.Pane != Left {
+			t.Fatalf("intent = %#v", intent)
+		}
+	}
+}
+
 func TestReducerCapturesFrozenCopyOrCutAndPastesIntoCurrentPane(t *testing.T) {
 	for _, test := range []struct {
 		name      string

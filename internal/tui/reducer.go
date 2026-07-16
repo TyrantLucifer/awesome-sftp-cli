@@ -688,6 +688,17 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			return model, nil
 		}
 		return model, []Intent{{Kind: IntentPrepareRename, Pane: model.Active, Location: locations[0], Locations: locations}}
+	case KeyEdit, KeyOpenExternal:
+		entry := pane.visibleEntry(pane.Cursor)
+		if entry.Location.Path == "" || entry.Kind != domain.EntryFile {
+			model.Notice = "edit/open requires a regular file"
+			return model, nil
+		}
+		kind := IntentEdit
+		if key == KeyOpenExternal {
+			kind = IntentOpenExternal
+		}
+		return model, []Intent{{Kind: kind, Pane: model.Active, Location: entry.Location}}
 	case KeyRepeat:
 		if len(model.repeatDelete) != 0 {
 			model.pendingDelete = append([]transfer.FileRef(nil), model.repeatDelete...)

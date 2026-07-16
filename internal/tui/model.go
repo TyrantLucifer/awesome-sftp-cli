@@ -459,6 +459,8 @@ const (
 	IntentJobCancel          IntentKind = "job_cancel"
 	IntentJobResolveConflict IntentKind = "job_resolve_conflict"
 	IntentDiagnosticList     IntentKind = "diagnostic_list"
+	IntentEdit               IntentKind = "edit"
+	IntentOpenExternal       IntentKind = "open_external"
 )
 
 const PreviewByteLimit = 64 * 1024
@@ -518,6 +520,8 @@ const (
 	KeyDelete                Key = "delete"
 	KeyRename                Key = "rename"
 	KeyRepeat                Key = "repeat"
+	KeyEdit                  Key = "edit"
+	KeyOpenExternal          Key = "open_external"
 	KeyPreviewDrawer         Key = "preview_drawer"
 	KeyJobs                  Key = "jobs"
 	KeyLogDrawer             Key = "log_drawer"

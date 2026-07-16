@@ -174,6 +174,8 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.saveWorkspace(payload)
 	case DiagnosticList:
 		return s.listDiagnostics(payload)
+	case CacheMaterialize:
+		return s.cacheMaterialize(ctx, payload)
 	case JobCapture, JobCaptureDelete, JobCreateCopy, JobCreateDelete, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:
 		return s.handleJob(ctx, name, payload)
 	case ProviderConnectSSH:
