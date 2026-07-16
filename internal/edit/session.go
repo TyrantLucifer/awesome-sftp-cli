@@ -253,6 +253,9 @@ func RestorePersistent(value PersistentSession) (Session, error) {
 			return Session{}, fmt.Errorf("restore edit session: %w", err)
 		}
 	}
+	if err := validatePersistentState(value); err != nil {
+		return Session{}, err
+	}
 	base.version = value.Version
 	base.state = value.State
 	base.currentLocal = value.CurrentLocal
@@ -260,6 +263,61 @@ func RestorePersistent(value PersistentSession) (Session, error) {
 	base.evaluation = value.Evaluation
 	base.frozen = value.Frozen
 	return base, nil
+}
+
+func validatePersistentState(value PersistentSession) error {
+	zeroRemote := RemoteObservation{}
+	zeroEvaluation := Evaluation{}
+	switch value.State {
+	case StateReady:
+		if value.Version != 1 || value.CurrentLocal != "" || value.LastRemote != zeroRemote || value.Evaluation != zeroEvaluation || value.Frozen {
+			return fmt.Errorf("restore edit session: contradictory ready state")
+		}
+	case StateObserving:
+		if value.Version != 2 || value.CurrentLocal != "" || value.LastRemote != zeroRemote || value.Evaluation != zeroEvaluation || value.Frozen {
+			return fmt.Errorf("restore edit session: contradictory observing state")
+		}
+	case StateNoChanges:
+		if value.Version != 3 || value.CurrentLocal == "" || value.Evaluation != (Evaluation{Action: ActionNoUpload}) || value.Frozen {
+			return fmt.Errorf("restore edit session: contradictory no-change state")
+		}
+	case StateAwaitingUploadConfirmation:
+		if value.Version != 3 || value.CurrentLocal == "" || value.Evaluation != (Evaluation{Action: ActionConfirmUpload, LocalChanged: true}) || value.Frozen {
+			return fmt.Errorf("restore edit session: contradictory upload-confirmation state")
+		}
+	case StateRemoteChanged:
+		if value.Version != 3 || value.CurrentLocal == "" || value.Evaluation != (Evaluation{Action: ActionRefreshRemote, RemoteChanged: true}) || value.Frozen {
+			return fmt.Errorf("restore edit session: contradictory remote-change state")
+		}
+	case StateConflict:
+		if value.Version != 3 || value.CurrentLocal == "" || value.Evaluation != (Evaluation{Action: ActionResolveConflict, LocalChanged: true, RemoteChanged: true}) || value.Frozen {
+			return fmt.Errorf("restore edit session: contradictory conflict state")
+		}
+	case StateRecoveryRequired:
+		if value.Version != 3 || value.Evaluation.Action != ActionRecoverLocal || value.Frozen {
+			return fmt.Errorf("restore edit session: contradictory recovery state")
+		}
+	case StateSyncBackFrozen:
+		if value.Version != 4 || value.CurrentLocal == "" || !value.Frozen || value.Evaluation.Action != ActionConfirmUpload && value.Evaluation.Action != ActionResolveConflict {
+			return fmt.Errorf("restore edit session: contradictory frozen sync-back state")
+		}
+	case StateSkipped:
+		if value.Version != 4 || value.Frozen || !decisionStateForAction(value.Evaluation.Action) {
+			return fmt.Errorf("restore edit session: contradictory skipped state")
+		}
+	default:
+		return fmt.Errorf("restore edit session: unknown state %q", value.State)
+	}
+	return nil
+}
+
+func decisionStateForAction(action Action) bool {
+	switch action {
+	case ActionNoUpload, ActionConfirmUpload, ActionRefreshRemote, ActionResolveConflict, ActionRecoverLocal:
+		return true
+	default:
+		return false
+	}
 }
 
 func knownState(value State) bool {

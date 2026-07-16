@@ -153,6 +153,37 @@ func TestNewSessionOwnsBaselineFingerprint(t *testing.T) {
 	}
 }
 
+func TestRestorePersistentRejectsContradictoryMachineState(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*PersistentSession)
+	}{
+		{name: "ready version drift", mutate: func(value *PersistentSession) { value.Version = 2 }},
+		{name: "frozen flag outside sync back", mutate: func(value *PersistentSession) { value.Frozen = true }},
+		{name: "sync back without frozen flag", mutate: func(value *PersistentSession) {
+			value.Version = 4
+			value.State = StateSyncBackFrozen
+			value.CurrentLocal = testDigest("c")
+			value.Evaluation = Evaluation{Action: ActionConfirmUpload, LocalChanged: true}
+		}},
+		{name: "post observation action mismatch", mutate: func(value *PersistentSession) {
+			value.Version = 3
+			value.State = StateNoChanges
+			value.CurrentLocal = value.Baseline.LocalSHA256
+			value.Evaluation = Evaluation{Action: ActionResolveConflict, LocalChanged: true, RemoteChanged: true}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			value := newTestSession(t, PurposeEditor).Persistent()
+			test.mutate(&value)
+			if _, err := RestorePersistent(value); err == nil {
+				t.Fatal("RestorePersistent accepted contradictory state")
+			}
+		})
+	}
+}
+
 func TestExplicitDecisionsFreezeSyncBackPreconditions(t *testing.T) {
 	t.Run("ordinary upload retains original baseline", func(t *testing.T) {
 		session := observeLocalOnly(t)
