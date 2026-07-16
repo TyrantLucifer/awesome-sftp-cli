@@ -780,6 +780,7 @@ func TestManagerPrefersAdvertisedTrashWithoutIrreversibleConfirmation(t *testing
 	if _, err := os.Stat(filepath.Join(root, "target")); !os.IsNotExist(err) {
 		t.Fatalf("trash source remains: %v", err)
 	}
+	// #nosec G304 -- the path is a fixed child of this test's private temporary root.
 	data, err := os.ReadFile(filepath.Join(root, ".trash-target"))
 	if err != nil || string(data) != "trash-me" {
 		t.Fatalf("trash payload=%q err=%v", data, err)
@@ -884,6 +885,7 @@ func TestManagerDeletesFrozenSymlinkWithoutFollowingTarget(t *testing.T) {
 	if _, err := os.Lstat(filepath.Join(root, "link")); !os.IsNotExist(err) {
 		t.Fatalf("symlink remains: %v", err)
 	}
+	// #nosec G304 -- the path is a fixed child of this test's private temporary root.
 	data, err := os.ReadFile(filepath.Join(root, "target"))
 	if err != nil || string(data) != "keep" {
 		t.Fatalf("symlink target=%q err=%v", data, err)
