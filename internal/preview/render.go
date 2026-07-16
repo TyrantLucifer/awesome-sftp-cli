@@ -20,6 +20,8 @@ import (
 	"unicode/utf8"
 )
 
+var errJSONDepthBudget = fmt.Errorf("JSON depth exceeds preview budget")
+
 type Kind string
 
 const (
@@ -97,20 +99,28 @@ func Render(request Request, limits Limits) Result {
 		imageResult.Summary = result.Summary
 		return imageResult
 	}
-	if !partial && len(data) <= limits.MaxJSONBytes && looksLikeJSON(request.Path, data) {
-		if rendered, depth, ok := renderJSON(data); ok {
-			if depth <= limits.MaxJSONDepth {
+	if !partial && looksLikeJSON(request.Path, data) {
+		switch {
+		case len(data) > limits.MaxJSONBytes:
+			result.Warning = "JSON exceeds preview parse budget; showing text fallback"
+		default:
+			rendered, err := renderJSON(data, limits.MaxJSONDepth)
+			switch err {
+			case nil:
 				result.Kind = KindJSON
 				result.Text, result.Lines, result.Truncated = renderNumberedLines(rendered, limits, result.Truncated)
 				return result
+			case errJSONDepthBudget:
+				result.Warning = err.Error()
+			default:
+				result.Warning = "invalid JSON; showing text fallback"
 			}
-			result.Warning = "JSON depth exceeds preview budget"
 		}
 	}
 	if looksBinary(data) {
 		result.Kind = KindBinary
 		result.Binary = true
-		result.Text, result.Lines, result.Truncated = renderNumberedLines([]byte(hex.Dump(data)), limits, result.Truncated)
+		result.Text, result.Lines, result.Truncated = renderHex(data, limits, result.Truncated)
 		return result
 	}
 	result.Kind = KindText
@@ -154,35 +164,60 @@ func looksLikeJSON(path string, data []byte) bool {
 	return len(trimmed) != 0 && (trimmed[0] == '{' || trimmed[0] == '[')
 }
 
-func renderJSON(data []byte) ([]byte, int, bool) {
+func renderJSON(data []byte, maxDepth int) ([]byte, error) {
+	if err := scanJSON(data, maxDepth); err != nil {
+		return nil, err
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.UseNumber()
 	var value any
 	if err := decoder.Decode(&value); err != nil {
-		return nil, 0, false
+		return nil, err
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return nil, 0, false
+		return nil, fmt.Errorf("decode JSON trailing data")
 	}
-	depth := jsonDepth(value, 1)
 	rendered, err := json.MarshalIndent(value, "", "  ")
-	return rendered, depth, err == nil
+	return rendered, err
 }
 
-func jsonDepth(value any, current int) int {
-	maximum := current
-	switch typed := value.(type) {
-	case []any:
-		for _, child := range typed {
-			maximum = max(maximum, jsonDepth(child, current+1))
+func scanJSON(data []byte, maxDepth int) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	depth := 0
+	roots := 0
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
 		}
-	case map[string]any:
-		for _, child := range typed {
-			maximum = max(maximum, jsonDepth(child, current+1))
+		if err != nil {
+			return err
+		}
+		if delimiter, ok := token.(json.Delim); ok {
+			switch delimiter {
+			case '{', '[':
+				if depth == 0 {
+					roots++
+				}
+				depth++
+				if depth > maxDepth {
+					return errJSONDepthBudget
+				}
+			case '}', ']':
+				depth--
+			}
+			continue
+		}
+		if depth == 0 {
+			roots++
 		}
 	}
-	return maximum
+	if roots != 1 || depth != 0 {
+		return fmt.Errorf("JSON must contain exactly one complete value")
+	}
+	return nil
 }
 
 func looksBinary(data []byte) bool {
@@ -234,33 +269,106 @@ func sanitizeText(data []byte) []byte {
 }
 
 func renderNumberedLines(data []byte, limits Limits, alreadyTruncated bool) (string, int, bool) {
-	lines := strings.Split(string(data), "\n")
-	if len(lines) != 0 && lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
 	truncated := alreadyTruncated
-	if len(lines) > limits.MaxRenderedLines {
-		lines = lines[:limits.MaxRenderedLines]
-		truncated = true
-	}
-	width := len(strconv.Itoa(max(1, len(lines))))
+	lineCount, hasMore := boundedLineCount(data, limits.MaxRenderedLines)
+	truncated = truncated || hasMore
+	width := len(strconv.Itoa(max(1, lineCount)))
 	var output strings.Builder
-	for index, line := range lines {
-		formatted := fmt.Sprintf("%*d  %s", width, index+1, line)
-		if index != len(lines)-1 {
-			formatted += "\n"
+	output.Grow(min(limits.MaxOutputBytes, len(data)))
+	start := 0
+	renderedLines := 0
+	for index := 0; index < lineCount; index++ {
+		end := bytes.IndexByte(data[start:], '\n')
+		if end < 0 {
+			end = len(data)
+		} else {
+			end += start
 		}
-		remaining := limits.MaxOutputBytes - output.Len()
-		if remaining <= 0 {
+		complete := appendNumberedLine(&output, width, index+1, data[start:end], limits.MaxOutputBytes)
+		renderedLines++
+		if !complete {
 			truncated = true
 			break
 		}
-		if len(formatted) > remaining {
-			output.WriteString(formatted[:remaining])
-			truncated = true
-			break
-		}
-		output.WriteString(formatted)
+		start = end + 1
 	}
-	return output.String(), min(len(lines), limits.MaxRenderedLines), truncated
+	return output.String(), renderedLines, truncated
+}
+
+func boundedLineCount(data []byte, maximum int) (int, bool) {
+	lines := 0
+	start := 0
+	for start < len(data) {
+		if lines == maximum {
+			return lines, true
+		}
+		lines++
+		newline := bytes.IndexByte(data[start:], '\n')
+		if newline < 0 {
+			return lines, false
+		}
+		start += newline + 1
+	}
+	return lines, false
+}
+
+func renderHex(data []byte, limits Limits, alreadyTruncated bool) (string, int, bool) {
+	totalLines := (len(data) + 15) / 16
+	lineCount := min(totalLines, limits.MaxRenderedLines)
+	truncated := alreadyTruncated || totalLines > lineCount
+	width := len(strconv.Itoa(max(1, lineCount)))
+	var output strings.Builder
+	output.Grow(min(limits.MaxOutputBytes, lineCount*80))
+	renderedLines := 0
+	for index := 0; index < lineCount; index++ {
+		offset := index * 16
+		end := min(offset+16, len(data))
+		line := []byte(hex.Dump(data[offset:end]))
+		line = line[:len(line)-1]
+		copy(line[:8], fmt.Sprintf("%08x", offset))
+		complete := appendNumberedLine(&output, width, index+1, line, limits.MaxOutputBytes)
+		renderedLines++
+		if !complete {
+			truncated = true
+			break
+		}
+	}
+	return output.String(), renderedLines, truncated
+}
+
+func appendNumberedLine(output *strings.Builder, width, number int, line []byte, maximum int) bool {
+	prefix := fmt.Sprintf("%*d  ", width, number)
+	required := len(prefix) + len(line)
+	if output.Len() != 0 {
+		required++
+	}
+	remaining := maximum - output.Len()
+	if required <= remaining {
+		if output.Len() != 0 {
+			output.WriteByte('\n')
+		}
+		output.WriteString(prefix)
+		output.Write(line)
+		return true
+	}
+	if remaining <= 0 {
+		return false
+	}
+	if output.Len() != 0 {
+		output.WriteByte('\n')
+		remaining--
+		if remaining == 0 {
+			return false
+		}
+	}
+	if len(prefix) >= remaining {
+		output.WriteString(prefix[:remaining])
+		return false
+	}
+	output.WriteString(prefix)
+	remaining -= len(prefix)
+	if remaining != 0 {
+		output.Write(line[:min(len(line), remaining)])
+	}
+	return false
 }

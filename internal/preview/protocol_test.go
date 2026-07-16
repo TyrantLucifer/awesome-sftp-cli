@@ -2,9 +2,20 @@ package preview
 
 import (
 	"bytes"
+	"encoding/base64"
+	"math"
 	"strings"
 	"testing"
 )
+
+func testPNG(t *testing.T) []byte {
+	t.Helper()
+	payload, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	return payload
+}
 
 func TestSelectImageProtocolRequiresConfirmedCapability(t *testing.T) {
 	tests := []struct {
@@ -29,8 +40,8 @@ func TestSelectImageProtocolRequiresConfirmedCapability(t *testing.T) {
 }
 
 func TestEncodeKittyImageUsesBoundedChunkedAPC(t *testing.T) {
-	payload := bytes.Repeat([]byte{0xab}, 5000)
-	encoded, err := EncodeTerminalImage(ImageProtocolKitty, "image/png", payload, ImageOutputLimits{MaxPayloadBytes: 6000, MaxOutputBytes: 12000, ChunkBytes: 4096})
+	payload := testPNG(t)
+	encoded, err := EncodeTerminalImage(ImageProtocolKitty, "image/png", payload, ImageOutputLimits{MaxPayloadBytes: 6000, MaxOutputBytes: 12000, ChunkBytes: 64})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,18 +55,19 @@ func TestEncodeKittyImageUsesBoundedChunkedAPC(t *testing.T) {
 }
 
 func TestEncodeITerm2ImageUsesExactInlineEnvelope(t *testing.T) {
-	encoded, err := EncodeTerminalImage(ImageProtocolITerm2, "image/png", []byte("png"), DefaultImageOutputLimits())
+	payload := testPNG(t)
+	encoded, err := EncodeTerminalImage(ImageProtocolITerm2, "image/png", payload, DefaultImageOutputLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, want := string(encoded), "\x1b]1337;File=inline=1;size=3:cG5n\a"; got != want {
+	if got, want := string(encoded), "\x1b]1337;File=inline=1;size=68:"+base64.StdEncoding.EncodeToString(payload)+"\a"; got != want {
 		t.Fatalf("output = %q, want %q", got, want)
 	}
 }
 
 func TestEncodeTerminalImageFailsClosedForNoneSixelWrongMediaAndBudgets(t *testing.T) {
 	for _, protocol := range []ImageProtocol{ImageProtocolNone, ImageProtocolSixel, ImageProtocol("unknown")} {
-		if output, err := EncodeTerminalImage(protocol, "image/png", []byte("png"), DefaultImageOutputLimits()); err == nil || len(output) != 0 {
+		if output, err := EncodeTerminalImage(protocol, "image/png", testPNG(t), DefaultImageOutputLimits()); err == nil || len(output) != 0 {
 			t.Fatalf("protocol %q output=%q err=%v", protocol, output, err)
 		}
 	}
@@ -71,5 +83,40 @@ func TestEncodeTerminalImageFailsClosedForNoneSixelWrongMediaAndBudgets(t *testi
 	limits.MaxOutputBytes = 8
 	if output, err := EncodeTerminalImage(ImageProtocolITerm2, "image/png", []byte("png"), limits); err == nil || len(output) != 0 {
 		t.Fatalf("output-budget output=%q err=%v", output, err)
+	}
+}
+
+func TestEncodeTerminalImageVerifiesPNGContent(t *testing.T) {
+	valid := testPNG(t)
+	corrupt := append([]byte(nil), valid...)
+	corrupt[len(corrupt)-8] ^= 0xff
+	for name, payload := range map[string][]byte{
+		"wrong signature":    []byte("not a png"),
+		"missing image data": valid[:33],
+		"corrupt chunk":      corrupt,
+	} {
+		if output, err := EncodeTerminalImage(ImageProtocolKitty, "image/png", payload, DefaultImageOutputLimits()); err == nil || len(output) != 0 {
+			t.Fatalf("%s output=%q err=%v", name, output, err)
+		}
+	}
+}
+
+func TestEncodeTerminalImageRejectsProjectedOutputBeforeBase64Allocation(t *testing.T) {
+	payload := append(testPNG(t), bytes.Repeat([]byte("x"), 4*1024*1024-68)...)
+	limits := ImageOutputLimits{MaxPayloadBytes: len(payload), MaxOutputBytes: 32, ChunkBytes: 4096}
+	benchmark := testing.Benchmark(func(b *testing.B) {
+		for range b.N {
+			_, _ = EncodeTerminalImage(ImageProtocolITerm2, "image/png", payload, limits)
+		}
+	})
+	if benchmark.AllocedBytesPerOp() > 256*1024 {
+		t.Fatalf("projected rejection allocated %d bytes/op", benchmark.AllocedBytesPerOp())
+	}
+}
+
+func TestProjectedImageOutputRejectsArithmeticBoundary(t *testing.T) {
+	limits := ImageOutputLimits{MaxPayloadBytes: math.MaxInt, MaxOutputBytes: math.MaxInt, ChunkBytes: 1}
+	if _, err := projectedImageOutputBytes(ImageProtocolKitty, math.MaxInt, math.MaxInt, limits); err == nil {
+		t.Fatal("overflowing Kitty envelope projection succeeded")
 	}
 }

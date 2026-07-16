@@ -42,6 +42,22 @@ func TestRenderPartialJSONDoesNotPretendToBeComplete(t *testing.T) {
 	}
 }
 
+func TestRenderInvalidCompleteJSONWarnsAboutTextFallback(t *testing.T) {
+	result := Render(Request{Path: "broken.json", Data: []byte(`{"missing":}`), Complete: true}, DefaultLimits())
+	if result.Kind != KindText || result.Warning != "invalid JSON; showing text fallback" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestRenderRejectsDeepJSONBeforeBuildingValueTree(t *testing.T) {
+	limits := DefaultLimits()
+	data := []byte(strings.Repeat("[", limits.MaxJSONDepth+1) + strings.Repeat("]", limits.MaxJSONDepth+1))
+	result := Render(Request{Path: "deep.json", Data: data, Complete: true}, limits)
+	if result.Kind != KindText || result.Warning != "JSON depth exceeds preview budget" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestRenderBinaryUsesBoundedHexMetadata(t *testing.T) {
 	limits := DefaultLimits()
 	limits.MaxOutputBytes = 80
@@ -77,5 +93,33 @@ func TestRenderRejectsInvalidBudgetsWithoutReadingBeyondInputLimit(t *testing.T)
 	}
 	if got := Render(Request{Path: "x", Data: []byte("x")}, Limits{}); got.Warning == "" {
 		t.Fatalf("zero limits result = %#v", got)
+	}
+}
+
+func TestRenderIntermediateBuffersStayBoundedByOutputBudgets(t *testing.T) {
+	binaryData := make([]byte, DefaultLimits().MaxInputBytes)
+	binaryLimits := DefaultLimits()
+	binaryLimits.MaxRenderedLines = 2
+	binaryLimits.MaxOutputBytes = 128
+	binaryBenchmark := testing.Benchmark(func(b *testing.B) {
+		for range b.N {
+			_ = Render(Request{Path: "large.bin", Data: binaryData, Complete: true}, binaryLimits)
+		}
+	})
+	if binaryBenchmark.AllocedBytesPerOp() > 256*1024 {
+		t.Fatalf("bounded binary render allocated %d bytes/op", binaryBenchmark.AllocedBytesPerOp())
+	}
+
+	lineData := []byte(strings.Repeat("x", DefaultLimits().MaxInputBytes))
+	lineLimits := DefaultLimits()
+	lineLimits.MaxRenderedLines = 1
+	lineLimits.MaxOutputBytes = 32
+	lineBenchmark := testing.Benchmark(func(b *testing.B) {
+		for range b.N {
+			_, _, _ = renderNumberedLines(lineData, lineLimits, false)
+		}
+	})
+	if lineBenchmark.AllocedBytesPerOp() > 256*1024 {
+		t.Fatalf("bounded line render allocated %d bytes/op", lineBenchmark.AllocedBytesPerOp())
 	}
 }
