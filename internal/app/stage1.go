@@ -26,6 +26,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
@@ -35,6 +36,7 @@ import (
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/sshconfig"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/editstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
@@ -109,6 +111,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	generator := &domain.RandomGenerator{}
 	var stateDatabase *sql.DB
 	var jobStore *jobstore.Store
+	var editStore *editstore.Store
 	var stateOpenErr error
 	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
 		stateOpenErr = fmt.Errorf("prepare persistent state: %w", err)
@@ -130,10 +133,15 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 				err = store.CheckpointIdle(ctx)
 			}
 			if err == nil {
-				jobStore = store
+				var durableEdits *editstore.Store
+				durableEdits, err = editstore.New(ctx, stateDatabase)
+				if err == nil {
+					jobStore = store
+					editStore = durableEdits
+				}
 			}
 			if err != nil {
-				stateOpenErr = fmt.Errorf("recover durable Jobs: %w", err)
+				stateOpenErr = fmt.Errorf("initialize durable Jobs and edit sessions: %w", err)
 				_ = stateDatabase.Close()
 				stateDatabase = nil
 			}
@@ -202,6 +210,9 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	sessions, err := daemon.NewProviderSessions([]provider.Provider{local}, tui.PreviewByteLimit)
 	if err != nil {
 		return err
+	}
+	if editStore != nil {
+		sessions.SetEditSessionStore(editStore)
 	}
 	sessions.SetDiagnosticSource(diagnosticRecords)
 	if stateDatabase != nil && paths.CacheDir != "" {
@@ -530,6 +541,16 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			model, _ = tui.Reduce(model, tui.SetFilter{Pane: tui.PaneID(index), Query: paneState.Filter})
 		}
 	}
+	editWorkspace := cache.WorkspaceID(invocation.Workspace)
+	if editWorkspace == "" {
+		editWorkspace = "interactive"
+	}
+	editFlow, err := newEditCoordinator(client, localEndpoint.ID, editWorkspace, cache.Policy(cachePolicy), func(launchCtx context.Context, materialization string, purpose edit.Purpose) (preparedExternalEdit, error) {
+		return prepareExternalEdit(launchCtx, materialization, purpose, append([]string(nil), os.Environ()...), screen)
+	})
+	if err != nil {
+		return err
+	}
 	runCtx, stop := context.WithCancel(ctx)
 	authClient, err := connectDaemon(runCtx, paths, purpose)
 	if err != nil {
@@ -571,6 +592,33 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	var startIntent func(tui.Intent)
 	startIntent = func(intent tui.Intent) {
 		switch intent.Kind {
+		case tui.IntentEdit, tui.IntentOpenExternal:
+			actions <- editFlow.Begin(runCtx, intent)
+			return
+		case tui.IntentEditLaunch:
+			actions <- editFlow.Launch(runCtx, intent.EditSessionID)
+			return
+		case tui.IntentEditCheck:
+			actions <- editFlow.Check(runCtx, intent.EditSessionID)
+			return
+		case tui.IntentEditDecision:
+			actions <- editFlow.Decide(runCtx, intent)
+			return
+		case tui.IntentEditRecoverable:
+			activeClient := client
+			go func() {
+				var response daemon.EditSessionRecoverableResponse
+				listErr := activeClient.Call(runCtx, daemon.EditSessionRecoverable, daemon.EditSessionRecoverableRequest{Limit: 64}, &response)
+				result := tui.EditRecoveryLoaded{Count: len(response.Sessions)}
+				if listErr != nil {
+					result.Message = "list recoverable edits failed: " + clientErrorMessage(listErr)
+				}
+				select {
+				case actions <- result:
+				case <-runCtx.Done():
+				}
+			}()
+			return
 		case tui.IntentConnectEndpoint:
 			select {
 			case connectRequests <- intent:
@@ -940,6 +988,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		startConnection(pane, start, false, false, client)
 	}
+	startIntent(tui.Intent{Kind: tui.IntentEditRecoverable})
 	jobRefreshTicker := time.NewTicker(500 * time.Millisecond)
 	defer jobRefreshTicker.Stop()
 	for {
@@ -1000,6 +1049,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			oldClient := client
 			client = result.client
 			localEndpoint = result.local
+			editFlow.client = client
+			editFlow.localEndpoint = localEndpoint.ID
 			_ = oldClient.Close()
 			if authCancel != nil {
 				authCancel()

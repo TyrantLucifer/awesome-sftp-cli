@@ -9,6 +9,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
@@ -33,6 +34,17 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		model.Count = model.Count*10 + int(action.Digit)
 		return model, nil
 	case TextInput:
+		if model.Mode == ModeEditSaveAs {
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.editSaveAs))+len(action.Text) > 4096 {
+				return model, nil
+			}
+			suggested := string(model.EditDecision.Location.Path) + ".copy"
+			if strings.HasPrefix(action.Text, "/") && string(model.editSaveAs) == suggested {
+				model.editSaveAs = nil
+			}
+			model.editSaveAs = append(append([]rune(nil), model.editSaveAs...), []rune(action.Text)...)
+			return model, nil
+		}
 		if model.Auth.Active {
 			answerBytes := 0
 			for _, value := range model.Auth.answer {
@@ -417,6 +429,42 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			model.Notice += fmt.Sprintf("; %d bytes discarded", discarded)
 		}
 		return model, []Intent{{Kind: IntentList, Pane: action.Pane, Location: action.Location}}
+	case EditSessionObserved:
+		if action.SessionID == "" || !validPane(action.Pane) {
+			return model, nil
+		}
+		model.EditDecision = EditDecisionState{
+			Active: true, SessionID: action.SessionID, Pane: action.Pane,
+			Location: action.Location, State: action.State, Message: action.Message,
+		}
+		model.Mode = ModeEditDecision
+		model.Notice = action.Message
+		return model, []Intent{{Kind: IntentList, Pane: action.Pane, Location: action.Location}}
+	case EditLaunchReady:
+		if action.SessionID == "" || !validPane(action.Pane) || action.Command == "" {
+			return model, nil
+		}
+		model.EditLaunch = EditLaunchState{Active: true, SessionID: action.SessionID, Pane: action.Pane, Location: action.Location, Command: action.Command}
+		model.Mode = ModeEditLaunchConfirm
+		model.Notice = "external command resolved; confirm direct execution"
+		return model, nil
+	case EditSessionFinished:
+		model.Notice = action.Message
+		return model, []Intent{{Kind: IntentList, Pane: action.Pane, Location: action.Location}}
+	case EditSessionFailed:
+		model.Notice = action.Message
+		return model, nil
+	case EditRecoveryLoaded:
+		if action.Count < 0 {
+			return model, nil
+		}
+		model.RecoverableEdits = action.Count
+		if action.Message != "" {
+			model.Notice = action.Message
+		} else if action.Count > 0 {
+			model.Notice = fmt.Sprintf("%d recoverable edit session(s) retained", action.Count)
+		}
+		return model, nil
 	default:
 		return model, nil
 	}
@@ -438,6 +486,88 @@ func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
+	if model.Mode == ModeEditLaunchConfirm {
+		switch key {
+		case KeyEscape:
+			model.Mode = ModeNormal
+			model.EditLaunch = EditLaunchState{}
+			model.Notice = "external launch canceled; materialization retained for recovery"
+			return model, nil
+		case KeySubmit:
+			pending := model.EditLaunch
+			model.Mode = ModeNormal
+			model.EditLaunch = EditLaunchState{}
+			return model, []Intent{{Kind: IntentEditLaunch, Pane: pending.Pane, Location: pending.Location, EditSessionID: pending.SessionID}}
+		default:
+			return model, nil
+		}
+	}
+	if model.Mode == ModeEditSaveAs {
+		switch key {
+		case KeyBackspace:
+			if len(model.editSaveAs) != 0 {
+				model.editSaveAs = append([]rune(nil), model.editSaveAs[:len(model.editSaveAs)-1]...)
+			}
+			return model, nil
+		case KeyEscape:
+			model.editSaveAs = nil
+			model.Mode = ModeEditDecision
+			return model, nil
+		case KeySubmit:
+			target, err := domain.NewLocation(model.EditDecision.Location.EndpointID, domain.CanonicalPath(string(model.editSaveAs)))
+			if err != nil || !strings.HasPrefix(string(target.Path), "/") {
+				model.Notice = "save-as requires an absolute canonical path"
+				return model, nil
+			}
+			return finishEditDecision(model, edit.DecisionSaveAs, target, false)
+		default:
+			return model, nil
+		}
+	}
+	if model.Mode == ModeEditDecision {
+		state := model.EditDecision.State
+		switch key {
+		case KeyEscape:
+			model.Mode = ModeNormal
+			model.EditDecision = EditDecisionState{}
+			model.Notice = "edit retained for recovery; no upload was started"
+			return model, nil
+		case KeyPreviewDrawer:
+			model.Drawer.Mode = DrawerPreview
+			model.Drawer.Focus = FocusDrawer
+			pane := model.Panes[model.EditDecision.Pane]
+			return model, []Intent{{
+				Kind: IntentPreview, Pane: model.EditDecision.Pane, Location: model.EditDecision.Location,
+				EndpointSession: pane.Capabilities.Revision.SessionID, EndpointGeneration: pane.Capabilities.Revision.Generation,
+			}}
+		case KeyConflictSkip:
+			return finishEditDecision(model, edit.DecisionSkip, domain.Location{}, false)
+		case KeyConflictAutoRename:
+			if state != edit.StateConflict && state != edit.StateAwaitingUploadConfirmation {
+				return model, nil
+			}
+			model.editSaveAs = []rune(string(model.EditDecision.Location.Path) + ".copy")
+			model.Mode = ModeEditSaveAs
+			return model, nil
+		case KeyConflictOverwrite:
+			if state == edit.StateConflict {
+				return finishEditDecision(model, edit.DecisionOverwrite, domain.Location{}, false)
+			}
+		case KeySubmit:
+			switch state {
+			case edit.StateReady:
+				pending := model.EditDecision
+				model.Mode = ModeNormal
+				model.EditDecision = EditDecisionState{}
+				return model, []Intent{{Kind: IntentEditCheck, Pane: pending.Pane, Location: pending.Location, EditSessionID: pending.SessionID}}
+			case edit.StateAwaitingUploadConfirmation:
+				return finishEditDecision(model, edit.DecisionUpload, domain.Location{}, false)
+			case edit.StateRemoteChanged:
+				return finishEditDecision(model, edit.DecisionSkip, domain.Location{}, true)
+			}
+		}
+		return model, nil
+	}
 	if model.Mode == ModeCommand {
 		switch key {
 		case KeyBackspace:
@@ -900,6 +1030,19 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		}
 	}
 	return model, nil
+}
+
+func finishEditDecision(model Model, decision edit.DecisionKind, saveAs domain.Location, refresh bool) (Model, []Intent) {
+	state := model.EditDecision
+	intent := Intent{
+		Kind: IntentEditDecision, Pane: state.Pane, Location: state.Location,
+		EditSessionID: state.SessionID, EditDecision: decision,
+		SaveAsTarget: saveAs, RefreshAfterEdit: refresh,
+	}
+	model.Mode = ModeNormal
+	model.EditDecision = EditDecisionState{}
+	model.editSaveAs = nil
+	return model, []Intent{intent}
 }
 
 func reduceJobsKey(model Model, key Key) (Model, []Intent) {

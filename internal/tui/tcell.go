@@ -51,7 +51,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 	case *tcell.EventKey:
 		switch event.Key() {
 		case tcell.KeyEnter:
-			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm || mode == ModeCommand || mode == ModeCommandConfirm {
+			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm || mode == ModeCommand || mode == ModeCommandConfirm || mode == ModeEditDecision || mode == ModeEditSaveAs || mode == ModeEditLaunchConfirm {
 				return KeyPress{Key: KeySubmit}, true
 			}
 		case tcell.KeyTab:
@@ -61,7 +61,7 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 		case tcell.KeyBackspace:
 			return KeyPress{Key: KeyBackspace}, true
 		case tcell.KeyRune:
-			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeCommand {
+			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeCommand || mode == ModeEditSaveAs {
 				return TextInput{Text: event.Str()}, true
 			}
 			if value := event.Str(); len(value) == 1 && value[0] >= '0' && value[0] <= '9' {

@@ -169,6 +169,9 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Count != 0 {
 		status += fmt.Sprintf(" | %d", model.Count)
 	}
+	if model.RecoverableEdits != 0 {
+		status += fmt.Sprintf(" | edits:recoverable(%d)", model.RecoverableEdits)
+	}
 	status += " | " + string(model.Mode)
 	if model.Notice != "" {
 		status += " | " + SanitizeTerminalText(model.Notice)
@@ -202,7 +205,60 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeCommand || model.Mode == ModeCommandConfirm {
 		renderCommandModal(surface, model, width, height)
 	}
+	if model.Mode == ModeEditDecision || model.Mode == ModeEditSaveAs {
+		renderEditDecisionModal(surface, model, width, height)
+	}
+	if model.Mode == ModeEditLaunchConfirm {
+		renderEditLaunchModal(surface, model, width, height)
+	}
 	return stats
+}
+
+func renderEditDecisionModal(surface Surface, model Model, width, height int) {
+	state := model.EditDecision
+	if !state.Active || width < 20 || height < 5 {
+		return
+	}
+	modalWidth := min(width-4, 76)
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, height/2-2)
+	surface.PutClipped(x, y, modalWidth, " Edit result ", StyleActiveHeader)
+	surface.PutClipped(x, y+1, modalWidth, SanitizeTerminalText(string(state.Location.Path)), StylePlain)
+	if model.Mode == ModeEditSaveAs {
+		surface.PutClipped(x, y+2, modalWidth, "Save as: "+SanitizeTerminalText(string(model.editSaveAs)), StyleStatus)
+		surface.PutClipped(x, y+3, modalWidth, "Enter confirm · Esc back", StylePlain)
+		return
+	}
+	var instruction string
+	switch state.State {
+	case "ready":
+		instruction = "Opener lease retained: Enter check changes · Esc keep for recovery"
+	case "awaiting_upload_confirmation":
+		instruction = "Enter upload · a save as · x skip · Esc retain"
+	case "remote_changed":
+		instruction = "Remote changed: Enter refresh · x skip · Esc retain"
+	case "conflict":
+		instruction = "Conflict: K inspect remote · w overwrite · a save as · x skip · Esc retain"
+	default:
+		instruction = "Observation uncertain: x abandon · Esc retain for recovery"
+	}
+	surface.PutClipped(x, y+2, modalWidth, instruction, StyleError)
+	if state.Message != "" {
+		surface.PutClipped(x, y+3, modalWidth, SanitizeTerminalText(state.Message), StylePlain)
+	}
+}
+
+func renderEditLaunchModal(surface Surface, model Model, width, height int) {
+	state := model.EditLaunch
+	if !state.Active || width < 20 || height < 5 {
+		return
+	}
+	modalWidth := min(width-4, 90)
+	x := max(0, (width-modalWidth)/2)
+	y := max(1, height/2-2)
+	surface.PutClipped(x, y, modalWidth, " Confirm external direct execution ", StyleActiveHeader)
+	surface.PutClipped(x, y+1, modalWidth, SanitizeTerminalText(state.Command), StylePlain)
+	surface.PutClipped(x, y+2, modalWidth, "Enter run · Esc retain without launching", StyleStatus)
 }
 
 func drawerRows(drawer DrawerState, height int) int {

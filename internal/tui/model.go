@@ -7,6 +7,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
@@ -23,19 +24,22 @@ const (
 type Mode string
 
 const (
-	ModeNormal         Mode = "normal"
-	ModeFilter         Mode = "filter"
-	ModeVisual         Mode = "visual"
-	ModeVisualLine     Mode = "visual_line"
-	ModeAuth           Mode = "auth"
-	ModeWorkspace      Mode = "workspace_save"
-	ModePath           Mode = "path"
-	ModeEndpoint       Mode = "endpoint"
-	ModeRename         Mode = "rename"
-	ModeMoveConfirm    Mode = "move_confirm"
-	ModeDeleteConfirm  Mode = "delete_confirm"
-	ModeCommand        Mode = "command"
-	ModeCommandConfirm Mode = "command_confirm"
+	ModeNormal            Mode = "normal"
+	ModeFilter            Mode = "filter"
+	ModeVisual            Mode = "visual"
+	ModeVisualLine        Mode = "visual_line"
+	ModeAuth              Mode = "auth"
+	ModeWorkspace         Mode = "workspace_save"
+	ModePath              Mode = "path"
+	ModeEndpoint          Mode = "endpoint"
+	ModeRename            Mode = "rename"
+	ModeMoveConfirm       Mode = "move_confirm"
+	ModeDeleteConfirm     Mode = "delete_confirm"
+	ModeCommand           Mode = "command"
+	ModeCommandConfirm    Mode = "command_confirm"
+	ModeEditDecision      Mode = "edit_decision"
+	ModeEditSaveAs        Mode = "edit_save_as"
+	ModeEditLaunchConfirm Mode = "edit_launch_confirm"
 )
 
 type SortKey string
@@ -383,6 +387,23 @@ type AuthState struct {
 	answer []rune
 }
 
+type EditDecisionState struct {
+	Active    bool
+	SessionID edit.SessionID
+	Pane      PaneID
+	Location  domain.Location
+	State     edit.State
+	Message   string
+}
+
+type EditLaunchState struct {
+	Active    bool
+	SessionID edit.SessionID
+	Pane      PaneID
+	Location  domain.Location
+	Command   string
+}
+
 func (p PreviewState) DisplayText() string {
 	if p.Binary {
 		return "[binary preview omitted]"
@@ -407,6 +428,8 @@ type Model struct {
 	Count              int
 	Preview            PreviewState
 	Auth               AuthState
+	EditDecision       EditDecisionState
+	EditLaunch         EditLaunchState
 	Clipboard          ClipboardState
 	Jobs               []transfer.JobView
 	Diagnostics        []diagnostic.Record
@@ -414,12 +437,14 @@ type Model struct {
 	JobCursor          int
 	Notice             string
 	DeleteConfirmation int
+	RecoverableEdits   int
 
 	workspaceName []rune
 	pathInput     []rune
 	endpointInput []rune
 	renameInput   []rune
 	commandInput  []rune
+	editSaveAs    []rune
 	pendingRename transfer.FileRef
 	pendingDelete []transfer.FileRef
 	pendingMove   []Intent
@@ -479,6 +504,10 @@ const (
 	IntentDiagnosticList     IntentKind = "diagnostic_list"
 	IntentEdit               IntentKind = "edit"
 	IntentOpenExternal       IntentKind = "open_external"
+	IntentEditDecision       IntentKind = "edit_decision"
+	IntentEditCheck          IntentKind = "edit_check"
+	IntentEditLaunch         IntentKind = "edit_launch"
+	IntentEditRecoverable    IntentKind = "edit_recoverable"
 	IntentRunCommand         IntentKind = "run_command"
 	IntentShell              IntentKind = "shell"
 )
@@ -519,6 +548,10 @@ type Intent struct {
 	PreviewMode           builtinpreview.ReadMode
 	PreviewOffset         uint64
 	PreviewView           builtinpreview.ViewMode
+	EditSessionID         edit.SessionID
+	EditDecision          edit.DecisionKind
+	SaveAsTarget          domain.Location
+	RefreshAfterEdit      bool
 }
 
 type Key string
@@ -686,6 +719,38 @@ type CommandCompleted struct {
 	Message         string
 }
 
+type EditSessionObserved struct {
+	SessionID edit.SessionID
+	Pane      PaneID
+	Location  domain.Location
+	State     edit.State
+	Message   string
+}
+
+type EditLaunchReady struct {
+	SessionID edit.SessionID
+	Pane      PaneID
+	Location  domain.Location
+	Command   string
+}
+
+type EditSessionFinished struct {
+	Pane     PaneID
+	Location domain.Location
+	Message  string
+}
+
+type EditSessionFailed struct {
+	Pane     PaneID
+	Location domain.Location
+	Message  string
+}
+
+type EditRecoveryLoaded struct {
+	Count   int
+	Message string
+}
+
 func (KeyPress) isAction()              {}
 func (CountDigit) isAction()            {}
 func (TextInput) isAction()             {}
@@ -708,6 +773,11 @@ func (JobsLoaded) isAction()            {}
 func (JobUpdated) isAction()            {}
 func (DiagnosticsLoaded) isAction()     {}
 func (CommandCompleted) isAction()      {}
+func (EditSessionObserved) isAction()   {}
+func (EditLaunchReady) isAction()       {}
+func (EditSessionFinished) isAction()   {}
+func (EditSessionFailed) isAction()     {}
+func (EditRecoveryLoaded) isAction()    {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))
