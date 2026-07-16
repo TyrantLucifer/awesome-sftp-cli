@@ -1,0 +1,17 @@
+{
+  "classification": "NON-PRODUCTION PUBLIC TEST VECTORS",
+  "source": "RFC 8032 section 7.1 public keys",
+  "algorithm": "Ed25519",
+  "vectors": [
+    {
+      "role": "current",
+      "public_key_hex": "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a",
+      "expected_key_id": "ed25519-21fe31dfa154a261626bf854046fd2271b7bed4b6abe45aa58877ef4"
+    },
+    {
+      "role": "next",
+      "public_key_hex": "3d4017c3e843895a92b70aa74d1b7ebc9c982ccf2ec4968cc0cd55f12af4660c",
+      "expected_key_id": "ed25519-39f713d0a644253f04529421b9f51b9b08979d08295959c4f3990ee6"
+    }
+  ]
+}
