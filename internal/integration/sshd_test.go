@@ -115,6 +115,61 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
 }
 
+func TestStage2TemporarySSHDPTYUploadDownloadMVP(t *testing.T) {
+	if os.Getenv("AMSFTP_REAL_SSHD") != "1" {
+		t.Skip("set AMSFTP_REAL_SSHD=1 in an isolated account")
+	}
+	current, err := user.Current()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyRoot := t.TempDir()
+	clientKey := filepath.Join(keyRoot, "client_key")
+	run(t, "/usr/bin/ssh-keygen", "-q", "-t", "ed25519", "-N", "", "-f", clientKey)
+	// #nosec G304 -- path is generated inside this test's private TempDir.
+	publicKey, err := os.ReadFile(clientKey + ".pub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := startTestSSHD(t, current.Username, publicKey, "stage2-mvp")
+	alias := "amsftp-stage2-mvp"
+	sshDir := filepath.Join(current.HomeDir, ".ssh")
+	if err := os.MkdirAll(sshDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(sshDir, "config")
+	// #nosec G304 -- guarded integration test intentionally reads the isolated runner account's SSH config.
+	original, readErr := os.ReadFile(configPath)
+	hadConfig := readErr == nil
+	if readErr != nil && !os.IsNotExist(readErr) {
+		t.Fatal(readErr)
+	}
+	// #nosec G703 -- guarded integration test writes only the isolated account's canonical SSH config.
+	if err := os.WriteFile(configPath, append(original, []byte(sshHostConfig(alias, server, current.Username, clientKey))...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if hadConfig {
+			// #nosec G703 -- restores the exact isolated runner config captured above.
+			_ = os.WriteFile(configPath, original, 0o600)
+		} else {
+			_ = os.Remove(configPath)
+		}
+	})
+	binary := filepath.Join(t.TempDir(), "amsftp")
+	// #nosec G204 -- the output is confined to the test-owned temporary directory.
+	build := exec.Command("go", "build", "-trimpath", "-o", binary, "../../cmd/amsftp")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build amsftp: %v\n%s", err, output)
+	}
+	remoteRoot := t.TempDir()
+	// #nosec G204 -- script and alias are fixed, and paths are test-owned.
+	command := exec.Command("python3", "hosted-stage2-mvp.py", binary, alias, remoteRoot)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Stage 2 temporary-sshd PTY MVP failed: %v\n%s\nsshd:\n%s", err, output, server.logs.String())
+	}
+}
+
 func assertBidirectionalDurableTransfer(t *testing.T, ctx context.Context, remote *sftpprovider.Provider, remoteRoot string) {
 	t.Helper()
 	snapshot, err := remote.Snapshot(ctx)

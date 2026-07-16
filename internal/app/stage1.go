@@ -770,12 +770,18 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		startConnection(pane, start, false, false, client)
 	}
+	jobRefreshTicker := time.NewTicker(500 * time.Millisecond)
+	defer jobRefreshTicker.Stop()
 	for {
 		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
 		screen.Show()
 		select {
 		case <-runCtx.Done():
 			return nil
+		case <-jobRefreshTicker.C:
+			if model.ShowJobs {
+				startIntent(tui.Intent{Kind: tui.IntentJobList})
+			}
 		case err := <-authErrors:
 			if authFailureLostDaemon(err, func() error {
 				probeCtx, cancel := context.WithTimeout(runCtx, daemonReadyTimeout)
