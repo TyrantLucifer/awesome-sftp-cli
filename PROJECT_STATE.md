@@ -9,7 +9,7 @@
 
 ## Current outcome
 
-Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; M2.1's exact modernc intake is complete before schema or production database-open code, including exact-SHA native Ubuntu 22.04/24.04 evidence in Hosted run 29470643854.
+Stage 1 is complete. The merge baseline is commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) completed successfully across quality, auth, native, oldstable, four-target build, reproducibility and comparison jobs. Stage 2 is now In Progress on `codex/stage2-durable-transfers`; the M2.1 Version 1 foundation now includes the frozen schema/contract, safe APFS/ext4/XFS state boundary, atomic bootstrap/runtime validation, transactional Job/events and conservative pre-bind restart recovery. Pending migration attempt/backup/retention and WAL-budget closeout remain before M2.1 can complete.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -37,11 +37,11 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Freeze the canonical Version 1 schema contract and implement the ADR-0008 migration runner, validation and deterministic restart recovery.
+Complete ADR-0008 pending-attempt, online-backup sanitize/hold, retention/space and WAL-budget behavior around the implemented Version 1 state foundation.
 
 ## Current risks
 
-- The exact modernc intake gate is closed; the next persistence risk is freezing a complete additive Version 1 schema contract before the first production database open.
+- The exact modernc intake and Version 1 schema/identity/bootstrap/Job foundation are implemented; M2.1 remains incomplete until attempt/backup/retention and online WAL bounds close with fault evidence.
 - APFS can be exercised locally, but ext4/XFS database semantics require native Linux Hosted fixtures; cross-builds are not acceptance evidence.
 - Stage 2 touches persistent user state and destructive file operations, so every milestone remains fail-closed to the verified Stage 1 read-only surface until its evidence is complete.
 

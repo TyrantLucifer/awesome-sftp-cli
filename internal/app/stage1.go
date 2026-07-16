@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"os"
 	"os/exec"
@@ -24,6 +26,8 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/sshconfig"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
@@ -69,13 +73,49 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	defer lock.Close()
-	daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
-	if err != nil {
-		return err
+	generator := &domain.RandomGenerator{}
+	var stateDatabase *sql.DB
+	var stateOpenErr error
+	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
+		stateOpenErr = fmt.Errorf("prepare persistent state: %w", err)
+	} else {
+		databasePath := paths.DatabaseFile
+		if databasePath == "" {
+			databasePath = filepath.Join(paths.StateDir, "amsftp.db")
+		}
+		stateDatabase, _, stateOpenErr = statefs.Initialize(ctx, statefs.InitializeConfig{
+			Root: paths.StateDir, DatabasePath: databasePath,
+		})
+		if stateOpenErr == nil {
+			if _, err := jobstore.New(stateDatabase).RecoverInterrupted(ctx, generator, time.Now()); err != nil {
+				stateOpenErr = fmt.Errorf("recover durable Jobs: %w", err)
+				_ = stateDatabase.Close()
+				stateDatabase = nil
+			}
+		}
 	}
-	defer func() {
-		returnErr = errors.Join(returnErr, daemonLog.Close())
-	}()
+	if stateDatabase != nil {
+		defer func() {
+			returnErr = errors.Join(returnErr, stateDatabase.Close())
+		}()
+	}
+	var logger *slog.Logger
+	if stateOpenErr == nil {
+		daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
+		if err != nil {
+			return err
+		}
+		logger = daemonLog.Logger
+		defer func() {
+			returnErr = errors.Join(returnErr, daemonLog.Close())
+		}()
+	} else {
+		// A rejected/corrupt/newer state database must not trigger any further
+		// persistent writes. Stage 1 browsing remains available with an
+		// in-memory diagnostic logger and no mutation store.
+		logger = slog.New(diagnostic.NewJSONHandler(io.Discard, nil))
+		logger.Error("persistent state unavailable; mutation disabled", diagnostic.Component("state"), diagnostic.Event("read_only_degraded"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
+	}
 	if _, err := os.Lstat(paths.ControlSocket); err == nil {
 		probeCtx, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
 		connection, probeErr := platform.DialControlSocket(probeCtx, paths.ControlSocket, purpose)
@@ -100,7 +140,6 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		return err
 	}
 	defer func() { _ = listener.Close(); _ = os.Remove(paths.ControlSocket) }()
-	generator := &domain.RandomGenerator{}
 	endpointID, err := domain.NewEndpointID(generator)
 	if err != nil {
 		return err
@@ -117,11 +156,13 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 	if err != nil {
 		return err
 	}
-	workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
-	if err != nil {
-		return err
+	if stateOpenErr == nil {
+		workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
+		if err != nil {
+			return err
+		}
+		sessions.SetWorkspaceStore(workspaceStore)
 	}
-	sessions.SetWorkspaceStore(workspaceStore)
 	authBroker, err := auth.NewBroker(auth.Config{MaxPrompts: 8})
 	if err != nil {
 		return err
@@ -166,7 +207,7 @@ func runDaemonWithPaths(ctx context.Context, paths platform.Paths, purpose platf
 		}
 		return implementation, nil
 	})
-	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: daemonLog.Logger, VerifyPeer: func(conn net.Conn) error {
+	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: logger, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {
 			return fmt.Errorf("unexpected peer connection %T", conn)

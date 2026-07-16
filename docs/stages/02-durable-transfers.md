@@ -41,6 +41,7 @@
 - 写操作必须扩展共享 Provider 契约，不能通过临时 shell 命令绕开系统 OpenSSH、结构化错误和取消语义。
 - Stage 0/1 的 Fake Provider、临时 `sshd`、断线和认证夹具可直接用于写入与恢复测试。
 - SQLite driver、连接策略和迁移机制必须直接实现 [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md)，不得临时切换 CGO driver 或通用 migration framework。
+- Version 1 领域表、Job 状态转换、事务事件序列和 daemon restart pause 语义由 [ADR-0012](../architecture/adr/0012-durable-job-schema-and-restart-state-machine.md) 冻结；共享后只能用新的前向 migration 修改。
 
 ### 3.2 数据安全不变量
 

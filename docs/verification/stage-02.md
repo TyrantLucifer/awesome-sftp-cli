@@ -71,8 +71,9 @@ Local command ledger:
 
 - **Status**: In Progress
 - **Goal**: ADR-0008 state store, Version 1 schema, Job/step state machine, transactional events and deterministic restart recovery.
-- **Current action**: freeze the canonical Version 1 schema and implement the migration runner.
-- **Last green command**: exact-intake Hosted run 29470643854 native Ubuntu 22.04/24.04 jobs; both passed `make test` and `make test-race`.
+- **Current action**: implement pending-attempt/online-backup/restore-hold/retention and WAL-budget closeout around the completed Version 1 foundation.
+- **Implemented foundation**: checksum-v1 golden and real-v1 digest; single-statement lexer/main-only admission; explicit `BEGIN IMMEDIATE` runner; exact runner/domain DDL; 24,495-byte whole-schema contract (`659edd23b5bc332b488a171c920815daffef6223ef2d3859215ba177c3d55e64`); APFS/ext4/XFS gate; raw identity; WAL/locking/full-sync probe; durable-intent/no-replace bootstrap; runtime validation; transactional Job/event store and conservative restart pause before bind.
+- **Last green command**: current/Go 1.25.12 focused state/job suites and focused race; four-target statefs test compilation; repository `go test ./...`; `make lint` with zero issues.
 
 ### M2.2 — Single-file copy, conflict and commit
 
@@ -98,6 +99,10 @@ Local command ledger:
 | Intake lint | First run reported an unwrapped EOF comparison and untrusted file/tool paths. | Used `errors.Is` and documented trusted module-cache reads. | Advanced to one remaining issue. |
 | Intake lint | Second run reported deprecated `runtime.GOROOT`. | Resolved the active Go binary with `exec.LookPath`. | Third run passed with zero issues. |
 | Tools module check | A root-level `-modfile=tools/go.mod` tidy attempt incorrectly tried to resolve repository-internal imports. | Used the Makefile's correct `go -C tools` form; no file was changed by the failed command. | Both toolchains' tools tidy/verify checks passed. |
+| Schema contract query | First runtime manifest attempt used unquoted `notnull` in the table-valued PRAGMA query. | Quoted the metadata column while keeping table names parameterized. | Contract suite passed on the second attempt. |
+| State foundation lint | First lint run found wrapped-error, trusted-path annotation and one Darwin conversion issue. | Preserved causes with `%w`, documented exact validated paths and removed the redundant conversion. | Second lint run passed with zero issues. |
+| Immutable max-page validation | First existing-state reopen expected connection-local `max_page_count` in an immutable reader. | Kept raw 8 GiB file-size identity plus bootstrap/runtime max-page readback; immutable validation no longer claims a writer-connection setting. | Initial bootstrap and existing reopen passed on the second attempt. |
+| Foundation module hygiene | First dual-toolchain `make check` stopped at `go mod tidy -diff` because new statefs code directly imports the existing `x/sys v0.47.0` pin. | Moved the unchanged pin from indirect to direct with `go mod tidy`. | Current and exact Go 1.25.12 `make check` passed on the second attempt. |
 
 No issue exceeded three attempts.
 
