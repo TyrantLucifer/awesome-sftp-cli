@@ -146,6 +146,14 @@ type HandoffResult struct {
 	Lease           cache.Lease
 }
 
+type ReleaseHandoffRequest struct {
+	MaterializationID cache.MaterializationID
+	ReferenceID       cache.ReferenceID
+	LeaseID           cache.LeaseID
+	OwnerKind         cache.LeaseOwnerKind
+	OwnerID           string
+}
+
 func (manager *Manager) PrepareHandoff(ctx context.Context, request HandoffRequest) (HandoffResult, error) {
 	if manager == nil || manager.files == nil || manager.catalog == nil || manager.clock == nil {
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff: nil manager")
@@ -187,6 +195,23 @@ func (manager *Manager) PrepareHandoff(ctx context.Context, request HandoffReque
 		return HandoffResult{}, fmt.Errorf("prepare cache handoff catalog: %w", err)
 	}
 	return HandoffResult{Path: filesystemResult.Info.Path, Materialization: materialization, Reference: reference, Lease: lease}, nil
+}
+
+func (manager *Manager) ReleaseHandoff(ctx context.Context, request ReleaseHandoffRequest) error {
+	if manager == nil || manager.catalog == nil || manager.clock == nil {
+		return fmt.Errorf("release cache handoff: nil manager")
+	}
+	if ctx == nil {
+		return fmt.Errorf("release cache handoff: nil context")
+	}
+	return manager.catalog.ReleaseHandoff(ctx, cachestore.ReleaseHandoffRequest{
+		MaterializationID: request.MaterializationID,
+		ReferenceID:       request.ReferenceID,
+		LeaseID:           request.LeaseID,
+		OwnerKind:         request.OwnerKind,
+		OwnerID:           request.OwnerID,
+		ReleasedAt:        manager.now(),
+	})
 }
 
 type ReconcileReport struct {

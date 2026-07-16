@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -229,6 +230,101 @@ func TestPrepareHandoffAtomicallyCreatesMaterializationReferenceAndLease(t *test
 	}
 }
 
+func TestMarkMaterializationDirtyRequiresExactActiveHandoff(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t, ctx, newVersion2Database(t, ctx))
+	blob, entry, materialization, reference, lease := validGraph()
+	reference.OwnerKind = cache.ReferenceOwnerEdit
+	reference.OwnerID = lease.OwnerID
+	reference.Target = cache.MaterializationTarget(materialization.ID)
+	must(t, store.Publish(ctx, blob, entry))
+	must(t, store.PrepareHandoff(ctx, materialization, reference, lease))
+
+	request := MarkDirtyRequest{
+		MaterializationID: materialization.ID, ReferenceID: reference.ID, LeaseID: lease.ID,
+		OwnerKind: lease.OwnerKind, OwnerID: lease.OwnerID, CurrentBlobID: cache.BlobID(strings.Repeat("1", 64)),
+		Size: 11, ObservedAt: time.Unix(20, 0).UTC(),
+	}
+	wrong := request
+	wrong.OwnerID = "wrong-owner"
+	if _, err := store.MarkMaterializationDirty(ctx, wrong); err == nil {
+		t.Fatal("MarkMaterializationDirty accepted the wrong owner")
+	}
+	got, err := store.MarkMaterializationDirty(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != cache.MaterializationDirty || got.CurrentBlobID != request.CurrentBlobID || got.Size != request.Size {
+		t.Fatalf("dirty materialization = %#v", got)
+	}
+}
+
+func TestBeginEvictionRechecksProtectionsAndPersistsCrashResumeClaim(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t, ctx, newVersion2Database(t, ctx))
+	blob, entry, materialization, reference, lease := validGraph()
+	reference.OwnerKind = cache.ReferenceOwnerEdit
+	reference.OwnerID = lease.OwnerID
+	reference.Target = cache.MaterializationTarget(materialization.ID)
+	must(t, store.Publish(ctx, blob, entry))
+	must(t, store.PrepareHandoff(ctx, materialization, reference, lease))
+
+	if _, err := store.BeginEviction(ctx, cache.MaterializationEviction(materialization.ID), time.Unix(20, 0).UTC()); !errors.Is(err, ErrEvictionProtected) {
+		t.Fatalf("BeginEviction protected error = %v", err)
+	}
+	must(t, store.ReleaseHandoff(ctx, ReleaseHandoffRequest{
+		MaterializationID: materialization.ID, ReferenceID: reference.ID, LeaseID: lease.ID,
+		OwnerKind: lease.OwnerKind, OwnerID: lease.OwnerID, ReleasedAt: time.Unix(21, 0).UTC(),
+	}))
+	claim, err := store.BeginEviction(ctx, cache.MaterializationEviction(materialization.ID), time.Unix(22, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.Target.MaterializationID != materialization.ID {
+		t.Fatalf("claim = %#v", claim)
+	}
+	pending, err := store.ListPendingEvictions(ctx, 8)
+	if err != nil || len(pending) != 1 || pending[0] != claim {
+		t.Fatalf("pending = %#v, %v", pending, err)
+	}
+	if err := store.FinalizeEviction(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.LoadSnapshot(ctx)
+	if err != nil || len(snapshot.Materializations) != 0 {
+		t.Fatalf("snapshot after finalize = %#v, %v", snapshot, err)
+	}
+}
+
+func TestEntryEvictionClaimRejectsConcurrentReferenceAndFinalizesEntryBlob(t *testing.T) {
+	ctx := context.Background()
+	store := newStore(t, ctx, newVersion2Database(t, ctx))
+	blob, entry, _, reference, _ := validGraph()
+	must(t, store.Publish(ctx, blob, entry))
+	must(t, store.AddReference(ctx, reference))
+	if _, err := store.BeginEviction(ctx, cache.EntryEviction(entry.ID), time.Unix(20, 0).UTC()); !errors.Is(err, ErrEvictionProtected) {
+		t.Fatalf("BeginEviction with reference = %v", err)
+	}
+	must(t, store.RemoveReference(ctx, reference.ID))
+	claim, err := store.BeginEviction(ctx, cache.EntryEviction(entry.ID), time.Unix(21, 0).UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.EntryID != entry.ID || claim.BlobID != blob.ID {
+		t.Fatalf("claim = %#v", claim)
+	}
+	if err := store.AddReference(ctx, reference); !errors.Is(err, ErrEvictionProtected) {
+		t.Fatalf("AddReference against deleting blob = %v", err)
+	}
+	if err := store.FinalizeEviction(ctx, claim); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := store.LoadSnapshot(ctx)
+	if err != nil || len(snapshot.Entries) != 0 || len(snapshot.Blobs) != 0 {
+		t.Fatalf("snapshot after entry eviction = %#v, %v", snapshot, err)
+	}
+}
+
 func TestConcurrentDuplicateReferenceLeavesOneRow(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -272,6 +368,19 @@ func TestNewRejectsVersion1AndChangedContract(t *testing.T) {
 	}
 	if _, err := New(ctx, v2); err == nil {
 		t.Fatal("New accepted changed schema contract")
+	}
+}
+
+func TestNewAcceptsVersion3WithoutChangingVersion2CatalogBehavior(t *testing.T) {
+	ctx := context.Background()
+	database := newDatabaseAtHead(t, ctx, 3)
+	store, err := New(ctx, database)
+	if err != nil {
+		t.Fatalf("New(Version 3): %v", err)
+	}
+	blob, entry, _, _, _ := validGraph()
+	if err := store.Publish(ctx, blob, entry); err != nil {
+		t.Fatalf("publish through Version 3 cache store: %v", err)
 	}
 }
 
@@ -384,7 +493,7 @@ func newDatabaseAtHead(t *testing.T, ctx context.Context, head int) *sql.DB {
 	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil { //nolint:gosec // directory requires owner traversal
 		t.Fatal(err)
 	}
-	migrations := []migration.Migration{migration.Version1(), migration.Version2()}
+	migrations := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
 	for index := 0; index < head; index++ {
 		m := migrations[index]
 		for _, statement := range m.Statements {

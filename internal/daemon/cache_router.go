@@ -17,7 +17,10 @@ import (
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 )
 
-const CacheMaterialize = "cache.materialize"
+const (
+	CacheMaterialize    = "cache.materialize"
+	CacheReleaseHandoff = "cache.release_handoff"
+)
 
 type CacheMaterializeRequest struct {
 	Location    ipc.WireLocation     `json:"location"`
@@ -35,6 +38,35 @@ type CacheMaterializeResponse struct {
 	LeaseID           cache.LeaseID           `json:"lease_id"`
 	Path              string                  `json:"path"`
 	SourceFingerprint ipc.WireFingerprint     `json:"source_fingerprint"`
+}
+
+type CacheReleaseHandoffRequest struct {
+	MaterializationID cache.MaterializationID `json:"materialization_id"`
+	ReferenceID       cache.ReferenceID       `json:"reference_id"`
+	LeaseID           cache.LeaseID           `json:"lease_id"`
+	OwnerKind         cache.LeaseOwnerKind    `json:"owner_kind"`
+	OwnerID           string                  `json:"owner_id"`
+}
+
+type CacheReleaseHandoffResponse struct {
+	Released bool `json:"released"`
+}
+
+func (s *providerSession) cacheReleaseHandoff(ctx context.Context, payload json.RawMessage) (any, error) {
+	if s.cache == nil {
+		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+	}
+	var request CacheReleaseHandoffRequest
+	if err := decodePayload(payload, &request); err != nil {
+		return nil, invalidArgument("decode cache handoff release request", err)
+	}
+	if err := s.cache.ReleaseHandoff(ctx, cachemanager.ReleaseHandoffRequest{
+		MaterializationID: request.MaterializationID, ReferenceID: request.ReferenceID, LeaseID: request.LeaseID,
+		OwnerKind: request.OwnerKind, OwnerID: request.OwnerID,
+	}); err != nil {
+		return nil, internalError("release cache handoff", err)
+	}
+	return CacheReleaseHandoffResponse{Released: true}, nil
 }
 
 func (s *providerSession) cacheMaterialize(ctx context.Context, payload json.RawMessage) (response any, resultErr error) {

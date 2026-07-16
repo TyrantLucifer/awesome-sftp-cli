@@ -35,9 +35,16 @@ func New(ctx context.Context, database *sql.DB) (*Store, error) {
 		return nil, fmt.Errorf("new cache store: reserve validation connection: %w", err)
 	}
 	defer connection.Close()
-	compiled := []migration.Migration{migration.Version1(), migration.Version2()}
-	contracts := map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract()}
-	if err := migration.ValidateHead(ctx, connection, compiled, contracts, 2); err != nil {
+	var head uint64
+	if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&head); err != nil {
+		return nil, fmt.Errorf("new cache store: read schema head: %w", err)
+	}
+	compiled := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
+	contracts := map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract(), 3: migration.Version3SchemaContract()}
+	if head != 2 && head != 3 {
+		return nil, fmt.Errorf("new cache store: unsupported schema head %d", head)
+	}
+	if err := migration.ValidateHead(ctx, connection, compiled, contracts, head); err != nil {
 		return nil, fmt.Errorf("new cache store: %w", err)
 	}
 	guard, err := wal.OpenFileGuard(ctx, connection)
@@ -244,8 +251,11 @@ func (store *Store) AddReference(ctx context.Context, item cache.Reference) erro
 	}
 	blob, materialization := targetValues(item.Target)
 	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
-		_, err := w.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,blob_sha256,materialization_id,created_at_unix) VALUES(?,?,?,?,?,?)", item.ID, item.OwnerKind, item.OwnerID, blob, materialization, unix(item.CreatedAt))
-		if err != nil {
+		result, err := w.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,blob_sha256,materialization_id,created_at_unix) SELECT ?,?,?,?,?,? WHERE (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_blobs WHERE sha256=? AND state='published')) OR (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_materializations WHERE materialization_id=? AND state<>'deleting'))", item.ID, item.OwnerKind, item.OwnerID, blob, materialization, unix(item.CreatedAt), blob, blob, materialization, materialization)
+		if err := requireOne("add cache reference", result, err); err != nil {
+			if err != nil && !strings.Contains(err.Error(), "UNIQUE constraint") {
+				return errors.Join(ErrEvictionProtected, fmt.Errorf("add cache reference %q: %w", item.ID, err))
+			}
 			return fmt.Errorf("add cache reference %q: %w", item.ID, err)
 		}
 		return nil
@@ -294,9 +304,9 @@ func (store *Store) AcquireLease(ctx context.Context, item cache.Lease) error {
 	}
 	pid, birth := processValues(item.Process)
 	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
-		_, err := w.ExecContext(ctx, "INSERT INTO cache_leases(lease_id,blob_sha256,materialization_id,owner_kind,owner_id,daemon_instance_id,owner_pid,process_birth_identity,heartbeat_at_unix,expires_at_unix,grace_until_unix,state) VALUES(?,?,?,?,?,?,?,?,?,?,?,'active')", item.ID, blob, materialization, owner, item.OwnerID, item.DaemonInstanceID, pid, birth, unix(item.HeartbeatAt), unix(item.ExpiresAt), unix(item.GraceUntil))
-		if err != nil {
-			return fmt.Errorf("acquire cache lease %q: %w", item.ID, err)
+		result, err := w.ExecContext(ctx, "INSERT INTO cache_leases(lease_id,blob_sha256,materialization_id,owner_kind,owner_id,daemon_instance_id,owner_pid,process_birth_identity,heartbeat_at_unix,expires_at_unix,grace_until_unix,state) SELECT ?,?,?,?,?,?,?,?,?,?,?,'active' WHERE (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_blobs WHERE sha256=? AND state='published')) OR (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_materializations WHERE materialization_id=? AND state<>'deleting'))", item.ID, blob, materialization, owner, item.OwnerID, item.DaemonInstanceID, pid, birth, unix(item.HeartbeatAt), unix(item.ExpiresAt), unix(item.GraceUntil), blob, blob, materialization, materialization)
+		if err := requireOne("acquire cache lease", result, err); err != nil {
+			return errors.Join(ErrEvictionProtected, fmt.Errorf("acquire cache lease %q: %w", item.ID, err))
 		}
 		return nil
 	})
@@ -331,6 +341,61 @@ func (store *Store) ReleaseLease(ctx context.Context, item cache.Lease) error {
 	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
 		result, err := w.ExecContext(ctx, "UPDATE cache_leases SET heartbeat_at_unix=?,expires_at_unix=?,grace_until_unix=?,state='released' WHERE lease_id=? AND state='active' AND daemon_instance_id=? AND owner_kind=? AND owner_id=? AND blob_sha256 IS ? AND materialization_id IS ? AND owner_pid IS ? AND process_birth_identity IS ? AND heartbeat_at_unix<=?", unix(item.ReleasedAt), unix(maxTime(item.ExpiresAt, item.ReleasedAt)), unix(maxTime(item.GraceUntil, maxTime(item.ExpiresAt, item.ReleasedAt))), item.ID, item.DaemonInstanceID, owner, item.OwnerID, blob, materialization, pid, birth, unix(item.ReleasedAt))
 		return requireOne("release cache lease", result, err)
+	})
+}
+
+type ReleaseHandoffRequest struct {
+	MaterializationID cache.MaterializationID
+	ReferenceID       cache.ReferenceID
+	LeaseID           cache.LeaseID
+	OwnerKind         cache.LeaseOwnerKind
+	OwnerID           string
+	ReleasedAt        time.Time
+}
+
+// ReleaseHandoff atomically releases the process lease and removes its exact
+// reachability reference. It never updates or deletes the materialization.
+func (store *Store) ReleaseHandoff(ctx context.Context, request ReleaseHandoffRequest) error {
+	if _, err := cache.ParseMaterializationID(string(request.MaterializationID)); err != nil {
+		return fmt.Errorf("release cache handoff: %w", err)
+	}
+	if _, err := cache.ParseReferenceID(string(request.ReferenceID)); err != nil {
+		return fmt.Errorf("release cache handoff: %w", err)
+	}
+	if _, err := cache.ParseLeaseID(string(request.LeaseID)); err != nil {
+		return fmt.Errorf("release cache handoff: %w", err)
+	}
+	owner, err := encodeLeaseOwner(request.OwnerKind)
+	if err != nil || request.OwnerID == "" || len(request.OwnerID) > 128 || validateTime("handoff release", request.ReleasedAt) != nil {
+		return fmt.Errorf("release cache handoff: invalid owner or time")
+	}
+	return store.write(ctx, 2, func(connection *sql.Conn, writer *transactionWriter) error {
+		var state, storedOwner, storedOwnerID, materializationID string
+		if err := connection.QueryRowContext(ctx, "SELECT state,owner_kind,owner_id,materialization_id FROM cache_leases WHERE lease_id=?", request.LeaseID).Scan(&state, &storedOwner, &storedOwnerID, &materializationID); err != nil {
+			return fmt.Errorf("release cache handoff lease: %w", err)
+		}
+		if storedOwner != owner || storedOwnerID != request.OwnerID || materializationID != string(request.MaterializationID) || state != string(cache.LeaseActive) && state != string(cache.LeaseReleased) {
+			return errors.New("release cache handoff: lease identity does not match")
+		}
+		var referenceOwner, referenceOwnerID, referenceMaterialization string
+		referenceErr := connection.QueryRowContext(ctx, "SELECT owner_kind,owner_id,materialization_id FROM cache_references WHERE reference_id=?", request.ReferenceID).Scan(&referenceOwner, &referenceOwnerID, &referenceMaterialization)
+		if referenceErr != nil && !errors.Is(referenceErr, sql.ErrNoRows) {
+			return fmt.Errorf("release cache handoff reference: %w", referenceErr)
+		}
+		if errors.Is(referenceErr, sql.ErrNoRows) && state == string(cache.LeaseActive) {
+			return errors.New("release cache handoff: active lease reference is missing")
+		}
+		if referenceErr == nil && (referenceOwner != owner || referenceOwnerID != request.OwnerID || referenceMaterialization != string(request.MaterializationID)) {
+			return errors.New("release cache handoff: reference identity does not match")
+		}
+		released := unix(request.ReleasedAt)
+		if _, err := writer.ExecContext(ctx, "UPDATE cache_leases SET heartbeat_at_unix=max(heartbeat_at_unix,?),expires_at_unix=max(expires_at_unix,?),grace_until_unix=max(grace_until_unix,expires_at_unix,?),state='released' WHERE lease_id=? AND state='active'", released, released, released, request.LeaseID); err != nil {
+			return fmt.Errorf("release cache handoff lease: %w", err)
+		}
+		if _, err := writer.ExecContext(ctx, "DELETE FROM cache_references WHERE reference_id=?", request.ReferenceID); err != nil {
+			return fmt.Errorf("release cache handoff reference: %w", err)
+		}
+		return nil
 	})
 }
 

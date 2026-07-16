@@ -3,8 +3,10 @@ package cachemanager
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -133,6 +135,205 @@ func TestPrepareHandoffPublishesMaterializationBeforeAtomicReachabilityAndLease(
 	}
 	if len(reconcile.DirtyCandidates) != 1 || reconcile.DirtyCandidates[0] != result.Materialization.ID || !reconcile.NeedsAttention {
 		t.Fatalf("dirty reconcile = %#v", reconcile)
+	}
+}
+
+func TestReleaseHandoffIsAtomicIdempotentAndNeverDeletesDirtyMaterialization(t *testing.T) {
+	manager, _, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("editable")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/release"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("a", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("b", 32)), LeaseID: cache.LeaseID(strings.Repeat("c", 32)),
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dirty := handoff.Materialization
+	dirty.State = cache.MaterializationDirty
+	dirty.CurrentBlobID = cache.BlobID(strings.Repeat("e", 64))
+	dirty.Size++
+	if err := manager.catalog.UpdateMaterialization(ctx, dirty); err != nil {
+		t.Fatal(err)
+	}
+	request := ReleaseHandoffRequest{
+		MaterializationID: dirty.ID, ReferenceID: handoff.Reference.ID, LeaseID: handoff.Lease.ID,
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	}
+	if err := manager.ReleaseHandoff(ctx, request); err != nil {
+		t.Fatalf("release handoff: %v", err)
+	}
+	if err := manager.ReleaseHandoff(ctx, request); err != nil {
+		t.Fatalf("repeat release handoff: %v", err)
+	}
+	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Materializations) != 1 || snapshot.Materializations[0].State != cache.MaterializationDirty || len(snapshot.References) != 0 || len(snapshot.Leases) != 1 || snapshot.Leases[0].State != cache.LeaseReleased {
+		t.Fatalf("snapshot after release = %#v", snapshot)
+	}
+}
+
+func TestReleaseHandoffRollsBackWhenReferenceIdentityDoesNotMatch(t *testing.T) {
+	manager, _, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("editable")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/rollback"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("a", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("b", 32)), LeaseID: cache.LeaseID(strings.Repeat("c", 32)),
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = manager.ReleaseHandoff(ctx, ReleaseHandoffRequest{
+		MaterializationID: handoff.Materialization.ID, ReferenceID: cache.ReferenceID(strings.Repeat("f", 32)), LeaseID: handoff.Lease.ID,
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	})
+	if err == nil {
+		t.Fatal("release with wrong reference ID succeeded")
+	}
+	snapshot, loadErr := manager.catalog.LoadSnapshot(ctx)
+	if loadErr != nil || len(snapshot.References) != 1 || snapshot.Leases[0].State != cache.LeaseActive {
+		t.Fatalf("snapshot after rejected release = (%#v, %v)", snapshot, loadErr)
+	}
+}
+
+func TestMarkDirtyHashesStableMaterializationAndRequiresExactOwner(t *testing.T) {
+	manager, _, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("editable")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/dirty"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	handoff, err := manager.PrepareHandoff(ctx, HandoffRequest{
+		EntryID: published.Entry.ID, MaterializationID: cache.MaterializationID(strings.Repeat("a", 32)),
+		ReferenceID: cache.ReferenceID(strings.Repeat("b", 32)), LeaseID: cache.LeaseID(strings.Repeat("c", 32)),
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed := []byte("locally changed and rehashed")
+	if err := os.WriteFile(handoff.Path, changed, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	request := MarkDirtyRequest{
+		MaterializationID: handoff.Materialization.ID, ReferenceID: handoff.Reference.ID, LeaseID: handoff.Lease.ID,
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	}
+	wrong := request
+	wrong.OwnerID = "wrong-owner"
+	if _, err := manager.MarkDirty(ctx, wrong); err == nil {
+		t.Fatal("MarkDirty accepted wrong owner")
+	}
+	result, err := manager.MarkDirty(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDigest := cache.BlobIDFromDigest(sha256.Sum256(changed))
+	if result.Materialization.State != cache.MaterializationDirty || result.Materialization.CurrentBlobID != wantDigest || result.Materialization.Size != int64(len(changed)) || result.Path != handoff.Path {
+		t.Fatalf("dirty result = %#v, want digest %s", result, wantDigest)
+	}
+}
+
+func TestEnforceQuotaDeletesExactClaimedEntryAndBlob(t *testing.T) {
+	manager, files, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("quota bytes")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/quota"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: 0, GlobalEntries: 0, WorkspaceBytes: 0, MaxCandidates: 8}
+	result, err := manager.EnforceQuota(ctx, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Plan.Satisfied || len(result.Deleted) != 1 || result.Deleted[0].EntryID != published.Entry.ID {
+		t.Fatalf("quota result = %#v", result)
+	}
+	if _, err := files.InspectBlob(published.Blob.ID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("blob still inspectable: %v", err)
+	}
+	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	if err != nil || len(snapshot.Blobs)+len(snapshot.Entries) != 0 {
+		t.Fatalf("snapshot after quota = %#v, %v", snapshot, err)
+	}
+}
+
+func TestRecoverPendingEvictionsResumesAfterCatalogClaim(t *testing.T) {
+	manager, files, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("resume bytes")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/resume"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.catalog.BeginEviction(ctx, cache.EntryEviction(published.Entry.ID), manager.now()); err != nil {
+		t.Fatal(err)
+	}
+	deleted, err := manager.RecoverPendingEvictions(ctx, 8)
+	if err != nil || len(deleted) != 1 || deleted[0].EntryID != published.Entry.ID {
+		t.Fatalf("RecoverPendingEvictions = %#v, %v", deleted, err)
+	}
+	if _, err := files.InspectBlob(published.Blob.ID); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("pending blob still inspectable: %v", err)
+	}
+}
+
+func TestEnforceQuotaReturnsResourceExhaustionWithoutMutatingProtectedContent(t *testing.T) {
+	manager, files, _ := newManager(t)
+	ctx := context.Background()
+	content := []byte("protected")
+	published, err := manager.PublishComplete(ctx, PublishRequest{
+		Location: testLocation(t, "/protected"), SourceFingerprint: testSourceFingerprint(uint64(len(content))), WorkspaceID: "workspace",
+		Policy: cache.PolicyLRU, Source: bytes.NewReader(content), MaxBytes: int64(len(content)), ExpectedSize: sizePointer(int64(len(content))),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reference := cache.Reference{ID: cache.ReferenceID(strings.Repeat("1", 32)), OwnerKind: cache.ReferenceOwnerPreview, OwnerID: "preview", Target: cache.BlobTarget(published.Blob.ID), CreatedAt: manager.now()}
+	if err := manager.catalog.AddReference(ctx, reference); err != nil {
+		t.Fatal(err)
+	}
+	manager.limits = cache.Limits{GlobalBytes: 0, GlobalEntries: 0, WorkspaceBytes: 0, MaxCandidates: 8}
+	result, err := manager.EnforceQuota(ctx, 2)
+	if !errors.Is(err, ErrQuotaUnsatisfied) || result.Plan.Satisfied || len(result.Deleted) != 0 {
+		t.Fatalf("protected quota result = %#v, %v", result, err)
+	}
+	if _, err := files.InspectBlob(published.Blob.ID); err != nil {
+		t.Fatalf("protected blob changed: %v", err)
+	}
+	snapshot, err := manager.catalog.LoadSnapshot(ctx)
+	if err != nil || len(snapshot.Blobs) != 1 || len(snapshot.Entries) != 1 || len(snapshot.References) != 1 {
+		t.Fatalf("protected snapshot = %#v, %v", snapshot, err)
 	}
 }
 

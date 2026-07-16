@@ -79,6 +79,22 @@ func TestCacheMaterializeReadsCompleteProviderFileAndReturnsLeasedPrivatePath(t 
 	if _, err := cache.ParseLeaseID(string(response.LeaseID)); err != nil {
 		t.Fatal(err)
 	}
+	releasePayload, err := json.Marshal(CacheReleaseHandoffRequest{
+		MaterializationID: response.MaterializationID, ReferenceID: response.ReferenceID, LeaseID: response.LeaseID,
+		OwnerKind: cache.LeaseOwnerEditor, OwnerID: "edit-session",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for attempt := 0; attempt < 2; attempt++ {
+		value, err := session.Handle(ctx, CacheReleaseHandoff, releasePayload)
+		if err != nil {
+			t.Fatalf("release attempt %d: %v", attempt+1, err)
+		}
+		if released, ok := value.(CacheReleaseHandoffResponse); !ok || !released.Released {
+			t.Fatalf("release attempt %d response = %#v", attempt+1, value)
+		}
+	}
 }
 
 func TestCacheMaterializeFailsClosedWhenCacheUnavailableOrTargetIsDirectory(t *testing.T) {

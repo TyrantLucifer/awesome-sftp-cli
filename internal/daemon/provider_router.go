@@ -53,6 +53,7 @@ type ProviderSessions struct {
 	transfer        TransferService
 	diagnostics     DiagnosticSource
 	cache           *cachemanager.Manager
+	editSessions    EditSessionStore
 	nextOwner       atomic.Uint64
 }
 
@@ -72,6 +73,7 @@ func (s *ProviderSessions) SetWorkspaceStore(store *workspace.Store)      { s.wo
 func (s *ProviderSessions) SetTransferService(service TransferService)    { s.transfer = service }
 func (s *ProviderSessions) SetDiagnosticSource(source DiagnosticSource)   { s.diagnostics = source }
 func (s *ProviderSessions) SetCacheManager(manager *cachemanager.Manager) { s.cache = manager }
+func (s *ProviderSessions) SetEditSessionStore(store EditSessionStore)    { s.editSessions = store }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	if len(providers) == 0 {
@@ -117,6 +119,7 @@ func (s *ProviderSessions) NewSession() Session {
 		transfer:     s.transfer,
 		diagnostics:  s.diagnostics,
 		cache:        s.cache,
+		editSessions: s.editSessions,
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -150,6 +153,7 @@ type providerSession struct {
 	transfer     TransferService
 	diagnostics  DiagnosticSource
 	cache        *cachemanager.Manager
+	editSessions EditSessionStore
 }
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
@@ -176,7 +180,11 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.listDiagnostics(payload)
 	case CacheMaterialize:
 		return s.cacheMaterialize(ctx, payload)
-	case JobCapture, JobCaptureDelete, JobCreateCopy, JobCreateDelete, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:
+	case CacheReleaseHandoff:
+		return s.cacheReleaseHandoff(ctx, payload)
+	case EditSessionCreate, EditSessionGet, EditSessionTransition, EditSessionEvents, EditSessionRecoverable:
+		return s.handleEditSession(ctx, name, payload)
+	case JobCapture, JobCaptureDelete, JobCreateCopy, JobCreateSyncBack, JobCreateDelete, JobList, JobEvents, JobPause, JobResume, JobCancel, JobResolveConflict:
 		return s.handleJob(ctx, name, payload)
 	case ProviderConnectSSH:
 		return s.connect(ctx, payload)
