@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
 )
 
 const validConfigJSON = `{
@@ -31,6 +33,23 @@ func TestDefaultConfigIsValid(t *testing.T) {
 	if err := got.Validate(); err != nil {
 		t.Fatalf("Default().Validate() returned error: %v", err)
 	}
+}
+
+func TestDecodeAcceptsContextKeymapRemap(t *testing.T) {
+	input := `{"schema_version":1,"keymap":{"bindings":[{"context":"visual","input":"n","action":"down"}]}}`
+	got, err := Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []keymap.Override{{Context: keymap.ContextVisual, Input: "n", Action: keymap.ActionDown}}
+	if !reflect.DeepEqual(got.Keymap.Bindings, want) {
+		t.Fatalf("keymap bindings = %#v, want %#v", got.Keymap.Bindings, want)
+	}
+}
+
+func TestDecodeRejectsConflictingOrReservedKeymap(t *testing.T) {
+	assertDecodeErrorContains(t, `{"schema_version":1,"keymap":{"bindings":[{"context":"normal","input":"k","action":"down"}]}}`, "conflict")
+	assertDecodeErrorContains(t, `{"schema_version":1,"keymap":{"bindings":[{"context":"normal","input":"z","action":"delete"}]}}`, "reserved")
 }
 
 func TestDecodeAcceptsCanonicalConfig(t *testing.T) {

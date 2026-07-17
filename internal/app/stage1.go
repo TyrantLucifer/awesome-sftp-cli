@@ -481,6 +481,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
+	userKeymap, err := tui.NewKeymap(applicationConfig.Keymap.Bindings)
+	if err != nil {
+		return fmt.Errorf("resolve keymap: %w", err)
+	}
 	environment := append([]string(nil), os.Environ()...)
 	externalRuntime, err := resolveExternalRuntimeConfig(applicationConfig.External, environment)
 	if err != nil {
@@ -1372,7 +1376,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			if _, ok := event.(*tcell.EventResize); ok {
 				screen.Sync()
 			}
-			action, ok := tui.TranslateTCellEvent(event, model.Mode)
+			action, ok := tui.TranslateTCellEventWithKeymap(event, model.Mode, userKeymap)
 			if !ok {
 				continue
 			}

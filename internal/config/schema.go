@@ -8,6 +8,8 @@ import (
 	"io"
 	"strings"
 	"unicode/utf8"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
 )
 
 const (
@@ -30,6 +32,7 @@ type Config struct {
 	IPC           IPCConfig      `json:"ipc"`
 	Listing       ListingConfig  `json:"listing"`
 	External      ExternalConfig `json:"external,omitempty"`
+	Keymap        KeymapConfig   `json:"keymap,omitempty"`
 }
 
 type IPCConfig struct {
@@ -60,6 +63,10 @@ type PreviewerConfig struct {
 	TimeoutMS       int64         `json:"timeout_ms"`
 	MaxInputBytes   int64         `json:"max_input_bytes"`
 	RequireComplete bool          `json:"require_complete"`
+}
+
+type KeymapConfig struct {
+	Bindings []keymap.Override `json:"bindings,omitempty"`
 }
 
 func Default() Config {
@@ -142,6 +149,9 @@ func (c Config) Validate() error {
 	}
 	if err := c.External.validate(); err != nil {
 		return fmt.Errorf("external: %w", err)
+	}
+	if _, err := keymap.New(c.Keymap.Bindings); err != nil {
+		return fmt.Errorf("keymap: %w", err)
 	}
 	return nil
 }

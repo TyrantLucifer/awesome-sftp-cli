@@ -56,18 +56,29 @@ Plan-only commit `59c0d2003e41a6ec798fc696bcffcd4d72526622` produced failed push
 
 Both failed-only attempt 2 reruns completed `success` without code, assertion, timeout, or workflow changes. Classification: **environment/known timing fixtures, not introduced code**. Attempts 1 remain preserved and neither attempt is final release evidence.
 
+### M6.1 public-interface CI classification
+
+Public-interface commit `51b7cfc2b5c4c3ce9c6989bb482564d1b096f603` produced successful push run [29582457142](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29582457142) and failed PR run [29582459680](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29582459680) on attempt 1. The PR failures were confined to existing macOS timing fixtures:
+
+| Failed leg | Observed failure | Same-SHA companion | No-change rerun |
+|---|---|---|---|
+| PR oldstable macOS 15 | existing Helper exact-stderr-cap reader observed zero bytes; the existing Stage 2 PTY fixture then observed a transient empty selection before delete confirmation | push oldstable macOS 15 job `87891201150` passed | pending |
+| PR native macOS 15 | existing Helper heartbeat-termination test observed process termination before the client failure became visible | push native macOS 15 job `87891201232` passed | pending |
+
+Classification before rerun: **environment/known timing fixtures, not introduced code**. The same SHA passed both directly comparable push jobs, Linux native/oldstable legs, quality, integration, reproducibility, and all changed app/config/docs packages; the failing tests do not exercise the new config/help/man/completion behavior. A failed-only rerun was requested without code, assertion, timeout, or workflow changes. Attempt 1 remains preserved and cannot serve as final release evidence.
+
 ## Milestone status
 
 | Milestone | Status | Evidence |
 |---|---|---|
-| M6.1 configuration/keymap/public interfaces | In Progress | first config default-overlay RED/GREEN complete; remaining schema, precedence, redaction, keymap, CLI, help/man/completion, and compatibility contracts open |
+| M6.1 configuration/keymap/public interfaces | In Progress | default overlay, versioned config CLI/output, help/man/completion, and validated Normal/Visual keymap RED/GREEN complete; remaining schema, precedence, effective keymap/export, version inventory, and compatibility contracts open |
 | M6.2 migration/package/clean machine | Not Started | no implementation evidence |
 | M6.3 security/compatibility/diagnostics | Not Started | no implementation evidence |
 | M6.4 RC/1.0 | Not Started | no RC, release artifacts, tag, release, or channel evidence |
 
 ## Feature status
 
-REL-001, REL-002, and REL-011 are `In Progress` after the versioned-default, config command, redacted machine output, stable exit-code, and help/man/completion parity contracts. The other 20 Stage 6-owned rows remain `Planned`: WORK-006, VIM-013, VIM-014, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, REL-003 through REL-010, and REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
+VIM-013, VIM-014, REL-001, REL-002, and REL-011 are `In Progress` after the versioned-default, validated context-keymap/reserved-action, config command, redacted machine output, stable exit-code, and help/man/completion parity contracts. The other 18 Stage 6-owned rows remain `Planned`: WORK-006, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, REL-003 through REL-010, and REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
 
 ## Exit criteria
 
@@ -92,3 +103,7 @@ Production Helper distribution and production Level 2 stay **CLOSED**. Opening t
 | M6.1 config CLI complete local gate | CI-equivalent `make check`; `make lint`; `make docs-check`; `git diff --check` | PASS after adding precise `#nosec G302` rationale for the two test-only owner-private 0700 directories; no product permission or lint rule was weakened |
 | M6.1 help/man/completion RED | `go test ./internal/app -run='(TestPublicHelpManAndCompletionsShareCommandFacts\|TestRunCompletion\|TestCommittedManPage)' -count=1` | Intended compile FAIL: no shared public CLI facts, man renderer, completion renderer, or completion command existed |
 | M6.1 help/man/completion GREEN | focused `go test` and `go test -race ./internal/app -count=1`; `make lint`; `make docs-check` | PASS: ordered facts drive help/man and bash/zsh/fish static completions; committed man parity and forbidden remote/auth operation scans green; lint 0 issues |
+| M6.1 keymap registry RED | `go test ./internal/keymap ./internal/tui -run='(TestDefaultSnapshot\|TestNewSupportsContext\|TestNewRejects\|TestTranslateTCellEventWithKeymap)' -count=1` | Intended compile FAIL: no keymap registry, default snapshot, override validation, context lookup, or keymap-aware tcell translation existed |
+| M6.1 config keymap RED | `go test ./internal/config -run='TestDecode(AcceptsContextKeymapRemap\|RejectsConflictingOrReservedKeymap)' -count=1` | Intended compile FAIL: schema had no keymap section |
+| M6.1 keymap GREEN | `go test ./internal/config ./internal/keymap ./internal/tui ./internal/app -count=1`; `go test -race ./internal/keymap ./internal/tui -count=1`; `make lint`; `make docs-check` | PASS: exact Vim default snapshot, Normal/Visual remap isolation, conflict/unreachable/unknown/count/control/dangerous rejection, schema round-trip, app wiring, default tcell regressions, race, lint 0, and docs green |
+| M6.1 keymap complete local gate | CI-equivalent `make check`; `make lint`; `make docs-check`; `git diff --check` | PASS: full unit/provider/integration/docs/tidy/verify gate green; keymap coverage 90.3%, config 87.0%, TUI 69.7%; lint 0 and clean diff check |
