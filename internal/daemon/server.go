@@ -46,6 +46,7 @@ type ServerConfig struct {
 	EventTypes       []string
 	Sessions         SessionFactory
 	MaxInFlight      int
+	MaxFrameBytes    uint32
 	HandshakeTimeout time.Duration
 	VerifyPeer       func(net.Conn) error
 	Logger           *slog.Logger
@@ -59,6 +60,7 @@ type Server struct {
 	eventTypes       []string
 	sessions         SessionFactory
 	maxInFlight      int
+	maxFrameBytes    uint32
 	handshakeTimeout time.Duration
 	verifyPeer       func(net.Conn) error
 	logger           *slog.Logger
@@ -79,6 +81,13 @@ func NewServer(config ServerConfig) (*Server, error) {
 	if config.MaxInFlight <= 0 {
 		return nil, errors.New("create daemon server: maximum in-flight requests must be positive")
 	}
+	maxFrameBytes := config.MaxFrameBytes
+	if maxFrameBytes == 0 {
+		maxFrameBytes = ipc.MaxFrameBytes
+	}
+	if maxFrameBytes > ipc.MaxFrameBytes {
+		return nil, fmt.Errorf("create daemon server: maximum frame bytes %d exceeds protocol maximum %d", maxFrameBytes, ipc.MaxFrameBytes)
+	}
 	if config.HandshakeTimeout <= 0 {
 		return nil, errors.New("create daemon server: handshake timeout must be positive")
 	}
@@ -95,6 +104,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		eventTypes:       append([]string(nil), config.EventTypes...),
 		sessions:         config.Sessions,
 		maxInFlight:      config.MaxInFlight,
+		maxFrameBytes:    maxFrameBytes,
 		handshakeTimeout: config.HandshakeTimeout,
 		verifyPeer:       config.VerifyPeer,
 		logger:           config.Logger,
@@ -127,12 +137,12 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 		return errors.New("serve daemon connection: session factory returned nil")
 	}
 
-	reader, err := ipc.NewReader(conn, ipc.MaxFrameBytes)
+	reader, err := ipc.NewReader(conn, s.maxFrameBytes)
 	if err != nil {
 		_ = session.Close()
 		return err
 	}
-	frameWriter, err := ipc.NewWriter(conn, ipc.MaxFrameBytes)
+	frameWriter, err := ipc.NewWriter(conn, s.maxFrameBytes)
 	if err != nil {
 		_ = session.Close()
 		return err

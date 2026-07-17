@@ -170,7 +170,7 @@ Omitted fields inherit these current defaults:
 }
 ```
 
-`ipc.max_frame_bytes` may be tightened but cannot exceed the protocol maximum of 8 MiB. Listing sizes must be nonzero, `default_page_size` cannot exceed `max_page_size`, and `max_page_size` cannot exceed 4096.
+`ipc.max_frame_bytes` may be tightened but cannot exceed the protocol maximum of 8 MiB. The daemon validates and freezes it at startup for both inbound and outbound control frames; a frame over that configured bound closes only the offending connection. Listing sizes must be nonzero, `default_page_size` cannot exceed `max_page_size`, and `max_page_size` cannot exceed 4096. The client freezes `default_page_size` at startup and uses it for every page of a directory listing; `max_page_size` is the validated ceiling for that effective request size.
 
 `cache` can only tighten the existing safety ceilings: 2 GiB and 4096 global entries, 1 GiB per workspace, and 256 eviction candidates. A workspace byte limit must not exceed the effective global byte limit. The daemon validates and freezes these values when it constructs the cache manager.
 

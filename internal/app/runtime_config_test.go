@@ -3,17 +3,56 @@
 package app
 
 import (
+	"context"
 	"reflect"
 	"testing"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 )
+
+type listingLimitCaptureRPC struct {
+	limit uint32
+}
+
+func (c *listingLimitCaptureRPC) Call(_ context.Context, route string, request any, response any) error {
+	if route != daemon.ProviderList {
+		return nil
+	}
+	c.limit = request.(ipc.ProviderListRequest).Limit
+	*response.(*ipc.ProviderListResponse) = ipc.ProviderListResponse{Done: true}
+	return nil
+}
+
+func TestListLocationUsesValidatedConfiguredPageSize(t *testing.T) {
+	rpc := &listingLimitCaptureRPC{}
+	location, err := domain.NewLocation("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	actions := make(chan tui.Action, 1)
+	listLocation(context.Background(), rpc, tui.PaneID(0), 1, location, 17, actions)
+	if rpc.limit != 17 {
+		t.Fatalf("provider list limit = %d, want configured 17", rpc.limit)
+	}
+	select {
+	case action := <-actions:
+		if page, ok := action.(tui.ListingPage); !ok || !page.Done {
+			t.Fatalf("listing action = %#v", action)
+		}
+	default:
+		t.Fatal("listLocation produced no terminal page")
+	}
+}
 
 func TestRuntimeCacheLimitsUseValidatedConfiguration(t *testing.T) {
 	input := config.CacheConfig{GlobalBytes: 1024, GlobalEntries: 10, WorkspaceBytes: 512, MaxEvictionCandidates: 3}

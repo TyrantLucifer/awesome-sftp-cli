@@ -85,6 +85,41 @@ func TestServeConnRequiresHelloAsFirstFrame(t *testing.T) {
 	}
 }
 
+func TestServeConnUsesConfiguredFrameMaximum(t *testing.T) {
+	server, err := NewServer(ServerConfig{
+		BuildVersion:     "test",
+		Epoch:            "epoch-test",
+		Sessions:         sessionFactory(func() Session { return &testSession{} }),
+		MaxInFlight:      4,
+		MaxFrameBytes:    64,
+		HandshakeTimeout: time.Second,
+		VerifyPeer:       func(net.Conn) error { return nil },
+		Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverConn, clientConn := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(context.Background(), serverConn) }()
+	writer, err := ipc.NewWriter(clientConn, ipc.MaxFrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- writer.WriteFrame(bytes.Repeat([]byte{'x'}, 65)) }()
+	select {
+	case serveErr := <-done:
+		if serveErr == nil || !strings.Contains(serveErr.Error(), "payload exceeds configured limit") {
+			t.Fatalf("ServeConn() error = %v", serveErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeConn did not reject an oversized configured frame")
+	}
+	_ = clientConn.Close()
+	<-writeDone
+}
+
 func TestServeConnNegotiatesAndRoutesRequest(t *testing.T) {
 	server := newTestServer(t, sessionFactory(func() Session { return &testSession{} }))
 	serverConn, clientConn := net.Pipe()

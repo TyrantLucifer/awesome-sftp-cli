@@ -340,7 +340,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	}
 	serveCtx, requestShutdown := context.WithCancel(ctx)
 	defer requestShutdown()
-	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: logger, Shutdown: requestShutdown, VerifyPeer: func(conn net.Conn) error {
+	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, MaxFrameBytes: applicationConfig.IPC.MaxFrameBytes, HandshakeTimeout: 2 * time.Second, Logger: logger, Shutdown: requestShutdown, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {
 			return fmt.Errorf("unexpected peer connection %T", conn)
@@ -1085,7 +1085,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		go func() {
 			defer cancel()
-			listLocation(requestCtx, activeClient, pane, generation, intent.Location, actions)
+			listLocation(requestCtx, activeClient, pane, generation, intent.Location, applicationConfig.Listing.DefaultPageSize, actions)
 		}()
 	}
 	type connectionResult struct {
@@ -1739,11 +1739,15 @@ func capabilitySnapshotFromWire(response ipc.ProviderSnapshotResponse) (domain.C
 	return snapshot, nil
 }
 
-func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, generation uint64, location domain.Location, actions chan<- tui.Action) {
+type providerListRPC interface {
+	Call(context.Context, string, any, any) error
+}
+
+func listLocation(ctx context.Context, client providerListRPC, pane tui.PaneID, generation uint64, location domain.Location, pageSize uint32, actions chan<- tui.Action) {
 	cursor := provider.PageCursor("")
 	for {
 		var response ipc.ProviderListResponse
-		err := client.Call(ctx, daemon.ProviderList, ipc.ProviderListRequest{Location: ipc.EncodeLocation(location), Cursor: cursor, Limit: 256}, &response)
+		err := client.Call(ctx, daemon.ProviderList, ipc.ProviderListRequest{Location: ipc.EncodeLocation(location), Cursor: cursor, Limit: pageSize}, &response)
 		if err != nil {
 			if ctx.Err() == nil {
 				code, retry, daemonLost := providerCallFailure(err)
