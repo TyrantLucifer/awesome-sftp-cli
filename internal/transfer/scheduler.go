@@ -207,7 +207,7 @@ func (scheduler *TransferScheduler) Wait(ctx context.Context, request BandwidthR
 		now := scheduler.clock.Now()
 		scheduler.refillLocked(now)
 		selected := scheduler.selectedLocked()
-		if selected == waiter && scheduler.canGrantLocked(request) {
+		if selected == waiter {
 			scheduler.consumeLocked(request)
 			scheduler.dequeueSelectedLocked()
 			scheduler.grantedBytes += uint64(request.Bytes)
@@ -218,7 +218,7 @@ func (scheduler *TransferScheduler) Wait(ctx context.Context, request BandwidthR
 
 		wake := scheduler.wake
 		waitFor := time.Hour
-		if selected == waiter {
+		if selected == nil && scheduler.isClassHeadLocked(waiter) {
 			waitFor = scheduler.waitDurationLocked(request)
 		}
 		timer := scheduler.clock.NewTimer(waitFor)
@@ -271,9 +271,11 @@ func (scheduler *TransferScheduler) Update(policy SchedulerPolicy) error {
 		bucket.update(normalized.EndpointBytesPerSecond, bucketCapacity(normalized.EndpointBytesPerSecond, normalized.BurstBytes), now)
 	}
 	for jobID, bucket := range scheduler.jobs {
-		if scheduler.jobRates[jobID] == 0 {
-			bucket.update(normalized.JobBytesPerSecond, bucketCapacity(normalized.JobBytesPerSecond, normalized.BurstBytes), now)
+		rate := scheduler.jobRates[jobID]
+		if rate == 0 {
+			rate = normalized.JobBytesPerSecond
 		}
+		bucket.update(rate, bucketCapacity(rate, normalized.BurstBytes), now)
 	}
 	scheduler.policy = normalized
 	scheduler.rebuildCycle()
@@ -402,14 +404,20 @@ func (scheduler *TransferScheduler) enqueue(waiter *bandwidthWaiter) {
 
 func (scheduler *TransferScheduler) selectedLocked() *bandwidthWaiter {
 	for attempts := 0; attempts < len(scheduler.cycle); attempts++ {
-		class := scheduler.cycle[scheduler.cycleIndex]
+		index := (scheduler.cycleIndex + attempts) % len(scheduler.cycle)
+		class := scheduler.cycle[index]
 		queue := scheduler.queue(class)
-		if len(queue) > 0 {
+		if len(queue) > 0 && scheduler.canGrantLocked(queue[0].request) {
+			scheduler.cycleIndex = index
 			return queue[0]
 		}
-		scheduler.cycleIndex = (scheduler.cycleIndex + 1) % len(scheduler.cycle)
 	}
 	return nil
+}
+
+func (scheduler *TransferScheduler) isClassHeadLocked(waiter *bandwidthWaiter) bool {
+	queue := scheduler.queue(waiter.request.Class)
+	return len(queue) > 0 && queue[0] == waiter
 }
 
 func (scheduler *TransferScheduler) dequeueSelectedLocked() {

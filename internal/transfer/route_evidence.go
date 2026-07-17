@@ -18,6 +18,7 @@ type RouteReason string
 
 const (
 	ReasonSameEndpointAtomicRename     RouteReason = "same_endpoint_atomic_rename"
+	ReasonAtomicRenameUnavailable      RouteReason = "atomic_rename_unavailable"
 	ReasonServerCopySelected           RouteReason = "server_copy_capability_selected"
 	ReasonServerCopyFailedBeforeWrite  RouteReason = "server_copy_failed_part_absent"
 	ReasonServerCopyUnavailable        RouteReason = "server_copy_unavailable"
@@ -104,6 +105,11 @@ func freezeRouteEvidence(plan *Plan) {
 		plan.RouteEvidence = &evidence
 
 		return
+	}
+	if plan.Kind == OperationMove && plan.SourceEndpoint.ID == plan.DestinationEndpoint.ID {
+		evidence.Candidates = append(evidence.Candidates, RouteDecision{
+			Route: RouteAtomicRename, Reason: ReasonAtomicRenameUnavailable, Eligible: false,
+		})
 	}
 
 	sameSSH := plan.SourceEndpoint.ID == plan.DestinationEndpoint.ID &&

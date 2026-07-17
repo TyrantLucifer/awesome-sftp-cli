@@ -25,9 +25,10 @@ type ResourceUsage struct {
 }
 
 type ResourceRequest struct {
-	JobID       domain.JobID
-	EndpointIDs []domain.EndpointID
-	Usage       ResourceUsage
+	JobID            domain.JobID
+	EndpointIDs      []domain.EndpointID
+	Usage            ResourceUsage
+	PerEndpointUsage ResourceUsage
 }
 
 type ResourceSnapshot struct {
@@ -137,10 +138,11 @@ func (ledger *ResourceLedger) canEverAcquireLocked(request ResourceRequest) erro
 	if err := usageFits(ResourceUsage{}, request.Usage, ledger.limits); err != nil {
 		return err
 	}
-	if request.Usage.ActiveJobs > ledger.limits.ActiveJobsPerEndpoint && len(request.EndpointIDs) > 0 {
+	perEndpoint := endpointUsage(request)
+	if perEndpoint.ActiveJobs > ledger.limits.ActiveJobsPerEndpoint && len(request.EndpointIDs) > 0 {
 		return fmt.Errorf("%w: per-endpoint active Job ceiling %d", ErrResourceExhausted, ledger.limits.ActiveJobsPerEndpoint)
 	}
-	if request.Usage.Connections > ledger.limits.ConnectionsPerEndpoint && len(request.EndpointIDs) > 0 {
+	if perEndpoint.Connections > ledger.limits.ConnectionsPerEndpoint && len(request.EndpointIDs) > 0 {
 		return fmt.Errorf("%w: per-endpoint connection ceiling %d", ErrResourceExhausted, ledger.limits.ConnectionsPerEndpoint)
 	}
 	return nil
@@ -192,6 +194,9 @@ func normalizeResourceRequest(request ResourceRequest) (ResourceRequest, error) 
 		endpoints = append(endpoints, endpointID)
 	}
 	request.EndpointIDs = endpoints
+	if len(endpoints) > 0 && request.PerEndpointUsage == (ResourceUsage{}) {
+		request.PerEndpointUsage = request.Usage
+	}
 	return request, nil
 }
 
@@ -203,12 +208,13 @@ func (ledger *ResourceLedger) canAcquireLocked(request ResourceRequest) error {
 	if err := usageFits(ledger.total, request.Usage, limits); err != nil {
 		return err
 	}
+	perEndpoint := endpointUsage(request)
 	for _, endpointID := range request.EndpointIDs {
 		current := ledger.perEndpoint[endpointID]
-		if exceeds32(current.ActiveJobs, request.Usage.ActiveJobs, limits.ActiveJobsPerEndpoint) {
+		if exceeds32(current.ActiveJobs, perEndpoint.ActiveJobs, limits.ActiveJobsPerEndpoint) {
 			return fmt.Errorf("%w: endpoint %s active Job ceiling %d", ErrResourceExhausted, endpointID, limits.ActiveJobsPerEndpoint)
 		}
-		if exceeds32(current.Connections, request.Usage.Connections, limits.ConnectionsPerEndpoint) {
+		if exceeds32(current.Connections, perEndpoint.Connections, limits.ConnectionsPerEndpoint) {
 			return fmt.Errorf("%w: endpoint %s connection ceiling %d", ErrResourceExhausted, endpointID, limits.ConnectionsPerEndpoint)
 		}
 	}
@@ -254,8 +260,9 @@ func usageFits(current, requested ResourceUsage, limits ResourceLimits) error {
 func (ledger *ResourceLedger) acquireLocked(request ResourceRequest) {
 	ledger.total = addUsage(ledger.total, request.Usage)
 	ledger.perJob[request.JobID] = addUsage(ledger.perJob[request.JobID], request.Usage)
+	perEndpoint := endpointUsage(request)
 	for _, endpointID := range request.EndpointIDs {
-		ledger.perEndpoint[endpointID] = addUsage(ledger.perEndpoint[endpointID], request.Usage)
+		ledger.perEndpoint[endpointID] = addUsage(ledger.perEndpoint[endpointID], perEndpoint)
 	}
 }
 
@@ -268,17 +275,25 @@ func (ledger *ResourceLedger) release(request ResourceRequest) {
 	} else {
 		ledger.perJob[request.JobID] = jobUsage
 	}
+	perEndpoint := endpointUsage(request)
 	for _, endpointID := range request.EndpointIDs {
-		endpointUsage := subtractUsage(ledger.perEndpoint[endpointID], request.Usage)
-		if endpointUsage == (ResourceUsage{}) {
+		remaining := subtractUsage(ledger.perEndpoint[endpointID], perEndpoint)
+		if remaining == (ResourceUsage{}) {
 			delete(ledger.perEndpoint, endpointID)
 		} else {
-			ledger.perEndpoint[endpointID] = endpointUsage
+			ledger.perEndpoint[endpointID] = remaining
 		}
 	}
 	close(ledger.wake)
 	ledger.wake = make(chan struct{})
 	ledger.mu.Unlock()
+}
+
+func endpointUsage(request ResourceRequest) ResourceUsage {
+	if request.PerEndpointUsage != (ResourceUsage{}) {
+		return request.PerEndpointUsage
+	}
+	return request.Usage
 }
 
 func (ledger *ResourceLedger) newEndpointCountLocked(endpointIDs []domain.EndpointID) uint32 {

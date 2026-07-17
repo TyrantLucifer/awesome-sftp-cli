@@ -38,7 +38,7 @@ type nativeSFTPProcess struct {
 	cmd    *exec.Cmd
 }
 
-func TestLevel2NativeDualSSHDUsesIsolatedControlSessionsAndDirectDataPlane(t *testing.T) {
+func TestLevel2NativeDualSSHDUsesIsolatedControlSessionsAndFixtureLocalDataPlane(t *testing.T) {
 	if os.Getenv("AMSFTP_REAL_SSHD") != "1" {
 		t.Skip("set AMSFTP_REAL_SSHD=1 in an isolated account")
 	}
@@ -85,7 +85,7 @@ func TestLevel2NativeDualSSHDUsesIsolatedControlSessionsAndDirectDataPlane(t *te
 		t.Fatalf("native dual-sshd direct = (%#v, %v)\nsource sshd:\n%s\ntarget sshd:\n%s", result, err, sourceServer.logs.String(), destinationServer.logs.String())
 	}
 	if source.openReads != 0 || destination.openReads != 0 || backend.stagedBytes != result.Bytes {
-		t.Fatalf("native data topology reads/staged = %d/%d/%d", source.openReads, destination.openReads, backend.stagedBytes)
+		t.Fatalf("native control-session Provider reads/fixture-local staged bytes = %d/%d/%d", source.openReads, destination.openReads, backend.stagedBytes)
 	}
 	entries, err := os.ReadDir(destinationServer.dataRoot)
 	if err != nil {

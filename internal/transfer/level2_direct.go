@@ -2,8 +2,6 @@ package transfer
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"reflect"
@@ -84,13 +82,8 @@ func (worker *Worker) refreshExpiredLevel2Preflight(ctx context.Context, plan Pl
 	if err != nil {
 		return Plan{}, false, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "fresh request correlation could not be created", domain.RetryBackoff)
 	}
-	nonceBytes := make([]byte, 16)
-	if _, err := rand.Read(nonceBytes); err != nil {
-		return Plan{}, false, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "fresh request nonce could not be created", domain.RetryBackoff)
-	}
 	request.RequestID = requestID
 	request.DeadlineUnix = now.Add(directprotocol.MaxRequestDuration / 2).Unix()
-	request.Nonce = hex.EncodeToString(nonceBytes)
 	result, err := worker.level2.Preflight(ctx, request)
 	if err != nil {
 		if ctx.Err() != nil {

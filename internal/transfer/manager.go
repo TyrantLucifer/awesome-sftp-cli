@@ -233,17 +233,26 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
+	var queueLease *ResourceLease
 	var release func()
 	if create.InitialState == job.StateQueued {
+		queueLease, err = manager.acquireQueueLease(plan.JobID)
+		if err != nil {
+			return jobstore.Snapshot{}, err
+		}
 		if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
 			release, err = acquirer.Acquire(ctx, plan)
 			if err != nil {
+				queueLease.Release()
 				return jobstore.Snapshot{}, err
 			}
 		}
 	}
 	snapshot, _, err := manager.store.Create(ctx, create)
 	if err != nil {
+		if queueLease != nil {
+			queueLease.Release()
+		}
 		if release != nil {
 			release()
 		}
@@ -253,12 +262,17 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 		if release != nil {
 			manager.retainLease(snapshot.JobID, release)
 		}
-		if err := manager.enqueue(plan.JobID); err != nil {
+		if err := manager.enqueueWithLease(plan.JobID, queueLease); err != nil {
 			manager.releaseLease(snapshot.JobID)
 			return jobstore.Snapshot{}, err
 		}
-	} else if release != nil {
-		release()
+	} else {
+		if queueLease != nil {
+			queueLease.Release()
+		}
+		if release != nil {
+			release()
+		}
 	}
 	return snapshot, nil
 }
@@ -294,15 +308,21 @@ func (manager *Manager) CreateSyncBack(ctx context.Context, intent SyncBackInten
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
+	queueLease, err := manager.acquireQueueLease(plan.JobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
 	var release func()
 	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
 		release, err = acquirer.Acquire(ctx, plan)
 		if err != nil {
+			queueLease.Release()
 			return jobstore.Snapshot{}, err
 		}
 	}
 	snapshot, _, err := manager.store.Create(ctx, create)
 	if err != nil {
+		queueLease.Release()
 		if release != nil {
 			release()
 		}
@@ -311,7 +331,7 @@ func (manager *Manager) CreateSyncBack(ctx context.Context, intent SyncBackInten
 	if release != nil {
 		manager.retainLease(snapshot.JobID, release)
 	}
-	if err := manager.enqueue(plan.JobID); err != nil {
+	if err := manager.enqueueWithLease(plan.JobID, queueLease); err != nil {
 		manager.releaseLease(snapshot.JobID)
 		return jobstore.Snapshot{}, err
 	}
@@ -344,15 +364,21 @@ func (manager *Manager) CreateDelete(ctx context.Context, intent DeleteIntent) (
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
+	queueLease, err := manager.acquireQueueLease(plan.JobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
 	var release func()
 	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
 		release, err = acquirer.Acquire(ctx, plan)
 		if err != nil {
+			queueLease.Release()
 			return jobstore.Snapshot{}, err
 		}
 	}
 	snapshot, _, err := manager.store.Create(ctx, create)
 	if err != nil {
+		queueLease.Release()
 		if release != nil {
 			release()
 		}
@@ -361,7 +387,7 @@ func (manager *Manager) CreateDelete(ctx context.Context, intent DeleteIntent) (
 	if release != nil {
 		manager.retainLease(snapshot.JobID, release)
 	}
-	if err := manager.enqueue(snapshot.JobID); err != nil {
+	if err := manager.enqueueWithLease(snapshot.JobID, queueLease); err != nil {
 		manager.releaseLease(snapshot.JobID)
 		return jobstore.Snapshot{}, err
 	}
@@ -417,10 +443,15 @@ func (manager *Manager) Resume(ctx context.Context, jobID domain.JobID) (jobstor
 	if snapshot.State != job.StatePaused && snapshot.State != job.StateWaitingAuth && snapshot.State != job.StateRetryWait {
 		return jobstore.Snapshot{}, fmt.Errorf("resume Job: state %q cannot be resumed", snapshot.State)
 	}
+	queueLease, err := manager.acquireQueueLease(jobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
 	if snapshot.PauseRequested {
 		value := false
 		snapshot, err = manager.updateControl(ctx, snapshot, &value, nil, "job_pause_cleared")
 		if err != nil {
+			queueLease.Release()
 			return jobstore.Snapshot{}, err
 		}
 	}
@@ -430,9 +461,10 @@ func (manager *Manager) Resume(ctx context.Context, jobID domain.JobID) (jobstor
 	}
 	queued, err := manager.transition(snapshot, job.StateQueued, eventKind, map[string]string{"reason": "user"})
 	if err != nil {
+		queueLease.Release()
 		return jobstore.Snapshot{}, err
 	}
-	if err := manager.enqueue(jobID); err != nil {
+	if err := manager.enqueueWithLease(jobID, queueLease); err != nil {
 		return jobstore.Snapshot{}, err
 	}
 	return queued, nil
@@ -478,8 +510,13 @@ func (manager *Manager) ResolveConflict(ctx context.Context, jobID domain.JobID,
 	if conflictIndex < 0 {
 		return jobstore.Snapshot{}, errors.New("resolve conflict: Job has no waiting conflict")
 	}
+	queueLease, err := manager.acquireQueueLease(jobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
 	eventID, err := domain.NewEventID(manager.generator)
 	if err != nil {
+		queueLease.Release()
 		return jobstore.Snapshot{}, err
 	}
 	applyScope := "item"
@@ -491,10 +528,11 @@ func (manager *Manager) ResolveConflict(ctx context.Context, jobID domain.JobID,
 		Resolution: string(resolution), ApplyScope: applyScope, EventID: eventID, Now: manager.now(),
 	})
 	if err != nil {
+		queueLease.Release()
 		return jobstore.Snapshot{}, err
 	}
 	manager.notify(jobID)
-	if err := manager.enqueue(jobID); err != nil {
+	if err := manager.enqueueWithLease(jobID, queueLease); err != nil {
 		return jobstore.Snapshot{}, err
 	}
 	return queued, nil
@@ -683,14 +721,11 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	if err := manager.applyConflictResolution(&plan); err != nil {
 		return
 	}
-	resourceLease, err := manager.scheduler.AcquireResources(manager.ctx, ResourceRequest{
-		JobID: plan.JobID,
-		EndpointIDs: []domain.EndpointID{
-			plan.SourceEndpoint.ID, plan.DestinationEndpoint.ID,
-		},
-		Usage: executionResourceUsage(plan),
-	})
+	resourceLease, err := manager.scheduler.AcquireResources(manager.ctx, executionResourceRequest(plan))
 	if err != nil {
+		if manager.ctx.Err() == nil {
+			manager.fail(snapshot, fmt.Errorf("execute Job: acquire execution resources: %w", err))
+		}
 		return
 	}
 	defer resourceLease.Release()
@@ -994,12 +1029,27 @@ func (manager *Manager) transitionRequest(snapshot jobstore.Snapshot, to job.Sta
 }
 
 func (manager *Manager) enqueue(jobID domain.JobID) error {
+	lease, err := manager.acquireQueueLease(jobID)
+	if err != nil {
+		return err
+	}
+	return manager.enqueueWithLease(jobID, lease)
+}
+
+func (manager *Manager) acquireQueueLease(jobID domain.JobID) (*ResourceLease, error) {
 	lease, err := manager.scheduler.TryAcquireResources(ResourceRequest{
 		JobID: jobID,
 		Usage: ResourceUsage{QueuedJobs: 1},
 	})
 	if err != nil {
-		return fmt.Errorf("enqueue Job: acquire queue resource: %w", err)
+		return nil, fmt.Errorf("enqueue Job: acquire queue resource: %w", err)
+	}
+	return lease, nil
+}
+
+func (manager *Manager) enqueueWithLease(jobID domain.JobID, lease *ResourceLease) error {
+	if lease == nil {
+		return errors.New("enqueue Job: queue resource lease is required")
 	}
 	manager.mu.Lock()
 	if manager.queueLeases[jobID] != nil {
@@ -1097,6 +1147,18 @@ func executionResourceUsage(plan Plan) ResourceUsage {
 		FileDescriptors: 2 + 3*connections,
 		Goroutines:      1,
 		MemoryBytes:     uint64(plan.BufferBytes),
+	}
+}
+
+func executionResourceRequest(plan Plan) ResourceRequest {
+	return ResourceRequest{
+		JobID:       plan.JobID,
+		EndpointIDs: []domain.EndpointID{plan.SourceEndpoint.ID, plan.DestinationEndpoint.ID},
+		Usage:       executionResourceUsage(plan),
+		PerEndpointUsage: ResourceUsage{
+			ActiveJobs:  1,
+			Connections: 1,
+		},
 	}
 }
 

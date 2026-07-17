@@ -542,7 +542,8 @@ func checkpointMatchesPlan(checkpoint Checkpoint, plan Plan) bool {
 	}
 	if plan.Route == RouteLevel2Direct {
 		if plan.Level2Preflight == nil || checkpoint.DirectFormatVersion != Level2DirectFormatVersion ||
-			validateLowerHexIdentity(checkpoint.DirectNonce, 32) != nil {
+			validateLowerHexIdentity(checkpoint.DirectNonce, 32) != nil ||
+			checkpoint.DirectNonce != plan.Level2Preflight.Request.Nonce {
 			return false
 		}
 	} else if checkpoint.DirectFormatVersion != 0 || checkpoint.DirectNonce != "" {

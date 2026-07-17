@@ -99,6 +99,23 @@ func TestLevel2RouteEvidencePreservesRequireStrongPolicy(t *testing.T) {
 	}
 }
 
+func TestMoveRouteEvidenceRecordsUnavailableAtomicRenameCandidate(t *testing.T) {
+	plan := freezeSameEndpointRouteContractPlan(ClipboardCopy, false)(t)
+	plan.Kind = OperationMove
+	plan.MoveStrategy = MoveCopyDelete
+	freezeRouteEvidence(&plan)
+	if plan.RouteEvidence == nil {
+		t.Fatal("move Plan has no route evidence")
+	}
+	want := RouteDecision{Route: RouteAtomicRename, Reason: ReasonAtomicRenameUnavailable, Eligible: false}
+	for _, candidate := range plan.RouteEvidence.Candidates {
+		if candidate == want {
+			return
+		}
+	}
+	t.Fatalf("route candidates = %#v, want %#v", plan.RouteEvidence.Candidates, want)
+}
+
 func TestValidateExecutionRejectsTamperedRouteEvidence(t *testing.T) {
 	original := freezeCrossEndpointRouteContractPlan(t)
 	tests := []struct {

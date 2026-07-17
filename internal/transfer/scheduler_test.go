@@ -256,6 +256,24 @@ func TestTransferSchedulerWeightedRoundRobinNeverStarvesBulk(t *testing.T) {
 	}
 }
 
+func TestTransferSchedulerGrantableInteractiveBypassesRateLimitedBulkHead(t *testing.T) {
+	clock := foundation.NewManualClock(time.Unix(2_500, 0))
+	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{BurstBytes: 8, QuantumBytes: 8})
+	bulk := waitForGrant(t, scheduler, BandwidthRequest{
+		JobID: "slow-bulk", Class: ScheduleBulk, Bytes: 8, JobBytesPerSecond: 1,
+	})
+	assertNoGrant(t, bulk)
+
+	scheduler.mu.Lock()
+	scheduler.cycleIndex = len(scheduler.cycle) - 1
+	scheduler.mu.Unlock()
+	interactive := waitForGrant(t, scheduler, BandwidthRequest{
+		JobID: "interactive", Class: ScheduleInteractive, Bytes: 1,
+	})
+	assertGrant(t, interactive)
+	assertNoGrant(t, bulk)
+}
+
 func TestTransferSchedulerHotRateUpdateOnlyAffectsFutureTokens(t *testing.T) {
 	clock := foundation.NewManualClock(time.Unix(3_000, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
@@ -285,6 +303,25 @@ func TestTransferSchedulerHotRateUpdateOnlyAffectsFutureTokens(t *testing.T) {
 	assertNoGrant(t, done)
 	clock.Advance(time.Millisecond)
 	assertGrant(t, done)
+}
+
+func TestTransferSchedulerHotUpdateTightensExplicitJobBucketCapacity(t *testing.T) {
+	clock := foundation.NewManualClock(time.Unix(3_250, 0))
+	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{BurstBytes: 8, QuantumBytes: 8})
+	request := BandwidthRequest{JobID: "explicit-rate", Class: ScheduleBulk, Bytes: 8, JobBytesPerSecond: 8}
+	if err := scheduler.Wait(context.Background(), request); err != nil {
+		t.Fatalf("initial explicit-rate grant: %v", err)
+	}
+	if err := scheduler.Update(SchedulerPolicy{BurstBytes: 4, QuantumBytes: 4}); err != nil {
+		t.Fatalf("tighten policy: %v", err)
+	}
+	scheduler.mu.Lock()
+	capacity := scheduler.jobs[request.JobID].capacity
+	rate := scheduler.jobs[request.JobID].rate
+	scheduler.mu.Unlock()
+	if capacity != 4 || rate != request.JobBytesPerSecond {
+		t.Fatalf("explicit Job bucket rate/capacity = %d/%d, want %d/4", rate, capacity, request.JobBytesPerSecond)
+	}
 }
 
 func TestTransferSchedulerRejectsHotUpdateThatWouldStrandQueuedGrant(t *testing.T) {
@@ -650,6 +687,31 @@ func TestExecutionResourceUsageAccountsSSHConnectionsAndDirectHelper(t *testing.
 	if usage.ActiveJobs != 1 || usage.Connections != 2 || usage.SSHProcesses != 2 ||
 		usage.HelperProcesses != 1 || usage.FileDescriptors != 8 || usage.Goroutines != 1 || usage.MemoryBytes != 4096 {
 		t.Fatalf("execution resource usage = %+v", usage)
+	}
+}
+
+func TestExecutionResourceRequestChargesOneConnectionToEachEndpoint(t *testing.T) {
+	plan := Plan{
+		JobID:               "job-two-endpoints",
+		SourceEndpoint:      domain.Endpoint{ID: "endpoint-a", Kind: domain.EndpointSSH},
+		DestinationEndpoint: domain.Endpoint{ID: "endpoint-b", Kind: domain.EndpointSSH},
+		BufferBytes:         4096,
+	}
+	request := executionResourceRequest(plan)
+	if request.Usage.Connections != 2 {
+		t.Fatalf("global connections = %d, want 2", request.Usage.Connections)
+	}
+	if request.PerEndpointUsage.Connections != 1 || request.PerEndpointUsage.ActiveJobs != 1 {
+		t.Fatalf("per-endpoint usage = %+v, want one connection and one active Job", request.PerEndpointUsage)
+	}
+	limits := HardResourceCeilings()
+	limits.ConnectionsPerEndpoint = 1
+	ledger, err := NewResourceLedger(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ledger.TryAcquire(request); err != nil {
+		t.Fatalf("two-endpoint Job with one connection per endpoint: %v", err)
 	}
 }
 

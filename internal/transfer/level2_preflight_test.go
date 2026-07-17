@@ -201,6 +201,14 @@ func TestValidateExecutionRejectsTamperedLevel2Binding(t *testing.T) {
 	}{
 		{name: "target alias", mutate: func(plan *Plan) { plan.Level2Preflight.Request.TargetHostAlias = "other-target" }},
 		{name: "source digest", mutate: func(plan *Plan) { plan.Level2Preflight.Result.SourceSHA256 = strings.Repeat("b", 64) }},
+		{name: "internally consistent foreign source size", mutate: func(plan *Plan) {
+			foreignSize := *plan.Source.Fingerprint.Size + 1
+			plan.Level2Preflight.Request.ExpectedSize = foreignSize
+			plan.Level2Preflight.Request.SourceFingerprint.Size = &foreignSize
+			plan.Level2Preflight.Result.SourceSize = foreignSize
+			plan.Level2Preflight.Result.SourceFingerprint.Size = &foreignSize
+			plan.Level2Preflight.SourceSize = foreignSize
+		}},
 		{name: "control semantics", mutate: func(plan *Plan) { plan.Level2Preflight.Request.Control.CancelSemantics = "best_effort" }},
 		{name: "preflight outcome", mutate: func(plan *Plan) { plan.Level2Preflight.Outcome = Level2PreflightFailed }},
 		{name: "route evidence", mutate: func(plan *Plan) { plan.RouteEvidence.Selected.Reason = ReasonBoundedRelayDefault }},

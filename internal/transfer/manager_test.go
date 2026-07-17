@@ -64,6 +64,83 @@ func TestManagerContinuesCreatedJobAfterClientContextCancellation(t *testing.T) 
 	}
 }
 
+func TestManagerDoesNotPersistQueuedJobWhenQueueAdmissionIsExhausted(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("queue admission"), ConflictAsk)
+	ctx := context.Background()
+	store, database := openTransferStore(t, ctx, testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	limits := HardResourceCeilings()
+	limits.QueuedJobs = 1
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: &testkit.SequenceGenerator{},
+		MaxConcurrent: 1, MaxQueued: 1, ResourceLimits: limits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	manager.mu.Lock()
+	manager.started = true
+	manager.mu.Unlock()
+	occupied, err := manager.scheduler.TryAcquireResources(ResourceRequest{
+		JobID: "job-occupies-queue", Usage: ResourceUsage{QueuedJobs: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Release()
+
+	_, err = manager.CreateCopy(ctx, Intent{
+		Clipboard: ClipboardCopy, Source: fixture.plan.Source,
+		DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name:                 fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if !errors.Is(err, ErrResourceExhausted) {
+		t.Fatalf("CreateCopy() error = %v, want ErrResourceExhausted", err)
+	}
+	jobs, listErr := store.List(ctx, 10)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("durable Jobs after rejected queue admission = %#v, want none", jobs)
+	}
+}
+
+func TestManagerPermanentlyImpossibleExecutionResourceFailsDurableJob(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("impossible execution"), ConflictAsk)
+	ctx := context.Background()
+	store, database := openTransferStore(t, ctx, testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	created, _, err := store.Create(ctx, fixture.create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := HardResourceCeilings()
+	limits.MemoryBytes = 1
+	generator := &testkit.SequenceGenerator{}
+	if _, err := generator.New("evt_"); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: generator,
+		Now:           func() time.Time { return fixture.create.Now.Add(time.Second) },
+		MaxConcurrent: 1, MaxQueued: 1, ResourceLimits: limits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	manager.execute(created.JobID)
+	got, err := store.Get(ctx, created.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != job.StateFailed {
+		t.Fatalf("state after permanently impossible execution admission = %q, transition error = %v, want failed", got.State, manager.transitionError(created.JobID))
+	}
+}
+
 func TestManagerTerminalTransitionFallsBackToBoundedPayload(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("payload"), ConflictAsk)
 	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)

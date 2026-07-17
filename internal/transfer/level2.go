@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"reflect"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/directprotocol"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
@@ -111,6 +112,8 @@ func validLevel2PreflightBinding(binding Level2PreflightBinding, plan Plan) bool
 		binding.Request.DestinationEndpointID != plan.DestinationEndpoint.ID || binding.Request.PartPath != string(plan.Part.Path) ||
 		binding.Request.FinalPath != string(plan.Final.Path) || binding.Request.TargetHostAlias != plan.DestinationEndpoint.SSHHostAlias ||
 		binding.Request.SourceFingerprint.Strength() == domain.FingerprintWeak ||
+		!reflect.DeepEqual(binding.Request.SourceFingerprint, plan.Source.Fingerprint) ||
+		plan.Source.Fingerprint.Size == nil || binding.Request.ExpectedSize != *plan.Source.Fingerprint.Size ||
 		binding.Request.IntegrityPolicy != string(plan.DirectPolicy.Integrity) {
 		return false
 	}

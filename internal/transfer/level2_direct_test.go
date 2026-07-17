@@ -39,6 +39,8 @@ type level2DataFixture struct {
 	stagedBytes     uint64
 	preflightCalls  int
 	preflightStatus directprotocol.Status
+	preflightNonces []string
+	stageNonces     []string
 }
 
 type blockingLevel2DataFixture struct {
@@ -188,6 +190,7 @@ func (fixture *silentLevel2DataFixture) Stage(ctx context.Context, _ Level2Stage
 
 func (fixture *level2DataFixture) Preflight(_ context.Context, request directprotocol.Request) (directprotocol.Result, error) {
 	fixture.preflightCalls++
+	fixture.preflightNonces = append(fixture.preflightNonces, request.Nonce)
 	result, err := passingLevel2PreflightResult(request)
 	if fixture.preflightStatus != "" && fixture.preflightStatus != directprotocol.Pass {
 		result.Checks[0].Status = fixture.preflightStatus
@@ -198,6 +201,7 @@ func (fixture *level2DataFixture) Preflight(_ context.Context, request directpro
 
 func (fixture *level2DataFixture) Stage(ctx context.Context, request Level2StageRequest, acknowledge func(Level2Progress) error) (Level2StageResult, error) {
 	fixture.stageCalls++
+	fixture.stageNonces = append(fixture.stageNonces, request.Nonce)
 	source, err := os.Open(fixture.localPath(request.Source)) // #nosec G304 -- test fixture roots are isolated t.TempDir paths.
 	if err != nil {
 		return Level2StageResult{}, err
@@ -438,10 +442,29 @@ func TestProductionWorkerCannotExecuteFixtureOnlyLevel2Plan(t *testing.T) {
 	}
 }
 
+func TestLevel2CheckpointRejectsDifferentValidRequestNonce(t *testing.T) {
+	_, plan, _, _, _, _ := newLevel2DirectPlanFixture(t)
+	checkpoint := Checkpoint{
+		JobID: plan.JobID, Phase: PhaseStreaming,
+		SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
+		Part:              plan.Part, Final: plan.Final,
+		ActualRoute: RouteLevel2Direct, RouteReason: ReasonLevel2PreflightPassed,
+		DirectFormatVersion: Level2DirectFormatVersion,
+		DirectNonce:         "fedcba9876543210fedcba9876543210",
+	}
+	if checkpoint.DirectNonce == plan.Level2Preflight.Request.Nonce {
+		t.Fatal("test nonce unexpectedly equals frozen request nonce")
+	}
+	if checkpointMatchesPlan(checkpoint, plan) {
+		t.Fatal("checkpoint from a different valid direct correlation matched the frozen Plan")
+	}
+}
+
 func TestLevel2ExpiredPreflightIsFreshlyRevalidatedBeforeAnyTargetWrite(t *testing.T) {
 	for _, status := range []directprotocol.Status{directprotocol.Pass, directprotocol.Fail, directprotocol.Unknown} {
 		t.Run(string(status), func(t *testing.T) {
 			_, plan, sourceBase, destinationBase, sourceRoot, destinationRoot := newLevel2DirectPlanFixture(t)
+			originalNonce := plan.Level2Preflight.Request.Nonce
 			source := &countingContentProvider{endpointKindProvider: sourceBase}
 			destination := &countingContentProvider{endpointKindProvider: destinationBase}
 			frozenAt := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
@@ -461,6 +484,10 @@ func TestLevel2ExpiredPreflightIsFreshlyRevalidatedBeforeAnyTargetWrite(t *testi
 			if status == directprotocol.Pass {
 				if err != nil || result.Outcome != OutcomeCompleted || backend.stageCalls != 1 {
 					t.Fatalf("fresh pass result = (%#v, %v), stage calls %d", result, err, backend.stageCalls)
+				}
+				if len(backend.preflightNonces) != 1 || backend.preflightNonces[0] != originalNonce ||
+					len(backend.stageNonces) != 1 || backend.stageNonces[0] != originalNonce {
+					t.Fatalf("refreshed preflight/stage nonce = %#v/%#v, want durable correlation %q", backend.preflightNonces, backend.stageNonces, originalNonce)
 				}
 				return
 			}

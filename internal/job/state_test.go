@@ -8,7 +8,7 @@ func TestStateTransitions(t *testing.T) {
 	allowed := map[State][]State{
 		StateDraft:                {StateAwaitingConfirmation, StateQueued, StateCanceled},
 		StateAwaitingConfirmation: {StateQueued, StateCanceled},
-		StateQueued:               {StateRunning, StatePaused, StateCanceled},
+		StateQueued:               {StateRunning, StatePaused, StateFailed, StateCanceled},
 		StateRunning:              {StateVerifying, StatePaused, StateWaitingAuth, StateWaitingConflict, StateRetryWait, StateFailed, StateCanceled},
 		StateVerifying:            {StateCompleted, StateCompletedWithSourceRetained, StatePaused, StateWaitingAuth, StateWaitingConflict, StateRetryWait, StateFailed, StateCanceled},
 		StatePaused:               {StateQueued, StateCanceled},
