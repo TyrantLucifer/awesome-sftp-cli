@@ -11,6 +11,8 @@ import (
 )
 
 const (
+	ManifestFormatVersion  = 1
+	ManifestHeader         = "amsftp-helper-manifest-v1"
 	MaxManifestBytes       = 512
 	MaxHelperArtifactBytes = 128 << 20
 	detachedSignatureBytes = 89
@@ -78,7 +80,7 @@ func ParseManifestV1(raw []byte) (Manifest, error) {
 		return Manifest{}, errors.New("parse helper manifest: exactly one final LF is required")
 	}
 	lines := strings.Split(string(raw), "\n")
-	if len(lines) != 10 || lines[9] != "" || lines[0] != "amsftp-helper-manifest-v1" {
+	if len(lines) != 10 || lines[9] != "" || lines[0] != ManifestHeader {
 		return Manifest{}, errors.New("parse helper manifest: line count or header is invalid")
 	}
 	values := make([]string, 8)

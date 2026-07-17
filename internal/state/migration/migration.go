@@ -7,8 +7,9 @@ import (
 )
 
 const (
-	maxMigrationVersion  = uint64(math.MaxInt64)
-	maxMigrationWalBytes = uint64(8*1024*1024*1024 + 64*1024*1024)
+	SchemaHead           uint64 = 3
+	maxMigrationVersion         = uint64(math.MaxInt64)
+	maxMigrationWalBytes        = uint64(8*1024*1024*1024 + 64*1024*1024)
 )
 
 // Migration is immutable compatibility data compiled into the daemon.

@@ -62,23 +62,23 @@ Public-interface commit `51b7cfc2b5c4c3ce9c6989bb482564d1b096f603` produced succ
 
 | Failed leg | Observed failure | Same-SHA companion | No-change rerun |
 |---|---|---|---|
-| PR oldstable macOS 15 | existing Helper exact-stderr-cap reader observed zero bytes; the existing Stage 2 PTY fixture then observed a transient empty selection before delete confirmation | push oldstable macOS 15 job `87891201150` passed | pending |
-| PR native macOS 15 | existing Helper heartbeat-termination test observed process termination before the client failure became visible | push native macOS 15 job `87891201232` passed | pending |
+| PR oldstable macOS 15 | existing Helper exact-stderr-cap reader observed zero bytes; the existing Stage 2 PTY fixture then observed a transient empty selection before delete confirmation | push oldstable macOS 15 job `87891201150` passed | attempt 2 superseded/cancelled by newer PR SHA before execution |
+| PR native macOS 15 | existing Helper heartbeat-termination test observed process termination before the client failure became visible | push native macOS 15 job `87891201232` passed | attempt 2 superseded/cancelled by newer PR SHA before execution |
 
-Classification before rerun: **environment/known timing fixtures, not introduced code**. The same SHA passed both directly comparable push jobs, Linux native/oldstable legs, quality, integration, reproducibility, and all changed app/config/docs packages; the failing tests do not exercise the new config/help/man/completion behavior. A failed-only rerun was requested without code, assertion, timeout, or workflow changes. Attempt 1 remains preserved and cannot serve as final release evidence.
+Classification before rerun: **environment/known timing fixtures, not introduced code**. The same SHA passed both directly comparable push jobs, Linux native/oldstable legs, quality, integration, reproducibility, and all changed app/config/docs packages; the failing tests do not exercise the new config/help/man/completion behavior. A failed-only rerun was requested without code, assertion, timeout, or workflow changes, but repository PR concurrency cancelled it after `01a7b0b` was pushed. The cancellation is not a passing rerun and does not erase attempt 1; a no-change rerun remains required after the current PR run stops occupying the concurrency group. Neither attempt can serve as final release evidence.
 
 ## Milestone status
 
 | Milestone | Status | Evidence |
 |---|---|---|
-| M6.1 configuration/keymap/public interfaces | In Progress | default overlay, versioned config CLI/output, help/man/completion, and validated Normal/Visual keymap RED/GREEN complete; remaining schema, precedence, effective keymap/export, version inventory, and compatibility contracts open |
+| M6.1 configuration/keymap/public interfaces | In Progress | default overlay, versioned config CLI/output, help/man/completion, validated Normal/Visual keymap, and owning-package-derived public version inventory RED/GREEN complete; remaining schema, precedence, effective keymap/export, combination, and compatibility contracts open |
 | M6.2 migration/package/clean machine | Not Started | no implementation evidence |
 | M6.3 security/compatibility/diagnostics | Not Started | no implementation evidence |
 | M6.4 RC/1.0 | Not Started | no RC, release artifacts, tag, release, or channel evidence |
 
 ## Feature status
 
-VIM-013, VIM-014, REL-001, REL-002, and REL-011 are `In Progress` after the versioned-default, validated context-keymap/reserved-action, config command, redacted machine output, stable exit-code, and help/man/completion parity contracts. The other 18 Stage 6-owned rows remain `Planned`: WORK-006, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, REL-003 through REL-010, and REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
+VIM-013, VIM-014, REL-001, REL-002, and REL-011 are `In Progress` after the versioned-default, validated context-keymap/reserved-action, config command, redacted machine output, stable exit-code, help/man/completion parity, and public compatibility inventory contracts. The other 18 Stage 6-owned rows remain `Planned`: WORK-006, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, REL-003 through REL-010, and REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
 
 ## Exit criteria
 
@@ -107,3 +107,7 @@ Production Helper distribution and production Level 2 stay **CLOSED**. Opening t
 | M6.1 config keymap RED | `go test ./internal/config -run='TestDecode(AcceptsContextKeymapRemap\|RejectsConflictingOrReservedKeymap)' -count=1` | Intended compile FAIL: schema had no keymap section |
 | M6.1 keymap GREEN | `go test ./internal/config ./internal/keymap ./internal/tui ./internal/app -count=1`; `go test -race ./internal/keymap ./internal/tui -count=1`; `make lint`; `make docs-check` | PASS: exact Vim default snapshot, Normal/Visual remap isolation, conflict/unreachable/unknown/count/control/dangerous rejection, schema round-trip, app wiring, default tcell regressions, race, lint 0, and docs green |
 | M6.1 keymap complete local gate | CI-equivalent `make check`; `make lint`; `make docs-check`; `git diff --check` | PASS: full unit/provider/integration/docs/tidy/verify gate green; keymap coverage 90.3%, config 87.0%, TUI 69.7%; lint 0 and clean diff check |
+| M6.1 compatibility inventory RED | `go test ./internal/compatibility -count=1` | Intended compile FAIL: no registry/snapshot/Markdown renderer and no explicit owning constants for SQLite head, cache manifest, Helper manifest, or Helper envelope existed |
+| M6.1 compatibility inventory GREEN | `umask 0022; go test ./internal/compatibility ./internal/app ./internal/cachefs ./internal/helper ./internal/ipc ./internal/state/migration ./internal/workspace -count=1` | PASS: exact nine-boundary snapshot and committed reference parity; config/workspace/SQLite/cache/IPC/Helper values resolve from owning package constants; outbound Helper envelope and cache manifest behavior is unchanged |
+| local permission-fixture classification | the same focused command first ran under inherited `umask 0077` | ENVIRONMENT, not code: deliberate `0755` cache fixtures were masked to `0700`, so two wrong-mode negatives could not create their unsafe precondition; both targeted tests and the full focused set passed under the required CI-equivalent `umask 0022` with no code/assertion/timeout change |
+| M6.1 compatibility inventory complete local gate | focused race on compatibility/cachefs/helper/IPC; CI-equivalent `make check`; `make lint`; `make docs-check`; `git diff --check` | PASS: race green; full unit/provider/integration/docs/tidy/verify green; compatibility registry 100% statement coverage; lint 0 and clean diff check |

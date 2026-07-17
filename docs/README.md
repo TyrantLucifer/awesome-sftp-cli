@@ -24,6 +24,7 @@ This repository treats documentation as part of the product contract. A feature 
 - [Search and Optional Helper guide](user/search-helper.md) documents Stage 4 `f`/`g/`, budgets/partial results, Level 0/1 status, fixture-only consent/lifecycle, degradation, same-host copy, and the production distribution CLOSED boundary.
 - [Configuration reference](user/configuration.md) documents the versioned strict JSON schema, current precedence, validation/effective-output commands, redaction, and stable public exit codes while M6.1 expands the remaining sections.
 - [Vim-first keymap reference](user/keymap.md) documents the exact default action map, Normal/Visual remapping, reserved dangerous and sequence actions, count/repeat boundaries, and the 1.0 macro/named-register exclusion.
+- [Compatibility boundaries](product/compatibility-boundaries.md) freezes the current/read/write/unsupported behavior for config, workspace, SQLite, cache, IPC, Helper, CLI, and machine-output versions before migration work begins.
 - [amsftp(1)](man/amsftp.1) is the committed man page checked against the same ordered command facts that render `--help` and bash/zsh/fish completions.
 
 ## Required reading order for a new session

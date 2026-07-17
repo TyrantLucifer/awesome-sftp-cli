@@ -144,7 +144,7 @@ func Serve(ctx context.Context, reader io.Reader, writer io.Writer, config Servi
 			if err := decodeStrictPayload(envelope.Payload, &ping); err != nil || len(ping.Nonce) != 16 || !isLowerHex(ping.Nonce) {
 				return errors.New("serve helper: invalid ping")
 			}
-			if _, err := out.send(Envelope{Version: 1, Type: FramePong}, ping); err != nil {
+			if _, err := out.send(Envelope{Version: EnvelopeVersion, Type: FramePong}, ping); err != nil {
 				return err
 			}
 		case FrameCancel:
@@ -244,7 +244,7 @@ func runRequestWithOutputLimit(ctx context.Context, out *serviceWriter, requestI
 			budgetExceeded = true
 			return errors.New("helper handler: output byte limit reached")
 		}
-		written, err := out.sendEncoded(Envelope{Version: 1, Type: kind, RequestID: requestID}, encoded)
+		written, err := out.sendEncoded(Envelope{Version: EnvelopeVersion, Type: kind, RequestID: requestID}, encoded)
 		if err != nil {
 			return err
 		}
@@ -260,7 +260,7 @@ func runRequestWithOutputLimit(ctx context.Context, out *serviceWriter, requestI
 		failure := StructuredError{Code: "operation_failed", Message: message, Retryable: false}
 		encoded, marshalErr := json.Marshal(failure)
 		if marshalErr == nil && outputBytes+uint64(len(encoded)) <= payloadBudget {
-			if written, sendErr := out.sendEncoded(Envelope{Version: 1, Type: FrameError, RequestID: requestID}, encoded); sendErr == nil {
+			if written, sendErr := out.sendEncoded(Envelope{Version: EnvelopeVersion, Type: FrameError, RequestID: requestID}, encoded); sendErr == nil {
 				outputBytes += uint64(written) // #nosec G115 -- sendEncoded reports a non-negative payload byte count.
 			}
 		} else {
@@ -287,7 +287,7 @@ func runRequestWithOutputLimit(ctx context.Context, out *serviceWriter, requestI
 		failure := StructuredError{Code: "capability_violation", Message: "handler returned an invalid completion", Retryable: false}
 		encoded, marshalErr := json.Marshal(failure)
 		if marshalErr == nil && outputBytes+uint64(len(encoded)) <= payloadBudget {
-			if written, sendErr := out.sendEncoded(Envelope{Version: 1, Type: FrameError, RequestID: requestID}, encoded); sendErr == nil {
+			if written, sendErr := out.sendEncoded(Envelope{Version: EnvelopeVersion, Type: FrameError, RequestID: requestID}, encoded); sendErr == nil {
 				outputBytes += uint64(written) // #nosec G115 -- sendEncoded reports a non-negative payload byte count.
 			}
 		}
@@ -302,7 +302,7 @@ func runRequestWithOutputLimit(ctx context.Context, out *serviceWriter, requestI
 	if err != nil || outputBytes+uint64(len(encoded)) > maximumOutputBytes {
 		return
 	}
-	_, _ = out.sendEncoded(Envelope{Version: 1, Type: FrameComplete, RequestID: requestID}, encoded)
+	_, _ = out.sendEncoded(Envelope{Version: EnvelopeVersion, Type: FrameComplete, RequestID: requestID}, encoded)
 }
 
 func validCompletion(completion Completion) bool {
@@ -325,10 +325,10 @@ func isCompletionReasonByte(value byte) bool {
 }
 
 func sendRejected(out *serviceWriter, requestID domain.RequestID, code, message string) error {
-	if _, err := out.send(Envelope{Version: 1, Type: FrameError, RequestID: requestID}, StructuredError{Code: code, Message: message, Retryable: false}); err != nil {
+	if _, err := out.send(Envelope{Version: EnvelopeVersion, Type: FrameError, RequestID: requestID}, StructuredError{Code: code, Message: message, Retryable: false}); err != nil {
 		return err
 	}
-	_, err := out.send(Envelope{Version: 1, Type: FrameComplete, RequestID: requestID}, Completion{Status: "partial_results", Reason: code})
+	_, err := out.send(Envelope{Version: EnvelopeVersion, Type: FrameComplete, RequestID: requestID}, Completion{Status: "partial_results", Reason: code})
 	return err
 }
 

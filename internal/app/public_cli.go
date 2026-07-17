@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const PublicCLIContractVersion = 1
+
 type cliCommandFact struct {
 	name        string
 	syntax      string

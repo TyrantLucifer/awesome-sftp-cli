@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始；当前处于 M6.1，执行计划与基线证据已建立，功能实现尚未开始。
+Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始；当前处于 M6.1，配置默认/校验/脱敏输出、keymap、help/man/completion 与公共兼容版本清单已进入实现和验证，剩余配置优先级与公共接口契约继续推进。
 
 ## Stage 0: Foundation & Knowledge
 
