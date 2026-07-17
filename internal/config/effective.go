@@ -16,6 +16,19 @@ type effectiveOutput struct {
 	Config        Config `json:"config"`
 }
 
+func Write(w io.Writer, input Config) error {
+	if err := input.Validate(); err != nil {
+		return fmt.Errorf("validate config for write: %w", err)
+	}
+	encoder := json.NewEncoder(w)
+	encoder.SetEscapeHTML(false)
+	encoder.SetIndent("", "  ")
+	if err := encoder.Encode(input); err != nil {
+		return fmt.Errorf("encode config: %w", err)
+	}
+	return nil
+}
+
 func WriteRedactedEffective(w io.Writer, input Config) error {
 	if err := input.Validate(); err != nil {
 		return fmt.Errorf("validate effective config: %w", err)

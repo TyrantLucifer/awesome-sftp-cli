@@ -38,6 +38,24 @@ amsftp config print-effective /path/to/config.json
 
 `print-effective` never prints configured command arguments: each argument is replaced with `<redacted>`. It writes one JSON object to stdout with `output_version: 1` and the configuration under `config`. Diagnostics go to stderr. The command does not contact an endpoint, prompt for authentication, start a transfer, or mutate configuration.
 
+Print the complete effective Normal and Visual keymap, including each action's current input, default input, remap policy, and override state:
+
+```console
+amsftp config print-effective-keymap
+amsftp config print-effective-keymap /path/to/config.json
+```
+
+The deterministic JSON output has `output_version: 1` and contains both contexts. It performs no remote, authentication, daemon, or mutation operation.
+
+Reset only the keymap overrides in the default or an explicit configuration file:
+
+```console
+amsftp config reset-keymap --yes
+amsftp config reset-keymap --yes /path/to/config.json
+```
+
+`--yes` is mandatory. Before replacement, AMSFTP validates and fully decodes the owner-private source file. It clears only `keymap.bindings`, preserves all other semantic values without redacting configured argv, writes a validated 0600 temporary file, syncs it, atomically replaces the configuration, validates the published file, and syncs the parent directory. A missing/invalid confirmation or invalid source leaves the original bytes unchanged. The normalized replacement may make previously omitted default fields explicit; a running client/daemon is not hot-reloaded.
+
 The stable public exit codes are:
 
 | Code | Meaning |

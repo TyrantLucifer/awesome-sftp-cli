@@ -65,6 +65,80 @@ func TestRunConfigCommandPrintsVersionedRedactedEffectiveConfig(t *testing.T) {
 	}
 }
 
+func TestRunConfigCommandPrintsEffectiveKeymapAndResetsOnlyOverrides(t *testing.T) {
+	directory, err := filepath.EvalSymlinks(testkit.PersistentTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o700); err != nil { // #nosec G302 -- owner-only directory mode is the property under test.
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "config.json")
+	encoded := []byte(`{"schema_version":1,"external":{"editor":{"executable":"/usr/bin/vi","argv":["retain-me"]}},"keymap":{"bindings":[{"context":"visual","input":"n","action":"down"}]}}`)
+	if err := os.WriteFile(path, encoded, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var stdout bytes.Buffer
+	if err := runConfigCommand([]string{"print-effective-keymap", path}, "", &stdout); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`"output_version": 1`, `"context": "normal"`, `"context": "visual"`, `"input": "n"`, `"default_input": "j"`, `"overridden": true`} {
+		if !strings.Contains(stdout.String(), want) {
+			t.Fatalf("effective keymap output lacks %s: %s", want, stdout.String())
+		}
+	}
+
+	before, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runConfigCommand([]string{"reset-keymap", path}, "", &bytes.Buffer{}); err == nil || exitCode(err) != ExitUsage {
+		t.Fatalf("unconfirmed reset error = %v", err)
+	}
+	afterRejected, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(afterRejected, before) {
+		t.Fatal("unconfirmed keymap reset changed the configuration file")
+	}
+
+	stdout.Reset()
+	if err := runConfigCommand([]string{"reset-keymap", "--yes", path}, "", &stdout); err != nil {
+		t.Fatal(err)
+	}
+	if stdout.String() != "keymap reset to defaults\n" {
+		t.Fatalf("reset output = %q", stdout.String())
+	}
+	loaded, err := loadApplicationConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Keymap.Bindings) != 0 {
+		t.Fatalf("keymap overrides remain: %#v", loaded.Keymap.Bindings)
+	}
+	if loaded.External.Editor == nil || len(loaded.External.Editor.Args) != 1 || loaded.External.Editor.Args[0] != "retain-me" {
+		t.Fatalf("reset changed unrelated config: %#v", loaded.External)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Mode().Perm() != 0o600 {
+		t.Fatalf("reset config mode = %o, want 600", info.Mode().Perm())
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if entry.Name() != "config.json" {
+			t.Fatalf("reset left unexpected file %q", entry.Name())
+		}
+	}
+}
+
 func TestRunConfigCommandClassifiesUsageAndConfigFailures(t *testing.T) {
 	tests := []struct {
 		name string

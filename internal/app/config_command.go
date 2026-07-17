@@ -8,10 +8,11 @@ import (
 	"os"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
 )
 
 func runConfig(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error {
-	if len(args) != 1 || args[0] != "validate" && args[0] != "print-effective" {
+	if !configCommandUsesDefaultPath(args) {
 		return runConfigCommand(args, "", stdout)
 	}
 	paths, _, err := runtimePaths()
@@ -21,19 +22,42 @@ func runConfig(_ context.Context, args []string, stdout io.Writer, _ io.Writer) 
 	return runConfigCommand(args, paths.ConfigFile, stdout)
 }
 
+func configCommandUsesDefaultPath(args []string) bool {
+	if len(args) == 1 {
+		return args[0] == "validate" || args[0] == "print-effective" || args[0] == "print-effective-keymap"
+	}
+	return len(args) == 2 && args[0] == "reset-keymap" && args[1] == "--yes"
+}
+
 func runConfigCommand(args []string, defaultPath string, stdout io.Writer) error {
-	if len(args) < 1 || len(args) > 2 {
-		return NewExitError(ExitUsage, errors.New("config requires validate or print-effective and an optional path"))
+	if len(args) < 1 {
+		return NewExitError(ExitUsage, errors.New("config requires a subcommand"))
 	}
 	command := args[0]
-	if command != "validate" && command != "print-effective" {
+	if command != "validate" && command != "print-effective" && command != "print-effective-keymap" && command != "reset-keymap" {
 		return NewExitError(ExitUsage, fmt.Errorf("unknown config command %q", command))
 	}
 
 	path := defaultPath
-	explicit := len(args) == 2
+	explicit := false
+	if command == "reset-keymap" {
+		if len(args) < 2 || len(args) > 3 || args[1] != "--yes" {
+			return NewExitError(ExitUsage, errors.New("config reset-keymap requires --yes and an optional path"))
+		}
+		explicit = len(args) == 3
+		if explicit {
+			path = args[2]
+		}
+	} else {
+		if len(args) > 2 {
+			return NewExitError(ExitUsage, errors.New("config subcommand accepts at most one optional path"))
+		}
+		explicit = len(args) == 2
+		if explicit {
+			path = args[1]
+		}
+	}
 	if explicit {
-		path = args[1]
 		if path == "" {
 			return NewExitError(ExitUsage, errors.New("config path is empty"))
 		}
@@ -46,10 +70,19 @@ func runConfigCommand(args []string, defaultPath string, stdout io.Writer) error
 	if err != nil {
 		return NewExitError(ExitConfig, fmt.Errorf("load config %q: %w", path, err))
 	}
-	if command == "validate" {
+	switch command {
+	case "validate":
 		_, err = fmt.Fprintf(stdout, "config valid (schema %d)\n", loaded.SchemaVersion)
-	} else {
+	case "print-effective":
 		err = config.WriteRedactedEffective(stdout, loaded)
+	case "print-effective-keymap":
+		err = keymap.WriteEffective(stdout, loaded.Keymap.Bindings)
+	case "reset-keymap":
+		loaded.Keymap.Bindings = nil
+		if err := replaceApplicationConfig(path, loaded); err != nil {
+			return NewExitError(ExitConfig, err)
+		}
+		_, err = fmt.Fprintln(stdout, "keymap reset to defaults")
 	}
 	if err != nil {
 		return NewExitError(ExitInternal, err)

@@ -8,17 +8,18 @@ import (
 const PublicCLIContractVersion = 1
 
 type cliCommandFact struct {
-	name        string
-	syntax      string
-	description string
-	children    []string
-	internal    bool
+	name           string
+	syntax         string
+	description    string
+	children       []string
+	childArguments map[string][]string
+	internal       bool
 }
 
 var publicCLIContract = []cliCommandFact{
 	{syntax: "amsftp [<location> [<location>]]", description: "Open the two-pane client with zero, one, or two locations."},
 	{name: "--workspace", syntax: "amsftp --workspace <name>", description: "Open a saved workspace."},
-	{name: "config", syntax: "amsftp config <validate|print-effective> [<path>]", description: "Validate configuration or print versioned redacted effective JSON.", children: []string{"validate", "print-effective"}},
+	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
 	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a static shell completion script.", children: []string{"bash", "zsh", "fish"}},
 	{syntax: "amsftp [client|daemon|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
 	{name: "--help", syntax: "amsftp --help", description: "Print command help."},
@@ -61,6 +62,7 @@ func RenderManPage() string {
 func RenderCompletion(shell string) (string, error) {
 	top := completionWords(publicCLIContract)
 	config := strings.Join(childrenFor("config"), " ")
+	configReset := strings.Join(childArgumentsFor("config", "reset-keymap"), " ")
 	completion := strings.Join(childrenFor("completion"), " ")
 	switch shell {
 	case "bash":
@@ -71,11 +73,12 @@ func RenderCompletion(shell string) (string, error) {
   case "$previous" in
     config) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     completion) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+    reset-keymap) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     *) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
   esac
 }
 complete -F _amsftp amsftp
-`, config, completion, top), nil
+`, config, completion, configReset, top), nil
 	case "zsh":
 		return fmt.Sprintf(`#compdef amsftp
 _amsftp() {
@@ -83,10 +86,10 @@ _amsftp() {
   commands=(%s)
   config_commands=(%s)
   completion_commands=(%s)
-  _arguments '1:command:($commands)' '2:subcommand:($config_commands $completion_commands)' '*:location or path:_files'
+  _arguments '1:command:($commands)' '2:subcommand:($config_commands $completion_commands)' '3:confirmation:(%s)' '*:location or path:_files'
 }
 _amsftp
-`, top, config, completion), nil
+`, top, config, completion, configReset), nil
 	case "fish":
 		var builder strings.Builder
 		for _, word := range strings.Fields(top) {
@@ -98,10 +101,22 @@ _amsftp
 		for _, word := range childrenFor("completion") {
 			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from completion' -a %q\n", word)
 		}
+		for _, word := range childArgumentsFor("config", "reset-keymap") {
+			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from reset-keymap' -a %q\n", word)
+		}
 		return builder.String(), nil
 	default:
 		return "", fmt.Errorf("unsupported completion shell %q; want bash, zsh, or fish", shell)
 	}
+}
+
+func childArgumentsFor(name, child string) []string {
+	for _, fact := range publicCLIContract {
+		if fact.name == name {
+			return append([]string(nil), fact.childArguments[child]...)
+		}
+	}
+	return nil
 }
 
 func completionWords(facts []cliCommandFact) string {

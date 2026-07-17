@@ -17,7 +17,7 @@ Schema version 1 supports `normal` and `visual` keymap contexts. `visual` inheri
 }
 ```
 
-`amsftp config validate` rejects unknown contexts/actions, duplicate action overrides, inputs already owned by another action, digits reserved for count prefixes, control/multi-rune inputs, dangerous reserved actions, and reserved sequence inputs. Removing the `bindings` entries restores the documented defaults; the unchanged default map is also covered by an exact snapshot test.
+`amsftp config validate` rejects unknown contexts/actions, duplicate action overrides, inputs already owned by another action, digits reserved for count prefixes, control/multi-rune inputs, dangerous reserved actions, and reserved sequence inputs. `amsftp config print-effective-keymap [<path>]` exports the complete versioned Normal/Visual map, including moved inputs and their defaults. `amsftp config reset-keymap --yes [<path>]` atomically clears only validated overrides and preserves every unrelated configuration value. Removing `bindings` manually has the same semantic effect; the unchanged default map is also covered by an exact snapshot test.
 
 ## Default bindings
 
