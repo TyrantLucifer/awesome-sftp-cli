@@ -15,6 +15,7 @@ type Handlers struct {
 	Daemon     Handler
 	Askpass    Handler
 	Helper     Handler
+	Job        Handler
 	Config     Handler
 	Completion Handler
 }
@@ -47,6 +48,13 @@ func Run(
 		return int(ExitInternal)
 	}
 	if err := handler(ctx, roleArgs(args, invocation.Role), stdout, stderr); err != nil {
+		if renderer, ok := err.(interface{ RenderCLIError(io.Writer) error }); ok {
+			if renderErr := renderer.RenderCLIError(stderr); renderErr != nil {
+				fmt.Fprintf(stderr, "amsftp: render machine error: %v\n", renderErr)
+				return int(ExitInternal)
+			}
+			return int(exitCode(err))
+		}
 		fmt.Fprintf(stderr, "amsftp: %s handler: %v\n", invocation.Role, err)
 		return int(exitCode(err))
 	}
@@ -64,6 +72,8 @@ func (h Handlers) handler(role Role) Handler {
 		return h.Askpass
 	case RoleHelper:
 		return h.Helper
+	case RoleJob:
+		return h.Job
 	case RoleConfig:
 		return h.Config
 	case RoleCompletion:

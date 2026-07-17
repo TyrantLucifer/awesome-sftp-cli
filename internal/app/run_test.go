@@ -30,6 +30,7 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 		{name: "daemon", args: []string{"daemon", "--socket", "test.sock"}, wantRole: app.RoleDaemon, wantArgs: []string{"--socket", "test.sock"}},
 		{name: "askpass", args: []string{"askpass", "Password:"}, wantRole: app.RoleAskpass, wantArgs: []string{"Password:"}},
 		{name: "helper", args: []string{"helper", "serve"}, wantRole: app.RoleHelper, wantArgs: []string{"serve"}},
+		{name: "job", args: []string{"job", "list", "--limit", "5"}, wantRole: app.RoleJob, wantArgs: []string{"list", "--limit", "5"}},
 		{name: "config", args: []string{"config", "validate"}, wantRole: app.RoleConfig, wantArgs: []string{"validate"}},
 		{name: "completion", args: []string{"completion", "zsh"}, wantRole: app.RoleCompletion, wantArgs: []string{"zsh"}},
 	}
@@ -57,6 +58,7 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 				Daemon:     record(app.RoleDaemon),
 				Askpass:    record(app.RoleAskpass),
 				Helper:     record(app.RoleHelper),
+				Job:        record(app.RoleJob),
 				Config:     record(app.RoleConfig),
 				Completion: record(app.RoleCompletion),
 			}

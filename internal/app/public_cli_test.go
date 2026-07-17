@@ -10,7 +10,7 @@ import (
 func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 	help := Usage()
 	man := RenderManPage()
-	for _, command := range []string{"--workspace", "config", "completion", "--help", "--version"} {
+	for _, command := range []string{"--workspace", "job", "config", "completion", "--help", "--version"} {
 		if !strings.Contains(help, command) {
 			t.Fatalf("help does not contain %q:\n%s", command, help)
 		}
@@ -24,10 +24,28 @@ func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RenderCompletion(%q): %v", shell, err)
 		}
-		for _, command := range []string{"config", "completion", "validate", "print-effective", "print-effective-keymap", "reset-keymap", "--yes"} {
+		for _, command := range []string{"job", "list", "events", "pause", "resume", "cancel", "--limit", "--after", "--format", "--confirm", "config", "completion", "validate", "print-effective", "print-effective-keymap", "reset-keymap", "--yes"} {
 			if !strings.Contains(completion, command) {
 				t.Fatalf("%s completion does not contain %q:\n%s", shell, command, completion)
 			}
+		}
+		for _, fact := range publicCLIContract {
+			if fact.name != "" && !fact.internal && !strings.Contains(completion, fact.name) {
+				t.Fatalf("%s completion drifted from command fact %q", shell, fact.name)
+			}
+			for _, child := range fact.children {
+				if !strings.Contains(completion, child) {
+					t.Fatalf("%s completion drifted from %s child %q", shell, fact.name, child)
+				}
+				for _, argument := range fact.childArguments[child] {
+					if !strings.Contains(completion, argument) {
+						t.Fatalf("%s completion drifted from %s %s argument %q", shell, fact.name, child, argument)
+					}
+				}
+			}
+		}
+		if strings.Contains(completion, "%!") {
+			t.Fatalf("%s completion contains a formatting artifact:\n%s", shell, completion)
 		}
 		for _, forbidden := range []string{"/usr/bin/ssh", "ProxyCommand", "askpass", "helper serve"} {
 			if strings.Contains(completion, forbidden) {
