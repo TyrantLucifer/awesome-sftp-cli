@@ -31,6 +31,10 @@ type Policy struct {
 	denied        map[ArtifactID]struct{}
 }
 
+// ProductionDistributionOpen remains false until the protected release trust,
+// notarization, final-byte manifest, and offline-signing gates are complete.
+const ProductionDistributionOpen = false
+
 // NewProductionPolicy stays fail-closed while production Helper distribution
 // is CLOSED: there are no trusted keys, supported floors, or installable assets.
 func NewProductionPolicy() Policy { return Policy{} }

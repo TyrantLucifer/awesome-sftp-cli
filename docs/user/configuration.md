@@ -36,7 +36,7 @@ amsftp config print-effective
 amsftp config print-effective /path/to/config.json
 ```
 
-`print-effective` never prints configured command arguments: each argument is replaced with `<redacted>`. It writes one JSON object to stdout with `output_version: 1` and the configuration under `config`. Diagnostics go to stderr. The command does not contact an endpoint, prompt for authentication, start a transfer, or mutate configuration.
+`print-effective` never prints configured command arguments: each argument is replaced with `<redacted>`. It writes one JSON object to stdout with `output_version: 1`, the exact resolution contract under `resolution_policy`, and the configuration under `config`. The policy records CLI startup selection → workspace state → user configuration → built-in defaults, rejects system-wide and AMSFTP-specific environment configuration layers, restricts environment use to validated OpenSSH inheritance and external-command discovery, requires restart for every setting, and freezes Job semantics at plan creation. Diagnostics go to stderr. The command does not contact an endpoint, prompt for authentication, start a transfer, or mutate configuration.
 
 Print the complete effective Normal and Visual keymap, including each action's current input, default input, remap policy, and override state:
 
@@ -161,6 +161,9 @@ Omitted fields inherit these current defaults:
     "log_backups": 3,
     "ring_records": 1000
   },
+  "helper": {
+    "enabled": false
+  },
   "external": {
     "previewers": []
   }
@@ -185,8 +188,10 @@ Omitted fields inherit these current defaults:
 
 `diagnostic.log_max_bytes` sets the owner-private JSON daemon log's per-file limit and must remain between 256 bytes and the existing 4 MiB ceiling. `diagnostic.log_backups` retains between one and the existing three rotated files. `diagnostic.ring_records` bounds the in-memory, already-redacted daemon diagnostic history between one and the existing 1000-record ceiling. The daemon freezes all three values at startup. The ring limit also applies when corrupt or newer persistent state forces the read-only degraded logger; no configuration value enables raw messages, paths, credentials, file content, extra fields, automatic upload, or a broader log level.
 
+`helper.enabled` defaults to `false` and remains gated by the owning production-distribution policy. It cannot be set to `true` until the protected Developer ID/notary, final-byte manifest, offline-signature, custody, and release gates open that policy; opening distribution never changes the explicit-opt-in default. The field cannot inject trust roots, fixture artifacts, remote commands, installation consent, credentials, or Level 2 access. Standard Level 0 SFTP remains available. Per-Endpoint installation and execution still require the separately specified explicit approvals and current-policy/fresh-binding/hash/handshake checks after production distribution exists.
+
 `external.editor` and `external.opener` are structured commands with `executable` and an `argv` array. They are executed directly, never concatenated into a shell command. A previewer adds a unique name, bounded media-type or extension match, structured command, timeout, input limit, and completeness requirement. Command strings reject control characters and all counts and byte sizes have hard ceilings.
 
-The schema is not yet complete for every Stage 6 setting. Helper, retention, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
+This is the complete 1.0 application configuration surface. Job-history retention and migration recovery are owned by M6.2 durable-state policy rather than a user-tunable setting. Host-key, credential, confirmation, Helper trust/custody, direct-transfer, redaction, owner-private storage, and other security boundaries are fixed product policy; configuration cannot weaken them. No undocumented field is accepted.
 
-The `keymap.bindings` section is now implemented for the `normal` and `visual` contexts. Each entry contains `context`, a single-rune `input`, and a documented remappable `action`. Exact defaults, reserved dangerous/sequence actions, count behavior, and the deliberate macro/named-register exclusion are in the [keymap reference](keymap.md). The other sections listed above remain open.
+The `keymap.bindings` section supports the `normal` and `visual` contexts. Each entry contains `context`, a single-rune `input`, and a documented remappable `action`. Exact defaults, reserved dangerous/sequence actions, count behavior, and the deliberate macro/named-register exclusion are in the [keymap reference](keymap.md).

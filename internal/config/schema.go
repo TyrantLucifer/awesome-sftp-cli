@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/retrypolicy"
@@ -51,6 +52,7 @@ type Config struct {
 	Integrity      IntegrityConfig      `json:"integrity"`
 	DirectTransfer DirectTransferConfig `json:"direct_transfer"`
 	Diagnostic     DiagnosticConfig     `json:"diagnostic"`
+	Helper         HelperConfig         `json:"helper"`
 	External       ExternalConfig       `json:"external,omitempty"`
 	Keymap         KeymapConfig         `json:"keymap,omitempty"`
 }
@@ -143,6 +145,10 @@ type DiagnosticConfig struct {
 	RingRecords int   `json:"ring_records"`
 }
 
+type HelperConfig struct {
+	Enabled bool `json:"enabled"`
+}
+
 type CommandConfig struct {
 	Executable string   `json:"executable"`
 	Args       []string `json:"argv"`
@@ -230,6 +236,7 @@ func Default() Config {
 			LogBackups:  diagnosticDefaults.Backups,
 			RingRecords: diagnosticDefaults.RingCapacity,
 		},
+		Helper: HelperConfig{Enabled: false},
 	}
 }
 
@@ -322,6 +329,9 @@ func (c Config) Validate() error {
 	}
 	if err := c.Diagnostic.validate(); err != nil {
 		return err
+	}
+	if c.Helper.Enabled && !helper.ProductionDistributionOpen {
+		return errors.New("helper.enabled must be false while production distribution is closed")
 	}
 	if err := c.External.validate(); err != nil {
 		return fmt.Errorf("external: %w", err)

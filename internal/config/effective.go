@@ -12,8 +12,27 @@ const (
 )
 
 type effectiveOutput struct {
-	OutputVersion int    `json:"output_version"`
-	Config        Config `json:"config"`
+	OutputVersion    int              `json:"output_version"`
+	ResolutionPolicy ResolutionPolicy `json:"resolution_policy"`
+	Config           Config           `json:"config"`
+}
+
+type ResolutionPolicy struct {
+	Precedence        []string `json:"precedence"`
+	Unsupported       []string `json:"unsupported_layers"`
+	EnvironmentRole   string   `json:"environment_role"`
+	HotReloadPolicy   string   `json:"hot_reload_policy"`
+	JobSemanticPolicy string   `json:"job_semantic_policy"`
+}
+
+func DefaultResolutionPolicy() ResolutionPolicy {
+	return ResolutionPolicy{
+		Precedence:        []string{"cli_startup_selection", "workspace_state", "user_config", "built_in_defaults"},
+		Unsupported:       []string{"system_config", "amsftp_environment_config"},
+		EnvironmentRole:   "openssh_and_external_command_discovery_only",
+		HotReloadPolicy:   "none_restart_required",
+		JobSemanticPolicy: "frozen_at_plan_creation",
+	}
 }
 
 func Write(w io.Writer, input Config) error {
@@ -38,7 +57,9 @@ func WriteRedactedEffective(w io.Writer, input Config) error {
 	encoder := json.NewEncoder(w)
 	encoder.SetEscapeHTML(false)
 	encoder.SetIndent("", "  ")
-	if err := encoder.Encode(effectiveOutput{OutputVersion: EffectiveOutputVersion, Config: redacted}); err != nil {
+	if err := encoder.Encode(effectiveOutput{
+		OutputVersion: EffectiveOutputVersion, ResolutionPolicy: DefaultResolutionPolicy(), Config: redacted,
+	}); err != nil {
 		return fmt.Errorf("encode effective config: %w", err)
 	}
 	return nil

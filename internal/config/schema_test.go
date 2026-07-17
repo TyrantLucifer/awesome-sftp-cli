@@ -53,6 +53,7 @@ func TestDefaultConfigIsValid(t *testing.T) {
 		Diagnostic: DiagnosticConfig{
 			LogMaxBytes: 4 * 1024 * 1024, LogBackups: 3, RingRecords: 1000,
 		},
+		Helper: HelperConfig{Enabled: false},
 	}
 
 	got := Default()
