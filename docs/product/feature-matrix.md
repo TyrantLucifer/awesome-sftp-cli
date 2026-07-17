@@ -2,7 +2,7 @@
 
 > - 产品：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
 > - 基线：已批准产品设计
-> - 实现状态：Stage 0–5 与 Stage 6 M6.1 已完成；Stage 4 的 26/26 行与 Stage 5 的 22/22 行已验证；Stage 6 有 6 个专属行为 `In Progress`、17 个仍为 `Planned`
+> - 实现状态：Stage 0–5 已完成；Stage 6 M6.1 provenance correction gate 进行中；Stage 4 的 26/26 行与 Stage 5 的 22/22 行已验证；Stage 6 有 6 个专属行为 `In Progress`、17 个仍为 `Planned`
 > - 最后更新：2026-07-18
 
 ## 1. 使用规则

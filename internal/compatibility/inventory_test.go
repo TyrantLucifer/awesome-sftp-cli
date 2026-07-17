@@ -59,7 +59,7 @@ workspace document v1 | e07413d46f516f8b0f92c61d006927c1aa319f0f | captured | in
 workspace document v2 | 8bbb0f144583bbff10746ebdb22f82f86b4655e6 | captured | internal/compatibility/testdata/historical/workspace-v2-stage3.json | 1f137d8470e2d005d1672df39fb3c8bf6c7107b766ce9b62d3581c92680cdd40 | internal/workspace
 sqlite state v1 | 486a63f90be51c0d79a454bef52e9e3302df5250 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/sqlite-v1-stage2.sqlite | - | internal/state/migration
 sqlite state v2 | 4eb1961b7b3b5495620fb1f6fcb3b88c52a4fba9 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/sqlite-v2-stage3.sqlite | - | internal/state/migration
-sqlite state v3 | 939ba9c5d978b8ea5bf2aadd3485831d78b533c2e | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/sqlite-v3-stage3.sqlite | - | internal/state/migration
+sqlite state v3 | 939ba9c5d978b8ea5bf1ae060ff62a0769d0d6c0 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/sqlite-v3-stage3.sqlite | - | internal/state/migration
 cache entry manifest v1 | 8a4ada06836b9ed71c72b40949d6b87d8e1f849a | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/cache-entry-manifest-v1-stage3.json | - | internal/cachefs
 cache materialization manifest v1 | 8a4ada06836b9ed71c72b40949d6b87d8e1f849a | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/cache-materialization-manifest-v1-stage3.json | - | internal/cachefs
 helper release manifest v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/helper-release-manifest-v1-stage4.txt | - | internal/helper
@@ -67,6 +67,18 @@ helper state index v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | capture-requi
 helper metadata v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/helper-metadata-v1-stage4.json | - | internal/helper`)
 	if got := HistoricalSourceSnapshotText(); got != want {
 		t.Fatalf("historical source inventory changed:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+func TestHistoricalSourceProvenanceCommitsAreCanonicalObjectIDs(t *testing.T) {
+	for _, source := range HistoricalSources() {
+		if len(source.ProvenanceCommit) != 40 {
+			t.Errorf("%s v%s provenance length = %d, want 40", source.Boundary, source.Version, len(source.ProvenanceCommit))
+			continue
+		}
+		if _, err := hex.DecodeString(source.ProvenanceCommit); err != nil || source.ProvenanceCommit != strings.ToLower(source.ProvenanceCommit) {
+			t.Errorf("%s v%s provenance is not a canonical lowercase object ID: %q", source.Boundary, source.Version, source.ProvenanceCommit)
+		}
 	}
 }
 
