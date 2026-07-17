@@ -1,6 +1,6 @@
 # Stage 5 Verification Record
 
-- **Status**: In Progress — M5.1–M5.3 complete; M5.4 scale/resource/scheduling active
+- **Status**: In Progress — M5.1–M5.4 complete; final review and exact-SHA closeout active
 - **Updated**: 2026-07-17
 - **Repository root**: `/data00/home/tianchao.thatcher/projects/awsome-sftp-cli`
 - **Branch**: `codex/stage5-direct-transfer-scale`
@@ -59,7 +59,7 @@ Directory discovery is iterative bounded BFS rather than Go recursion. The canon
 
 ## Stage 5 feature evidence
 
-The 22 Stage 5 rows remain `Planned` until their implementations and focused tests exist. A row moves to `Verified` only with an independent PASS cell here and exact final-candidate evidence.
+All 22 Stage 5 rows are locally `Implemented`. A row moves to `Verified` only after the two independent final reviews, clean candidate-tree audit, and exact final push/PR Hosted matrices pass.
 
 | Feature ID | Result | Evidence |
 |---|---|---|
@@ -128,6 +128,12 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | M5.4 canonical scale gate | `make test-scale` | PASS across TUI/search/Helper/transfer/daemon/jobstore/diagnostic/external previewer. |
 | M5.4 first trend record | `make bench-scale` | PASS: three fixed 100x samples; render 33.7–41.3 µs and 26.5 KiB/329 alloc, move 602.7–718.9 ns and 0 alloc. |
 | M5.4 local quality gate | CI-equivalent `make check`; `make lint`; focused race on transfer/daemon/jobstore | PASS; transfer coverage 73.5%, lint 0 issues, race green. |
+| final current gate | CI-equivalent `make ci` with external build/coverage paths | PASS: canonical check, lint, full race, four fuzz smokes, govulncheck/actionlint and four cross-builds; transfer coverage 73.5%, lint 0 issues, no called vulnerability. |
+| final scale/resource gate | `make test-scale`; scheduler/resource `-race -count=100`; all Level 2 tests `-count=20`; nightly fake fault contracts `-race -count=100` | PASS: scale fixtures and every repetition completed without race, deadlock, starvation or nondeterministic assertion. |
+| final benchmark trend | `make bench-scale` | PASS: render 35.9–40.3 µs/op, 26,465–26,466 B/op and 329 allocs/op; move 501.6–504.1 ns/op and zero allocation. |
+| final native Level 2 | `AMSFTP_REAL_SSHD=1 go test -race ./internal/transfer -run '^TestLevel2NativeDualSSHD' -count=1 -v` | PASS: two real isolated sshd control sessions and direct data roots, with no daemon content read or target credential material. |
+| final independent-cache reproducibility | two independent build and module caches; `-trimpath -buildvcs=false`; darwin/linux × arm64/amd64; `cmp` | PASS: all four replica pairs are byte-identical; accepted local SHA-256 values are `af26c66a…`, `889d30d5…`, `9df49451…`, and `95e62114…`. |
+| expanded opt-in race diagnostic RED/GREEN | real Stage 2/Stage 5 sshd fixtures under `-race`; `TestConcurrentBufferAllowsSnapshotsDuringWrites` `-race -count=10` | Initial RED found only concurrent read/write of a live sshd diagnostic `bytes.Buffer`; commit `c789a29` uses a tested synchronized testkit buffer in both fixtures. GREEN: buffer and Stage 5 native race pass; the old Stage 2 local run has no data race and remains unavailable because the host OpenSSH rejects `StdinNull`. |
 
 ## Hosted CI instability classification
 
@@ -135,6 +141,8 @@ Commit `4aacfc8d8cb275b3b0abf70962418c9dd29d9510` predates the complete fallback
 
 At M5.3 commit `3a018198ce2167cfb0e631adbc3494fe75289f55`, [push run 29567471724](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29567471724) passed. [PR run 29567473988](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29567473988) failed only two pre-existing macOS timing fixtures: arm64 race sent Stage 2 PTY delete before the listing target appeared, and Intel tail rotation observed truncate/new bytes before the rotate notice. Their opposite same-SHA jobs and all Stage 5 route/direct/fault tests passed. These failures are classified but are not final acceptance; the exact final SHA still requires green push and PR matrices.
 
+At M5.4 commit `1103c3fd362b0f94dd6d207be3ded0f33b2283aa`, [push run 29569733204](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29569733204) failed only the existing macOS Intel foreground-process-group timing fixture (`EPERM` after the helper had repeatedly printed `PASS`). [PR run 29569735058](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29569735058) failed only two existing macOS timing fixtures: Intel sent Stage 2 PTY delete before the asynchronous listing supplied a target, and arm64 observed Helper heartbeat termination before the client failure became visible. Each failure's companion job on the same SHA passed in the opposite run; auth, Linux native ext4/XFS/platform, oldstable, build, every reproducibility producer/compare, and all Stage 5 packages were green. This is instability classification, not final evidence.
+
 ## Pending closeout gates
 
-M5.1–M5.4 are locally implemented. Remaining closeout is the final full current/oldstable/native/platform/filesystem/auth/route/direct/fault/scale/resource/soak/reproducibility/pollution matrix, two independent final reviews, exact final push and PR Hosted CI, then promotion of all 22 cells from IMPLEMENTED to PASS/Verified. The PR remains Draft and may become Ready only after every final gate is green; it must not be merged automatically.
+M5.1–M5.4 and the available local current/route/direct/fault/scale/resource/soak/native-Level-2/reproducibility matrix are green. Remaining closeout is the clean candidate-tree production/secret/pollution audit, two independent final reviews with every finding addressed, exact final push and PR Hosted CI, then promotion of all 22 cells from IMPLEMENTED to PASS/Verified. Hosted CI supplies the unavailable oldstable, macOS, authentication, APFS/ext4/XFS and platform matrix. The PR remains Draft and may become Ready only after every final gate is green; it must not be merged automatically.

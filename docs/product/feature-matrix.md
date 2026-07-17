@@ -2,14 +2,14 @@
 
 > - 产品：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
 > - 基线：已批准产品设计
-> - 实现状态：Stage 0–4 已完成；Stage 4 的 26/26 行已验证；Stage 5 正在进行（M5.1–M5.3 Complete，M5.4 In Progress）；Stage 6 尚未开始
+> - 实现状态：Stage 0–4 已完成；Stage 4 的 26/26 行已验证；Stage 5 的 M5.1–M5.4 已实现，正在完成最终审查与 exact-SHA 验收；Stage 6 尚未开始
 > - 最后更新：2026-07-17
 
 ## 1. 使用规则
 
 本矩阵是 1.0 交付范围的逐项事实源。每条能力使用稳定 ID；ID 一经进入矩阵不得复用，能力被取消时保留原行并将状态改为 `Removed`，同时链接对应 ADR。实现不得只在代码或聊天中增加能力而不更新本矩阵。
 
-Stage 0–4 已完成且各阶段拥有完整验收范围的行已按证据标记为 `Verified`；验收仍由后续阶段共同拥有的行保持 `In Progress`。Stage 4 的 26 行已经过完整本地门禁、独立安全/正确性审查、candidate-tree secret/pollution 扫描、cold-start audit 与 exact-SHA Hosted 交付门禁，标记为 `Verified`。Stage 5 已进入 M5.4；只有已有实现且完成当前里程碑本地证据的行会标记 `Implemented`，全部 22 行仍须绑定 exact final candidate 后才能 `Verified`。Stage 6 未开始行保持 `Planned`。Stage 1 最终证据见 [Stage 1 verification](../verification/stage-01.md)，Stage 2 证据见 [Stage 2 verification](../verification/stage-02.md)，Stage 3 证据见 [Stage 3 evidence](../verification/stage-03.md)，Stage 4 证据见 [Stage 4 evidence](../verification/stage-04.md)。
+Stage 0–4 已完成且各阶段拥有完整验收范围的行已按证据标记为 `Verified`；验收仍由后续阶段共同拥有的行保持 `In Progress`。Stage 4 的 26 行已经过完整本地门禁、独立安全/正确性审查、candidate-tree secret/pollution 扫描、cold-start audit 与 exact-SHA Hosted 交付门禁，标记为 `Verified`。Stage 5 的 M5.1–M5.4 与可用本地最终矩阵已通过；全部 22 行保持 `Implemented`，仍须完成 candidate-tree audit、双重独立审查并绑定 exact final push/PR Hosted 证据后才能 `Verified`。Stage 6 未开始行保持 `Planned`。Stage 1 最终证据见 [Stage 1 verification](../verification/stage-01.md)，Stage 2 证据见 [Stage 2 verification](../verification/stage-02.md)，Stage 3 证据见 [Stage 3 evidence](../verification/stage-03.md)，Stage 4 证据见 [Stage 4 evidence](../verification/stage-04.md)。
 
 状态词义：
 
