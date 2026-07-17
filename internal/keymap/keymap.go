@@ -129,6 +129,9 @@ func New(overrides []Override) (Map, error) {
 		if !metadata.remappable {
 			return Map{}, fmt.Errorf("keymap override %d action %q is reserved", index, override.Action)
 		}
+		if override.Context == ContextNormal && override.Input == "q" {
+			return Map{}, fmt.Errorf("keymap override %d input %q is reserved for the fixed normal-mode quit action", index, override.Input)
+		}
 		if err := validateInput(override.Input); err != nil {
 			return Map{}, fmt.Errorf("keymap override %d: %w", index, err)
 		}

@@ -50,12 +50,12 @@ normal <space> mark remappable`)
 }
 
 func TestNewSupportsContextRemapWithoutChangingOtherContexts(t *testing.T) {
-	mapping, err := New([]Override{{Context: ContextVisual, Input: "n", Action: ActionDown}})
+	mapping, err := New([]Override{{Context: ContextVisual, Input: "q", Action: ActionDown}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got, ok := mapping.Lookup(ContextVisual, "n"); !ok || got != ActionDown {
-		t.Fatalf("visual n = %q, %v", got, ok)
+	if got, ok := mapping.Lookup(ContextVisual, "q"); !ok || got != ActionDown {
+		t.Fatalf("visual q = %q, %v", got, ok)
 	}
 	if _, ok := mapping.Lookup(ContextVisual, "j"); ok {
 		t.Fatal("visual j remained reachable after remap")
@@ -74,6 +74,7 @@ func TestNewRejectsConflictReservedDangerousAndUnreachableOverrides(t *testing.T
 		{name: "conflict", overrides: []Override{{Context: ContextNormal, Input: "k", Action: ActionDown}}, want: "conflict"},
 		{name: "reserved action", overrides: []Override{{Context: ContextNormal, Input: "z", Action: ActionDelete}}, want: "reserved"},
 		{name: "reserved input", overrides: []Override{{Context: ContextNormal, Input: ".", Action: ActionDown}}, want: "reserved"},
+		{name: "fixed quit input", overrides: []Override{{Context: ContextNormal, Input: "q", Action: ActionDown}}, want: "quit"},
 		{name: "digit", overrides: []Override{{Context: ContextNormal, Input: "2", Action: ActionDown}}, want: "count"},
 		{name: "unknown context", overrides: []Override{{Context: "command", Input: "z", Action: ActionDown}}, want: "context"},
 		{name: "unknown action", overrides: []Override{{Context: ContextNormal, Input: "z", Action: "macro_record"}}, want: "action"},
