@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 3 已合入 `main`，merge commit 为 `09821bdbcfc9693b309a1a39ee5121113c033254`。Stage 4 已在固定分支 `codex/stage4-search-helper` 从该 exact-main 基线开始；Stage 5–6 保持 Not Started。
+Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 4 在固定分支 `codex/stage4-search-helper` 从 exact-main 基线 `09821bdbcfc9693b309a1a39ee5121113c033254` 完成；Stage 5–6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -198,7 +198,7 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: Helper lifecycle/protocol；current-policy manifest/Ed25519/revoke/compat/floor/high-water；preliminary取消=0 probe、final取消=0 app-tree create/content、drift重probe/确认；Stage4 testdata fixture-only、production trust拒fixture且installable binary/curated dist无fixture assets（自动source archive除外）；shared/unknown/双节点mapping、fresh ssh GSS-delegation+CM off、root-owned utilities/PATH、uid0/cwd/RealPath/uname；safe-home/path/temp/ancestor、128MiB/expected+1/O_EXCL/首write前Chmod0600、client回读、no-replace；shell-c/唯一command/banner/chroot/byte0/stderr边界。失败Level0且不外推node/object/ACL/same-euid/root/server；百万节点/取消/预算与远端矩阵。
 
-**Status**: In Progress
+**Status**: Complete
 
 ### M4.1: SFTP 搜索基线
 
@@ -220,9 +220,9 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: manifest/signature golden/fuzz/compat；两阶段 consent/drift；OpenSSH 8.9 shell `-c`、fresh argv、poisoned PATH、uid/cwd/uname、safe-home 255/256 与 path 1000/1001、stderr 65536/65537、tamper/replay/upgrade/disable/remove、fixture isolation 与 production artifact pollution scans。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: Focused implementation is complete: canonical raw manifest/signature and enabled/high-water state persist atomically in owner-private bounded files; installation has two consent boundaries, current policy, fresh absolute-utility binding, SFTP attrs/readback/exclusive upload, hardlink target-exists-fails publication, exact enable-time revalidation, disable/remove, and protocol/version/capability handshake. The adapter fails closed without a separately reviewed raw-MKDIR primitive; its production packet implementation remains CLOSED. Fresh OpenSSH processes use isolated process groups, GSS delegation/ControlMaster off, byte-zero preface, 65,536-byte stderr acceptance and 65,537-byte rejection, and automatic termination on heartbeat/hard-deadline failure. Exact removal is serialized against Helper-capable planning and rejects non-terminal exact artifact references. Production runtime exposes no fixture install source and production trust remains empty. Final hostile OpenSSH/native/pollution/Hosted gates remain open.
+**Current checkpoint**: Canonical raw manifest/signature and enabled/high-water state persist atomically in owner-private bounded files; installation has two consent boundaries, current policy, fresh absolute-utility binding, SFTP attrs/readback/exclusive upload, hardlink target-exists-fails publication, exact enable-time revalidation, disable/remove, and protocol/version/capability handshake. Fresh OpenSSH processes use isolated process groups, GSS delegation/ControlMaster off, byte-zero preface, bounded stderr and automatic termination on heartbeat/hard-deadline failure. Exact removal is serialized against Helper-capable planning and rejects non-terminal exact artifact references. The complete hostile OpenSSH/native/pollution/Hosted matrix passed at `199e1012530b4d0112d0bbb1eef175c761db1567`. Production runtime exposes no fixture install source, production trust is empty, and raw-MKDIR packet implementation/distribution remain **CLOSED**.
 
 ### M4.3: Helper 搜索
 
@@ -232,9 +232,9 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: protocol golden/fuzz/compat/capability violation、cancel/timeout/invalid frame；million-node streaming/取消/资源证据；long line/binary/encoding/large-file/permission/mid-search change；process/port/service/secret scans 与 Helper failure 后 Stage 1–3 regression。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: The strict framed protocol, independent capability negotiation, concurrent request correlation, cancellation, time/frame/string/depth/result/output/concurrency limits, structured completion/errors, heartbeat, built-in filename/content scanner, and daemon Level 1 routing are implemented. Rejected request IDs cannot be reused; one encoded payload is both checked and written; terminal/error payloads fit inside the same 64-MiB client/server budget. End-to-end tests prove negotiated Helper results retain the exact M4.1 identity and a closed Helper routes a new request through Level 0 while Provider snapshot remains available. The synthetic million-node Helper walk returns its first result in about 0.29 ms with about 3.5 MiB peak allocation delta. Final real SSH crash/hang/native resource gates remain open.
+**Current checkpoint**: The strict framed protocol, independent capability negotiation, concurrent request correlation, cancellation, hard resource limits, structured completion/errors, heartbeat, built-in filename/content scanner, and daemon Level 1 routing are verified. Rejected request IDs cannot be reused; terminal/error payloads fit inside the shared client/server budget. Negotiated Helper results retain the exact M4.1 identity and a closed Helper routes a new request through Level 0 while Provider snapshot remains available. The million-node Helper fixture and real SSH crash/hang/native resource gates passed in the accepted local and Hosted matrices.
 
 ### M4.4: 增强能力与退化闭环
 
@@ -244,9 +244,9 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: capability removal table；hash mutation、quota unknown、tail truncate/rotate、watch lost/coalesced、same-host copy conflict/verify/restart；kill/crash/hang/version mismatch 后 browsing/search/transfer/Preview/Edit/Job 继续绿色；完整平台、资源、安全和 cold-start 门禁。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: Focused strong-hash mutation, statfs quota-unknown, tail truncate/rotation, watch loss/coalescing, independent capability removal, Helper status, and same-host copy tests are green. Same-host copy is now a durable `helper_same_host` Plan route that freezes Endpoint, artifact, source identity and capabilities. Manager holds Job Store admission from before Helper prepare through durable create; removal uses the same database-scoped coordinator and scans every non-terminal exact reference. Helper creates only the exact part and the existing Worker owns checksum, conflict, commit, restart adoption, cancellation, and Job state. Jobs expose their frozen route. Final full-platform/fault/resource/security/Hosted and cold-start gates remain open.
+**Current checkpoint**: Strong-hash mutation, statfs quota-unknown, tail truncate/rotation, watch loss/coalescing, independent capability removal, dynamic Helper status and same-host copy are verified. The durable `helper_same_host` Plan freezes Endpoint, artifact, source identity and capabilities; Job Store admission/removal coordination prevents exact-artifact races; the existing Worker owns checksum, conflict, commit, restart adoption, cancellation and Job state. Full-platform/fault/resource/security/cold-start gates and exact-SHA push [29557909197](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557909197) and PR [29557911211](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557911211) runs passed 24/24 jobs each at commit `199e1012530b4d0112d0bbb1eef175c761db1567`, tree `48e5ebddf136d2c59a144fc5f82dd14dd60e24dc`.
 
 ## Stage 5: Direct Transfer & Scale
 

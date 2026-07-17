@@ -1,11 +1,13 @@
 # Stage 4 Verification Record
 
-- **Status**: In Progress — M4.1 Complete; M4.2–M4.4 focused implementation complete, final candidate gates pending
+- **Status**: Complete — M4.1–M4.4 verified
 - **Updated**: 2026-07-17
 - **Repository root**: `/Users/bytedance/Downloads/projects/awesome-mac-sftp`
 - **Branch**: `codex/stage4-search-helper`
 - **Stage 3 merge baseline**: commit `09821bdbcfc9693b309a1a39ee5121113c033254`, tree `c18e4cf8faf8eb70cc9964e242513b30ab0e79cc`
 - **Baseline Hosted run**: [29517334761](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29517334761) — exact merge commit, successful
+- **Accepted implementation checkpoint**: commit `199e1012530b4d0112d0bbb1eef175c761db1567`, tree `48e5ebddf136d2c59a144fc5f82dd14dd60e24dc`
+- **Exact-SHA Hosted runs**: [push 29557909197](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557909197) and [PR 29557911211](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557911211) — 24/24 jobs successful in each
 - **Production Helper distribution**: **CLOSED**
 
 Stage 4 delivers Level 0 bounded SFTP search before any optional Helper work. Helper lifecycle, protocol and capability work is authorized only through explicitly injected non-release `testdata` fixtures; the production verifier must reject fixture keys and no production Helper artifact, manifest, key or custody claim may be created in this stage.
@@ -33,7 +35,7 @@ The synthetic million-node Provider generates only the requested 128-entry page.
 
 ### M4.2 — Helper install and handshake
 
-**Status: In Progress.** Production distribution remains CLOSED; only explicit test-only fixture injection is permitted.
+**Status: Complete.** Production distribution remains CLOSED; only explicit test-only fixture injection is permitted.
 
 The current internal lifecycle freezes canonical Manifest v1 and 89-byte detached signature parsing, Ed25519/key-ID verification, empty production trust, current-policy floors/revocation/denylist, monotonic version/hash decisions, strict safe-home/target/path derivation, two consents, fresh-plan drift rejection, expected+1 artifact reads, exclusive unpredictable temp upload, pre-first-byte chmod/handle/path checks, client readback, no-replace publication, final verification and post-handshake high-water update. The fixture private key exists only in `_test.go`; the sole artifact is `internal/helper/testdata/nonrelease-helper-fixture.txt`.
 
@@ -41,11 +43,11 @@ The fresh OpenSSH process session uses the exact restricted command builder, for
 
 Exact raw signed metadata is now durably staged before probe in a 0700/0600 content-addressed store. Its atomic index separates the enabled bit from persistent Endpoint/protocol/target version/hash high-water, fails closed on missing/corrupt/symlink metadata, caps records and metadata files at 4,096, and preserves high-water across disable/remove and restart. `PrepareEnable` reloads exact bytes and repeats current policy, fresh binding/target/namespace/ancestor/final attributes and full remote hash before validating exact protocol/version/independent capabilities.
 
-The `pkg/sftp` adapter requires raw UID/mode attributes, exact 0600 handle operations, exclusive create, readback and exact removal. It rejects ordinary create-then-chmod `Mkdir` because that exposes an umask-dependent permission window, and requires a construction-time raw-MKDIR primitive whose Stage 4 fixture creates with exact `0700`; the production packet implementation remains intentionally absent while distribution is CLOSED. Testing proved a nominal SFTP v3 server may replace on rename, so publication deliberately requires OpenSSH `hardlink@openssh.com` target-exists-fails and refuses servers without it; it never uses replacement rename or delete-first. Utility attributes are checked before and after probe, the formal executable must match the full content-addressed grammar, and exact removal uses the Job Store's admission/removal lease to scan exact artifact IDs in non-terminal durable plans. [ADR-0016](../architecture/adr/0016-stage4-search-helper-runtime-contracts.md) records these fail-closed decisions. Final hostile OpenSSH/native/pollution gates remain pending.
+The `pkg/sftp` adapter requires raw UID/mode attributes, exact 0600 handle operations, exclusive create, readback and exact removal. It rejects ordinary create-then-chmod `Mkdir` because that exposes an umask-dependent permission window, and requires a construction-time raw-MKDIR primitive whose Stage 4 fixture creates with exact `0700`; the production packet implementation remains intentionally absent while distribution is CLOSED. Testing proved a nominal SFTP v3 server may replace on rename, so publication deliberately requires OpenSSH `hardlink@openssh.com` target-exists-fails and refuses servers without it; it never uses replacement rename or delete-first. Utility attributes are checked before and after probe, the formal executable must match the full content-addressed grammar, and exact removal uses the Job Store's admission/removal lease to scan exact artifact IDs in non-terminal durable plans. [ADR-0016](../architecture/adr/0016-stage4-search-helper-runtime-contracts.md) records these fail-closed decisions. The hostile OpenSSH, native and pollution gates passed on the accepted candidate.
 
 ### M4.3 — Helper search
 
-**Status: In Progress.**
+**Status: Complete.**
 
 Protocol v1 now has the ADR-0010-frozen `amsftp-helper-wire-v1` byte-zero preface, strict envelopes and payloads, 1 MiB frames, depth/string/capability/concurrency bounds, independent capability negotiation, permanent request-ID non-reuse including rejected requests, concurrent result/progress/error/complete streams, cancel, operation timeout and mandatory nonce heartbeat. Server and client use payload-byte accounting, release a concurrency slot before exposing `complete`, and independently cap every request at ten minutes, 100,000 results and 64 MiB. The built-in scanner supplies bounded filename/content search without shell interpolation. Daemon routing uses Helper only after independent capability negotiation, preserves the exact Level 0 identity, reports canceled contexts (including an empty closed Helper stream) as canceled before Provider snapshot validation, emits partial results on Helper failure, and never mixes fallback results into the same request. A closed Helper causes the next request to use Level 0 while the Provider snapshot remains healthy.
 
@@ -53,11 +55,42 @@ The million-node Helper synthetic walk traverses one million generated entries w
 
 ### M4.4 — Enhanced capabilities and degradation closure
 
-**Status: In Progress.** Focused implementation is complete; final cross-platform and fault gates remain pending.
+**Status: Complete.** Cross-platform, fault, resource, security and degradation gates are verified.
 
 `strong_hash` returns SHA-256, file identity and compute time, and invalidates a mid-read change. `disk_stats` reports statfs total/available with quota explicitly unknown. Tail reports truncate/rotation and byte/time limits; watch is explicitly loss-possible, coalesced, and refresh-required.
 
 Planner selects `helper_same_host` only for a regular-file copy within one SSH Endpoint after independent `strong_hash` and `same_host_copy` negotiation. The concrete Helper session is bound to that exact EndpointID, and Helper size/mtime at Provider precision/available file ID/existing SHA-256 must agree with the frozen Provider FileRef. The frozen Plan carries exact Endpoint, protocol, Helper version, OS/architecture/artifact SHA, capability version and source SHA-256/size/identity. Manager holds the shared Job Store admission lease from before Helper preparation through durable creation; exact removal takes the same coordinator and scans every non-terminal durable plan. Helper may create only the standard `.part-<JobID>` location. The existing Worker then verifies, applies conflict policy, commits, checkpoints and adopts an exact response-lost part after restart. Durable Manager, overwrite, cancel propagation, route visibility and fallback-to-relay-at-plan-time tests are green. The TUI refreshes each ready SSH pane's dynamic Helper status through a one-at-a-time one-second snapshot loop and rejects stale Endpoint/session/generation actions. The production Manager still receives no fixture backend while distribution is CLOSED.
+
+## Stage 4 feature evidence
+
+| Feature ID | Result | Evidence |
+|---|---|---|
+| VIM-018 | PASS | Search key sequences, cancellation, generation isolation and native PTY gates pass. |
+| SRCH-002 | PASS | Level 0 and negotiated Helper filename search pass Provider, daemon, TUI and real-sshd gates. |
+| SRCH-003 | PASS | Bounded Level 0 and Helper content search pass binary, encoding, long-line and real-sshd gates. |
+| SRCH-004 | PASS | Streaming, terminal status and million-entry resource evidence pass. |
+| SRCH-005 | PASS | Provider and Helper cancellation, drain and process cleanup gates pass. |
+| SRCH-006 | PASS | Depth, result, file, read, output, time and concurrency budgets pass. |
+| SRCH-007 | PASS | Zero-Helper filename search and explicit slow-content degradation pass. |
+| SRCH-008 | PASS | Helper/Level 0 identity, event and fresh-request fallback parity pass. |
+| SRCH-009 | PASS | Symlink no-follow, permission partials and temporary-sshd boundaries pass. |
+| SRCH-010 | PASS | Open, preview and clipboard actions preserve frozen pane/result identity. |
+| HELP-002 | PASS | Both consent boundaries, zero-action cancellation and drift re-confirmation pass. |
+| HELP-003 | PASS | Binding, target, namespace, safe-home, path and ancestor checks pass. |
+| HELP-004 | PASS | Current-policy verification, fixture isolation, safe upload/publication and pollution gates pass. |
+| HELP-005 | PASS | Exact directory/file modes, content-addressed paths and no-replace publication pass; production raw-MKDIR remains CLOSED. |
+| HELP-006 | PASS | Frozen OpenSSH argv, byte-zero protocol, heartbeat/deadline cleanup and stderr boundaries pass. |
+| HELP-007 | PASS | Stdio-only, non-root, non-resident and no-listener process boundaries pass. |
+| HELP-008 | PASS | Bounded/cancelable filename and content scans plus million-entry resource gates pass. |
+| HELP-009 | PASS | Mutation-safe SHA-256 and quota-honest filesystem statistics pass. |
+| HELP-010 | PASS | Bounded tail/watch truncate, rotation, loss and coalescing semantics pass. |
+| HELP-011 | PASS | Durable same-host staging preserves Planner, Job, verification, conflict, commit and restart semantics. |
+| HELP-012 | PASS | Crash, timeout, malformed-output and version/capability degradation preserve Level 0. |
+| HELP-014 | PASS | Strict frames, no banner resync, bounded/redacted diagnostics and hostile process gates pass. |
+| DIRECT-003 | PASS | Exact Helper route planning and durable same-host copy fall back to relay when unavailable. |
+| SEC-004 | PASS | Non-root execution, exact modes, process-group cleanup and native security scans pass. |
+| SEC-005 | PASS | Persistent signed metadata, current-policy freshness, high-water and tamper/revoke gates pass; production trust remains empty. |
+| OBS-005 | PASS | Dynamic Helper status, independent capabilities, degradation reasons and frozen Job routes pass. |
 
 ## Command ledger
 
@@ -100,7 +133,8 @@ Planner selects `helper_same_host` only for a regular-file copy within one SSH E
 | trusted-root fixture repair | affected Helper tests, focused race, and `make check` | PASS: executable and persistent-state fixtures now use the CI-provisioned `testkit.PersistentTempDir`; production code is unchanged |
 | repair candidate `5de255740f9cb1a600648e5ab0181615468c66d2` | Hosted push run [29557617101](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557617101) and PR run [29557619380](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557619380) quality jobs | FAIL: Linux-only lint identified an unchecked signed `statfs` block-size conversion and a cross-platform test conversion; the repaired Linux native Helper tests passed |
 | Linux lint repair | native Linux package analysis and focused disk-stats/SFTP adapter tests | PASS: non-positive block sizes fail closed before conversion, and the intentional platform-width test conversion is documented |
+| accepted implementation checkpoint `199e1012530b4d0112d0bbb1eef175c761db1567` / tree `48e5ebddf136d2c59a144fc5f82dd14dd60e24dc` | Hosted push run [29557909197](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557909197) and PR run [29557911211](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557911211) | PASS: 24/24 jobs successful in each exact-SHA run, including quality, auth, four native, four oldstable, four builds, eight reproducibility producers, reproducibility compare and final provenance compare |
 
-## Pending final gates
+## Closeout
 
-Independent security/correctness and cold-start/documentation re-reviews report no remaining blockers. Exact current/oldstable, real temporary-sshd, hostile process fixture, reproducibility and production-pollution gates are green. Native/Hosted exact-SHA jobs, including the repository's full OpenSSH/auth/provenance matrix, remain pending. Focused implementation rows are `Implemented`; none may become `Verified` before the exact final candidate passes its required gates.
+Independent security/correctness and cold-start/documentation re-reviews report no remaining blockers. Exact current/oldstable, real temporary-sshd, hostile process fixture, reproducibility, production-pollution and both exact-SHA Hosted matrices are green. All 26 Stage 4 feature rows are `Verified`. Production Helper distribution remains **CLOSED**: production trust is empty and no production artifact, manifest, signature, private key, raw-MKDIR packet implementation, install source or custody claim is shipped.
