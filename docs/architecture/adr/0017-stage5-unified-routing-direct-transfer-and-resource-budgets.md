@@ -19,13 +19,14 @@ Stage 2–4 已分别交付 durable relay、同 Endpoint atomic rename 和 `help
 5. atomic rename、server copy、Helper copy 和 Level 2 只可影响数据路线。除 atomic rename 自身已由 Stage 2 后置条件路径处理外，快/直传只能创建或续写冻结的 Job-owned `.part-<JobID>`；现有 Worker 独占 verify、conflict、commit、checkpoint/restart 和 move source-delete。不得增加 direct-only raw final write/rename/delete/source-delete API。
 6. 冻结 Plan 不在执行时静默改路。只有证据明确允许的 downgrade 才可发生：direct write 前可走 relay；已有 part 仅在 Job/source/target/offset/size/hash/format 全部兼容并重新验证后复用。commit 可能发生或响应丢失时先检查 final/part/strong postcondition，分类 success/conflict/needs-attention，不盲重放。
 7. Level 2 preflight v1 对 protocol、capability、network、trusted target address、write/temp、space/quota、existing non-interactive auth、host-key policy、user/workspace/data policy、hash/freshness 分别产生 bounded evidence。任何 required 项 unknown/fail 都不得创建 direct temp/write。目标地址只能来自冻结 Endpoint/受信配置；文件内容、display name、搜索结果和 Helper 自报地址不能成为 authority。
-8. Level 2 控制面由本地 daemon 拥有并使用 request/Job correlation、bounded frames/results/concurrency、hard deadline、nonce heartbeat 和 cancel。数据面可以远端直达；目标 durable acknowledgement 才形成进度/checkpoint。协议不提供通用 shell RPC 或用户可控 command string。
+8. Level 2 控制面由本地 daemon 拥有并使用 request/Job correlation、bounded frames/results/concurrency、hard deadline、nonce heartbeat 和 cancel。nonce 是冻结 Job 的 durable transfer correlation：fresh expiry preflight 必须更换 request ID/deadline 但保留 nonce；checkpoint 必须与冻结 nonce 精确相等，不能只验证格式或跨 correlation 续传。数据面可以远端直达；目标 durable acknowledgement 才形成进度/checkpoint。协议不提供通用 shell RPC 或用户可控 command string。
 9. direct transport 使用 fresh validated absolute system OpenSSH 语义，默认和测试均禁止 Agent forwarding、GSS credential delegation、ControlMaster/Path/Persist、密码/askpass 转交、私钥/ticket/known_hosts 复制和宽松 host-key。它只使用源主机已经存在且无需新秘密的非交互认证。
 10. ordinary production construction 永远不接受 fixture trust/backend/config switch，并稳定拒绝 Level 2 为 `production_distribution_closed` 后选择 relay。只有显式 non-release `_test.go`/`testdata` constructor 可运行 Level 2；release binary、archive、diagnostics 和候选树必须通过 fixture/secret/pollution 扫描。
 11. 统一资源模型采用不可关闭的 hard ceilings，并允许配置进一步收紧：单 transfer buffer 256 KiB；恢复时每 Job transfer buffer 总量不超过 512 KiB；Provider page 256；directory frontier 64；depth 128；Helper frame 1 MiB、四并发、十分钟、100,000 results、64 MiB output 沿用 ADR-0016。新增 scheduler 对 global/Endpoint/Job admission、connection/SSH/helper process、FD、goroutine、memory、queue、event/log bytes 分层计数；实现常量与 Stage 5 verification 必须列出精确值，配置不得超过 hard ceiling。
 12. 调度采用确定性 weighted round-robin/等价无饥饿队列和整数 token bucket。控制消息、Preview 和小交互读取拥有有界服务机会；大树/大文件按固定 quantum 让出。速率热更新只作用于后续 token/admission，不重写已提交步骤。不能精确限速的快路径必须在 Plan 声明 `uncontrolled`，策略要求限速时禁用该路线。
 13. 大目录、树、事件和日志只通过 bounded page/batch/transaction/frame 传播。50k UI 只保留可视窗口和有限 overscan；百万树使用 bounded frontier，若内存不足只能落入 daemon-private durable/disk-backed state；100GB 路径使用 64-bit offset 与大小无关的 buffer/checkpoint/event 上限。所有 truncated/partial/degraded 结果保留 stable reason 和摘要。
 14. Stage 5 的 canonical 100 GiB 验收采用显式的正交分解，而不伪称快速门禁已物理搬运 100 GiB：真实 sparse 文件与 synthetic 100 GiB Provider 通过同一生产 Worker 执行到 durable cancel checkpoint，证明 64-bit identity/offset、固定 buffer、part retention 和 final 不可见；`TestWorkerHundredGiBContractLifecycleUsesSameCheckpointHashAndRateStateMachine` 使用 sparse-shaped 多 quantum 内容、同一 Worker/Journal/Scheduler 代码路径和新的 Worker 实例，证明 pause、持久 checksum、restart resume、限速、最终 SHA-256 与 commit；transport interrupt/source drift/direct-relay goldens 分别证明恢复拒绝和路线等价。SHA-256 对全部逻辑字节必然是 O(n)，因此完整物理 100 GiB LocalFS/SFTP 搬运与 hash 按测试策略保留为 Stage 6 nightly/release 长跑门禁，不是 Stage 5 快速 merge gate。这个分解只收窄 Stage 5 的证据组合，不降低产品 100 GiB 支持上限或任何运行时语义。
+15. Stage 5 的 native dual-sshd gate 也采用诚实的分层证据：它证明两个真实、独立的 sshd/SFTP **控制会话**、strict known-host/BatchMode、Agent/GSS/ControlMaster 禁用、两个隔离 data root、production Provider content-read 计数为零和 target-root credential 扫描；test-only `level2DataFixture` 仍由同一 Go test process 直接访问两个 data root。因此本门禁不声称 source-remote→target-remote 网络数据通道、不声称 daemon 进程未承载内容，也不满足进程/网络隔离的 production data-plane 证明。真正分离进程/网络 namespace 的 remote→remote transport、remote hash 和 daemon-content-bypass 组合证据属于 Stage 6 nightly/release；Stage 5 production Level 2 继续 CLOSED。
 
 ## Consequences
 
@@ -33,6 +34,7 @@ Stage 2–4 已分别交付 durable relay、同 Endpoint atomic rename 和 `help
 - production direct 在 Stage 5 中必然显示关闭并中继；这是真实安全状态，不是缺陷或可由普通配置绕过的开关。
 - route evidence、resource budget 和 user-visible reason 成为兼容契约；改变代码或语义需要新版本和相应迁移/ADR。
 - 100 GiB 的规模边界与生命周期语义必须同时在 canonical gate 中出现；文档不得把一次首 checkpoint cancel 描述成完整物理传输。Stage 6 仍须提供完整物理长跑记录。
+- native dual-sshd 的真实控制面证据不得描述为真实远端数据面；Stage 6 仍须提供进程/网络隔离的 remote→remote data-plane 记录。
 - M5.2 在 M5.1 shared route contract、Plan round-trip/restart 和 Jobs/Log/TUI evidence 全绿前不能开始。
 
 ## Evidence

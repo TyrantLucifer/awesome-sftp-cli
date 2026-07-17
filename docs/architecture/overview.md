@@ -406,11 +406,11 @@ cache filesystem manifest 不包含完整的 policy/dirty/reference/lease 元数
 - `gs` 在 UI 中是 `g`、`s` 的顺序键；local 继承 pane cwd 与 controlling TTY，remote current-cwd 先 probe 再使用 fresh `ssh -tt`。probe/正式启动失败只提供显式 `gS` home retry，不静默 fallback。shell terminal bytes 不 capture/log。
 - terminal handoff 保存/恢复 foreground pgrp、termios、raw/alternate/cursor 和 SIGWINCH；不论 normal/nonzero/signal/spawn/PTY 失败都回到同一恢复路径。child 已 spawn 但 pgrp/foreground 交接失败时，必须先 terminate 整个 process group 并 reap，再恢复 TUI。daemon Job 不依赖 TUI 存活；Provider/file RPC/preview/cache 都不能调用 shell runner。
 
-### 10.5 搜索（Stage 4 目标）
+### 10.5 搜索（Stage 4 已交付）
 
-- 当前目录过滤已由 `/` 触发；递归 filename/content search、helper fast walk/watch/tail 在 Stage 3 不可用。
-- Stage 4 的递归文件搜索 `f` 优先使用 helper；无 helper 时使用有预算、可取消、流式的 SFTP walk。
-- Stage 4 的内容搜索 `g/` 优先调用 helper 的安全 rg 或内置扫描器；无 helper 时只提供明确标记为受限且较慢的模式。
+- 当前目录过滤由 `/` 触发；递归 filename/content search 与 Helper fast walk/hash/watch/tail 已在 Stage 4 交付。
+- 递归文件搜索 `f` 优先使用 Helper；无 Helper 时使用有预算、可取消、流式的 SFTP walk。
+- 内容搜索 `g/` 优先调用 Helper 的安全 rg 或内置扫描器；无 Helper 时提供明确标记为受限且较慢的模式。
 - 所有结果携带来源 Location、部分结果标记和搜索代次。取消后不得继续无限产生结果。
 
 ## 11. 安全不变量

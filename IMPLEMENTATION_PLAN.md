@@ -272,15 +272,15 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 ### M5.2: Level 2 预检与跨主机直传
 
-**Goal**: 通过显式 non-release `testdata` fixture 交付版本化、有界、daemon-owned 的 Level 2 控制面和隔离双远端数据面，同时让普通 runtime 保持 production distribution CLOSED。
+**Goal**: 通过显式 non-release `testdata` fixture 交付版本化、有界、daemon-owned 的 Level 2 控制面与数据生命周期契约，以两个真实 sshd/SFTP 会话验证控制策略，同时让普通 runtime 保持 production distribution CLOSED；真实进程/网络隔离的双远端数据面是 Stage 6 组合门禁。
 
 **Success Criteria**: protocol/capability/network/address/write/temp/space/quota/auth/host-key/user/workspace/data/hash 每项都必须通过；目标先写唯一 part，目标 durable acknowledgement 才计进度；strong hash/fingerprint 证明来源未变；无 Agent forwarding、GSS delegation、secret/key/ticket/known_hosts 复制或宽松 host-key；普通 runtime 稳定记录 `production_distribution_closed` 并走 relay。
 
-**Tests**: bounded protocol/frame/deadline/heartbeat/cancel contract；逐项 unknown/fail 预检矩阵及零 direct mutation 断言；固定 OpenSSH argv/config 与 secret/pollution 扫描；真实隔离 test-only 双远端 direct，证明数据面直达、daemon 控制面可审计且本地不承载完整内容。
+**Tests**: bounded protocol/frame/deadline/heartbeat/cancel contract；逐项 unknown/fail 预检矩阵及零 direct mutation 断言；固定 OpenSSH argv/config 与 secret/pollution 扫描；两个真实 sshd/SFTP 控制会话加同进程 test-only 数据夹具，证明控制策略、隔离 data root 与完整 fixture 生命周期。按 ADR-0017，本门禁不声称远端网络数据面直达或 daemon 进程不承载内容；该组合证据属于 Stage 6。
 
 **Milestone Status**: Complete
 
-**Current checkpoint**: direct protocol v1 已冻结 request/Job/Endpoint/path/target-alias/source identity、14 项 ordered preflight、1 MiB/4-request/10-minute/heartbeat/cancel/progress/result limits；逐项 fail/unknown 均 0 direct stage 并 relay。仅同包 `_test.go` 可注入的 data facet 已证明 source→target staging、target durable checkpoint、remote part/final strong hash、shared Worker commit、daemon 0 Provider content read、expiry fresh preflight、in-flight cancel、lost-response exact restart adoption 与 absent-part safe relay downgrade。真实双 sshd/SFTP native gate 证明隔离控制会话、strict host key/BatchMode、Agent/GSS/ControlMaster 禁用、target data root 无 credential material。普通 `NewPlanner`/`NewWorker` 无注入入口，production 继续 `production_distribution_closed`。M5.2 完成，M5.3 开始。
+**Current checkpoint**: direct protocol v1 已冻结 request/Job/Endpoint/path/target-alias/source identity、14 项 ordered preflight、1 MiB/4-request/10-minute/heartbeat/cancel/progress/result limits；逐项 fail/unknown 均 0 direct stage 并 relay。仅同包 `_test.go` 可注入的 data facet 已证明 source→target staging、target durable checkpoint、part/final strong hash、shared Worker commit、daemon Provider content-read 计数为 0、expiry fresh preflight、in-flight cancel、lost-response exact restart adoption 与 absent-part safe relay downgrade。真实双 sshd/SFTP native gate 只证明两个隔离控制会话、strict host key/BatchMode、Agent/GSS/ControlMaster 禁用、隔离 data root 与 target root 无 credential material；数据 fixture 仍在同一测试进程本地访问 data root，真正进程/网络隔离的数据面证据已由 ADR-0017 递交 Stage 6。普通 `NewPlanner`/`NewWorker` 无注入入口，production 继续 `production_distribution_closed`。M5.2、M5.3 与 M5.4 均已本地完成，当前处于最终修复与精确 SHA closeout。
 
 ### M5.3: 降级、故障与语义等价
 
@@ -292,7 +292,7 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Milestone Status**: Complete
 
-**Current checkpoint**: expired preflight fail/unknown/malformed evidence now durably selects relay before direct write and restart honors that actual route without re-probing. Acknowledged exact parts are reused or removed only after exact Job/path/size/fingerprint/hash proof; drifted or unprovable parts remain isolated and block fallback. The fault matrix covers post-preflight network/auth/permission/space failures, mid-part disconnect/resume, hang/cancel, corrupt/short results, part-proof corruption, checkpoint mismatch, source/target drift, stage/commit/delete response loss and source-delete uncertainty. Direct/relay share ask/overwrite/skip/auto-rename, cancellation, durable Job/event, move deletion/source-retention and strong-integrity semantics; deterministic-random, sparse-shaped and multi-chunk large goldens produce identical bytes, SHA-256, final and outcome. Focused/full transfer, race and lint gates pass. Production Level 2 remains CLOSED. M5.4 owns the 50k/1M/100GB and scheduler/resource evidence.
+**Current checkpoint**: expired preflight fail/unknown/malformed evidence now durably selects relay before direct write and restart honors that actual route without re-probing. Acknowledged exact parts are reused or removed only after exact Job/path/size/fingerprint/hash proof; drifted or unprovable parts remain isolated and block fallback. The fault matrix covers post-preflight network/auth/permission/space failures, mid-part disconnect/resume, hang/cancel, corrupt/short results, part-proof corruption, checkpoint mismatch, source/target drift, stage/commit/delete response loss and source-delete uncertainty. Direct/relay share ask/overwrite/skip/auto-rename, cancellation, durable Job/event, move deletion/source-retention and strong-integrity semantics; deterministic-random, sparse-shaped and multi-chunk large goldens produce identical bytes, SHA-256, final and outcome. Focused/full transfer, race and lint gates pass. Production Level 2 remains CLOSED. M5.3 已完成并已移交 M5.4；M5.4 规模与 scheduler/resource evidence 也已本地完成。
 
 ### M5.4: 规模、资源预算与公平调度
 
