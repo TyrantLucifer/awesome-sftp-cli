@@ -3,7 +3,6 @@
 package transfer
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -21,6 +20,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	pkgsftp "github.com/pkg/sftp"
 )
 
@@ -29,7 +29,7 @@ type nativeDirectSSHD struct {
 	dataRoot string
 	port     int
 	cmd      *exec.Cmd
-	logs     bytes.Buffer
+	logs     testkit.ConcurrentBuffer
 	once     sync.Once
 }
 
@@ -202,7 +202,7 @@ func startNativeSFTPProcess(t *testing.T, ctx context.Context, configPath, alias
 	if err != nil {
 		t.Fatal(err)
 	}
-	var stderr bytes.Buffer
+	var stderr testkit.ConcurrentBuffer
 	command.Stderr = &stderr
 	if err := command.Start(); err != nil {
 		t.Fatal(err)
