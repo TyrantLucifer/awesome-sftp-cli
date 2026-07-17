@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始；当前处于 M6.1，配置、keymap、公共 CLI/help/man/completion、兼容版本清单与 11 项历史持久化来源 inventory 已实现，config v1 和 workspace v1/v2 已以真实 SHA-pinned fixture 冻结，仅剩最终本地与 exact-SHA Hosted milestone gate。
+Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始；M6.1 已在 exact implementation commit `9e2ed6df9fc736d0d86fa5e6f70d3a0ef0146224` 完成本地 current/oldstable 与 push/PR Hosted 门禁，当前进入 M6.2，首个 RED slice 是在任何 owner mutation 前捕获剩余 SQLite/cache/Helper 真实历史 fixture。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -316,4 +316,4 @@ Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Status**: In Progress
 
-**Current checkpoint**: 唯一基线为 commit `312bcccbcbd54246bbe5ff9babf4f14560449176`、tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`；local `main`、`origin/main` 与 remote `refs/heads/main` 一致，exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) 24/24 jobs 成功，untouched baseline 的 CI-equivalent `make ci` 通过。固定分支已从该 SHA 创建，Draft PR [#6](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/6) 已打开；VIM-013/VIM-014/REL-001/REL-002/REL-011 为 `In Progress`，其余 18 个 Stage 6 专属行仍为 `Planned`，12 个退出条件全部开放，production Helper distribution 与 production Level 2 保持 **CLOSED**。逐里程碑 RED→GREEN、真实 process/network-isolated Level 2、完整物理 100 GiB、签名/公证/离线 manifest 与 release/channel 顺序见 [Stage 6 execution plan](docs/stages/06-hardening-release-plan.md)，实时结果见 [Stage 6 verification](docs/verification/stage-06.md)。
+**Current checkpoint**: 唯一基线为 commit `312bcccbcbd54246bbe5ff9babf4f14560449176`、tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`，exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) 24/24 jobs 成功。M6.1 exact implementation commit `9e2ed6df9fc736d0d86fa5e6f70d3a0ef0146224`、tree `73a8b94974ffc98862f0d28243834acba5d999bc` 完成配置/keymap/公共 CLI/兼容与历史来源 inventory；本地 Go 1.26.5 `make ci`、Go 1.25.12 `make check`，以及 push [29619828356](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29619828356) / PR [29619830232](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29619830232) Hosted attempt 2 均成功。M6.1 Complete，M6.2 从剩余八项真实历史 fixture 捕获开始；12 个 Stage 6 退出条件仍全部开放，production Helper distribution 与 production Level 2 保持 **CLOSED**。逐里程碑 RED→GREEN、真实 process/network-isolated Level 2、完整物理 100 GiB、签名/公证/离线 manifest 与 release/channel 顺序见 [Stage 6 execution plan](docs/stages/06-hardening-release-plan.md)，实时结果见 [Stage 6 verification](docs/verification/stage-06.md)。
