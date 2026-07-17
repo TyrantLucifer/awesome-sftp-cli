@@ -280,6 +280,8 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Milestone Status**: In Progress
 
+**Current checkpoint**: direct protocol v1 已冻结 request/Job/Endpoint/path/target-alias/source identity、14 项 ordered preflight、1 MiB/4-request/10-minute/heartbeat/cancel/progress/result limits；逐项 fail/unknown 均 0 direct stage 并 relay。仅同包 `_test.go` 可注入的 data facet 已证明 source→target staging、target durable checkpoint、remote part/final strong hash、shared Worker commit、daemon 0 Provider content read、expiry fresh preflight、in-flight cancel、lost-response exact restart adoption 与 absent-part safe relay downgrade。普通 `NewPlanner`/`NewWorker` 无注入入口，production 继续 `production_distribution_closed`。M5.2 尚需真实隔离双 sshd 与 native auth/host-key evidence 后关闭。
+
 ### M5.3: 降级、故障与语义等价
 
 **Goal**: 在 direct 与所有快路径的每个安全边界注入故障，证明降级、结果恢复和精确清理不改变冻结保证。

@@ -53,22 +53,24 @@ const (
 )
 
 type Checkpoint struct {
-	JobID              domain.JobID       `json:"job_id"`
-	Phase              Phase              `json:"phase"`
-	Offset             uint64             `json:"offset"`
-	SourceFingerprint  domain.Fingerprint `json:"source_fingerprint"`
-	Part               domain.Location    `json:"part"`
-	PartFingerprint    domain.Fingerprint `json:"part_fingerprint"`
-	ChecksumState      []byte             `json:"checksum_state,omitempty"`
-	ChecksumHex        string             `json:"checksum_hex,omitempty"`
-	Final              domain.Location    `json:"final"`
-	Outcome            Outcome            `json:"outcome,omitempty"`
-	Items              uint64             `json:"items,omitempty"`
-	CurrentPath        string             `json:"current_path,omitempty"`
-	DirectoryRootOwned bool               `json:"directory_root_owned,omitempty"`
-	ActualRoute        Route              `json:"actual_route,omitempty"`
-	DowngradedFrom     Route              `json:"downgraded_from,omitempty"`
-	RouteReason        RouteReason        `json:"route_reason,omitempty"`
+	JobID               domain.JobID       `json:"job_id"`
+	Phase               Phase              `json:"phase"`
+	Offset              uint64             `json:"offset"`
+	SourceFingerprint   domain.Fingerprint `json:"source_fingerprint"`
+	Part                domain.Location    `json:"part"`
+	PartFingerprint     domain.Fingerprint `json:"part_fingerprint"`
+	ChecksumState       []byte             `json:"checksum_state,omitempty"`
+	ChecksumHex         string             `json:"checksum_hex,omitempty"`
+	Final               domain.Location    `json:"final"`
+	Outcome             Outcome            `json:"outcome,omitempty"`
+	Items               uint64             `json:"items,omitempty"`
+	CurrentPath         string             `json:"current_path,omitempty"`
+	DirectoryRootOwned  bool               `json:"directory_root_owned,omitempty"`
+	ActualRoute         Route              `json:"actual_route,omitempty"`
+	DowngradedFrom      Route              `json:"downgraded_from,omitempty"`
+	RouteReason         RouteReason        `json:"route_reason,omitempty"`
+	DirectFormatVersion uint16             `json:"direct_format_version,omitempty"`
+	DirectNonce         string             `json:"direct_nonce,omitempty"`
 }
 
 type Journal interface {
@@ -133,6 +135,7 @@ type Worker struct {
 	resolver Resolver
 	journal  Journal
 	sameHost SameHostCopyBackend
+	level2   level2DataBackend
 }
 
 func NewWorker(resolver Resolver, journal Journal) *Worker {
@@ -149,6 +152,16 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	if worker == nil || worker.resolver == nil || worker.journal == nil {
 		return Result{}, errors.New("execute transfer: resolver and durable journal are required")
+	}
+	if plan.Route == RouteLevel2Direct && worker.level2 == nil {
+		return Result{}, planError(domain.CodeUnsupported, "execute_direct", plan.Part, "Level 2 data-plane fixture is not attached", domain.RetryAfterReplan)
+	}
+	if plan.Route == RouteLevel2Direct {
+		refreshed, err := worker.refreshExpiredLevel2Preflight(ctx, plan, time.Now())
+		if err != nil {
+			return Result{}, err
+		}
+		plan = refreshed
 	}
 	if plan.Source.Kind == domain.EntryDirectory {
 		return worker.executeDirectory(ctx, plan, control)
@@ -209,6 +222,29 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if current.ActualRoute == "" {
 			current.ActualRoute = plan.Route
 			current.RouteReason = plannedRouteReason(plan)
+		}
+	}
+	if plan.Route == RouteLevel2Direct {
+		if checkpoint == nil {
+			current.DirectFormatVersion = Level2DirectFormatVersion
+			current.DirectNonce = plan.Level2Preflight.Request.Nonce
+		}
+		if current.ActualRoute != RouteSFTPRelay && (current.Phase == PhasePrepared || current.Phase == PhaseStreaming) {
+			result, directErr := worker.executeLevel2Direct(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
+			if !errors.Is(directErr, errLevel2SafeRelayFallback) {
+				return result, directErr
+			}
+			current.Phase = PhasePrepared
+			current.Offset = 0
+			current.PartFingerprint = domain.Fingerprint{}
+			current.ChecksumState = nil
+			current.ChecksumHex = ""
+			current.ActualRoute = RouteSFTPRelay
+			current.DowngradedFrom = RouteLevel2Direct
+			current.RouteReason = ReasonLevel2FailedBeforeWrite
+			if err := worker.journal.Save(ctx, current); err != nil {
+				return Result{}, fmt.Errorf("execute transfer: persist safe direct route downgrade: %w", err)
+			}
 		}
 	}
 	if plan.Route == RouteHelperSameHost && current.Phase == PhasePrepared {
@@ -436,6 +472,14 @@ func checkpointMatchesPlan(checkpoint Checkpoint, plan Plan) bool {
 	if checkpoint.Part != plan.Part || !reflect.DeepEqual(checkpoint.SourceFingerprint, plan.Source.Fingerprint) {
 		return false
 	}
+	if plan.Route == RouteLevel2Direct {
+		if plan.Level2Preflight == nil || checkpoint.DirectFormatVersion != Level2DirectFormatVersion ||
+			validateLowerHexIdentity(checkpoint.DirectNonce, 32) != nil {
+			return false
+		}
+	} else if checkpoint.DirectFormatVersion != 0 || checkpoint.DirectNonce != "" {
+		return false
+	}
 	if checkpoint.Phase != PhaseCommitting && checkpoint.Phase != PhaseCommitted {
 		return checkpoint.Final == plan.Final && validCheckpointRoute(checkpoint, plan)
 	}
@@ -451,7 +495,8 @@ func validCheckpointRoute(checkpoint Checkpoint, plan Plan) bool {
 		return checkpoint.DowngradedFrom == "" && checkpoint.RouteReason == plannedRouteReason(plan)
 	}
 	return checkpoint.ActualRoute == RouteSFTPRelay && checkpoint.DowngradedFrom == plan.Route &&
-		plan.Route == RouteSFTPServerCopy && checkpoint.RouteReason == ReasonServerCopyFailedBeforeWrite
+		(plan.Route == RouteSFTPServerCopy && checkpoint.RouteReason == ReasonServerCopyFailedBeforeWrite ||
+			plan.Route == RouteLevel2Direct && checkpoint.RouteReason == ReasonLevel2FailedBeforeWrite)
 }
 
 func plannedRouteReason(plan Plan) RouteReason {
@@ -494,7 +539,7 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	partEntry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
 	if err != nil {
 		if checkpoint.Phase == PhaseCommitting && domain.IsCode(err, domain.CodeNotFound) {
-			proved, proofErr := proveCommitted(ctx, destinationProvider, plan.Final, checkpoint.ChecksumHex, buffer)
+			proved, proofErr := worker.proveCommitted(ctx, plan, destinationProvider, plan.Final, checkpoint.ChecksumHex, buffer)
 			if proofErr == nil && proved {
 				checkpoint.Phase = PhaseCommitted
 				checkpoint.Outcome = OutcomeCompleted
@@ -661,12 +706,12 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 			}
 			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
 		}
-		proved, proofErr := proveCommitted(ctx, destinationProvider, final, checkpoint.ChecksumHex, buffer)
+		proved, proofErr := worker.proveCommitted(ctx, plan, destinationProvider, final, checkpoint.ChecksumHex, buffer)
 		if proofErr != nil || !proved {
 			return Result{}, renameErr
 		}
 	}
-	checksum, err := verifyFile(ctx, destinationProvider, final, domain.Fingerprint{}, buffer)
+	checksum, err := worker.verifyCommittedFile(ctx, plan, destinationProvider, final, checkpoint.ChecksumHex, buffer)
 	if err != nil {
 		return Result{}, err
 	}
@@ -718,7 +763,7 @@ func validateExecution(plan Plan) error {
 	if plan.Verification != VerifySHA256 {
 		return errors.New("execute transfer: unsupported verification")
 	}
-	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay && plan.Route != RouteHelperSameHost && plan.Route != RouteSFTPServerCopy {
+	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay && plan.Route != RouteHelperSameHost && plan.Route != RouteSFTPServerCopy && plan.Route != RouteLevel2Direct {
 		return errors.New("execute transfer: unsupported route")
 	}
 	if !validRouteEvidence(plan) {
@@ -743,6 +788,18 @@ func validateExecution(plan Plan) error {
 		}
 	} else if plan.ServerCopy != nil {
 		return errors.New("execute transfer: unexpected server-copy binding")
+	}
+	if plan.Level2Preflight != nil {
+		if !plan.DirectPolicy.enabled() || plan.Version != 1 || plan.Source.Kind != domain.EntryFile ||
+			plan.SourceEndpoint.ID == plan.DestinationEndpoint.ID || plan.SourceEndpoint.Kind != domain.EndpointSSH ||
+			plan.DestinationEndpoint.Kind != domain.EndpointSSH || !validLevel2PreflightBinding(*plan.Level2Preflight, plan) {
+			return errors.New("execute transfer: invalid Level 2 preflight binding")
+		}
+	} else if plan.Route == RouteLevel2Direct {
+		return errors.New("execute transfer: Level 2 route lacks preflight binding")
+	}
+	if plan.Route == RouteLevel2Direct && plan.Level2Preflight.Outcome != Level2PreflightPassed {
+		return errors.New("execute transfer: Level 2 route lacks passing preflight evidence")
 	}
 	if plan.Source.Kind == domain.EntryFile && plan.Discovery != nil {
 		return errors.New("execute transfer: file plan has a directory discovery budget")
@@ -886,6 +943,27 @@ func verifyFile(ctx context.Context, implementation providerapi.Provider, locati
 
 func proveCommitted(ctx context.Context, implementation providerapi.Provider, final domain.Location, checksum string, buffer []byte) (bool, error) {
 	actual, err := verifyFile(ctx, implementation, final, domain.Fingerprint{}, buffer)
+	if err != nil {
+		if domain.IsCode(err, domain.CodeNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	return actual == checksum, nil
+}
+
+func (worker *Worker) verifyCommittedFile(ctx context.Context, plan Plan, implementation providerapi.Provider, location domain.Location, checksum string, buffer []byte) (string, error) {
+	if plan.Route == RouteLevel2Direct {
+		if plan.Level2Preflight == nil || plan.Level2Preflight.Result == nil {
+			return "", errors.New("verify committed direct: preflight evidence is absent")
+		}
+		return worker.verifyLevel2(ctx, plan, location, plan.Level2Preflight.Result.SourceSize, checksum)
+	}
+	return verifyFile(ctx, implementation, location, domain.Fingerprint{}, buffer)
+}
+
+func (worker *Worker) proveCommitted(ctx context.Context, plan Plan, implementation providerapi.Provider, final domain.Location, checksum string, buffer []byte) (bool, error) {
+	actual, err := worker.verifyCommittedFile(ctx, plan, implementation, final, checksum, buffer)
 	if err != nil {
 		if domain.IsCode(err, domain.CodeNotFound) {
 			return false, nil

@@ -3,7 +3,7 @@
 - **Updated**: 2026-07-17
 - **Lifecycle**: Stage 5 In Progress
 - **Active stage**: Stage 5 — Direct Transfer & Scale
-- **Current milestone**: M5.2 — Level 2 protocol and per-condition preflight RED next
+- **Current milestone**: M5.2 — typed preflight and fixture data plane implemented; real dual-sshd closeout next
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
@@ -59,7 +59,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Write the M5.2 RED bounded Level 2 protocol/control contract and the table-driven preflight matrix, beginning with production-closed ordinary runtime and zero direct mutation on every failed/unknown condition. Keep the executable backend reachable only through an explicit non-release fixture constructor.
+Close M5.2 with the real isolated dual-sshd fixture and native authentication/host-key audit, then enter the remaining M5.3 fault/equivalence matrix. The typed v1 preflight, all 14 fail/unknown routes, test-only direct data plane, durable target progress, expiry revalidation, cancel, lost-response restart and proven absent-part relay downgrade are already green. Keep production Helper distribution and Level 2 CLOSED.
 
 ## Current risks
 

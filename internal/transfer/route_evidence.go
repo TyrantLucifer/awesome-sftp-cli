@@ -23,6 +23,11 @@ const (
 	ReasonServerCopyUnavailable        RouteReason = "server_copy_unavailable"
 	ReasonHelperSameHostSelected       RouteReason = "helper_same_host_selected"
 	ReasonHelperSameHostUnavailable    RouteReason = "helper_same_host_unavailable"
+	ReasonLevel2PreflightPassed        RouteReason = "level2_preflight_passed"
+	ReasonLevel2PolicyDisabled         RouteReason = "policy_disabled"
+	ReasonLevel2PreflightFailed        RouteReason = "preflight_failed"
+	ReasonLevel2PreflightUnknown       RouteReason = "preflight_unknown"
+	ReasonLevel2FailedBeforeWrite      RouteReason = "direct_failed_before_write"
 	ReasonProductionDistributionClosed RouteReason = "production_distribution_closed"
 	ReasonBoundedRelayDefault          RouteReason = "bounded_relay_default"
 )
@@ -116,9 +121,22 @@ func freezeRouteEvidence(plan *Plan) {
 
 	if plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID &&
 		plan.SourceEndpoint.Kind == domain.EndpointSSH && plan.DestinationEndpoint.Kind == domain.EndpointSSH {
-		evidence.Candidates = append(evidence.Candidates, RouteDecision{
-			Route: RouteLevel2Direct, Reason: ReasonProductionDistributionClosed, Eligible: false,
-		})
+		direct := RouteDecision{Route: RouteLevel2Direct, Reason: ReasonProductionDistributionClosed, Eligible: false}
+		switch {
+		case plan.DirectPolicy.zero():
+		case !plan.DirectPolicy.enabled():
+			direct.Reason = ReasonLevel2PolicyDisabled
+		case plan.Level2Preflight == nil:
+		case plan.Level2Preflight.Outcome == Level2PreflightPassed && plan.Route == RouteLevel2Direct:
+			direct = RouteDecision{Route: RouteLevel2Direct, Reason: ReasonLevel2PreflightPassed, Eligible: true}
+			evidence.Selected = direct
+			evidence.DowngradeBoundary = "before_target_write"
+		case plan.Level2Preflight.Outcome == Level2PreflightUnknown:
+			direct.Reason = ReasonLevel2PreflightUnknown
+		default:
+			direct.Reason = ReasonLevel2PreflightFailed
+		}
+		evidence.Candidates = append(evidence.Candidates, direct)
 	}
 	if evidence.Selected.Route == "" {
 		evidence.Selected = RouteDecision{Route: plan.Route, Reason: ReasonBoundedRelayDefault, Eligible: true}

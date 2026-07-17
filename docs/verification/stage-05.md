@@ -41,7 +41,9 @@ Declared SFTP server-copy requires the same SSH Endpoint, a regular file, explic
 
 ### M5.2 — Level 2 preflight and direct transfer
 
-**Status: In Progress.** The first action is the bounded versioned protocol/control RED plus table-driven per-condition preflight RED. Production distribution remains CLOSED; no executable fixture backend is reachable from ordinary runtime/configuration.
+**Status: In Progress.** A lower-level, typed direct protocol v1 now shares the Helper/Planner contract without creating the pre-existing Helper→transfer import cycle. It freezes request/Job/Endpoint/path correlation, trusted destination SSH alias, 1 TiB ceiling, strong source identity/hash, ten-minute hard deadline, nonce, 1 MiB frame, four-request concurrency, heartbeat, request-context cancellation, target-durable progress and staged-not-committed result semantics. Every one of protocol/capability/network/address/write/temp/space/quota/auth/host-key/user/workspace/data/hash independently returns fail/unknown and selects relay with zero direct staging. Malformed, stale, reordered, weak, untrusted or altered evidence fails closed.
+
+Only same-package `_test.go` constructors can attach the unexported preflight/data facets. An all-pass fixture Plan stages directly between isolated source/target roots, persists target-durable acknowledgements, remotely strong-hashes part and final, and uses the shared Worker commit path while counting zero source/destination Provider content reads in the daemon. Expired evidence is freshly correlated and revalidated before target write; fail/unknown performs zero direct stage. In-flight cancel retains only the exact acknowledged part and never final/source-delete; a lost complete stage response restarts from the exact acknowledged checkpoint without retransmitting bytes; a failure proven before any target write durably records `level2_direct`→`sftp_relay`. Frozen evidence contains no command, argv, password, private-key, ticket, Agent/GSS, known-hosts, ControlMaster or ProxyCommand surface. Production constructors remain CLOSED and relay with `production_distribution_closed`. A real isolated dual-sshd fixture and the remaining fault/equivalence matrix are still pending before M5.2/M5.3 closeout.
 
 ### M5.3 — Downgrade, fault and semantic equivalence
 
@@ -60,11 +62,11 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | CONN-010 | PENDING | Controlled connection reuse and idle recovery not implemented. |
 | JOB-009 | PENDING | Job/global bandwidth policy and deterministic token bucket not implemented. |
 | DIRECT-002 | IMPLEMENTED | Explicit capability + structural facet gate, immutable binding, exact part staging, independent strong verification, response-loss adoption, corruption isolation, safe absent-part fallback, restart, pre/in-flight cancellation and relay conflict/cancel equivalence pass the complete M5.1 local gate; exact-final Hosted evidence remains required for PASS. |
-| DIRECT-004 | PENDING | Explicit direct policy and route disclosure not implemented. |
-| DIRECT-005 | PENDING | Per-condition Level 2 preflight matrix not implemented. |
-| DIRECT-006 | PENDING | No-forwarding/delegation/copy integration evidence not implemented. |
-| DIRECT-007 | IN PROGRESS | Route evidence v1 is durable and tamper-checked before execution; full Level 2 preflight/expiry evidence remains pending. |
-| DIRECT-008 | PENDING | Safe pre-commit downgrade matrix not implemented. |
+| DIRECT-004 | IMPLEMENTED | Frozen user/workspace/data/integrity policy gates selection; explicit disablement and production closure select relay with stable reasons. Exact-final Hosted evidence remains required. |
+| DIRECT-005 | IMPLEMENTED | All 14 ordered required conditions independently fail/unknown to relay; malformed/stale evidence and expired execution evidence fail closed before direct write. Real dual-sshd closeout remains pending. |
+| DIRECT-006 | IMPLEMENTED | Typed control evidence has no credential/command surface and target authority comes only from the frozen Endpoint SSH alias; isolated topology/native audit remains pending. |
+| DIRECT-007 | IMPLEMENTED | Direct protocol/preflight/request/result/control limits, source identity/hash, part/final, target alias and expiry are durable and tamper-checked; expired evidence is revalidated. Exact-final evidence remains required. |
+| DIRECT-008 | IN PROGRESS | Proven absent-part write-before failure durably downgrades direct→relay; full mid-part/commit uncertainty matrix remains pending. |
 | DIRECT-009 | PENDING | Direct-relay golden equivalence not implemented. |
 | DIRECT-010 | IMPLEMENTED | JobView, Jobs drawer and `job_created` Log show selected reason/integrity/downgrade/progress; runtime safe fallback durably shows planned→actual route and stable reason. Exact-final Hosted evidence remains required for PASS. |
 | SCALE-001 | PENDING | 50k directory production-scale gate not implemented. |
@@ -106,6 +108,10 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | M5.1 durable route identity | safe-downgrade Manager/JobView/Log test plus selected-reason tamper test | PASS: `job_created` carries selected route/reason/integrity/boundary/progress, runtime event carries planned/actual/reason, JobView survives restart, and forged checkpoint reason is rejected pre-I/O. |
 | M5.1 complete current gate | `make docs-check && make check && make lint` | PASS in CI-equivalent environment; transfer coverage 70.5%, lint 0 issues. |
 | M5.1 focused race | `go test -race ./internal/transfer ./internal/tui ./internal/state/jobstore -count=1` | PASS. |
+| M5.2 protocol RED/GREEN | `go test ./internal/helper -run '^TestDirectPreflight' -count=1` | Initial compile RED for the typed v1 contract; PASS for strict round-trip, all 14 fail/unknown conditions, freshness, correlation, trust, limits and malformed evidence. |
+| M5.2 planner RED/GREEN | `go test ./internal/transfer -run '^TestLevel2' -count=1` | Initial compile RED for policy/binding/backend; PASS for all-pass direct, 28 fail/unknown relay cases, production closure, policy disablement, durable reload and tamper rejection. |
+| M5.2 fixture data plane | focused direct fixture, expiry, cancel, lost-response restart and absent-part downgrade tests | PASS: target-durable checkpoints, remote part/final hashes, zero daemon Provider content reads on direct, fresh expiry preflight, no commit/source delete on cancel, exact restart adoption and safe relay fallback. |
+| M5.2 focused packages/race/lint | `go test ./internal/directprotocol ./internal/helper ./internal/transfer -count=1`; `go test -race` on the same packages; `make lint` | PASS; lint reports 0 issues. |
 
 ## Hosted CI instability classification
 

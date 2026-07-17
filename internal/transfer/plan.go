@@ -106,6 +106,7 @@ type Intent struct {
 	Name                 string          `json:"name"`
 	ConflictPolicy       ConflictPolicy  `json:"conflict_policy"`
 	ConflictConfirmed    bool            `json:"conflict_confirmed"`
+	DirectPolicy         DirectPolicy    `json:"direct_policy"`
 }
 
 type DeleteIntent struct {
@@ -147,6 +148,7 @@ type Plan struct {
 	SourceCapability                CapabilityBinding        `json:"source_capability"`
 	DestinationCapability           CapabilityBinding        `json:"destination_capability"`
 	Route                           Route                    `json:"route"`
+	DirectPolicy                    DirectPolicy             `json:"direct_policy"`
 	Verification                    Verification             `json:"verification"`
 	ConflictPolicy                  ConflictPolicy           `json:"conflict_policy"`
 	BufferBytes                     uint32                   `json:"buffer_bytes"`
@@ -156,6 +158,7 @@ type Plan struct {
 	SourceDeleteCapability          *CapabilityBinding       `json:"source_delete_capability,omitempty"`
 	ServerCopy                      *ServerCopyBinding       `json:"server_copy,omitempty"`
 	SameHostCopy                    *SameHostCopyBinding     `json:"same_host_copy,omitempty"`
+	Level2Preflight                 *Level2PreflightBinding  `json:"level2_preflight,omitempty"`
 	RouteEvidence                   *RouteEvidence           `json:"route_evidence,omitempty"`
 	DeleteRecursive                 bool                     `json:"delete_recursive,omitempty"`
 	DeleteIrreversible              bool                     `json:"delete_irreversible,omitempty"`
@@ -221,6 +224,7 @@ func (resolver MapResolver) Resolve(endpointID domain.EndpointID) (providerapi.P
 type Planner struct {
 	resolver Resolver
 	sameHost SameHostCopyBackend
+	level2   level2PreflightBackend
 }
 
 func NewPlanner(resolver Resolver) *Planner { return &Planner{resolver: resolver} }
@@ -367,6 +371,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 			Capability: destinationCapability,
 		},
 		Route:                  chooseRoute(sourceProvider.Descriptor(), destinationProvider.Descriptor()),
+		DirectPolicy:           request.Intent.DirectPolicy,
 		Verification:           VerifySHA256,
 		ConflictPolicy:         request.Intent.ConflictPolicy,
 		BufferBytes:            DefaultBufferBytes,
@@ -389,6 +394,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 	if !tryServerCopy(destinationProvider, sourceSnapshot, destinationSnapshot, &plan) {
 		planner.trySameHostCopy(ctx, &plan)
 	}
+	planner.tryLevel2Preflight(ctx, request, &plan)
 	freezeRouteEvidence(&plan)
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {
