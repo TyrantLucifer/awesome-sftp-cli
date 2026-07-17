@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已在固定分支 `codex/stage5-direct-transfer-scale` 从 verified exact-main `06415e1e9fe5ffa93999f112b64aee0bd35e5c75` 开始；Stage 6 保持 Not Started。
+Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 在固定分支 `codex/stage5-direct-transfer-scale` 从 verified exact-main `06415e1e9fe5ffa93999f112b64aee0bd35e5c75` 完成；Stage 6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -256,7 +256,7 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 路由决策表与能力组合测试；直传/中继等价性测试；认证、磁盘、网络和中途失败矩阵；50k 目录、百万树、100GB 稀疏文件基准；并发/限速测试；长时间运行、race 与资源泄漏测试。
 
-**Status**: In Progress
+**Status**: Complete
 
 ### M5.1: 路由统一与同 Endpoint 快路径
 
@@ -280,7 +280,7 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Milestone Status**: Complete
 
-**Current checkpoint**: direct protocol v1 已冻结 request/Job/Endpoint/path/target-alias/source identity、14 项 ordered preflight、1 MiB/4-request/10-minute/heartbeat/cancel/progress/result limits；逐项 fail/unknown 均 0 direct stage 并 relay。仅同包 `_test.go` 可注入的 data facet 已证明 source→target staging、target durable checkpoint、part/final strong hash、shared Worker commit、daemon Provider content-read 计数为 0、expiry fresh preflight、in-flight cancel、lost-response exact restart adoption 与 absent-part safe relay downgrade。真实双 sshd/SFTP native gate 只证明两个隔离控制会话、strict host key/BatchMode、Agent/GSS/ControlMaster 禁用、隔离 data root 与 target root 无 credential material；数据 fixture 仍在同一测试进程本地访问 data root，真正进程/网络隔离的数据面证据已由 ADR-0017 递交 Stage 6。普通 `NewPlanner`/`NewWorker` 无注入入口，production 继续 `production_distribution_closed`。M5.2、M5.3 与 M5.4 均已本地完成，当前处于最终修复与精确 SHA closeout。
+**Current checkpoint**: direct protocol v1 已冻结 request/Job/Endpoint/path/target-alias/source identity、14 项 ordered preflight、1 MiB/4-request/10-minute/heartbeat/cancel/progress/result limits；逐项 fail/unknown 均 0 direct stage 并 relay。仅同包 `_test.go` 可注入的 data facet 已证明 source→target staging、target durable checkpoint、part/final strong hash、shared Worker commit、daemon Provider content-read 计数为 0、expiry fresh preflight、in-flight cancel、lost-response exact restart adoption 与 absent-part safe relay downgrade。真实双 sshd/SFTP native gate 只证明两个隔离控制会话、strict host key/BatchMode、Agent/GSS/ControlMaster 禁用、隔离 data root 与 target root 无 credential material；数据 fixture 仍在同一测试进程本地访问 data root，真正进程/网络隔离的数据面证据已由 ADR-0017 递交 Stage 6。普通 `NewPlanner`/`NewWorker` 无注入入口，production 继续 `production_distribution_closed`。M5.2–M5.4 与 Stage 5 已完成。
 
 ### M5.3: 降级、故障与语义等价
 
@@ -292,7 +292,7 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Milestone Status**: Complete
 
-**Current checkpoint**: expired preflight fail/unknown/malformed evidence now durably selects relay before direct write and restart honors that actual route without re-probing. Acknowledged exact parts are reused or removed only after exact Job/path/size/fingerprint/hash proof; drifted or unprovable parts remain isolated and block fallback. The fault matrix covers post-preflight network/auth/permission/space failures, mid-part disconnect/resume, hang/cancel, corrupt/short results, part-proof corruption, checkpoint mismatch, source/target drift, stage/commit/delete response loss and source-delete uncertainty. Direct/relay share ask/overwrite/skip/auto-rename, cancellation, durable Job/event, move deletion/source-retention and strong-integrity semantics; deterministic-random, sparse-shaped and multi-chunk large goldens produce identical bytes, SHA-256, final and outcome. Focused/full transfer, race and lint gates pass. Production Level 2 remains CLOSED. M5.3 已完成并已移交 M5.4；M5.4 规模与 scheduler/resource evidence 也已本地完成。
+**Current checkpoint**: expired preflight fail/unknown/malformed evidence now durably selects relay before direct write and restart honors that actual route without re-probing. Acknowledged exact parts are reused or removed only after exact Job/path/size/fingerprint/hash proof; drifted or unprovable parts remain isolated and block fallback. The fault matrix covers post-preflight network/auth/permission/space failures, mid-part disconnect/resume, hang/cancel, corrupt/short results, part-proof corruption, checkpoint mismatch, source/target drift, stage/commit/delete response loss and source-delete uncertainty. Direct/relay share ask/overwrite/skip/auto-rename, cancellation, durable Job/event, move deletion/source-retention and strong-integrity semantics; deterministic-random, sparse-shaped and multi-chunk large goldens produce identical bytes, SHA-256, final and outcome. Focused/full transfer, race and lint gates pass. Production Level 2 remains CLOSED. M5.3、M5.4 与 Stage 5 已完成。
 
 ### M5.4: 规模、资源预算与公平调度
 
@@ -302,9 +302,9 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 50,000-entry 首屏/滚动/过滤/render/RSS fixture；1,000,000-node browse/search/plan/copy/cancel/restart 资源曲线；100GB sparse local/SFTP relay/test-only direct pause/resume/restart/cancel/hash/limit；多 Endpoint/多大小 Job 的 fairness/backpressure/idle recovery；race、soak、benchmark 环境与趋势记录。
 
-**Milestone Status**: Local implementation complete; final closeout in progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: Canonical `make test-scale` covers 50k windowed rendering, million-node Provider/Helper/discovery streams, actual/synthetic 100 GiB sparse-file bounded checkpoints, ADR-0017's same-state-machine pause/checksum/restart/rate/hash/commit decomposition, preview refusal, cancellation, connection admission/reuse, low-disk safety, bounded event/log behavior and low-capability degradation. One shared scheduler enforces global/both-Endpoint/Job integer token buckets, 4:1 weighted fairness, fixed/tightenable 256 KiB quantum, cancellation and safe future-token-only hot updates; rate-required Plans disable `uncontrolled` fast paths. A global/Endpoint/Job resource ledger accounts Job/queue/connection/SSH/Helper/FD/goroutine/memory/event/log dimensions with exact hard ceilings and idempotent release. ProviderSessions cap dynamic connections, roll back partial multi-Endpoint acquisition and close at the last lease. Directory child workers retain the scheduler while isolating journals; bounded result manifests disclose truncation. Job events are capped at 32 KiB and page at 1,000. The post-review current/oldstable/scale/high-repeat/real-dual-sshd/benchmark/independent-cache matrix passes; a reproducible manual-clock timer-registration race in the fairness test was fixed with an explicit timer handshake without changing scheduling assertions. Remaining work is the clean candidate-tree audit, two fresh independent reviews, exact-final push/PR Hosted matrices, then row/status promotion and Ready-but-unmerged PR handoff.
+**Current checkpoint**: Canonical `make test-scale` covers 50k windowed rendering, million-node Provider/Helper/discovery streams, actual/synthetic 100 GiB sparse-file bounded checkpoints, ADR-0017's same-state-machine pause/checksum/restart/rate/hash/commit decomposition, preview refusal, cancellation, connection admission/reuse, low-disk safety, bounded event/log behavior and low-capability degradation. One shared scheduler enforces global/both-Endpoint/Job integer token buckets, 4:1 weighted fairness, fixed/tightenable 256 KiB quantum, cancellation and safe future-token-only hot updates; rate-required Plans disable `uncontrolled` fast paths. A global/Endpoint/Job resource ledger accounts Job/queue/connection/SSH/Helper/FD/goroutine/memory/event/log dimensions with exact hard ceilings and idempotent release. ProviderSessions cap dynamic connections, roll back partial multi-Endpoint acquisition and close at the last lease. Directory child workers retain the scheduler while isolating journals; bounded result manifests disclose truncation. Job events are capped at 32 KiB and page at 1,000. The post-review current/oldstable/scale/high-repeat/real-dual-sshd/benchmark/independent-cache matrix, clean audit, two independent final reviews, and exact implementation-candidate push/PR Hosted runs `29577096235`/`29577098354` pass. Two PR-only macOS timing fixtures failed once while their same-SHA push companions passed, then passed targeted reruns without assertion changes. M5.4 and Stage 5 are complete; the status-only final SHA remains subject to the same exact Hosted/Ready-but-unmerged delivery rule.
 
 ## Stage 6: Hardening & 1.0 Release
 

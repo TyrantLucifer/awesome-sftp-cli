@@ -1,6 +1,6 @@
 # Stage 5 — Direct Transfer & Scale
 
-- **状态**：In Progress
+- **状态**：Complete
 - **阶段类型**：安全快路径与规模工程
 - **前置条件**：[Stage 4 — Search & Optional Helper](04-search-helper.md) 已通过退出门禁
 - **完成后进入**：[Stage 6 — Hardening & 1.0 Release](06-hardening-release.md)
@@ -11,7 +11,7 @@
 
 同时把浏览、搜索和传输验证到既定规模：单目录数万条目、整树百万节点、单文件数百 GB；验收夹具至少包含 5 万项目录、百万节点树和 100GB 稀疏文件。核心要求是流式、可取消、有界内存和可观察，而不是某台机器上的单一吞吐数字。
 
-当前 M5.1–M5.4 已在本地门禁实现；22 个 Stage 5 feature row 暂标 `Implemented`。只有最终矩阵、两次独立 review 与 exact-SHA push/PR Hosted CI 全绿后，本阶段才改为 Complete、feature 才改为 Verified。活动证据见 [Stage 5 verification](../verification/stage-05.md)。
+M5.1–M5.4、22 个 Stage 5 feature row、两次独立 review、clean audit 与 exact-SHA push/PR Hosted CI 已全绿；本阶段为 Complete，22 行均为 `Verified`。活动证据见 [Stage 5 verification](../verification/stage-05.md)。
 
 ## 2. 范围
 
@@ -194,19 +194,19 @@
 
 ## 6. 可验证退出标准
 
-以下复选框只表示**精确最终 SHA** 已完成本地、两路独立终审、push/PR Hosted 矩阵并晋级；它们不表示局部实现状态。当前 22 个 Stage 5 行仍为 `Implemented`，所以在最终晋级前全部保持未勾选。
+以下复选框表示 Stage 5 实现候选已完成本地门禁、两路独立终审、clean audit 与 exact-SHA push/PR Hosted 矩阵并晋级；最终状态提交仍按 verification 的 identity rule 由 Git/PR/Hosted 元数据外部绑定。
 
-- [ ] 路由计划列出选中路线、能力证据、完整性级别、风险和降级条件。
-- [ ] 同 Endpoint 快路径与标准路径在冲突、提交、取消和结果状态上通过共享契约。
-- [ ] 直传预检逐项验证网络、空间、写权限、认证、主机身份、Helper/协议和用户策略。
-- [ ] 未默认启用 Agent 转发、Kerberos 委派、密钥复制或宽松主机密钥策略。
-- [ ] 直传不可用时自动中继；原因在 UI/Job/诊断中一致可见。
-- [ ] 直传提交前各故障点均可安全降级或等待；提交结果未知时先检查后置条件。
-- [ ] 直传与中继的最终内容、冲突决策、移动源保留和完整性证据一致。
-- [ ] 5 万项目录可增量显示、滚动、筛选和取消，无全量渲染阻塞。
-- [ ] 百万节点树的浏览/搜索/作业计划不要求全量内存物化。
-- [ ] 100GB 契约按 ADR-0017 的 canonical 分解证明：真实/synthetic 100 GiB 规模边界与 durable cancel，加同一生产状态机的 pause/重启续传/限速/强校验/commit；完整物理 100 GiB 长跑明确递交 Stage 6，不作为本项的虚假本地声明。
-- [ ] 并发/限速/公平调度可复现，无长期句柄、goroutine、子进程或缓存增长。
+- [x] 路由计划列出选中路线、能力证据、完整性级别、风险和降级条件。
+- [x] 同 Endpoint 快路径与标准路径在冲突、提交、取消和结果状态上通过共享契约。
+- [x] 直传预检逐项验证网络、空间、写权限、认证、主机身份、Helper/协议和用户策略。
+- [x] 未默认启用 Agent 转发、Kerberos 委派、密钥复制或宽松主机密钥策略。
+- [x] 直传不可用时自动中继；原因在 UI/Job/诊断中一致可见。
+- [x] 直传提交前各故障点均可安全降级或等待；提交结果未知时先检查后置条件。
+- [x] 直传与中继的最终内容、冲突决策、移动源保留和完整性证据一致。
+- [x] 5 万项目录可增量显示、滚动、筛选和取消，无全量渲染阻塞。
+- [x] 百万节点树的浏览/搜索/作业计划不要求全量内存物化。
+- [x] 100GB 契约按 ADR-0017 的 canonical 分解证明：真实/synthetic 100 GiB 规模边界与 durable cancel，加同一生产状态机的 pause/重启续传/限速/强校验/commit；完整物理 100 GiB 长跑明确递交 Stage 6，不作为本项的虚假本地声明。
+- [x] 并发/限速/公平调度可复现，无长期句柄、goroutine、子进程或缓存增长。
 
 ## 7. 测试矩阵
 
