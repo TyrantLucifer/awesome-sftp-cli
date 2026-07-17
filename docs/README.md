@@ -65,7 +65,7 @@ The temporary `.superpowers/` visual workspace is intentionally ignored and cann
 
 Stage 6 is active on fixed branch `codex/stage6-hardening-release` from the sole verified baseline `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`. Exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) passed 24/24 jobs and the untouched local baseline passed CI-equivalent `make ci`. The authoritative live ledger is [Stage 6 verification](verification/stage-06.md) and the strict M6.1→M6.4 work breakdown is the [Stage 6 execution plan](stages/06-hardening-release-plan.md).
 
-- M6.1 implementation has not started. All 23 Stage 6-owned rows remain `Planned` and all 12 exit criteria remain open.
+- M6.1 implementation is underway. REL-001 is `In Progress` after the first versioned-default decode contract; the other 22 Stage 6-owned rows remain `Planned` and all 12 exit criteria remain open.
 - Production Helper distribution and production Level 2 remain **CLOSED**. The repository has no real production offline signing key/custody ceremony or final Developer ID/notary evidence; none may be fabricated.
 - Stage 5's same-process Level 2 data fixture does not satisfy the required Stage 6 process/network-isolated data plane. Its 100 GiB decomposition does not satisfy the complete physical 100 GiB LocalFS/SFTP release run.
 - The fixed delivery PR remains Draft until the same exact RC passes complete local/native/Hosted, security, compatibility, clean-machine, signed-byte, final-review, rollback, and truth-chain gates. A commit cannot contain its own SHA, so final identity is bound by Git/PR/Hosted/tag/release/channel metadata after the last documentation commit.

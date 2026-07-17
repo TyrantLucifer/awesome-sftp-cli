@@ -1,6 +1,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -76,10 +77,9 @@ func Default() Config {
 
 func Decode(r io.Reader) (Config, error) {
 	decoder := json.NewDecoder(r)
-	decoder.DisallowUnknownFields()
 
-	var config Config
-	if err := decoder.Decode(&config); err != nil {
+	var document json.RawMessage
+	if err := decoder.Decode(&document); err != nil {
 		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 
@@ -89,6 +89,23 @@ func Decode(r io.Reader) (Config, error) {
 			return Config{}, errors.New("decode config: trailing JSON value")
 		}
 		return Config{}, fmt.Errorf("decode config trailing data: %w", err)
+	}
+
+	var header struct {
+		SchemaVersion *int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(document, &header); err != nil {
+		return Config{}, fmt.Errorf("decode config: %w", err)
+	}
+	if header.SchemaVersion == nil {
+		return Config{}, errors.New("decode config: schema_version is required")
+	}
+
+	config := Default()
+	strict := json.NewDecoder(bytes.NewReader(document))
+	strict.DisallowUnknownFields()
+	if err := strict.Decode(&config); err != nil {
+		return Config{}, fmt.Errorf("decode config: %w", err)
 	}
 
 	if err := config.Validate(); err != nil {

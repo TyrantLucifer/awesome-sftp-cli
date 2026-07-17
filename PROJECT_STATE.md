@@ -9,7 +9,7 @@
 
 ## Current outcome
 
-Stage 5 is merged. Stage 6 began on fixed branch `codex/stage6-hardening-release` from the sole verified `main` commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`; local `main`, `origin/main`, and remote `refs/heads/main` matched before branch creation. Exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) completed successfully with 24/24 jobs. The untouched baseline also passed CI-equivalent `make ci`. The [Stage 6 execution plan](docs/stages/06-hardening-release-plan.md) maps all 23 owned feature rows and all 12 exit criteria to strict M6.1→M6.4 RED/GREEN and evidence gates; [Stage 6 verification](docs/verification/stage-06.md) is the active ledger. No Stage 6 feature implementation is yet claimed.
+Stage 5 is merged. Stage 6 began on fixed branch `codex/stage6-hardening-release` from the sole verified `main` commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`; local `main`, `origin/main`, and remote `refs/heads/main` matched before branch creation. Exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) completed successfully with 24/24 jobs. The untouched baseline also passed CI-equivalent `make ci`. The [Stage 6 execution plan](docs/stages/06-hardening-release-plan.md) maps all 23 owned feature rows and all 12 exit criteria to strict M6.1→M6.4 RED/GREEN and evidence gates; [Stage 6 verification](docs/verification/stage-06.md) is the active ledger. Draft PR [#6](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/6) is open. REL-001 is `In Progress`: omitted config fields now inherit the single documented `Default()` source while explicit schema version, unknown fields, trailing values, and explicit invalid zero values remain fail closed; the remaining schema/precedence/redaction/command surface is open.
 
 CI-equivalent baseline `make docs-check` and `make check` pass with Go on `PATH`, `umask 0022`, external build/coverage directories, and the workflow's root-owned `/var/lib/amsftp-tests/<uid>` fixture root. Initial local failures were diagnosed as environment-only: the shell omitted the installed Go SDK, `/home/tianchao.thatcher` is a symlink rejected by security fixtures, and interactive `umask 077` changed deliberately unsafe negative fixtures from 0755/0644 to private modes. No production code was changed to manufacture a green baseline. Completed M5.1 passes `make docs-check`, complete `make check` (transfer coverage 70.5%), `make lint`, and `go test -race ./internal/transfer ./internal/tui ./internal/state/jobstore -count=1` in that CI-equivalent environment.
 
@@ -61,7 +61,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Commit and push the Stage 6 plan/truth-chain checkpoint, create the fixed Draft PR titled `feat: ship AMSFTP 1.0.0`, then begin M6.1 with the configuration/public-version inventory and first failing contracts. Keep production Helper distribution and production Level 2 **CLOSED**.
+Continue M6.1 on Draft PR [#6](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/6): complete the configuration/public-version inventory and versioned schema, precedence, redacted effective output, keymap, CLI/help/man/completion contracts in test-first slices. Keep production Helper distribution and production Level 2 **CLOSED**.
 
 ## Current risks
 

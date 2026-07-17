@@ -57,9 +57,22 @@ func TestDecodeRejectsUnsupportedSchemaVersion(t *testing.T) {
 	assertDecodeErrorContains(t, input, "schema_version")
 }
 
-func TestDecodeAppliesNoImplicitZeroDefaults(t *testing.T) {
-	input := `{"schema_version":1,"ipc":{},"listing":{}}`
-	assertDecodeErrorContains(t, input, "max_frame_bytes")
+func TestDecodeAppliesDocumentedDefaultsToOmittedFields(t *testing.T) {
+	got, err := Decode(strings.NewReader(`{"schema_version":1}`))
+	if err != nil {
+		t.Fatalf("Decode() returned error: %v", err)
+	}
+	if !reflect.DeepEqual(got, Default()) {
+		t.Fatalf("Decode() = %#v, want documented defaults %#v", got, Default())
+	}
+}
+
+func TestDecodeRequiresExplicitSchemaVersion(t *testing.T) {
+	assertDecodeErrorContains(t, `{}`, "schema_version")
+}
+
+func TestDecodeDoesNotReplaceExplicitInvalidZeroWithDefault(t *testing.T) {
+	assertDecodeErrorContains(t, `{"schema_version":1,"ipc":{"max_frame_bytes":0}}`, "max_frame_bytes")
 }
 
 func TestConfigValidateRejectsInvalidValues(t *testing.T) {

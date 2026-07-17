@@ -1,10 +1,10 @@
 # Stage 6 Verification Record
 
-- **Status**: In Progress — exact-main baseline and execution plan complete; M6.1 implementation not started
+- **Status**: In Progress — M6.1 configuration contracts underway
 - **Updated**: 2026-07-17
 - **Repository root**: `/data00/home/tianchao.thatcher/projects/awsome-sftp-cli`
 - **Branch**: `codex/stage6-hardening-release`
-- **Delivery PR**: pending first branch commit; fixed title `feat: ship AMSFTP 1.0.0`, base `main`, Draft until final gates
+- **Delivery PR**: Draft [#6](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/6), title `feat: ship AMSFTP 1.0.0`, base `main`; remains Draft until final gates
 - **Sole exact-main baseline**: commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`
 - **Baseline Hosted run**: [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) — exact main commit, completed `success`, 24/24 jobs successful
 - **Production Helper distribution / production Level 2**: **CLOSED**
@@ -47,14 +47,14 @@ Only a subsequent complete exact-candidate matrix can become final release evide
 
 | Milestone | Status | Evidence |
 |---|---|---|
-| M6.1 configuration/keymap/public interfaces | Not Started | baseline and plan only |
+| M6.1 configuration/keymap/public interfaces | In Progress | first config default-overlay RED/GREEN complete; remaining schema, precedence, redaction, keymap, CLI, help/man/completion, and compatibility contracts open |
 | M6.2 migration/package/clean machine | Not Started | no implementation evidence |
 | M6.3 security/compatibility/diagnostics | Not Started | no implementation evidence |
 | M6.4 RC/1.0 | Not Started | no RC, release artifacts, tag, release, or channel evidence |
 
 ## Feature status
 
-All 23 Stage 6-owned feature rows remain `Planned`: WORK-006, VIM-013, VIM-014, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, and REL-001 through REL-012. Shared rows that remain `In Progress` are not advanced by this planning record.
+REL-001 is `In Progress` after the first versioned-default decode contract. The other 22 Stage 6-owned rows remain `Planned`: WORK-006, VIM-013, VIM-014, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, and REL-002 through REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
 
 ## Exit criteria
 
@@ -71,3 +71,6 @@ Production Helper distribution and production Level 2 stay **CLOSED**. Opening t
 | exact main | local/origin/remote ref and tree audit | PASS; all identities matched the frozen baseline |
 | exact main | Hosted run `29579514879` | PASS; completed success, 24/24 jobs |
 | exact main | CI-equivalent baseline `make ci` | PASS; exit 0, no code change required |
+| M6.1 config defaults RED | `go test ./internal/config -run='^TestDecode(AppliesDocumentedDefaultsToOmittedFields\|RequiresExplicitSchemaVersion)$' -count=1 -v` | Intended FAIL: minimal explicit-version document produced `ipc.max_frame_bytes must be greater than zero`; missing version remained rejected |
+| M6.1 config defaults GREEN | `go test ./internal/config -count=1` | PASS: omitted fields inherit the single documented `Default()` source; explicit schema version remains required; unknown/trailing/invalid explicit values remain rejected |
+| M6.1 config integration gate | `go test ./internal/app ./internal/config -count=1`; CI-equivalent `make check` | PASS: application loading regression and complete unit/provider/docs/tidy/verify gate green; config coverage 88.6% |

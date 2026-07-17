@@ -1,10 +1,10 @@
 # Stage 6 Execution Plan
 
-- **Status**: In Progress — planning and exact-main baseline complete; implementation has not begun
+- **Status**: In Progress — M6.1 configuration contracts underway
 - **Updated**: 2026-07-17
 - **Sole baseline**: commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`
 - **Fixed branch**: `codex/stage6-hardening-release`
-- **Delivery PR**: Draft PR titled `feat: ship AMSFTP 1.0.0`, base `main`; recorded in the verification ledger after creation
+- **Delivery PR**: Draft PR [#6](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/6), title `feat: ship AMSFTP 1.0.0`, base `main`
 - **Authoritative scope**: [Stage 6 specification](06-hardening-release.md), [ADR-0009](../architecture/adr/0009-supported-platform-ci-and-packaging-baseline.md), [ADR-0010](../architecture/adr/0010-helper-artifact-trust-and-distribution.md), [ADR-0017](../architecture/adr/0017-stage5-unified-routing-direct-transfer-and-resource-budgets.md), and the frozen feature rows below
 
 This is an execution plan, not release evidence. A row advances from `Planned` only after its first failing contract is recorded, and reaches `Verified` only after its focused, milestone, exact-candidate, platform, documentation, and Hosted gates are green. Milestones run strictly in the order M6.1 → M6.2 → M6.3 → M6.4.
