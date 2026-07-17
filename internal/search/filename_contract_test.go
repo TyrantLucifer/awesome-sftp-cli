@@ -75,9 +75,11 @@ func TestLevel0FilenameSearchCancellationRetainsResultsAndReportsCanceled(t *tes
 	if first.Kind != EventResult || first.Result.RelativePath != "match.txt" {
 		t.Fatalf("first event = %#v, want streamed match before blocked subtree", first)
 	}
+	cancelStarted := time.Now()
 	cancel()
 
 	terminal := terminalEvent(t, events)
+	cancelLatency := time.Since(cancelStarted)
 	if terminal.Status != StatusCanceled || terminal.StopReason != StopCanceled || terminal.Results != 1 {
 		t.Fatalf("terminal = %#v, want one retained result and canceled status", terminal)
 	}
@@ -86,6 +88,10 @@ func TestLevel0FilenameSearchCancellationRetainsResultsAndReportsCanceled(t *tes
 	case <-time.After(2 * time.Second):
 		t.Fatal("provider List did not observe propagated cancellation")
 	}
+	if cancelLatency > 250*time.Millisecond {
+		t.Fatalf("cancel latency = %s, want <= 250ms", cancelLatency)
+	}
+	t.Logf("cancel latency=%s", cancelLatency)
 }
 
 func TestLevel0FilenameSearchStopsWhenEndpointGenerationChanges(t *testing.T) {

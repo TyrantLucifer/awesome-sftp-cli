@@ -208,7 +208,9 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 先写 RED 契约测试；Provider/Fake/LocalFS/SFTP contract、TUI reducer/render、temporary-sshd `f`/`g/`、权限/symlink/binary/encoding/long-line、generation/cancel/partial、百万节点首结果/取消/peak RSS/goroutine/process/FD/read-list 计数。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
+
+**Current checkpoint**: Provider-only filename/content contracts, daemon cursors, TUI `f`/`g/`, explicit slow-content confirmation, cancellation/generation isolation, real temporary-sshd coverage, and a one-million-entry streaming fixture are green. The measured synthetic fixture returns the first result in about 65 µs, uses one 128-entry list page, adds about 6 MiB RSS, and records bounded goroutine/FD counts without retaining the full tree.
 
 ### M4.2: Helper 安装与握手
 
@@ -218,7 +220,9 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: manifest/signature golden/fuzz/compat；两阶段 consent/drift；OpenSSH 8.9 shell `-c`、fresh argv、poisoned PATH、uid/cwd/uname、safe-home 255/256 与 path 1000/1001、stderr 65536/65537、tamper/replay/upgrade/disable/remove、fixture isolation 与 production artifact pollution scans。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
+
+**Current checkpoint**: Manifest v1 canonical parsing, detached Ed25519 verification, production-empty trust, current-policy/revoke/deny/floor/high-water decisions, safe-home/path derivation, two-phase consent, drift detection, exclusive upload/readback/no-replace publication, and fixture-only lifecycle tests are implemented. Fresh OpenSSH process startup now freezes GSS delegation and ControlMaster off, requires byte-zero protocol preface, bounds stderr at 64 KiB, and supports heartbeat degradation. Protected persistence, real SFTP adapter/probe, runtime consent UI, per-exec freshness wiring, disable/remove, and the hostile OpenSSH matrix remain open.
 
 ### M4.3: Helper 搜索
 
@@ -228,7 +232,9 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: protocol golden/fuzz/compat/capability violation、cancel/timeout/invalid frame；million-node streaming/取消/资源证据；long line/binary/encoding/large-file/permission/mid-search change；process/port/service/secret scans 与 Helper failure 后 Stage 1–3 regression。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
+
+**Current checkpoint**: The strict framed protocol, independent capability negotiation, concurrent request correlation, cancellation, time/frame/string/depth/result/output/concurrency limits, structured completion/errors, heartbeat, built-in filename/content scanner, and daemon Level 1 routing are implemented. End-to-end tests prove negotiated Helper results retain the exact M4.1 identity and a closed Helper immediately routes a new request through Level 0 while Provider snapshot remains available. Million-node Helper resource evidence and real SSH crash/hang matrices remain open.
 
 ### M4.4: 增强能力与退化闭环
 

@@ -188,8 +188,8 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Mode == ModeWorkspace {
 		renderWorkspaceModal(surface, string(model.workspaceName), width, height)
 	}
-	if model.Mode == ModeFilenameSearch || model.Mode == ModeContentSearch {
-		renderSearchModal(surface, string(model.searchInput), model.Mode == ModeContentSearch, width, height)
+	if model.Mode == ModeFilenameSearch || model.Mode == ModeContentSearch || model.Mode == ModeContentSearchConfirm {
+		renderSearchModal(surface, string(model.searchInput), model.Mode == ModeContentSearch || model.Mode == ModeContentSearchConfirm, model.Mode == ModeContentSearchConfirm, width, height)
 	}
 	if model.Mode == ModePath {
 		renderPathModal(surface, string(model.pathInput), width, height)
@@ -531,7 +531,7 @@ func renderWorkspaceModal(surface Surface, name string, width, height int) {
 	surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] save  [Esc] cancel", StyleStatus)
 }
 
-func renderSearchModal(surface Surface, value string, content bool, width, height int) {
+func renderSearchModal(surface Surface, value string, content, confirm bool, width, height int) {
 	if width < 24 || height < 5 {
 		return
 	}
@@ -543,6 +543,10 @@ func renderSearchModal(surface Surface, value string, content bool, width, heigh
 	if content {
 		title = " Slow SFTP content search "
 		footer = "Literal text · binary skipped · remote reads are bounded · Enter search"
+	}
+	if confirm {
+		title = " Confirm slow SFTP scan "
+		footer = "≤1000 files · ≤1 MiB/file · ≤32 MiB total · ≤2 min · Enter accept · Esc back"
 	}
 	surface.PutClipped(x, y, modalWidth, title, StyleActiveHeader)
 	surface.PutClipped(x, y+1, modalWidth, "Pattern: "+SanitizeTerminalText(value), StyleStatus)

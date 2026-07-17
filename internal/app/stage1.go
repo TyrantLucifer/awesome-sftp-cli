@@ -30,6 +30,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
+	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
@@ -54,10 +55,21 @@ const authenticationTimeout = 2 * time.Minute
 const durableLocalEndpointID domain.EndpointID = "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func DefaultHandlers() Handlers {
-	unsupported := func(context.Context, []string, io.Writer, io.Writer) error {
-		return errors.New("role is not available in this stage")
+	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: runHelper}
+}
+
+func runHelper(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+	return runHelperWithIdentity(ctx, args, os.Stdin, stdout, os.Geteuid())
+}
+
+func runHelperWithIdentity(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, euid int) error {
+	if len(args) != 1 || args[0] != "serve" {
+		return errors.New("helper accepts only the restricted serve command")
 	}
-	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: unsupported}
+	if euid == 0 {
+		return errors.New("helper refuses to run with effective uid 0")
+	}
+	return helperruntime.Serve(ctx, stdin, stdout, helperruntime.NewLocalServiceConfig(helperruntime.Version{Major: 4}))
 }
 
 func runtimePaths() (platform.Paths, platform.ValidationPurpose, error) {

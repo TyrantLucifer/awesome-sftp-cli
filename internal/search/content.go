@@ -130,6 +130,12 @@ func StartContent(ctx context.Context, implementation providerapi.Provider, requ
 	return events, nil
 }
 
+// ValidateContentRequest applies the transport-neutral content-search
+// identity, option, and hard-budget contract without starting an operation.
+func ValidateContentRequest(endpointID domain.EndpointID, request ContentRequest) error {
+	return validateContentRequest(endpointID, request)
+}
+
 func validateContentRequest(endpointID domain.EndpointID, request ContentRequest) error {
 	i := request.Identity
 	if _, err := domain.ParseRequestID(string(i.RequestID)); err != nil || i.EndpointID != endpointID || i.Scope.EndpointID != endpointID || i.SessionID == "" || i.EndpointGeneration == 0 || i.UIGeneration == 0 {

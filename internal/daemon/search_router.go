@@ -41,7 +41,7 @@ func (s *providerSession) startFilenameSearch(payload json.RawMessage) (any, err
 	}
 
 	searchCtx, cancel := context.WithCancel(context.Background())
-	events, err := search.StartFilename(searchCtx, implementation, search.Request{Identity: identity})
+	events, err := s.startFilenameEvents(searchCtx, implementation, identity)
 	if err != nil {
 		cancel()
 		return nil, err

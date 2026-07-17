@@ -38,7 +38,7 @@ func (s *providerSession) startContentSearch(payload json.RawMessage) (any, erro
 		return nil, searchCursorError(domain.CodeResourceExhausted, "active search limit reached")
 	}
 	searchCtx, cancel := context.WithCancel(context.Background())
-	events, err := search.StartContent(searchCtx, implementation, search.ContentRequest{Identity: identity})
+	events, err := s.startContentEvents(searchCtx, implementation, identity)
 	if err != nil {
 		cancel()
 		return nil, err

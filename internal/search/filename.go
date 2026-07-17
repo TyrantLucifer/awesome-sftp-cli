@@ -192,6 +192,12 @@ func StartFilename(ctx context.Context, implementation providerapi.Provider, req
 	return events, nil
 }
 
+// ValidateFilenameRequest applies the transport-neutral filename-search
+// identity, option, and hard-budget contract without starting an operation.
+func ValidateFilenameRequest(endpointID domain.EndpointID, request Request) error {
+	return validateRequest(endpointID, request)
+}
+
 func validateRequest(endpointID domain.EndpointID, request Request) error {
 	identity := request.Identity
 	if _, err := domain.ParseRequestID(string(identity.RequestID)); err != nil {

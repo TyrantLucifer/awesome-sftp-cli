@@ -623,6 +623,23 @@ func previewIdentityMatches(expected, actual PreviewRequestIdentity) bool {
 }
 
 func reduceKey(model Model, key Key) (Model, []Intent) {
+	if model.Mode == ModeContentSearchConfirm {
+		switch key {
+		case KeyEscape:
+			model.Mode = ModeContentSearch
+			return model, nil
+		case KeySubmit:
+			pane := model.Panes[model.Active]
+			pattern := string(model.searchInput)
+			model.searchInput = nil
+			model.Mode = ModeNormal
+			model.Drawer = DrawerState{Mode: DrawerContentSearch, Focus: FocusDrawer, Rows: model.Drawer.Rows}
+			model.ContentSearch = ContentSearchState{Query: pattern, Loading: true}
+			return model, []Intent{{Kind: IntentSearchContent, Pane: model.Active, Location: pane.Location, SearchPattern: pattern}}
+		default:
+			return model, nil
+		}
+	}
 	if model.Mode == ModeFilenameSearch || model.Mode == ModeContentSearch {
 		content := model.Mode == ModeContentSearch
 		switch key {
@@ -642,13 +659,13 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			}
 			pane := model.Panes[model.Active]
 			pattern := string(model.searchInput)
+			if content {
+				model.Mode = ModeContentSearchConfirm
+				model.Notice = "confirm slow scan: max 1000 files, 1 MiB/file, 32 MiB total, 2 minutes"
+				return model, nil
+			}
 			model.searchInput = nil
 			model.Mode = ModeNormal
-			if content {
-				model.Drawer = DrawerState{Mode: DrawerContentSearch, Focus: FocusDrawer, Rows: model.Drawer.Rows}
-				model.ContentSearch = ContentSearchState{Query: pattern, Loading: true}
-				return model, []Intent{{Kind: IntentSearchContent, Pane: model.Active, Location: pane.Location, SearchPattern: pattern}}
-			}
 			model.Drawer = DrawerState{Mode: DrawerSearch, Focus: FocusDrawer, Rows: model.Drawer.Rows}
 			model.Search = SearchState{Query: pattern, Loading: true}
 			return model, []Intent{{Kind: IntentSearchFilename, Pane: model.Active, Location: pane.Location, SearchPattern: pattern}}

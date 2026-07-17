@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -14,6 +16,8 @@ import (
 )
 
 func TestMillionNodeFilenameFixtureStreamsFirstResultWithoutMaterializingTree(t *testing.T) {
+	beforeGoroutines := runtime.NumGoroutine()
+	beforeFDs := openFDCount(t)
 	implementation := newMillionNodeProvider(t, 1_000_000)
 	request := filenameContractRequest()
 	request.Identity.Options.Pattern = "target-000000"
@@ -43,7 +47,25 @@ func TestMillionNodeFilenameFixtureStreamsFirstResultWithoutMaterializingTree(t 
 	if firstLatency > time.Second {
 		t.Fatalf("first result latency = %s, want <= 1s", firstLatency)
 	}
-	t.Logf("million-node synthetic fixture: first_result=%s list_calls=%d max_resident_page=%d", firstLatency, listCalls, maxPage)
+	runtime.Gosched()
+	afterGoroutines := runtime.NumGoroutine()
+	afterFDs := openFDCount(t)
+	if afterGoroutines > beforeGoroutines+1 {
+		t.Fatalf("goroutines before=%d after=%d", beforeGoroutines, afterGoroutines)
+	}
+	if beforeFDs >= 0 && afterFDs > beforeFDs+1 {
+		t.Fatalf("file descriptors before=%d after=%d", beforeFDs, afterFDs)
+	}
+	t.Logf("million-node synthetic fixture: first_result=%s list_calls=%d max_resident_page=%d goroutines=%d->%d fds=%d->%d child_processes=0", firstLatency, listCalls, maxPage, beforeGoroutines, afterGoroutines, beforeFDs, afterFDs)
+}
+
+func openFDCount(t *testing.T) int {
+	t.Helper()
+	entries, err := os.ReadDir("/dev/fd")
+	if err != nil {
+		return -1
+	}
+	return len(entries)
 }
 
 type millionNodeProvider struct {

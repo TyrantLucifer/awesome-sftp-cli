@@ -22,6 +22,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 )
@@ -89,6 +90,7 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 	defer second.Close()
 	assertContainsEntry(t, ctx, first, "endpoint-first.txt")
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
+	assertLevel0SFTPSearch(t, ctx, first, firstServer.root)
 	assertBidirectionalDurableTransfer(t, ctx, first, firstServer.root)
 	assertDualRemoteDirectoryRelay(t, ctx, first, second, firstServer.root, secondServer.root)
 	assertDualRemoteDirectoryRelay(t, ctx, first, first, firstServer.root, firstServer.root)
@@ -115,6 +117,68 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 		time.Sleep(25 * time.Millisecond)
 	}
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
+}
+
+func assertLevel0SFTPSearch(t *testing.T, ctx context.Context, implementation *sftpprovider.Provider, remoteRoot string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(remoteRoot, "search", "nested"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(remoteRoot, "search", "nested", "target.txt"), []byte("first\nremote needle\nlast\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := implementation.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := normalizeIntegration(t, ctx, implementation, "/search")
+	filenameIdentity := search.Identity{
+		RequestID: "req_hhhhhhhhhhhhhhhhhhhhhhhhhh", EndpointID: implementation.Descriptor().ID,
+		SessionID: snapshot.SessionID, EndpointGeneration: snapshot.Capabilities.Revision.Generation, UIGeneration: 1, Scope: scope,
+		Options: search.Options{Pattern: "target", Target: search.MatchRelativePath, CaseSensitive: true, Symlinks: search.SymlinkNever, Ignore: search.IgnoreNone, Types: search.TypeFilter{Files: true}},
+		Budget:  search.Budget{PageItems: 8, EventBuffer: 4, ConcurrentLists: 1, MaxDepth: 8, MaxEntries: 64, MaxResults: 8, MaxOutputBytes: 4096, MaxDuration: 5 * time.Second},
+	}
+	filenameEvents, err := search.StartFilename(ctx, implementation, search.Request{Identity: filenameIdentity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var filenameResult search.Result
+	var filenameTerminal search.Terminal
+	for event := range filenameEvents {
+		if event.Kind == search.EventResult {
+			filenameResult = event.Result
+		}
+		if event.Kind == search.EventTerminal {
+			filenameTerminal = event.Terminal
+		}
+	}
+	if filenameResult.RelativePath != "nested/target.txt" || filenameTerminal.Status != search.StatusComplete {
+		t.Fatalf("real SFTP filename search = result %#v terminal %#v", filenameResult, filenameTerminal)
+	}
+
+	contentIdentity := search.ContentIdentity{
+		RequestID: "req_iiiiiiiiiiiiiiiiiiiiiiiiii", EndpointID: implementation.Descriptor().ID,
+		SessionID: snapshot.SessionID, EndpointGeneration: snapshot.Capabilities.Revision.Generation, UIGeneration: 2, Scope: scope,
+		Options: search.ContentOptions{Pattern: "needle", PatternType: search.PatternLiteral, CaseSensitive: true, Binary: search.BinarySkip},
+		Budget:  search.ContentBudget{PageItems: 8, EventBuffer: 4, MaxDepth: 8, MaxEntries: 64, MaxFiles: 8, MaxResults: 8, MaxMatchesPerFile: 4, MaxFileBytes: 4096, MaxReadBytes: 16 * 1024, MaxSnippetBytes: 256, MaxOutputBytes: 4096, MaxDuration: 5 * time.Second},
+	}
+	contentEvents, err := search.StartContent(ctx, implementation, search.ContentRequest{Identity: contentIdentity})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var contentResult search.ContentResult
+	var contentTerminal search.ContentTerminal
+	for event := range contentEvents {
+		if event.Kind == search.ContentEventResult {
+			contentResult = event.Result
+		}
+		if event.Kind == search.ContentEventTerminal {
+			contentTerminal = event.Terminal
+		}
+	}
+	if contentResult.RelativePath != "nested/target.txt" || contentResult.Line != 2 || contentTerminal.Status != search.StatusComplete {
+		t.Fatalf("real SFTP content search = result %#v terminal %#v", contentResult, contentTerminal)
+	}
 }
 
 func assertDualRemoteDirectoryRelay(

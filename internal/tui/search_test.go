@@ -79,6 +79,10 @@ func TestContentSearchGSlashFreezesActivePaneScope(t *testing.T) {
 	}
 	model, _ = Reduce(model, TextInput{Text: "needle"})
 	model, intents := Reduce(model, KeyPress{Key: KeySubmit})
+	if len(intents) != 0 || model.Mode != ModeContentSearchConfirm {
+		t.Fatalf("content confirmation model=%#v intents=%#v", model, intents)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
 	if len(intents) != 1 || intents[0].Kind != IntentSearchContent || intents[0].Pane != Left || intents[0].Location.Path != "/left" || intents[0].SearchPattern != "needle" {
 		t.Fatalf("content search intents = %#v", intents)
 	}

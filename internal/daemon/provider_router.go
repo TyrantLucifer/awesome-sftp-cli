@@ -17,6 +17,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachemanager"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
@@ -64,6 +65,7 @@ type ProviderSessions struct {
 	diagnostics     DiagnosticSource
 	cache           *cachemanager.Manager
 	editSessions    EditSessionStore
+	helpers         map[domain.EndpointID]*helperruntime.Client
 	nextOwner       atomic.Uint64
 }
 
@@ -110,7 +112,7 @@ func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) 
 	for id, implementation := range indexed {
 		endpoints[id] = &endpointLease{implementation: implementation, permanent: true}
 	}
-	return &ProviderSessions{providers: indexed, endpoints: endpoints, maxReadBytes: maxReadBytes}, nil
+	return &ProviderSessions{providers: indexed, endpoints: endpoints, maxReadBytes: maxReadBytes, helpers: make(map[domain.EndpointID]*helperruntime.Client)}, nil
 }
 
 func (s *ProviderSessions) NewSession() Session {
@@ -132,6 +134,7 @@ func (s *ProviderSessions) NewSession() Session {
 		diagnostics:     s.diagnostics,
 		cache:           s.cache,
 		editSessions:    s.editSessions,
+		helpers:         cloneHelperClients(s.helpers),
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -168,6 +171,15 @@ type providerSession struct {
 	diagnostics     DiagnosticSource
 	cache           *cachemanager.Manager
 	editSessions    EditSessionStore
+	helpers         map[domain.EndpointID]*helperruntime.Client
+}
+
+func cloneHelperClients(source map[domain.EndpointID]*helperruntime.Client) map[domain.EndpointID]*helperruntime.Client {
+	result := make(map[domain.EndpointID]*helperruntime.Client, len(source))
+	for endpointID, client := range source {
+		result[endpointID] = client
+	}
+	return result
 }
 
 const maxActiveFilenameSearches = 4
