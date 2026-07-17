@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestOpenSSHProcessSessionUsesFrozenArgvHeartbeatAndBoundedStderr(t *testing.T) {
@@ -45,7 +47,7 @@ func TestOpenSSHProcessSessionUsesFrozenArgvHeartbeatAndBoundedStderr(t *testing
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
 	}
-	raw, err := os.ReadFile(capture) // #nosec G304 -- capture is inside t.TempDir.
+	raw, err := os.ReadFile(capture) // #nosec G304 -- capture is inside the test-owned persistent directory.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +166,7 @@ func TestOpenSSHHelperChild(t *testing.T) {
 
 func fakeOpenSSHExecutable(t *testing.T) (string, string) {
 	t.Helper()
-	directory := t.TempDir()
+	directory := testkit.PersistentTempDir(t)
 	path := filepath.Join(directory, "ssh-fixture")
 	capture := filepath.Join(directory, "argv")
 	script := "#!/bin/sh\n: > \"$AMSFTP_HELPER_ARG_CAPTURE\"\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\" >> \"$AMSFTP_HELPER_ARG_CAPTURE\"; done\nexec \"$AMSFTP_HELPER_TEST_BINARY\" -test.run=TestOpenSSHHelperChild\n"

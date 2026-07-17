@@ -7,10 +7,12 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestOpenSSHBindingProbeUsesOnlyFrozenAbsoluteUtilitiesAndParsesByteZeroOutput(t *testing.T) {
-	directory := t.TempDir()
+	directory := testkit.PersistentTempDir(t)
 	sshPath := filepath.Join(directory, "ssh-probe-fixture")
 	capture := filepath.Join(directory, "argv")
 	script := "#!/bin/sh\n: > \"$AMSFTP_PROBE_ARG_CAPTURE\"\nfor arg in \"$@\"; do printf '%s\\n' \"$arg\" >> \"$AMSFTP_PROBE_ARG_CAPTURE\"; done\nprintf 'amsftp-helper-bind-v1\\0001001\\000/home/alice\\000Linux\\000x86_64\\000'\n"
@@ -29,7 +31,7 @@ func TestOpenSSHBindingProbeUsesOnlyFrozenAbsoluteUtilitiesAndParsesByteZeroOutp
 	if observation != (Observation{UID: 1001, Home: "/home/alice", Target: Target{OS: "linux", Arch: "amd64"}}) {
 		t.Fatalf("observation = %#v", observation)
 	}
-	raw, err := os.ReadFile(capture) // #nosec G304 -- capture is inside t.TempDir.
+	raw, err := os.ReadFile(capture) // #nosec G304 -- capture is inside the test-owned persistent directory.
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +60,7 @@ func TestOpenSSHBindingProbeRejectsBannerAndStderrOverflow(t *testing.T) {
 		{name: "stderr overflow", script: "head -c 65537 /dev/zero >&2; printf 'amsftp-helper-bind-v1\\0001001\\000/home/alice\\000Linux\\000x86_64\\000'"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), "ssh-probe-fixture")
+			path := filepath.Join(testkit.PersistentTempDir(t), "ssh-probe-fixture")
 			if err := os.WriteFile(path, []byte("#!/bin/sh\n"+test.script+"\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}

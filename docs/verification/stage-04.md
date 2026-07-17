@@ -96,6 +96,8 @@ Planner selects `helper_same_host` only for a regular-file copy within one SSH E
 | final real SFTP search | `AMSFTP_REAL_SSHD=1 go test ./internal/integration -run '^TestRealSSHDLevel0Search$' -count=1 -v -timeout=2m` | PASS; named test ran in 0.53 s |
 | final hostile process fixture | focused restricted argv/binding probe/process session/production-trust tests | PASS |
 | final production pollution | production binary string scan plus tracked `dist/**`/`coverage/**` scan | PASS; no fixture key/artifact/child-mode marker or tracked generated output |
+| implementation candidate `145b50ae871aa91f8acc0505d2b6b9bd19bae742` | Hosted push run [29557260133](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557260133) and PR run [29557261524](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557261524) | FAIL: Linux correctly rejected security-sensitive test fixtures rooted below world-writable `/tmp`; production path validation remained fail-closed |
+| trusted-root fixture repair | affected Helper tests, focused race, and `make check` | PASS: executable and persistent-state fixtures now use the CI-provisioned `testkit.PersistentTempDir`; production code is unchanged |
 
 ## Pending final gates
 

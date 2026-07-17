@@ -11,10 +11,11 @@ import (
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestStateStorePersistsExactMetadataAndMonotonicEnabledHighWater(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "helper-state")
+	root := filepath.Join(testkit.PersistentTempDir(t), "helper-state")
 	store, err := NewStateStore(root)
 	if err != nil {
 		t.Fatal(err)
@@ -79,7 +80,7 @@ func TestStateStorePersistsExactMetadataAndMonotonicEnabledHighWater(t *testing.
 
 func TestStateStoreDisableRetainsHighWaterAndFreshRemoveDeletesOnlyVerifiedArtifact(t *testing.T) {
 	fixture := newInstallerFixture(t)
-	store, err := NewStateStore(filepath.Join(t.TempDir(), "helper-state"))
+	store, err := NewStateStore(filepath.Join(testkit.PersistentTempDir(t), "helper-state"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +147,7 @@ func (denyHelperRemoval) AcquireHelperRemoval(context.Context, domain.EndpointID
 }
 
 func TestStateStoreBoundsUnreferencedStagedMetadata(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "helper-state")
+	root := filepath.Join(testkit.PersistentTempDir(t), "helper-state")
 	store, err := NewStateStore(root)
 	if err != nil {
 		t.Fatal(err)
@@ -164,7 +165,7 @@ func TestStateStoreBoundsUnreferencedStagedMetadata(t *testing.T) {
 }
 
 func TestStateStoreFailsClosedOnMissingCorruptOrReplacedMetadata(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "helper-state")
+	root := filepath.Join(testkit.PersistentTempDir(t), "helper-state")
 	store, err := NewStateStore(root)
 	if err != nil {
 		t.Fatal(err)
@@ -209,7 +210,7 @@ func TestStateStoreFailsClosedOnMissingCorruptOrReplacedMetadata(t *testing.T) {
 }
 
 func TestStateStoreInterruptedIndexReplacePreservesPreviousEnabledRecord(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "helper-state")
+	root := filepath.Join(testkit.PersistentTempDir(t), "helper-state")
 	store, err := NewStateStore(root)
 	if err != nil {
 		t.Fatal(err)

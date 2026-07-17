@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestInstallerRequiresTwoBoundConsentsAndPublishesWithoutReplacement(t *testing.T) {
@@ -155,7 +156,7 @@ func TestInstallerNeverWritesFirstByteWhenExclusiveHandleGateFails(t *testing.T)
 
 func TestInstallerPersistsExactMetadataBeforeProbeAndEnabledHighWaterAfterHandshake(t *testing.T) {
 	fixture := newInstallerFixture(t)
-	store, err := NewStateStore(filepath.Join(t.TempDir(), "state"))
+	store, err := NewStateStore(filepath.Join(testkit.PersistentTempDir(t), "state"))
 	if err != nil {
 		t.Fatal(err)
 	}
