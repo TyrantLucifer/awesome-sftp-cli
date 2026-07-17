@@ -11,6 +11,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 )
 
 const (
@@ -42,6 +43,7 @@ type Config struct {
 	Cache         CacheConfig    `json:"cache"`
 	Transfer      TransferConfig `json:"transfer"`
 	Preview       PreviewConfig  `json:"preview"`
+	Search        SearchConfig   `json:"search"`
 	External      ExternalConfig `json:"external,omitempty"`
 	Keymap        KeymapConfig   `json:"keymap,omitempty"`
 }
@@ -84,6 +86,37 @@ type PreviewConfig struct {
 	ImageMaxPixels       uint64 `json:"image_max_pixels"`
 }
 
+type SearchConfig struct {
+	Filename FilenameSearchConfig `json:"filename"`
+	Content  ContentSearchConfig  `json:"content"`
+}
+
+type FilenameSearchConfig struct {
+	PageItems       uint32 `json:"page_items"`
+	EventBuffer     uint32 `json:"event_buffer"`
+	ConcurrentLists uint32 `json:"concurrent_lists"`
+	MaxDepth        uint32 `json:"max_depth"`
+	MaxEntries      uint64 `json:"max_entries"`
+	MaxResults      uint64 `json:"max_results"`
+	MaxOutputBytes  uint64 `json:"max_output_bytes"`
+	MaxDurationMS   int64  `json:"max_duration_ms"`
+}
+
+type ContentSearchConfig struct {
+	PageItems         uint32 `json:"page_items"`
+	EventBuffer       uint32 `json:"event_buffer"`
+	MaxDepth          uint32 `json:"max_depth"`
+	MaxEntries        uint64 `json:"max_entries"`
+	MaxFiles          uint64 `json:"max_files"`
+	MaxResults        uint64 `json:"max_results"`
+	MaxMatchesPerFile uint64 `json:"max_matches_per_file"`
+	MaxFileBytes      uint64 `json:"max_file_bytes"`
+	MaxReadBytes      uint64 `json:"max_read_bytes"`
+	MaxSnippetBytes   uint32 `json:"max_snippet_bytes"`
+	MaxOutputBytes    uint64 `json:"max_output_bytes"`
+	MaxDurationMS     int64  `json:"max_duration_ms"`
+}
+
 type CommandConfig struct {
 	Executable string   `json:"executable"`
 	Args       []string `json:"argv"`
@@ -112,6 +145,8 @@ type KeymapConfig struct {
 func Default() Config {
 	renderLimits := preview.DefaultLimits()
 	imageLimits := preview.DefaultImageOutputLimits()
+	filenameBudget := search.DefaultFilenameBudget()
+	contentBudget := search.DefaultContentBudget()
 	return Config{
 		SchemaVersion: SchemaVersion,
 		IPC: IPCConfig{
@@ -133,6 +168,24 @@ func Default() Config {
 			MaxStyleSpans: renderLimits.MaxStyleSpans, ImageMaxPayloadBytes: imageLimits.MaxPayloadBytes,
 			ImageMaxOutputBytes: imageLimits.MaxOutputBytes, ImageChunkBytes: imageLimits.ChunkBytes,
 			ImageMaxPixels: imageLimits.MaxPixels,
+		},
+		Search: SearchConfig{
+			Filename: FilenameSearchConfig{
+				PageItems: filenameBudget.PageItems, EventBuffer: filenameBudget.EventBuffer,
+				ConcurrentLists: filenameBudget.ConcurrentLists, MaxDepth: filenameBudget.MaxDepth,
+				MaxEntries: filenameBudget.MaxEntries, MaxResults: filenameBudget.MaxResults,
+				MaxOutputBytes: filenameBudget.MaxOutputBytes,
+				MaxDurationMS:  filenameBudget.MaxDuration.Milliseconds(),
+			},
+			Content: ContentSearchConfig{
+				PageItems: contentBudget.PageItems, EventBuffer: contentBudget.EventBuffer,
+				MaxDepth: contentBudget.MaxDepth, MaxEntries: contentBudget.MaxEntries,
+				MaxFiles: contentBudget.MaxFiles, MaxResults: contentBudget.MaxResults,
+				MaxMatchesPerFile: contentBudget.MaxMatchesPerFile, MaxFileBytes: contentBudget.MaxFileBytes,
+				MaxReadBytes: contentBudget.MaxReadBytes, MaxSnippetBytes: contentBudget.MaxSnippetBytes,
+				MaxOutputBytes: contentBudget.MaxOutputBytes,
+				MaxDurationMS:  contentBudget.MaxDuration.Milliseconds(),
+			},
 		},
 	}
 }
@@ -211,6 +264,9 @@ func (c Config) Validate() error {
 	if err := c.Preview.validate(); err != nil {
 		return err
 	}
+	if err := c.Search.validate(); err != nil {
+		return err
+	}
 	if err := c.External.validate(); err != nil {
 		return fmt.Errorf("external: %w", err)
 	}
@@ -287,6 +343,59 @@ func (c PreviewConfig) validate() error {
 	imagePixelLimit := min(c.MaxImagePixels, maximumImage.MaxPixels)
 	if c.ImageMaxPixels < 1 || c.ImageMaxPixels > imagePixelLimit {
 		return fmt.Errorf("preview.image_max_pixels must be within 1..%d", imagePixelLimit)
+	}
+	return nil
+}
+
+func (c SearchConfig) validate() error {
+	maximumFilename := search.DefaultFilenameBudget()
+	filenameChecks := []struct {
+		name         string
+		value, limit uint64
+	}{
+		{name: "page_items", value: uint64(c.Filename.PageItems), limit: uint64(maximumFilename.PageItems)},
+		{name: "event_buffer", value: uint64(c.Filename.EventBuffer), limit: uint64(maximumFilename.EventBuffer)},
+		{name: "concurrent_lists", value: uint64(c.Filename.ConcurrentLists), limit: uint64(maximumFilename.ConcurrentLists)},
+		{name: "max_depth", value: uint64(c.Filename.MaxDepth), limit: uint64(maximumFilename.MaxDepth)},
+		{name: "max_entries", value: c.Filename.MaxEntries, limit: maximumFilename.MaxEntries},
+		{name: "max_results", value: c.Filename.MaxResults, limit: maximumFilename.MaxResults},
+		{name: "max_output_bytes", value: c.Filename.MaxOutputBytes, limit: maximumFilename.MaxOutputBytes},
+	}
+	for _, check := range filenameChecks {
+		if check.value < 1 || check.value > check.limit {
+			return fmt.Errorf("search.filename.%s must be within 1..%d", check.name, check.limit)
+		}
+	}
+	filenameDurationLimit := maximumFilename.MaxDuration.Milliseconds()
+	if c.Filename.MaxDurationMS < 1 || c.Filename.MaxDurationMS > filenameDurationLimit {
+		return fmt.Errorf("search.filename.max_duration_ms must be within 1..%d", filenameDurationLimit)
+	}
+
+	maximumContent := search.DefaultContentBudget()
+	contentChecks := []struct {
+		name         string
+		value, limit uint64
+	}{
+		{name: "page_items", value: uint64(c.Content.PageItems), limit: uint64(maximumContent.PageItems)},
+		{name: "event_buffer", value: uint64(c.Content.EventBuffer), limit: uint64(maximumContent.EventBuffer)},
+		{name: "max_depth", value: uint64(c.Content.MaxDepth), limit: uint64(maximumContent.MaxDepth)},
+		{name: "max_entries", value: c.Content.MaxEntries, limit: maximumContent.MaxEntries},
+		{name: "max_files", value: c.Content.MaxFiles, limit: maximumContent.MaxFiles},
+		{name: "max_results", value: c.Content.MaxResults, limit: maximumContent.MaxResults},
+		{name: "max_matches_per_file", value: c.Content.MaxMatchesPerFile, limit: maximumContent.MaxMatchesPerFile},
+		{name: "max_file_bytes", value: c.Content.MaxFileBytes, limit: min(c.Content.MaxReadBytes, maximumContent.MaxFileBytes)},
+		{name: "max_read_bytes", value: c.Content.MaxReadBytes, limit: maximumContent.MaxReadBytes},
+		{name: "max_snippet_bytes", value: uint64(c.Content.MaxSnippetBytes), limit: uint64(maximumContent.MaxSnippetBytes)},
+		{name: "max_output_bytes", value: c.Content.MaxOutputBytes, limit: maximumContent.MaxOutputBytes},
+	}
+	for _, check := range contentChecks {
+		if check.value < 1 || check.value > check.limit {
+			return fmt.Errorf("search.content.%s must be within 1..%d", check.name, check.limit)
+		}
+	}
+	contentDurationLimit := maximumContent.MaxDuration.Milliseconds()
+	if c.Content.MaxDurationMS < 1 || c.Content.MaxDurationMS > contentDurationLimit {
+		return fmt.Errorf("search.content.max_duration_ms must be within 1..%d", contentDurationLimit)
 	}
 	return nil
 }

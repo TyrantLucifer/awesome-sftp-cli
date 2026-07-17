@@ -35,6 +35,18 @@ func TestDefaultConfigIsValid(t *testing.T) {
 			MaxStyleSpans: 4096, ImageMaxPayloadBytes: 4 * 1024 * 1024,
 			ImageMaxOutputBytes: 6 * 1024 * 1024, ImageChunkBytes: 4096, ImageMaxPixels: 1_000_000,
 		},
+		Search: SearchConfig{
+			Filename: FilenameSearchConfig{
+				PageItems: 256, EventBuffer: 64, ConcurrentLists: 1, MaxDepth: 128,
+				MaxEntries: 1_000_000, MaxResults: 10_000, MaxOutputBytes: 8 << 20, MaxDurationMS: 300_000,
+			},
+			Content: ContentSearchConfig{
+				PageItems: 128, EventBuffer: 32, MaxDepth: 32, MaxEntries: 10_000,
+				MaxFiles: 1_000, MaxResults: 5_000, MaxMatchesPerFile: 100,
+				MaxFileBytes: 1 << 20, MaxReadBytes: 32 << 20, MaxSnippetBytes: 512,
+				MaxOutputBytes: 8 << 20, MaxDurationMS: 120_000,
+			},
+		},
 	}
 
 	got := Default()
@@ -78,6 +90,75 @@ func TestDefaultPreviewSettingsFreezeCurrentRuntimeBehavior(t *testing.T) {
 	}
 	if got != want {
 		t.Fatalf("preview defaults = %#v, want %#v", got, want)
+	}
+}
+
+func TestDefaultSearchSettingsFreezeCurrentRuntimeBehavior(t *testing.T) {
+	got := Default().Search
+	want := SearchConfig{
+		Filename: FilenameSearchConfig{
+			PageItems: 256, EventBuffer: 64, ConcurrentLists: 1, MaxDepth: 128,
+			MaxEntries: 1_000_000, MaxResults: 10_000, MaxOutputBytes: 8 << 20, MaxDurationMS: 300_000,
+		},
+		Content: ContentSearchConfig{
+			PageItems: 128, EventBuffer: 32, MaxDepth: 32, MaxEntries: 10_000,
+			MaxFiles: 1_000, MaxResults: 5_000, MaxMatchesPerFile: 100,
+			MaxFileBytes: 1 << 20, MaxReadBytes: 32 << 20, MaxSnippetBytes: 512,
+			MaxOutputBytes: 8 << 20, MaxDurationMS: 120_000,
+		},
+	}
+	if got != want {
+		t.Fatalf("search defaults = %#v, want %#v", got, want)
+	}
+}
+
+func TestDecodeAppliesPartialSearchSettings(t *testing.T) {
+	input := `{"schema_version":1,"search":{"filename":{"max_depth":64},"content":{"max_files":500}}}`
+	got, err := Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Search.Filename.MaxDepth != 64 || got.Search.Filename.MaxEntries != 1_000_000 || got.Search.Content.MaxFiles != 500 || got.Search.Content.MaxReadBytes != 32<<20 {
+		t.Fatalf("partial search = %#v", got.Search)
+	}
+}
+
+func TestSearchSettingsCanOnlyTightenFrozenCeilings(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "filename page", input: `{"schema_version":1,"search":{"filename":{"page_items":257}}}`, want: "search.filename.page_items"},
+		{name: "filename buffer", input: `{"schema_version":1,"search":{"filename":{"event_buffer":65}}}`, want: "search.filename.event_buffer"},
+		{name: "filename concurrency", input: `{"schema_version":1,"search":{"filename":{"concurrent_lists":2}}}`, want: "search.filename.concurrent_lists"},
+		{name: "filename depth", input: `{"schema_version":1,"search":{"filename":{"max_depth":129}}}`, want: "search.filename.max_depth"},
+		{name: "filename entries", input: `{"schema_version":1,"search":{"filename":{"max_entries":1000001}}}`, want: "search.filename.max_entries"},
+		{name: "filename results", input: `{"schema_version":1,"search":{"filename":{"max_results":10001}}}`, want: "search.filename.max_results"},
+		{name: "filename output", input: `{"schema_version":1,"search":{"filename":{"max_output_bytes":8388609}}}`, want: "search.filename.max_output_bytes"},
+		{name: "filename zero duration", input: `{"schema_version":1,"search":{"filename":{"max_duration_ms":0}}}`, want: "search.filename.max_duration_ms"},
+		{name: "filename negative duration", input: `{"schema_version":1,"search":{"filename":{"max_duration_ms":-1}}}`, want: "search.filename.max_duration_ms"},
+		{name: "filename duration", input: `{"schema_version":1,"search":{"filename":{"max_duration_ms":300001}}}`, want: "search.filename.max_duration_ms"},
+		{name: "content page", input: `{"schema_version":1,"search":{"content":{"page_items":129}}}`, want: "search.content.page_items"},
+		{name: "content buffer", input: `{"schema_version":1,"search":{"content":{"event_buffer":33}}}`, want: "search.content.event_buffer"},
+		{name: "content depth", input: `{"schema_version":1,"search":{"content":{"max_depth":33}}}`, want: "search.content.max_depth"},
+		{name: "content entries", input: `{"schema_version":1,"search":{"content":{"max_entries":10001}}}`, want: "search.content.max_entries"},
+		{name: "content files", input: `{"schema_version":1,"search":{"content":{"max_files":1001}}}`, want: "search.content.max_files"},
+		{name: "content results", input: `{"schema_version":1,"search":{"content":{"max_results":5001}}}`, want: "search.content.max_results"},
+		{name: "content per file", input: `{"schema_version":1,"search":{"content":{"max_matches_per_file":101}}}`, want: "search.content.max_matches_per_file"},
+		{name: "content file bytes", input: `{"schema_version":1,"search":{"content":{"max_file_bytes":1048577}}}`, want: "search.content.max_file_bytes"},
+		{name: "content read bytes", input: `{"schema_version":1,"search":{"content":{"max_read_bytes":33554433}}}`, want: "search.content.max_read_bytes"},
+		{name: "content snippet", input: `{"schema_version":1,"search":{"content":{"max_snippet_bytes":513}}}`, want: "search.content.max_snippet_bytes"},
+		{name: "content output", input: `{"schema_version":1,"search":{"content":{"max_output_bytes":8388609}}}`, want: "search.content.max_output_bytes"},
+		{name: "content zero duration", input: `{"schema_version":1,"search":{"content":{"max_duration_ms":0}}}`, want: "search.content.max_duration_ms"},
+		{name: "content negative duration", input: `{"schema_version":1,"search":{"content":{"max_duration_ms":-1}}}`, want: "search.content.max_duration_ms"},
+		{name: "content duration", input: `{"schema_version":1,"search":{"content":{"max_duration_ms":120001}}}`, want: "search.content.max_duration_ms"},
+		{name: "file above total read", input: `{"schema_version":1,"search":{"content":{"max_file_bytes":1048576,"max_read_bytes":524288}}}`, want: "search.content.max_file_bytes"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertDecodeErrorContains(t, test.input, test.want)
+		})
 	}
 }
 

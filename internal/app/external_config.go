@@ -16,6 +16,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"golang.org/x/sys/unix"
 )
@@ -42,6 +43,24 @@ func runtimePreviewLimits(input config.PreviewConfig) (preview.Limits, preview.I
 		}, preview.ImageOutputLimits{
 			MaxPayloadBytes: input.ImageMaxPayloadBytes, MaxOutputBytes: input.ImageMaxOutputBytes,
 			ChunkBytes: input.ImageChunkBytes, MaxPixels: input.ImageMaxPixels,
+		}
+}
+
+func runtimeSearchBudgets(input config.SearchConfig) (search.Budget, search.ContentBudget) {
+	return search.Budget{
+			PageItems: input.Filename.PageItems, EventBuffer: input.Filename.EventBuffer,
+			ConcurrentLists: input.Filename.ConcurrentLists, MaxDepth: input.Filename.MaxDepth,
+			MaxEntries: input.Filename.MaxEntries, MaxResults: input.Filename.MaxResults,
+			MaxOutputBytes: input.Filename.MaxOutputBytes,
+			MaxDuration:    time.Duration(input.Filename.MaxDurationMS) * time.Millisecond,
+		}, search.ContentBudget{
+			PageItems: input.Content.PageItems, EventBuffer: input.Content.EventBuffer,
+			MaxDepth: input.Content.MaxDepth, MaxEntries: input.Content.MaxEntries,
+			MaxFiles: input.Content.MaxFiles, MaxResults: input.Content.MaxResults,
+			MaxMatchesPerFile: input.Content.MaxMatchesPerFile, MaxFileBytes: input.Content.MaxFileBytes,
+			MaxReadBytes: input.Content.MaxReadBytes, MaxSnippetBytes: input.Content.MaxSnippetBytes,
+			MaxOutputBytes: input.Content.MaxOutputBytes,
+			MaxDuration:    time.Duration(input.Content.MaxDurationMS) * time.Millisecond,
 		}
 }
 

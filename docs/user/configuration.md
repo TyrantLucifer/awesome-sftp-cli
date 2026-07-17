@@ -102,6 +102,32 @@ Omitted fields inherit these current defaults:
     "image_chunk_bytes": 4096,
     "image_max_pixels": 1000000
   },
+  "search": {
+    "filename": {
+      "page_items": 256,
+      "event_buffer": 64,
+      "concurrent_lists": 1,
+      "max_depth": 128,
+      "max_entries": 1000000,
+      "max_results": 10000,
+      "max_output_bytes": 8388608,
+      "max_duration_ms": 300000
+    },
+    "content": {
+      "page_items": 128,
+      "event_buffer": 32,
+      "max_depth": 32,
+      "max_entries": 10000,
+      "max_files": 1000,
+      "max_results": 5000,
+      "max_matches_per_file": 100,
+      "max_file_bytes": 1048576,
+      "max_read_bytes": 33554432,
+      "max_snippet_bytes": 512,
+      "max_output_bytes": 8388608,
+      "max_duration_ms": 120000
+    }
+  },
   "external": {
     "previewers": []
   }
@@ -116,8 +142,10 @@ Omitted fields inherit these current defaults:
 
 `preview` can only tighten the existing built-in renderer and terminal-image ceilings. Combination checks keep JSON input within total input, terminal-image payload within terminal output, chunks within payload, and terminal-image pixels within both image limits. The client validates and freezes these limits at startup; changing the file does not alter a running client.
 
+`search.filename` and `search.content` can only tighten the existing interactive-search resource envelopes. All page, queue, concurrency, depth, entry, result, byte, and millisecond duration values must remain nonzero and no greater than the documented defaults. Content search also requires `max_file_bytes` not to exceed `max_read_bytes`. The client validates and freezes both envelopes at startup, and each search request carries its frozen budget identity; changing the file does not alter a running client or an already-started search.
+
 `external.editor` and `external.opener` are structured commands with `executable` and an `argv` array. They are executed directly, never concatenated into a shell command. A previewer adds a unique name, bounded media-type or extension match, structured command, timeout, input limit, and completeness requirement. Command strings reject control characters and all counts and byte sizes have hard ceilings.
 
-The schema is not yet complete for every Stage 6 setting. Integrity, retry, search, Helper, direct-transfer, retention, diagnostic, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
+The schema is not yet complete for every Stage 6 setting. Integrity, retry, Helper, direct-transfer, retention, diagnostic, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
 
 The `keymap.bindings` section is now implemented for the `normal` and `visual` contexts. Each entry contains `context`, a single-rune `input`, and a documented remappable `action`. Exact defaults, reserved dangerous/sequence actions, count behavior, and the deliberate macro/named-register exclusion are in the [keymap reference](keymap.md). The other sections listed above remain open.

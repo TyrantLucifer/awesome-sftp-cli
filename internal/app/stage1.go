@@ -497,6 +497,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		return err
 	}
 	previewRenderLimits, previewImageLimits := runtimePreviewLimits(applicationConfig.Preview)
+	filenameSearchBudget, contentSearchBudget := runtimeSearchBudgets(applicationConfig.Search)
 	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
 	reprobeTerminalImages := func() {
 		terminalImageCapability.Reprobe(append([]string(nil), os.Environ()...))
@@ -931,7 +932,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			activeClient := client
 			frozenIntent := intent
-			pendingIdentity := pendingFilenameSearchIdentity(requestID, generation, frozenIntent)
+			pendingIdentity := pendingFilenameSearchIdentity(requestID, generation, frozenIntent, filenameSearchBudget)
 			go func() {
 				defer cancel()
 				select {
@@ -968,7 +969,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				return
 			}
 			activeClient := client
-			pendingIdentity := pendingContentSearchIdentity(requestID, generation, intent)
+			pendingIdentity := pendingContentSearchIdentity(requestID, generation, intent, contentSearchBudget)
 			go func() {
 				defer cancel()
 				select {
@@ -1752,7 +1753,7 @@ func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, g
 	}
 }
 
-func pendingFilenameSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent) search.Identity {
+func pendingFilenameSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent, budget search.Budget) search.Identity {
 	return search.Identity{
 		RequestID:    requestID,
 		EndpointID:   intent.Location.EndpointID,
@@ -1763,11 +1764,7 @@ func pendingFilenameSearchIdentity(requestID domain.RequestID, generation uint64
 			IncludeHidden: false, Symlinks: search.SymlinkNever, Ignore: search.IgnoreNone,
 			Types: search.TypeFilter{Files: true, Directories: true, Symlinks: true},
 		},
-		Budget: search.Budget{
-			PageItems: 256, EventBuffer: 64, ConcurrentLists: 1, MaxDepth: 128,
-			MaxEntries: 1_000_000, MaxResults: tui.SearchResultLimit,
-			MaxOutputBytes: 8 << 20, MaxDuration: 5 * time.Minute,
-		},
+		Budget: budget,
 	}
 }
 
@@ -1841,15 +1838,11 @@ func streamFilenameSearch(ctx context.Context, client *daemon.Client, identity s
 	}
 }
 
-func pendingContentSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent) search.ContentIdentity {
+func pendingContentSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent, budget search.ContentBudget) search.ContentIdentity {
 	return search.ContentIdentity{
 		RequestID: requestID, EndpointID: intent.Location.EndpointID, UIGeneration: generation, Scope: intent.Location,
 		Options: search.ContentOptions{Pattern: intent.SearchPattern, PatternType: search.PatternLiteral, CaseSensitive: false, Binary: search.BinarySkip},
-		Budget: search.ContentBudget{
-			PageItems: 128, EventBuffer: 32, MaxDepth: 32, MaxEntries: 10_000, MaxFiles: 1_000,
-			MaxResults: 5_000, MaxMatchesPerFile: 100, MaxFileBytes: 1 << 20,
-			MaxReadBytes: 32 << 20, MaxSnippetBytes: 512, MaxOutputBytes: 8 << 20, MaxDuration: 2 * time.Minute,
-		},
+		Budget:  budget,
 	}
 }
 

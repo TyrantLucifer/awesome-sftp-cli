@@ -4,10 +4,12 @@ package app
 
 import (
 	"testing"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
@@ -48,5 +50,32 @@ func TestRuntimePreviewLimitsUseValidatedConfiguration(t *testing.T) {
 	wantImage := preview.ImageOutputLimits{MaxPayloadBytes: 50, MaxOutputBytes: 60, ChunkBytes: 5, MaxPixels: 40}
 	if render != wantRender || image != wantImage {
 		t.Fatalf("runtime preview limits = %#v / %#v, want %#v / %#v", render, image, wantRender, wantImage)
+	}
+}
+
+func TestRuntimeSearchBudgetsUseValidatedConfiguration(t *testing.T) {
+	input := config.SearchConfig{
+		Filename: config.FilenameSearchConfig{
+			PageItems: 8, EventBuffer: 7, ConcurrentLists: 1, MaxDepth: 6,
+			MaxEntries: 5, MaxResults: 4, MaxOutputBytes: 3, MaxDurationMS: 2,
+		},
+		Content: config.ContentSearchConfig{
+			PageItems: 18, EventBuffer: 17, MaxDepth: 16, MaxEntries: 15,
+			MaxFiles: 14, MaxResults: 13, MaxMatchesPerFile: 12, MaxFileBytes: 11,
+			MaxReadBytes: 11, MaxSnippetBytes: 10, MaxOutputBytes: 9, MaxDurationMS: 8,
+		},
+	}
+	filename, content := runtimeSearchBudgets(input)
+	wantFilename := search.Budget{
+		PageItems: 8, EventBuffer: 7, ConcurrentLists: 1, MaxDepth: 6,
+		MaxEntries: 5, MaxResults: 4, MaxOutputBytes: 3, MaxDuration: 2 * time.Millisecond,
+	}
+	wantContent := search.ContentBudget{
+		PageItems: 18, EventBuffer: 17, MaxDepth: 16, MaxEntries: 15,
+		MaxFiles: 14, MaxResults: 13, MaxMatchesPerFile: 12, MaxFileBytes: 11,
+		MaxReadBytes: 11, MaxSnippetBytes: 10, MaxOutputBytes: 9, MaxDuration: 8 * time.Millisecond,
+	}
+	if filename != wantFilename || content != wantContent {
+		t.Fatalf("runtime search budgets = %#v / %#v, want %#v / %#v", filename, content, wantFilename, wantContent)
 	}
 }
