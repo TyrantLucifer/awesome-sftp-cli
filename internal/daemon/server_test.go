@@ -206,6 +206,44 @@ func TestServeConnContextCancellationClosesIdleConnection(t *testing.T) {
 	_ = clientConn.Close()
 }
 
+func TestServeConnAcknowledgesShutdownBeforeRequestingItOnce(t *testing.T) {
+	shutdown := make(chan struct{})
+	server := newTestServer(t, sessionFactory(func() Session { return &testSession{} }))
+	server.shutdown = func() { close(shutdown) }
+
+	serverConn, clientConn := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(context.Background(), serverConn) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := NewClient(ctx, clientConn, "test-client", "client-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response ShutdownResponse
+	if err := client.Call(ctx, RequestShutdown, ShutdownRequest{}, &response); err != nil {
+		t.Fatalf("shutdown call was not acknowledged: %v", err)
+	}
+	if !response.Accepted {
+		t.Fatalf("shutdown response = %#v", response)
+	}
+	select {
+	case <-shutdown:
+	case <-ctx.Done():
+		t.Fatal("server did not request shutdown after acknowledging it")
+	}
+
+	var repeated ShutdownResponse
+	if err := client.Call(ctx, RequestShutdown, ShutdownRequest{}, &repeated); err != nil {
+		t.Fatal(err)
+	}
+	if !repeated.Accepted {
+		t.Fatalf("repeated shutdown response = %#v", repeated)
+	}
+	_ = client.Close()
+	<-done
+}
+
 func newTestServer(t *testing.T, factory SessionFactory) *Server {
 	t.Helper()
 	server, err := NewServer(ServerConfig{

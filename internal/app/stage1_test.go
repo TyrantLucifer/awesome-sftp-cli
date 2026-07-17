@@ -359,15 +359,39 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("second daemon did not converge on held lock")
 	}
-	cancel()
+	controlRuntime := daemonCommandRuntime{
+		probe: func(probeCtx context.Context) (daemonControlClient, bool, error) {
+			return probeDaemon(probeCtx, paths, purpose)
+		},
+	}
+	var statusOutput strings.Builder
+	if err := runDaemonCommandWithRuntime(context.Background(), []string{"status", "--format", "json"}, &statusOutput, controlRuntime); err != nil {
+		cancel()
+		t.Fatalf("daemon status command: %v", err)
+	}
+	if !strings.Contains(statusOutput.String(), `"running":true`) || !strings.Contains(statusOutput.String(), `"state":"running"`) {
+		cancel()
+		t.Fatalf("daemon status output = %q", statusOutput.String())
+	}
+	var stopOutput strings.Builder
+	if err := runDaemonCommandWithRuntime(context.Background(), []string{"stop", "--confirm", "stop", "--format", "json"}, &stopOutput, controlRuntime); err != nil {
+		cancel()
+		t.Fatalf("daemon stop command: %v", err)
+	}
+	if !strings.Contains(stopOutput.String(), `"running":false`) || !strings.Contains(stopOutput.String(), `"state":"stopped"`) {
+		cancel()
+		t.Fatalf("daemon stop output = %q", stopOutput.String())
+	}
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-time.After(5 * time.Second):
+		cancel()
 		t.Fatal("daemon did not stop")
 	}
+	cancel()
 	if _, err := os.Lstat(paths.ControlSocket); !os.IsNotExist(err) {
 		t.Fatalf("socket remains after shutdown: %v", err)
 	}

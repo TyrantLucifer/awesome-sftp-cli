@@ -19,9 +19,16 @@ import (
 )
 
 const (
-	RequestHello  = "hello"
-	RequestCancel = "cancel"
+	RequestHello    = "hello"
+	RequestCancel   = "cancel"
+	RequestShutdown = "daemon.shutdown"
 )
+
+type ShutdownRequest struct{}
+
+type ShutdownResponse struct {
+	Accepted bool `json:"accepted"`
+}
 
 type Session interface {
 	Handle(context.Context, string, json.RawMessage) (any, error)
@@ -42,6 +49,7 @@ type ServerConfig struct {
 	HandshakeTimeout time.Duration
 	VerifyPeer       func(net.Conn) error
 	Logger           *slog.Logger
+	Shutdown         func()
 }
 
 type Server struct {
@@ -54,6 +62,8 @@ type Server struct {
 	handshakeTimeout time.Duration
 	verifyPeer       func(net.Conn) error
 	logger           *slog.Logger
+	shutdown         func()
+	shutdownOnce     sync.Once
 }
 
 func NewServer(config ServerConfig) (*Server, error) {
@@ -88,6 +98,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		handshakeTimeout: config.HandshakeTimeout,
 		verifyPeer:       config.VerifyPeer,
 		logger:           config.Logger,
+		shutdown:         config.Shutdown,
 	}, nil
 }
 
@@ -192,6 +203,27 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 			}
 			activeMu.Unlock()
 			_ = writer.writePayload(selected, request, result)
+			continue
+		}
+		if request.Name == RequestShutdown {
+			if s.shutdown == nil {
+				_ = writer.writeError(selected, request, &domain.OpError{
+					Code:    domain.CodeUnsupported,
+					Message: "daemon shutdown is not available",
+					Retry:   domain.RetryAdvice{Kind: domain.RetryNever},
+					Effect:  domain.EffectNone,
+				})
+				continue
+			}
+			var shutdownRequest ShutdownRequest
+			if err := decodePayload(request.Payload, &shutdownRequest); err != nil {
+				_ = writer.writeError(selected, request, invalidArgument("decode daemon shutdown request", err))
+				continue
+			}
+			if err := writer.writePayload(selected, request, ShutdownResponse{Accepted: true}); err != nil {
+				return fmt.Errorf("serve daemon connection: acknowledge shutdown: %w", err)
+			}
+			s.shutdownOnce.Do(s.shutdown)
 			continue
 		}
 

@@ -62,24 +62,24 @@ func runJobCommand(ctx context.Context, args []string, stdout io.Writer, rpc job
 func runJobWithConnector(ctx context.Context, args []string, stdout io.Writer, connector jobRPCConnector) error {
 	options, err := parseJobCommand(args)
 	if err != nil {
-		return jobCommandError(args, NewExitError(ExitUsage, err))
+		return machineCommandError(args, NewExitError(ExitUsage, err))
 	}
 	if connector == nil {
-		return jobCommandError(args, NewExitError(ExitInternal, errors.New("job RPC connector is not configured")))
+		return machineCommandError(args, NewExitError(ExitInternal, errors.New("job RPC connector is not configured")))
 	}
 	rpc, closer, err := connector(ctx)
 	if err != nil {
-		return jobCommandError(args, err)
+		return machineCommandError(args, err)
 	}
 	if closer == nil {
-		return jobCommandError(args, NewExitError(ExitInternal, errors.New("job RPC connector returned no closer")))
+		return machineCommandError(args, NewExitError(ExitInternal, errors.New("job RPC connector returned no closer")))
 	}
 	commandErr := executeJobCommand(ctx, options, stdout, rpc)
 	closeErr := closer.Close()
 	if closeErr != nil {
 		closeErr = NewExitError(ExitInternal, fmt.Errorf("close Job RPC client: %w", closeErr))
 	}
-	return jobCommandError(args, errors.Join(commandErr, closeErr))
+	return machineCommandError(args, errors.Join(commandErr, closeErr))
 }
 
 func executeJobCommand(ctx context.Context, options jobCommandOptions, stdout io.Writer, rpc jobRPC) error {
@@ -419,91 +419,4 @@ func classifyJobConnectionError(err error) error {
 		return NewExitError(ExitCanceled, err)
 	}
 	return NewExitError(ExitNetwork, err)
-}
-
-type jobMachineError struct {
-	err      error
-	envelope jobErrorEnvelope
-}
-
-type jobErrorEnvelope struct {
-	OutputVersion int                `json:"output_version"`
-	Error         jobErrorDescriptor `json:"error"`
-}
-
-type jobErrorDescriptor struct {
-	ExitCode  int                 `json:"exit_code"`
-	Class     string              `json:"class"`
-	Message   string              `json:"message"`
-	RequestID domain.RequestID    `json:"request_id"`
-	ErrorCode domain.Code         `json:"error_code"`
-	Retry     domain.RetryKind    `json:"retry"`
-	Effect    domain.EffectStatus `json:"effect"`
-}
-
-func (err *jobMachineError) Error() string { return err.err.Error() }
-
-func (err *jobMachineError) Unwrap() error { return err.err }
-
-func (err *jobMachineError) RenderCLIError(writer io.Writer) error {
-	encoder := json.NewEncoder(writer)
-	encoder.SetEscapeHTML(false)
-	return encoder.Encode(err.envelope)
-}
-
-func jobCommandError(args []string, err error) error {
-	if err == nil || !jobJSONRequested(args) {
-		return err
-	}
-	code := exitCode(err)
-	summary := daemon.DiagnosticSummary(err)
-	return &jobMachineError{
-		err: err,
-		envelope: jobErrorEnvelope{
-			OutputVersion: JobCLIOutputVersion,
-			Error: jobErrorDescriptor{
-				ExitCode:  int(code),
-				Class:     exitClass(code),
-				Message:   err.Error(),
-				RequestID: summary.RequestID,
-				ErrorCode: summary.ErrorCode,
-				Retry:     summary.Retry,
-				Effect:    summary.Effect,
-			},
-		},
-	}
-}
-
-func jobJSONRequested(args []string) bool {
-	for index := 0; index+1 < len(args); index++ {
-		if args[index] == "--format" && args[index+1] == "json" {
-			return true
-		}
-	}
-	return false
-}
-
-func exitClass(code ExitCode) string {
-	switch code {
-	case ExitSuccess:
-		return "success"
-	case ExitInternal:
-		return "internal"
-	case ExitUsage:
-		return "usage"
-	case ExitConfig:
-		return "configuration"
-	case ExitAuthentication:
-		return "authentication"
-	case ExitNetwork:
-		return "network"
-	case ExitConflict:
-		return "conflict"
-	case ExitPartial:
-		return "partial_completion"
-	case ExitCanceled:
-		return "canceled"
-	default:
-		return "internal"
-	}
 }

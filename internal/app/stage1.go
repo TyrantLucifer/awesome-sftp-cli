@@ -98,7 +98,10 @@ func parseDaemonArgs(args []string) (daemonOptions, error) {
 	return daemonOptions{}, fmt.Errorf("daemon accepts only the optional --resume-migration flag")
 }
 
-func runDaemon(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
+func runDaemon(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
+		return runDaemonCommand(ctx, args, stdout)
+	}
 	options, err := parseDaemonArgs(args)
 	if err != nil {
 		return err
@@ -335,7 +338,9 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		defer manager.Close()
 		sessions.SetTransferService(manager)
 	}
-	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: logger, VerifyPeer: func(conn net.Conn) error {
+	serveCtx, requestShutdown := context.WithCancel(ctx)
+	defer requestShutdown()
+	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: logger, Shutdown: requestShutdown, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {
 			return fmt.Errorf("unexpected peer connection %T", conn)
@@ -345,7 +350,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	if err != nil {
 		return err
 	}
-	return daemon.Serve(ctx, listener, server)
+	return daemon.Serve(serveCtx, listener, server)
 }
 
 func cacheDaemonID(sessionID domain.SessionID) string {

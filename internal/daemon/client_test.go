@@ -21,6 +21,10 @@ func TestClientNegotiatesCallsAndCancels(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	info := client.Info()
+	if info.DaemonVersion != "test" || info.Protocol.Major != 1 || info.Protocol.Minor != 0 {
+		t.Fatalf("client info = %#v", info)
+	}
 	var echoed map[string]string
 	if err := client.Call(ctx, "echo", map[string]string{"value": "ok"}, &echoed); err != nil {
 		t.Fatal(err)

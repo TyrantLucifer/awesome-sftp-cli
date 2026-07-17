@@ -7,11 +7,25 @@ AMSFTP 1.0 uses exit status `0` for success and stable failure classes `1` inter
 ```text
 amsftp [<location> [<location>]]
 amsftp --workspace <name>
+amsftp daemon <start|status> [--format human|json]
+amsftp daemon stop --confirm stop [--format human|json]
 amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]
 amsftp completion <bash|zsh|fish>
 ```
 
 See the [configuration reference](configuration.md) and [keymap reference](keymap.md) for the configuration subcommands. Completion generation is static: it does not connect to a daemon or endpoint, prompt for authentication, or perform a remote write.
+
+## Daemon lifecycle
+
+`amsftp daemon status` is probe-only: it never starts the daemon. A healthy daemon reports its build version and negotiated client-daemon protocol; an absent socket is a successful `running: false`, `state: "stopped"` status result, while an existing but unhealthy, untrusted, or incompatible socket is a network-class failure rather than being misreported as stopped. `amsftp daemon start` is idempotent and reports either `started` or `already_running` after a successful handshake.
+
+Stopping is deliberately disruptive and requires the exact token `amsftp daemon stop --confirm stop`. AMSFTP validates that token and all output options before resolving runtime paths or opening the control socket. The shutdown request travels only over the owner-private local socket after the existing peer-UID and protocol handshake; the daemon acknowledges it before canceling its listener, active connections, transfer manager, database, and log lifecycle. An unconfirmed stop performs no probe or RPC. The private bare daemon role and `--resume-migration` recovery flag remain internal process/upgrade surfaces and are omitted from shell completion.
+
+Daemon JSON success has a stable v1 shape:
+
+```json
+{"output_version":1,"daemon":{"running":true,"state":"running","daemon_version":"1.0.0","protocol":"1.0"}}
+```
 
 ## Durable Job query and control
 

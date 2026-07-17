@@ -359,7 +359,7 @@ func TestRunWritesVersionedJobJSONErrorWithoutHumanPrefix(t *testing.T) {
 		},
 	}
 	handlers := Handlers{Job: func(context.Context, []string, io.Writer, io.Writer) error {
-		return jobCommandError([]string{"list", "--format", "json"}, classifyJobCLIError(remote))
+		return machineCommandError([]string{"list", "--format", "json"}, classifyJobCLIError(remote))
 	}}
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

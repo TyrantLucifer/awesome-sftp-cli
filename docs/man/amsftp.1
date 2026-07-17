@@ -9,6 +9,9 @@ Open the two-pane client with zero, one, or two locations.
 \fBamsftp --workspace <name>\fR
 Open a saved workspace.
 .TP
+\fBamsftp daemon <start|status> [--format human|json] | amsftp daemon stop --confirm stop [--format human|json]\fR
+Start, inspect, or explicitly stop the local daemon.
+.TP
 \fBamsftp job <list|events|pause|resume|cancel> [arguments]\fR
 Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.
 .TP
@@ -18,7 +21,7 @@ Validate configuration, print versioned effective output, or explicitly reset ke
 \fBamsftp completion <bash|zsh|fish>\fR
 Print a static shell completion script.
 .TP
-\fBamsftp [client|daemon|askpass|helper] [arguments...]\fR
+\fBamsftp [client|askpass|helper] [arguments...]\fR
 Run an explicit client or restricted internal role.
 .TP
 \fBamsftp --help\fR

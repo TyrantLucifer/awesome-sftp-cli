@@ -19,10 +19,11 @@ type cliCommandFact struct {
 var publicCLIContract = []cliCommandFact{
 	{syntax: "amsftp [<location> [<location>]]", description: "Open the two-pane client with zero, one, or two locations."},
 	{name: "--workspace", syntax: "amsftp --workspace <name>", description: "Open a saved workspace."},
+	{name: "daemon", syntax: "amsftp daemon <start|status> [--format human|json] | amsftp daemon stop --confirm stop [--format human|json]", description: "Start, inspect, or explicitly stop the local daemon.", children: []string{"start", "status", "stop"}, childArguments: map[string][]string{"start": {"--format"}, "status": {"--format"}, "stop": {"--format", "--confirm"}}},
 	{name: "job", syntax: "amsftp job <list|events|pause|resume|cancel> [arguments]", description: "Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.", children: []string{"list", "events", "pause", "resume", "cancel"}, childArguments: map[string][]string{"list": {"--limit", "--format"}, "events": {"--after", "--limit", "--format"}, "pause": {"--format"}, "resume": {"--format"}, "cancel": {"--format", "--confirm"}}},
 	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
 	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a static shell completion script.", children: []string{"bash", "zsh", "fish"}},
-	{syntax: "amsftp [client|daemon|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
+	{syntax: "amsftp [client|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
 	{name: "--help", syntax: "amsftp --help", description: "Print command help."},
 	{name: "--version", syntax: "amsftp --version", description: "Print version and build information."},
 }
@@ -64,6 +65,10 @@ func RenderCompletion(shell string) (string, error) {
 	top := completionWords(publicCLIContract)
 	config := strings.Join(childrenFor("config"), " ")
 	configReset := strings.Join(childArgumentsFor("config", "reset-keymap"), " ")
+	daemon := strings.Join(childrenFor("daemon"), " ")
+	daemonStart := strings.Join(childArgumentsFor("daemon", "start"), " ")
+	daemonStatus := strings.Join(childArgumentsFor("daemon", "status"), " ")
+	daemonStop := strings.Join(childArgumentsFor("daemon", "stop"), " ")
 	job := strings.Join(childrenFor("job"), " ")
 	jobList := strings.Join(childArgumentsFor("job", "list"), " ")
 	jobEvents := strings.Join(childArgumentsFor("job", "events"), " ")
@@ -79,9 +84,13 @@ func RenderCompletion(shell string) (string, error) {
   previous="${COMP_WORDS[COMP_CWORD-1]}"
   case "$previous" in
     config) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+    daemon) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     job) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     completion) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     reset-keymap) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+    start) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+    status) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+    stop) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     list) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     events) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     pause) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
@@ -91,19 +100,20 @@ func RenderCompletion(shell string) (string, error) {
   esac
 }
 complete -F _amsftp amsftp
-`, config, job, completion, configReset, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
+`, config, daemon, job, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
 	case "zsh":
 		return fmt.Sprintf(`#compdef amsftp
 _amsftp() {
-  local -a commands config_commands job_commands completion_commands
+  local -a commands config_commands daemon_commands job_commands completion_commands
   commands=(%s)
   config_commands=(%s)
+  daemon_commands=(%s)
   job_commands=(%s)
   completion_commands=(%s)
-  _arguments '1:command:($commands)' '2:subcommand:($config_commands $job_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s)' '*:location or path:_files'
+  _arguments '1:command:($commands)' '2:subcommand:($config_commands $daemon_commands $job_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
 }
 _amsftp
-`, top, config, job, completion, configReset, jobList, jobEvents, jobPause, jobResume, jobCancel), nil
+`, top, config, daemon, job, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel), nil
 	case "fish":
 		var builder strings.Builder
 		for _, word := range strings.Fields(top) {
@@ -114,6 +124,14 @@ _amsftp
 		}
 		for _, word := range childrenFor("completion") {
 			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from completion' -a %q\n", word)
+		}
+		for _, word := range childrenFor("daemon") {
+			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from daemon' -a %q\n", word)
+		}
+		for _, child := range childrenFor("daemon") {
+			for _, word := range childArgumentsFor("daemon", child) {
+				fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from %s' -a %q\n", child, word)
+			}
 		}
 		for _, word := range childrenFor("job") {
 			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from job' -a %q\n", word)
