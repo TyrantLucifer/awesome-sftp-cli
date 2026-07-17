@@ -14,7 +14,7 @@ Helper 是同一 `amsftp` 代码库的受限远端角色，但它会被客户端
 
 ### 产物与角色
 
-- Helper 仍由同一 module、同一版本的 `amsftp` 构建，受限入口为 `amsftp helper serve`；不建立独立仓库、常驻服务或公开日常 CLI。
+- Helper 仍由同一 module、同一版本的 `amsftp` 构建，远端受限入口为 `amsftp helper serve`；不建立独立仓库或常驻服务，且该 `serve` 入口不作为公开日常 CLI。Stage 6 的公开 Helper 管理命令只能编排本 ADR 的状态/安装/升级/禁用/移除边界，不得把 `serve`、任意 remote command 或 fixture trust 暴露给用户。
 - 远端产物按 OS/arch/version/hash 不可变命名，只覆盖明确支持的远端矩阵；安装必须由用户显式批准。v1 唯一安装根是 SFTP `RealPath(".")` 所代表登录 home/cwd 下的 `.local/lib/amsftp/helpers/`，不接受用户自定义绝对安装路径、`TMPDIR` 或 remote sticky directory。
 - 标准 SFTP 是永久 Level 0。缺失、拒绝、验签失败、版本不兼容或撤销都只禁用 Helper，不破坏浏览与基础传输。
 

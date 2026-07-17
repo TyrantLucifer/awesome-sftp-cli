@@ -9,6 +9,7 @@ amsftp [<location> [<location>]]
 amsftp --workspace <name>
 amsftp daemon <start|status> [--format human|json]
 amsftp daemon stop --confirm stop [--format human|json]
+amsftp helper status <SSH-host> [--format human|json]
 amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]
 amsftp completion <bash|zsh|fish>
 ```
@@ -26,6 +27,18 @@ Daemon JSON success has a stable v1 shape:
 ```json
 {"output_version":1,"daemon":{"running":true,"state":"running","daemon_version":"1.0.0","protocol":"1.0"}}
 ```
+
+## Helper status
+
+`amsftp helper status <SSH-host>` validates the host alias and output format before resolving runtime paths or connecting to the daemon. It opens one ordinary SSH Provider session through the daemon, reads the negotiated capability snapshot, and releases that temporary Endpoint whether the snapshot succeeds or fails. It does not install, enable, upgrade, disable, or remove Helper bytes.
+
+The command reports Level 0 with a safe fallback reason/recovery or Level 1 with the negotiated Helper version and independently negotiated capability names. Malformed, duplicate, unbounded, or unknown `helper_status` fields fail as an internal protocol error instead of being trusted or printed raw. Human output states whether production distribution is open; JSON success has this v1 shape:
+
+```json
+{"output_version":1,"command":"helper status","host":"work","endpoint_id":"ep_aaaaaaaaaaaaaaaaaaaaaaaaaa","state":"ready","helper":{"level":0,"version":"","capabilities":[],"reason":"not_available","recovery":"continue with Level 0; enable a verified Helper explicitly when available","production_distribution_open":false}}
+```
+
+Production distribution remains closed until the protected signing, notarization, manifest, custody, and final-byte gates are satisfied. The restricted remote process role `amsftp helper serve` remains separate from this public status command and is never offered by shell completion.
 
 ## Durable Job query and control
 

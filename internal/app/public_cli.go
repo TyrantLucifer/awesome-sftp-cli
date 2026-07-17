@@ -21,6 +21,7 @@ var publicCLIContract = []cliCommandFact{
 	{name: "--workspace", syntax: "amsftp --workspace <name>", description: "Open a saved workspace."},
 	{name: "daemon", syntax: "amsftp daemon <start|status> [--format human|json] | amsftp daemon stop --confirm stop [--format human|json]", description: "Start, inspect, or explicitly stop the local daemon.", children: []string{"start", "status", "stop"}, childArguments: map[string][]string{"start": {"--format"}, "status": {"--format"}, "stop": {"--format", "--confirm"}}},
 	{name: "job", syntax: "amsftp job <list|events|pause|resume|cancel> [arguments]", description: "Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.", children: []string{"list", "events", "pause", "resume", "cancel"}, childArguments: map[string][]string{"list": {"--limit", "--format"}, "events": {"--after", "--limit", "--format"}, "pause": {"--format"}, "resume": {"--format"}, "cancel": {"--format", "--confirm"}}},
+	{name: "helper", syntax: "amsftp helper status <SSH-host> [--format human|json]", description: "Inspect the negotiated Helper level without changing remote installation state.", children: []string{"status"}, childArguments: map[string][]string{"status": {"--format"}}},
 	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
 	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a static shell completion script.", children: []string{"bash", "zsh", "fish"}},
 	{syntax: "amsftp [client|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
@@ -75,6 +76,8 @@ func RenderCompletion(shell string) (string, error) {
 	jobPause := strings.Join(childArgumentsFor("job", "pause"), " ")
 	jobResume := strings.Join(childArgumentsFor("job", "resume"), " ")
 	jobCancel := strings.Join(childArgumentsFor("job", "cancel"), " ")
+	helper := strings.Join(childrenFor("helper"), " ")
+	helperStatus := strings.Join(childArgumentsFor("helper", "status"), " ")
 	completion := strings.Join(childrenFor("completion"), " ")
 	switch shell {
 	case "bash":
@@ -86,6 +89,7 @@ func RenderCompletion(shell string) (string, error) {
     config) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     daemon) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     job) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+    helper) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     completion) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     reset-keymap) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     start) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
@@ -100,20 +104,21 @@ func RenderCompletion(shell string) (string, error) {
   esac
 }
 complete -F _amsftp amsftp
-`, config, daemon, job, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
+`, config, daemon, job, helper, completion, configReset, daemonStart, helperStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
 	case "zsh":
 		return fmt.Sprintf(`#compdef amsftp
 _amsftp() {
-  local -a commands config_commands daemon_commands job_commands completion_commands
+  local -a commands config_commands daemon_commands job_commands helper_commands completion_commands
   commands=(%s)
   config_commands=(%s)
   daemon_commands=(%s)
   job_commands=(%s)
+  helper_commands=(%s)
   completion_commands=(%s)
-  _arguments '1:command:($commands)' '2:subcommand:($config_commands $daemon_commands $job_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
+  _arguments '1:command:($commands)' '2:subcommand:($config_commands $daemon_commands $job_commands $helper_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
 }
 _amsftp
-`, top, config, daemon, job, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel), nil
+`, top, config, daemon, job, helper, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, helperStatus), nil
 	case "fish":
 		var builder strings.Builder
 		for _, word := range strings.Fields(top) {
@@ -138,6 +143,14 @@ _amsftp
 		}
 		for _, child := range childrenFor("job") {
 			for _, word := range childArgumentsFor("job", child) {
+				fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from %s' -a %q\n", child, word)
+			}
+		}
+		for _, word := range childrenFor("helper") {
+			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from helper' -a %q\n", word)
+		}
+		for _, child := range childrenFor("helper") {
+			for _, word := range childArgumentsFor("helper", child) {
 				fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from %s' -a %q\n", child, word)
 			}
 		}

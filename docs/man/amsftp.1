@@ -15,6 +15,9 @@ Start, inspect, or explicitly stop the local daemon.
 \fBamsftp job <list|events|pause|resume|cancel> [arguments]\fR
 Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.
 .TP
+\fBamsftp helper status <SSH-host> [--format human|json]\fR
+Inspect the negotiated Helper level without changing remote installation state.
+.TP
 \fBamsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]\fR
 Validate configuration, print versioned effective output, or explicitly reset keymap overrides.
 .TP

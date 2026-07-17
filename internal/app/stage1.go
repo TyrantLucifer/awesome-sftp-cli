@@ -59,6 +59,9 @@ func DefaultHandlers() Handlers {
 }
 
 func runHelper(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+	if len(args) == 0 || args[0] != "serve" {
+		return runHelperManagement(ctx, args, stdout)
+	}
 	return runHelperWithIdentity(ctx, args, os.Stdin, stdout, os.Geteuid())
 }
 
