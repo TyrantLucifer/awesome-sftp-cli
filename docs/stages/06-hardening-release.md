@@ -1,9 +1,11 @@
 # Stage 6 — Hardening & 1.0 Release
 
-- **状态**：Not Started
+- **状态**：In Progress
 - **阶段类型**：兼容、安全、发行与支持
 - **前置条件**：[Stage 5 — Direct Transfer & Scale](05-direct-transfer-scale.md) 已通过退出门禁
 - **完成后进入**：1.0 维护与后续路线评审
+- **执行计划**：[Stage 6 execution plan](06-hardening-release-plan.md)
+- **证据账本**：[Stage 6 verification](../verification/stage-06.md)
 
 ## 1. 阶段目标
 

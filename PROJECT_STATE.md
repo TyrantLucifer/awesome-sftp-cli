@@ -1,15 +1,15 @@
 # Project State
 
 - **Updated**: 2026-07-17
-- **Lifecycle**: Stage 6 Not Started
+- **Lifecycle**: Stage 6 In Progress
 - **Active stage**: Stage 6 — Hardening & 1.0 Release
-- **Current milestone**: Stage 5 Ready-but-unmerged handoff
+- **Current milestone**: M6.1 — configuration, keymap, and public-interface freeze
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
 
-Stage 5 was completed on fixed branch `codex/stage5-direct-transfer-scale`. Its sole baseline is verified `main` commit `06415e1e9fe5ffa93999f112b64aee0bd35e5c75`, tree `5fd662757dfc96e8cb8980c4d721151b0fb510c6`; local `main`, `origin/main`, and remote `refs/heads/main` matched before branch creation. Exact-main Hosted run [29559563378](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29559563378) is successful. Earlier run `29559132294` was superseded and canceled by the later main push after its completed jobs were green; it is CI scheduling history, not a reproduced Stage 5 code failure.
+Stage 5 is merged. Stage 6 began on fixed branch `codex/stage6-hardening-release` from the sole verified `main` commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`; local `main`, `origin/main`, and remote `refs/heads/main` matched before branch creation. Exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) completed successfully with 24/24 jobs. The untouched baseline also passed CI-equivalent `make ci`. The [Stage 6 execution plan](docs/stages/06-hardening-release-plan.md) maps all 23 owned feature rows and all 12 exit criteria to strict M6.1→M6.4 RED/GREEN and evidence gates; [Stage 6 verification](docs/verification/stage-06.md) is the active ledger. No Stage 6 feature implementation is yet claimed.
 
 CI-equivalent baseline `make docs-check` and `make check` pass with Go on `PATH`, `umask 0022`, external build/coverage directories, and the workflow's root-owned `/var/lib/amsftp-tests/<uid>` fixture root. Initial local failures were diagnosed as environment-only: the shell omitted the installed Go SDK, `/home/tianchao.thatcher` is a symlink rejected by security fixtures, and interactive `umask 077` changed deliberately unsafe negative fixtures from 0755/0644 to private modes. No production code was changed to manufacture a green baseline. Completed M5.1 passes `make docs-check`, complete `make check` (transfer coverage 70.5%), `make lint`, and `go test -race ./internal/transfer ./internal/tui ./internal/state/jobstore -count=1` in that CI-equivalent environment.
 
@@ -61,7 +61,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Deliver this status-only final SHA through exact push and PR Hosted CI, then mark PR [#5](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/5) Ready while leaving it unmerged. Stage 6 remains Not Started. Keep production Helper distribution and Level 2 CLOSED.
+Commit and push the Stage 6 plan/truth-chain checkpoint, create the fixed Draft PR titled `feat: ship AMSFTP 1.0.0`, then begin M6.1 with the configuration/public-version inventory and first failing contracts. Keep production Helper distribution and production Level 2 **CLOSED**.
 
 ## Current risks
 
@@ -72,19 +72,23 @@ Deliver this status-only final SHA through exact push and PR Hosted CI, then mar
 - Stage 5 test-only Level 2 work must not make fixture trust/backend reachable from ordinary runtime or configuration. Production Helper distribution and production Level 2 remain **CLOSED** until Stage 6 custody/signing/notarization/release evidence exists.
 - Route evidence is security-sensitive durable state: execution must not silently replace a frozen route, integrity level, credential/network policy or downgrade boundary after Job creation.
 - Preserved sync-back originals are deliberately not auto-deleted; users must review the Job-reported hidden sibling before manual cleanup.
-- Stage 5 is complete, but Stage 6 packaging/release gates are unimplemented, so this is not a 1.0 production-readiness claim.
+- Stage 6 planning is complete but implementation/release gates are open, so this is not a 1.0 production-readiness claim.
+- The complete physical 100 GiB LocalFS/SFTP run and true process/network-isolated Level 2 data plane are unexecuted Stage 6 release gates; synthetic, sparse-decomposed, or same-process fixtures cannot replace them.
+- Real production Helper offline key custody/recovery/rotation and final Developer ID/notary evidence do not exist in the repository. Work independent of those protected facts continues, but release and production Helper/Level 2 opening remain blocked until real evidence is supplied.
 
 ## Required reading for the next session
 
 1. [Documentation map](docs/README.md)
-2. [Implementation plan](IMPLEMENTATION_PLAN.md), completed Stage 5 and Not Started Stage 6
-3. [Feature matrix](docs/product/feature-matrix.md), all 22 Verified Stage 5 rows plus shared In Progress rows
-4. [Stage 5 specification](docs/stages/05-direct-transfer-scale.md)
-5. [Stage 5 verification](docs/verification/stage-05.md), with [Stage 4 verification](docs/verification/stage-04.md) as the completed Helper handoff
+2. [Implementation plan](IMPLEMENTATION_PLAN.md), completed Stage 5 and active Stage 6
+3. [Feature matrix](docs/product/feature-matrix.md), 23 Planned Stage 6 rows plus shared In Progress rows
+4. [Stage 6 specification](docs/stages/06-hardening-release.md)
+5. [Stage 6 execution plan](docs/stages/06-hardening-release-plan.md) and [Stage 6 verification](docs/verification/stage-06.md)
 6. [Approved design](docs/superpowers/specs/2026-07-14-vim-first-sftp-commander-design.md)
 7. ADRs referenced by Stage 3, beginning with the Stage 2 mutation and postcondition handoff
 
 ## Validation record
+
+Stage 6 baseline checks on 2026-07-17: before branch creation, clean local `main`, `origin/main`, and remote `refs/heads/main` all resolved to `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`; the fixed remote branch and `v1.0.0` tag were absent. Exact-main Hosted run `29579514879` completed `success` with 24/24 jobs. The untouched baseline passed CI-equivalent `make ci` with `umask 0022`, `/var/lib/amsftp-tests/1001`, external build/coverage paths, and the installed Go SDK. The fixed branch was created once from that exact SHA. Active evidence is maintained in [Stage 6 verification](docs/verification/stage-06.md).
 
 Stage 5 baseline checks on 2026-07-17: after `git fetch --prune origin`, clean local `main`, `origin/main`, and remote `refs/heads/main` all resolved to `06415e1e9fe5ffa93999f112b64aee0bd35e5c75`, tree `5fd662757dfc96e8cb8980c4d721151b0fb510c6`; the fixed branch and Stage 5 PR were absent and the branch was created once from that baseline. Exact-main Hosted run `29559563378` is successful. With CI-equivalent PATH, `umask 0022`, trusted fixture root, and external output directories, baseline `make docs-check` and `make check` pass. Active evidence is maintained in [Stage 5 verification](docs/verification/stage-05.md).
 

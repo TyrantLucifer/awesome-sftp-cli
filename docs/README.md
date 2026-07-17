@@ -11,7 +11,7 @@ This repository treats documentation as part of the product contract. A feature 
 5. [Implementation plan](../IMPLEMENTATION_PLAN.md) tracks stage-level execution.
 6. [Stage specifications](stages/) define scope, tests, exit criteria, and handoff requirements for each stage.
 7. [Testing strategy](testing/strategy.md) defines the validation ladder and required fixtures.
-8. [Stage verification](verification/stage-05.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 0–4 ledgers remain immutable historical evidence.
+8. [Stage verification](verification/stage-06.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 0–5 ledgers remain immutable historical evidence.
 9. [Project state](../PROJECT_STATE.md) is the short, current handoff for the next work session.
 
 ## Engineering gates
@@ -31,7 +31,7 @@ Read only as far as needed, in this order:
 2. the active stage in `IMPLEMENTATION_PLAN.md`
 3. `docs/product/feature-matrix.md`
 4. the active `docs/stages/NN-*.md`
-5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 5)
+5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 6)
 6. ADRs and interfaces linked by that stage
 7. the complete worktree status/manifest plus the last green validation commands recorded in the verification record and `PROJECT_STATE.md`
 
@@ -61,13 +61,13 @@ Before marking a stage complete:
 
 The temporary `.superpowers/` visual workspace is intentionally ignored and cannot be the only source of implementation evidence. Durable decisions and final task verdicts must be copied into the approved design, active verification record, and linked documents.
 
-## Stage 5 cold-start capsule
+## Stage 6 cold-start capsule
 
-Stage 5 is active on fixed branch `codex/stage5-direct-transfer-scale` from the sole verified baseline `06415e1e9fe5ffa93999f112b64aee0bd35e5c75`. Its authoritative live ledger is [Stage 5 verification](verification/stage-05.md); Draft PR [#5](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/5) stays unmerged until the exact final push and PR matrices are green. A commit cannot contain its own SHA, so the final identity is bound by Git/PR/Hosted metadata after the last documentation commit, never inferred from a predecessor checkpoint.
+Stage 6 is active on fixed branch `codex/stage6-hardening-release` from the sole verified baseline `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`. Exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) passed 24/24 jobs and the untouched local baseline passed CI-equivalent `make ci`. The authoritative live ledger is [Stage 6 verification](verification/stage-06.md) and the strict M6.1→M6.4 work breakdown is the [Stage 6 execution plan](stages/06-hardening-release-plan.md).
 
-- M5.1–M5.4 are locally implemented: unified frozen route evidence, declared server copy, fixture-only Level 2 direct, safe downgrade/fault equivalence, 50k/million/100 GiB scale contracts, bounded BFS, shared bandwidth/resource scheduling, Endpoint lease reuse, bounded events/logs and reproducible trends.
-- Production Helper distribution and production Level 2 remain **CLOSED**. Ordinary runtime has no fixture backend/config switch and records `production_distribution_closed`; no Agent forwarding, Kerberos delegation, key/ticket/known-host copying or relaxed host-key policy is introduced.
-- ADR-0017 explicitly decomposes Stage 5's 100 GiB evidence: actual/synthetic 100 GiB executions prove 64-bit and fixed-resource/cancel boundaries, while the same Worker/Journal/Scheduler lifecycle proves pause/checksum/restart resume/rate/SHA-256/commit on sparse-shaped multi-quantum content. A complete physical 100 GiB LocalFS/SFTP run remains a Stage 6 nightly/release gate and is not claimed by the fast gate.
-- Stage 0–4 evidence remains immutable history. Stage 6 packaging, signing, notarization and release readiness have not started, so Stage 5 completion is not a 1.0 release claim.
+- M6.1 implementation has not started. All 23 Stage 6-owned rows remain `Planned` and all 12 exit criteria remain open.
+- Production Helper distribution and production Level 2 remain **CLOSED**. The repository has no real production offline signing key/custody ceremony or final Developer ID/notary evidence; none may be fabricated.
+- Stage 5's same-process Level 2 data fixture does not satisfy the required Stage 6 process/network-isolated data plane. Its 100 GiB decomposition does not satisfy the complete physical 100 GiB LocalFS/SFTP release run.
+- The fixed delivery PR remains Draft until the same exact RC passes complete local/native/Hosted, security, compatibility, clean-machine, signed-byte, final-review, rollback, and truth-chain gates. A commit cannot contain its own SHA, so final identity is bound by Git/PR/Hosted/tag/release/channel metadata after the last documentation commit.
 
-A new session must not infer final green status from this capsule. It must reconcile `PROJECT_STATE.md`, `IMPLEMENTATION_PLAN.md`, the feature matrix and the Stage 5 ledger, then require the listed CI-equivalent current/oldstable/race/scale/native/reproducibility/pollution gates, two fresh independent reviews, exact final push/PR Hosted success and a Ready-but-unmerged PR.
+A new session must not infer release readiness from this capsule. It must reconcile `PROJECT_STATE.md`, `IMPLEMENTATION_PLAN.md`, the feature matrix, Stage 6 specification, execution plan, and ledger, then resume the first incomplete milestone without bypassing protected release boundaries.

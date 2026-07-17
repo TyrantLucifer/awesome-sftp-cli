@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 在固定分支 `codex/stage5-direct-transfer-scale` 从 verified exact-main `06415e1e9fe5ffa93999f112b64aee0bd35e5c75` 完成；Stage 6 保持 Not Started。
+Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始；当前处于 M6.1，执行计划与基线证据已建立，功能实现尚未开始。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -314,4 +314,6 @@ Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 全量unit/integration/contract/race/fuzz；macOS/Linux安装升级、配置/DB/protocol/security；darwin两架构Developer ID/runtime/timestamp/strict verify/notary Accepted与ZIP↔final tar byte identity，pre-sign/pre-Accepted production manifest拒绝、Accepted后才offline签manifest；linux manifest绑定final unsigned bytes；四平台manifest size/hash↔final tar binary，并交叉验证checksums/SBOM/attestation同一archives；quarantine macOS15 Gatekeeper/version、发行冒烟与长稳。
 
-**Status**: Not Started
+**Status**: In Progress
+
+**Current checkpoint**: 唯一基线为 commit `312bcccbcbd54246bbe5ff9babf4f14560449176`、tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`；local `main`、`origin/main` 与 remote `refs/heads/main` 一致，exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) 24/24 jobs 成功，untouched baseline 的 CI-equivalent `make ci` 通过。固定分支已从该 SHA 创建；23 个 Stage 6 行仍为 `Planned`，12 个退出条件全部开放，production Helper distribution 与 production Level 2 保持 **CLOSED**。逐里程碑 RED→GREEN、真实 process/network-isolated Level 2、完整物理 100 GiB、签名/公证/离线 manifest 与 release/channel 顺序见 [Stage 6 execution plan](docs/stages/06-hardening-release-plan.md)，实时结果见 [Stage 6 verification](docs/verification/stage-06.md)。
