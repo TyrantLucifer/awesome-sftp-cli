@@ -15,6 +15,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"golang.org/x/sys/unix"
 )
@@ -31,6 +32,17 @@ func runtimeTransferLimits(input config.TransferConfig) (int, int, transfer.Sche
 		GlobalBytesPerSecond: input.GlobalBytesPerSecond, EndpointBytesPerSecond: input.EndpointBytesPerSecond,
 		JobBytesPerSecond: input.JobBytesPerSecond,
 	}
+}
+
+func runtimePreviewLimits(input config.PreviewConfig) (preview.Limits, preview.ImageOutputLimits) {
+	return preview.Limits{
+			MaxInputBytes: input.MaxInputBytes, MaxJSONBytes: input.MaxJSONBytes, MaxJSONDepth: input.MaxJSONDepth,
+			MaxRenderedLines: input.MaxRenderedLines, MaxOutputBytes: input.MaxOutputBytes,
+			MaxImagePixels: input.MaxImagePixels, MaxStyleSpans: input.MaxStyleSpans,
+		}, preview.ImageOutputLimits{
+			MaxPayloadBytes: input.ImageMaxPayloadBytes, MaxOutputBytes: input.ImageMaxOutputBytes,
+			ChunkBytes: input.ImageChunkBytes, MaxPixels: input.ImageMaxPixels,
+		}
 }
 
 type externalRuntimeConfig struct {

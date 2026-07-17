@@ -496,6 +496,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
+	previewRenderLimits, previewImageLimits := runtimePreviewLimits(applicationConfig.Preview)
 	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
 	reprobeTerminalImages := func() {
 		terminalImageCapability.Reprobe(append([]string(nil), os.Environ()...))
@@ -906,7 +907,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			go func() {
 				defer cancel()
-				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability.Current(), actions)
+				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability.Current(), previewRenderLimits, previewImageLimits, actions)
 			}()
 			return
 		case tui.IntentPreviewCancel:
@@ -2007,7 +2008,7 @@ func writeTerminalImage(data []byte) error {
 	return nil
 }
 
-func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.PreviewRequestIdentity, view builtinpreview.ViewMode, location domain.Location, workspaceID cache.WorkspaceID, policy cache.Policy, runner *externalpreviewer.Runner, capability builtinpreview.ImageCapabilityProof, actions chan<- tui.Action) {
+func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.PreviewRequestIdentity, view builtinpreview.ViewMode, location domain.Location, workspaceID cache.WorkspaceID, policy cache.Policy, runner *externalpreviewer.Runner, capability builtinpreview.ImageCapabilityProof, renderLimits builtinpreview.Limits, imageLimits builtinpreview.ImageOutputLimits, actions chan<- tui.Action) {
 	generation := identity.UIGeneration
 	var statResponse ipc.ProviderStatResponse
 	if err := client.Call(ctx, daemon.ProviderStat, ipc.ProviderStatRequest{Location: ipc.EncodeLocation(location)}, &statResponse); err != nil {
@@ -2036,7 +2037,7 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 		actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
 		result := builtinpreview.Render(builtinpreview.Request{
 			Path: string(location.Path), View: view, Object: previewObjectMetadata(entry), Complete: true,
-		}, builtinpreview.DefaultLimits())
+		}, renderLimits)
 		actions <- tui.PreviewChunk{
 			Generation: generation, Identity: identity, Data: []byte(result.Text), Done: true,
 			Truncated: result.Truncated, Rendered: true, Kind: string(result.Kind), Summary: result.Summary,
@@ -2100,11 +2101,11 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 	result := builtinpreview.Render(builtinpreview.Request{
 		Path: string(location.Path), Data: window.Data, View: view, Offset: window.Offset, Complete: window.Complete,
 		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
-	}, builtinpreview.DefaultLimits())
+	}, renderLimits)
 	outcome := externalpreviewer.Orchestrate(ctx, runner, externalpreviewer.OrchestrationRequest{
 		Path: string(location.Path), BuiltIn: result, RequestedView: view,
 		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
-		Capability: capability, ImageLimits: builtinpreview.DefaultImageOutputLimits(),
+		Capability: capability, ImageLimits: imageLimits,
 		Materialize: previewMaterializer(client, location, source, entry.Metadata.Size != nil, fileSize, workspaceID, policy, string(identity.RequestID)),
 	})
 	summary := result.Summary

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
@@ -94,7 +95,8 @@ func TestPreviewLocationRunsConfiguredExternalFallbackUnderAReleasedCacheLease(t
 	}
 	actions := make(chan tui.Action, 4)
 	identity := tui.PreviewRequestIdentity{RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", Mode: builtinpreview.ReadHead, UIGeneration: 7}
-	previewLocation(context.Background(), fixture, identity, builtinpreview.ViewAuto, location, "workspace", cache.PolicyLRU, runner, builtinpreview.ImageCapabilityProof{}, actions)
+	renderLimits, imageLimits := runtimePreviewLimits(config.Default().Preview)
+	previewLocation(context.Background(), fixture, identity, builtinpreview.ViewAuto, location, "workspace", cache.PolicyLRU, runner, builtinpreview.ImageCapabilityProof{}, renderLimits, imageLimits, actions)
 	if begin, ok := (<-actions).(tui.BeginPreview); !ok || begin.Generation != 7 {
 		t.Fatalf("begin = %#v", begin)
 	}
@@ -132,7 +134,8 @@ func TestPreviewLocationRendersObjectMetadataWithoutContentRead(t *testing.T) {
 			}}
 			identity := tui.PreviewRequestIdentity{RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", Pane: tui.Left, UIGeneration: 11, Mode: builtinpreview.ReadHead}
 			actions := make(chan tui.Action, 3)
-			previewLocation(context.Background(), fixture, identity, testCase.view, location, "workspace", cache.PolicyLRU, nil, builtinpreview.ImageCapabilityProof{}, actions)
+			renderLimits, imageLimits := runtimePreviewLimits(config.Default().Preview)
+			previewLocation(context.Background(), fixture, identity, testCase.view, location, "workspace", cache.PolicyLRU, nil, builtinpreview.ImageCapabilityProof{}, renderLimits, imageLimits, actions)
 			begin, ok := (<-actions).(tui.BeginPreview)
 			if !ok || begin.View != builtinpreview.ViewMetadata || begin.Identity.Source.Location != location {
 				t.Fatalf("begin = %#v", begin)
@@ -151,6 +154,23 @@ func TestPreviewLocationRendersObjectMetadataWithoutContentRead(t *testing.T) {
 				t.Fatalf("reduced metadata preview = %#v, text = %q", model.Preview, model.Preview.DisplayText())
 			}
 		})
+	}
+}
+
+func TestPreviewLocationUsesConfiguredRenderLimits(t *testing.T) {
+	location, _ := domain.NewLocation("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", "/srv/item")
+	fixture := &previewMetadataFixture{entry: domain.Entry{
+		Location: location, Name: strings.Repeat("x", 256), Kind: domain.EntryDirectory,
+	}}
+	identity := tui.PreviewRequestIdentity{RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", Pane: tui.Left, UIGeneration: 12, Mode: builtinpreview.ReadHead}
+	actions := make(chan tui.Action, 3)
+	renderLimits, imageLimits := runtimePreviewLimits(config.Default().Preview)
+	renderLimits.MaxOutputBytes = 64
+	previewLocation(context.Background(), fixture, identity, builtinpreview.ViewMetadata, location, "workspace", cache.PolicyLRU, nil, builtinpreview.ImageCapabilityProof{}, renderLimits, imageLimits, actions)
+	<-actions
+	chunk, ok := (<-actions).(tui.PreviewChunk)
+	if !ok || !chunk.Truncated || len(chunk.Data) > renderLimits.MaxOutputBytes {
+		t.Fatalf("configured preview chunk = %#v", chunk)
 	}
 }
 

@@ -29,6 +29,12 @@ func TestDefaultConfigIsValid(t *testing.T) {
 			WorkspaceBytes: 1 << 30, MaxEvictionCandidates: 256,
 		},
 		Transfer: TransferConfig{MaxConcurrent: 4, MaxQueued: 128},
+		Preview: PreviewConfig{
+			MaxInputBytes: 512 * 1024, MaxJSONBytes: 256 * 1024, MaxJSONDepth: 64,
+			MaxRenderedLines: 10_000, MaxOutputBytes: 512 * 1024, MaxImagePixels: 40_000_000,
+			MaxStyleSpans: 4096, ImageMaxPayloadBytes: 4 * 1024 * 1024,
+			ImageMaxOutputBytes: 6 * 1024 * 1024, ImageChunkBytes: 4096, ImageMaxPixels: 1_000_000,
+		},
 	}
 
 	got := Default()
@@ -59,6 +65,55 @@ func TestDefaultCacheAndTransferSettingsFreezeCurrentRuntimeBehavior(t *testing.
 	}
 	if got.Transfer != (TransferConfig{MaxConcurrent: 4, MaxQueued: 128}) {
 		t.Fatalf("transfer defaults = %#v", got.Transfer)
+	}
+}
+
+func TestDefaultPreviewSettingsFreezeCurrentRuntimeBehavior(t *testing.T) {
+	got := Default().Preview
+	want := PreviewConfig{
+		MaxInputBytes: 512 * 1024, MaxJSONBytes: 256 * 1024, MaxJSONDepth: 64,
+		MaxRenderedLines: 10_000, MaxOutputBytes: 512 * 1024, MaxImagePixels: 40_000_000,
+		MaxStyleSpans: 4096, ImageMaxPayloadBytes: 4 * 1024 * 1024,
+		ImageMaxOutputBytes: 6 * 1024 * 1024, ImageChunkBytes: 4096, ImageMaxPixels: 1_000_000,
+	}
+	if got != want {
+		t.Fatalf("preview defaults = %#v, want %#v", got, want)
+	}
+}
+
+func TestDecodeAppliesPartialPreviewSettings(t *testing.T) {
+	input := `{"schema_version":1,"preview":{"max_input_bytes":262144,"image_max_pixels":500000}}`
+	got, err := Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Preview.MaxInputBytes != 256*1024 || got.Preview.MaxJSONBytes != 256*1024 || got.Preview.ImageMaxPixels != 500_000 || got.Preview.ImageChunkBytes != 4096 {
+		t.Fatalf("partial preview = %#v", got.Preview)
+	}
+}
+
+func TestPreviewSettingsCanOnlyTightenFrozenCeilings(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "input bytes", input: `{"schema_version":1,"preview":{"max_input_bytes":524289}}`, want: "preview.max_input_bytes"},
+		{name: "json above input", input: `{"schema_version":1,"preview":{"max_input_bytes":1024,"max_json_bytes":2048}}`, want: "preview.max_json_bytes"},
+		{name: "json depth", input: `{"schema_version":1,"preview":{"max_json_depth":65}}`, want: "preview.max_json_depth"},
+		{name: "rendered lines", input: `{"schema_version":1,"preview":{"max_rendered_lines":10001}}`, want: "preview.max_rendered_lines"},
+		{name: "output bytes", input: `{"schema_version":1,"preview":{"max_output_bytes":524289}}`, want: "preview.max_output_bytes"},
+		{name: "render image pixels", input: `{"schema_version":1,"preview":{"max_image_pixels":40000001}}`, want: "preview.max_image_pixels"},
+		{name: "style spans", input: `{"schema_version":1,"preview":{"max_style_spans":4097}}`, want: "preview.max_style_spans"},
+		{name: "image output", input: `{"schema_version":1,"preview":{"image_max_output_bytes":6291457}}`, want: "preview.image_max_output_bytes"},
+		{name: "image payload above output", input: `{"schema_version":1,"preview":{"image_max_payload_bytes":4194304,"image_max_output_bytes":1048576}}`, want: "preview.image_max_payload_bytes"},
+		{name: "image chunk above payload", input: `{"schema_version":1,"preview":{"image_max_payload_bytes":1024,"image_chunk_bytes":2048}}`, want: "preview.image_chunk_bytes"},
+		{name: "image pixels", input: `{"schema_version":1,"preview":{"image_max_pixels":1000001}}`, want: "preview.image_max_pixels"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertDecodeErrorContains(t, test.input, test.want)
+		})
 	}
 }
 

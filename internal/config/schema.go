@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 )
 
 const (
@@ -40,6 +41,7 @@ type Config struct {
 	Listing       ListingConfig  `json:"listing"`
 	Cache         CacheConfig    `json:"cache"`
 	Transfer      TransferConfig `json:"transfer"`
+	Preview       PreviewConfig  `json:"preview"`
 	External      ExternalConfig `json:"external,omitempty"`
 	Keymap        KeymapConfig   `json:"keymap,omitempty"`
 }
@@ -68,6 +70,20 @@ type TransferConfig struct {
 	JobBytesPerSecond      uint64 `json:"job_bytes_per_second"`
 }
 
+type PreviewConfig struct {
+	MaxInputBytes        int    `json:"max_input_bytes"`
+	MaxJSONBytes         int    `json:"max_json_bytes"`
+	MaxJSONDepth         int    `json:"max_json_depth"`
+	MaxRenderedLines     int    `json:"max_rendered_lines"`
+	MaxOutputBytes       int    `json:"max_output_bytes"`
+	MaxImagePixels       uint64 `json:"max_image_pixels"`
+	MaxStyleSpans        int    `json:"max_style_spans"`
+	ImageMaxPayloadBytes int    `json:"image_max_payload_bytes"`
+	ImageMaxOutputBytes  int    `json:"image_max_output_bytes"`
+	ImageChunkBytes      int    `json:"image_chunk_bytes"`
+	ImageMaxPixels       uint64 `json:"image_max_pixels"`
+}
+
 type CommandConfig struct {
 	Executable string   `json:"executable"`
 	Args       []string `json:"argv"`
@@ -94,6 +110,8 @@ type KeymapConfig struct {
 }
 
 func Default() Config {
+	renderLimits := preview.DefaultLimits()
+	imageLimits := preview.DefaultImageOutputLimits()
 	return Config{
 		SchemaVersion: SchemaVersion,
 		IPC: IPCConfig{
@@ -108,6 +126,14 @@ func Default() Config {
 			WorkspaceBytes: maxCacheWorkspaceBytes, MaxEvictionCandidates: maxCacheCandidates,
 		},
 		Transfer: TransferConfig{MaxConcurrent: maxTransferConcurrent, MaxQueued: maxTransferQueued},
+		Preview: PreviewConfig{
+			MaxInputBytes: renderLimits.MaxInputBytes, MaxJSONBytes: renderLimits.MaxJSONBytes,
+			MaxJSONDepth: renderLimits.MaxJSONDepth, MaxRenderedLines: renderLimits.MaxRenderedLines,
+			MaxOutputBytes: renderLimits.MaxOutputBytes, MaxImagePixels: renderLimits.MaxImagePixels,
+			MaxStyleSpans: renderLimits.MaxStyleSpans, ImageMaxPayloadBytes: imageLimits.MaxPayloadBytes,
+			ImageMaxOutputBytes: imageLimits.MaxOutputBytes, ImageChunkBytes: imageLimits.ChunkBytes,
+			ImageMaxPixels: imageLimits.MaxPixels,
+		},
 	}
 }
 
@@ -182,6 +208,9 @@ func (c Config) Validate() error {
 	if err := c.Transfer.validate(); err != nil {
 		return err
 	}
+	if err := c.Preview.validate(); err != nil {
+		return err
+	}
 	if err := c.External.validate(); err != nil {
 		return fmt.Errorf("external: %w", err)
 	}
@@ -225,6 +254,39 @@ func (c TransferConfig) validate() error {
 		if item.value > maxBandwidthBytesPerSec {
 			return fmt.Errorf("transfer.%s must be within 0..%d", item.name, maxBandwidthBytesPerSec)
 		}
+	}
+	return nil
+}
+
+func (c PreviewConfig) validate() error {
+	maximumRender := preview.DefaultLimits()
+	maximumImage := preview.DefaultImageOutputLimits()
+	checks := []struct {
+		name  string
+		value int
+		limit int
+	}{
+		{name: "max_input_bytes", value: c.MaxInputBytes, limit: maximumRender.MaxInputBytes},
+		{name: "max_json_bytes", value: c.MaxJSONBytes, limit: min(c.MaxInputBytes, maximumRender.MaxJSONBytes)},
+		{name: "max_json_depth", value: c.MaxJSONDepth, limit: maximumRender.MaxJSONDepth},
+		{name: "max_rendered_lines", value: c.MaxRenderedLines, limit: maximumRender.MaxRenderedLines},
+		{name: "max_output_bytes", value: c.MaxOutputBytes, limit: maximumRender.MaxOutputBytes},
+		{name: "max_style_spans", value: c.MaxStyleSpans, limit: maximumRender.MaxStyleSpans},
+		{name: "image_max_output_bytes", value: c.ImageMaxOutputBytes, limit: maximumImage.MaxOutputBytes},
+		{name: "image_max_payload_bytes", value: c.ImageMaxPayloadBytes, limit: min(c.ImageMaxOutputBytes, maximumImage.MaxPayloadBytes)},
+		{name: "image_chunk_bytes", value: c.ImageChunkBytes, limit: min(c.ImageMaxPayloadBytes, maximumImage.ChunkBytes)},
+	}
+	for _, check := range checks {
+		if check.value < 1 || check.value > check.limit {
+			return fmt.Errorf("preview.%s must be within 1..%d", check.name, check.limit)
+		}
+	}
+	if c.MaxImagePixels < 1 || c.MaxImagePixels > maximumRender.MaxImagePixels {
+		return fmt.Errorf("preview.max_image_pixels must be within 1..%d", maximumRender.MaxImagePixels)
+	}
+	imagePixelLimit := min(c.MaxImagePixels, maximumImage.MaxPixels)
+	if c.ImageMaxPixels < 1 || c.ImageMaxPixels > imagePixelLimit {
+		return fmt.Errorf("preview.image_max_pixels must be within 1..%d", imagePixelLimit)
 	}
 	return nil
 }
