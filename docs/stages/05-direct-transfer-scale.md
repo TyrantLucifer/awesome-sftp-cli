@@ -1,6 +1,6 @@
 # Stage 5 — Direct Transfer & Scale
 
-- **状态**：Not Started
+- **状态**：Complete
 - **阶段类型**：安全快路径与规模工程
 - **前置条件**：[Stage 4 — Search & Optional Helper](04-search-helper.md) 已通过退出门禁
 - **完成后进入**：[Stage 6 — Hardening & 1.0 Release](06-hardening-release.md)
@@ -10,6 +10,8 @@
 在不改变 Stage 2 数据安全语义的前提下，增加两类性能能力：同 Endpoint 的服务端快路径，以及经完整预检、用户策略允许的远端 A→远端 B 直传。任何直传不可用或在提交前失败时，守护进程都能解释原因并安全降级为有界本地中继。
 
 同时把浏览、搜索和传输验证到既定规模：单目录数万条目、整树百万节点、单文件数百 GB；验收夹具至少包含 5 万项目录、百万节点树和 100GB 稀疏文件。核心要求是流式、可取消、有界内存和可观察，而不是某台机器上的单一吞吐数字。
+
+M5.1–M5.4、22 个 Stage 5 feature row、两次独立 review、clean audit 与 exact-SHA push/PR Hosted CI 已全绿；本阶段为 Complete，22 行均为 `Verified`。活动证据见 [Stage 5 verification](../verification/stage-05.md)。
 
 ## 2. 范围
 
@@ -167,7 +169,7 @@
 ### M5.2 — Level 2 预检与直传
 
 1. 扩展 Helper/控制协议支持直传预检。
-2. 实现远端数据面、目标临时写、进度、hash 和提交授权。
+2. 实现 test-only Level 2 数据 facet 的目标临时写、进度、hash 和提交授权语义；普通 runtime 保持 CLOSED，真实进程/网络隔离的远端数据通道由 Stage 6 证明。
 3. 覆盖不转发凭据、主机身份和网络策略负向测试。
 
 门禁：只有全部条件为真才直传；单项置未知/失败均可靠中继。
@@ -186,21 +188,25 @@
 2. 百万树流式计划、搜索和作业执行。
 3. 100GB 稀疏文件与长时间并发、暂停/续传、限速。
 
+100 GiB 的 Stage 5 canonical 验收按 ADR-0017 正交分解：真实/synthetic 100 GiB 夹具在生产 Worker 上证明 64-bit、固定资源、durable cancel、part retention 与 final 不可见；同一 Worker/Journal/Scheduler 的 sparse-shaped 多 quantum 夹具通过新 Worker 实例证明 pause、checkpoint checksum、restart resume、限速、强 hash 与 commit。完整物理 100 GiB LocalFS/SFTP 搬运与 hash 是 Stage 6 nightly/release 长跑门禁；Stage 5 不把首 checkpoint 测试冒充完整物理传输。
+
 门禁：内存由配置预算和活跃窗口界定，不随总文件字节或总节点线性增长；所有场景可取消并有验证记录。
 
 ## 6. 可验证退出标准
 
-- [ ] 路由计划列出选中路线、能力证据、完整性级别、风险和降级条件。
-- [ ] 同 Endpoint 快路径与标准路径在冲突、提交、取消和结果状态上通过共享契约。
-- [ ] 直传预检逐项验证网络、空间、写权限、认证、主机身份、Helper/协议和用户策略。
-- [ ] 未默认启用 Agent 转发、Kerberos 委派、密钥复制或宽松主机密钥策略。
-- [ ] 直传不可用时自动中继；原因在 UI/Job/诊断中一致可见。
-- [ ] 直传提交前各故障点均可安全降级或等待；提交结果未知时先检查后置条件。
-- [ ] 直传与中继的最终内容、冲突决策、移动源保留和完整性证据一致。
-- [ ] 5 万项目录可增量显示、滚动、筛选和取消，无全量渲染阻塞。
-- [ ] 百万节点树的浏览/搜索/作业计划不要求全量内存物化。
-- [ ] 100GB 稀疏文件可传输、暂停、重启续传、取消和强校验，峰值内存受预算约束。
-- [ ] 并发/限速/公平调度可复现，无长期句柄、goroutine、子进程或缓存增长。
+以下复选框表示 Stage 5 实现候选已完成本地门禁、两路独立终审、clean audit 与 exact-SHA push/PR Hosted 矩阵并晋级；最终状态提交仍按 verification 的 identity rule 由 Git/PR/Hosted 元数据外部绑定。
+
+- [x] 路由计划列出选中路线、能力证据、完整性级别、风险和降级条件。
+- [x] 同 Endpoint 快路径与标准路径在冲突、提交、取消和结果状态上通过共享契约。
+- [x] 直传预检逐项验证网络、空间、写权限、认证、主机身份、Helper/协议和用户策略。
+- [x] 未默认启用 Agent 转发、Kerberos 委派、密钥复制或宽松主机密钥策略。
+- [x] 直传不可用时自动中继；原因在 UI/Job/诊断中一致可见。
+- [x] 直传提交前各故障点均可安全降级或等待；提交结果未知时先检查后置条件。
+- [x] 直传与中继的最终内容、冲突决策、移动源保留和完整性证据一致。
+- [x] 5 万项目录可增量显示、滚动、筛选和取消，无全量渲染阻塞。
+- [x] 百万节点树的浏览/搜索/作业计划不要求全量内存物化。
+- [x] 100GB 契约按 ADR-0017 的 canonical 分解证明：真实/synthetic 100 GiB 规模边界与 durable cancel，加同一生产状态机的 pause/重启续传/限速/强校验/commit；完整物理 100 GiB 长跑明确递交 Stage 6，不作为本项的虚假本地声明。
+- [x] 并发/限速/公平调度可复现，无长期句柄、goroutine、子进程或缓存增长。
 
 ## 7. 测试矩阵
 
@@ -209,12 +215,13 @@
 | 单元 | 路由决策表 | 能力/策略组合选择确定 | 表驱动测试 |
 | 契约 | 快路径/中继/直传 | 冲突、取消、提交、结果等价 | 共享路线套件 |
 | 安全 | 凭据、主机身份、网络策略 | 不扩权、不绕过、不复制秘密 | 负向测试 |
-| 集成 | 两真实远端直传 | 数据面直达、控制面可审计 | 隔离网络夹具 |
+| 集成 | 两真实 sshd 控制会话 + test-only 数据夹具 | 真实控制面策略、隔离 data root、fixture-only 数据生命周期；不冒充远端网络数据面 | native control-session gate + local fixture |
+| Stage 6 长跑 | 两真实远端直传 | 分离进程/网络的 source→target 数据通道、remote hash、daemon 不承载内容 | 隔离网络 nightly/release 夹具 |
 | 故障 | 预检后变化、断网、磁盘满、进程 kill | 安全降级或检查后置条件 | 故障矩阵 |
 | 完整性 | 来源变化、静默损坏、hash 不兼容 | 不误报强校验成功 | 数据破坏测试 |
 | 规模 | 50k 目录 | 首屏增量、滚动稳定、有界渲染 | 基准记录 |
 | 规模 | 百万节点树 | 流式、可取消、内存有界 | 资源曲线 |
-| 规模 | 100GB 稀疏文件 | 暂停/续传/hash/限速正确 | 长运行记录 |
+| 规模 | 100GB 稀疏文件 | Stage 5 分解门禁证明规模边界与同状态机 pause/续传/hash/限速；Stage 6 组合物理长跑 | canonical 分解记录 + release 长运行记录 |
 | 调度 | 多 Endpoint、多大小 Job | 公平、背压、限速可控 | 确定性/集成测试 |
 | Race/长稳 | 重连、取消、Helper 切换 | 无竞态、泄漏和重复提交 | race/soak 报告 |
 | 平台 | macOS/Linux 客户端与远端组合 | 路由和资源语义一致 | 兼容矩阵 |

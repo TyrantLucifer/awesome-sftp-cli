@@ -362,8 +362,9 @@ func TestCanonicalMakefileForcesEveryRecipeGuard(t *testing.T) {
 			t.Fatalf("canonical Make recipe guard is not forced: %q", line)
 		}
 	}
-	if guardCount != 14 {
-		t.Fatalf("canonical forced Make recipe guards = %d, want 14", guardCount)
+	wantGuards := len(goProbeTargets) + 3 // make-contract-scan, make-contract, and make-contract-flags.
+	if guardCount != wantGuards {
+		t.Fatalf("canonical forced Make recipe guards = %d, want %d", guardCount, wantGuards)
 	}
 }
 
@@ -555,7 +556,7 @@ func TestVerifyContractRejectsTargetSpecificRecipeShell(t *testing.T) {
 	})
 
 	root := t.TempDir()
-	malicious := "fmt-check vet lint test test-contract test-race fuzz-smoke docs-check mod-check supply-chain build-all: SHELL = $(GO)\n"
+	malicious := "fmt-check vet lint test test-contract test-race test-scale bench-scale fuzz-smoke docs-check mod-check supply-chain build-all: SHELL = $(GO)\n"
 	if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(malicious), 0o600); err != nil {
 		t.Fatalf("write malicious Makefile: %v", err)
 	}

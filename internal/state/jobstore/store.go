@@ -19,6 +19,7 @@ import (
 
 const (
 	maxEncodedRowBytes   = 256 * 1024
+	MaxEventPayloadBytes = 32 * 1024
 	planWALBudget        = uint64(1024 * 1024)
 	jobWALBudget         = uint64(512 * 1024)
 	stepWALBudget        = uint64(1024 * 1024)
@@ -55,22 +56,23 @@ type Step struct {
 }
 
 type CreateRequest struct {
-	PlanID          string
-	RequestID       domain.RequestID
-	JobID           domain.JobID
-	Kind            string
-	SourceJSON      string
-	DestinationJSON *string
-	Route           string
-	Verification    string
-	ConflictPolicy  string
-	RiskClass       string
-	InitialState    job.State
-	EventID         domain.EventID
-	Now             time.Time
-	Steps           []Step
-	InitialConflict *ConflictSeed
-	EditSession     *EditSessionBinding
+	PlanID           string
+	RequestID        domain.RequestID
+	JobID            domain.JobID
+	Kind             string
+	SourceJSON       string
+	DestinationJSON  *string
+	Route            string
+	Verification     string
+	ConflictPolicy   string
+	RiskClass        string
+	InitialState     job.State
+	EventID          domain.EventID
+	EventPayloadJSON string
+	Now              time.Time
+	Steps            []Step
+	InitialConflict  *ConflictSeed
+	EditSession      *EditSessionBinding
 }
 
 // EditSessionBinding moves a durable dirty edit session into uploading while
@@ -241,6 +243,9 @@ func (store *Store) CheckpointIdle(ctx context.Context) (returnErr error) {
 }
 
 func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot, bool, error) {
+	if request.EventPayloadJSON == "" {
+		request.EventPayloadJSON = `{}`
+	}
 	if err := validateCreate(request); err != nil {
 		return Snapshot{}, false, err
 	}
@@ -311,7 +316,7 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 				return fmt.Errorf("bind edit session Job: %w", err)
 			}
 		}
-		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, 1, ?, 'job_created', '{}', ?)", request.JobID, request.EventID, request.Now.Unix()); err != nil {
+		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, 1, ?, 'job_created', ?, ?)", request.JobID, request.EventID, request.EventPayloadJSON, request.Now.Unix()); err != nil {
 			return fmt.Errorf("create Job event: %w", err)
 		}
 		response, err = marshalJobResponse(request.JobID)
@@ -1208,7 +1213,10 @@ func validateCreate(request CreateRequest) error {
 	if err := wal.ValidateTransactionBudgets(createWALBudgets(len(request.Steps), request.InitialConflict != nil, request.EditSession != nil)); err != nil {
 		return fmt.Errorf("create Job: %w", err)
 	}
-	values := []string{request.Kind, request.SourceJSON, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass}
+	if err := validateEventPayload(request.EventPayloadJSON); err != nil {
+		return fmt.Errorf("create Job: %w", err)
+	}
+	values := []string{request.Kind, request.SourceJSON, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass, request.EventPayloadJSON}
 	if request.DestinationJSON != nil {
 		values = append(values, *request.DestinationJSON)
 	}
@@ -1320,8 +1328,8 @@ func validateTransitionRequest(request TransitionRequest) error {
 	if request.ExpectedVersion <= 0 || !request.To.Valid() || !eventKindPattern.MatchString(request.EventKind) || request.Now.Unix() <= 0 {
 		return fmt.Errorf("transition Job: invalid version, state, event kind, or time")
 	}
-	if !json.Valid([]byte(request.PayloadJSON)) {
-		return fmt.Errorf("transition Job: invalid event JSON")
+	if err := validateEventPayload(request.PayloadJSON); err != nil {
+		return fmt.Errorf("transition Job: %w", err)
 	}
 	if request.To == job.StateRetryWait {
 		if request.RetryAt == nil || request.RetryAt.Unix() <= request.Now.Unix() {
@@ -1352,8 +1360,11 @@ func validateControlRequest(request ControlRequest) error {
 		return fmt.Errorf("update Job control: %w", err)
 	}
 	if request.ExpectedVersion <= 0 || request.PauseRequested == nil && request.CancelRequested == nil ||
-		!eventKindPattern.MatchString(request.EventKind) || !json.Valid([]byte(request.PayloadJSON)) || request.Now.Unix() <= 0 {
+		!eventKindPattern.MatchString(request.EventKind) || request.Now.Unix() <= 0 {
 		return errors.New("update Job control: invalid version, flags, event, payload, or time")
+	}
+	if err := validateEventPayload(request.PayloadJSON); err != nil {
+		return fmt.Errorf("update Job control: %w", err)
 	}
 	return validateEncodedValues(request.EventKind, request.PayloadJSON)
 }
@@ -1395,6 +1406,16 @@ func validateEncodedValues(values ...string) error {
 			return fmt.Errorf("encoded row exceeds %d bytes", maxEncodedRowBytes)
 		}
 		total += len(value)
+	}
+	return nil
+}
+
+func validateEventPayload(payload string) error {
+	if len(payload) > MaxEventPayloadBytes {
+		return fmt.Errorf("event payload exceeds %d bytes", MaxEventPayloadBytes)
+	}
+	if !json.Valid([]byte(payload)) {
+		return errors.New("invalid event payload JSON")
 	}
 	return nil
 }

@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 4 在固定分支 `codex/stage4-search-helper` 从 exact-main 基线 `09821bdbcfc9693b309a1a39ee5121113c033254` 完成；Stage 5–6 保持 Not Started。
+Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 在固定分支 `codex/stage5-direct-transfer-scale` 从 verified exact-main `06415e1e9fe5ffa93999f112b64aee0bd35e5c75` 完成；Stage 6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -256,7 +256,55 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 路由决策表与能力组合测试；直传/中继等价性测试；认证、磁盘、网络和中途失败矩阵；50k 目录、百万树、100GB 稀疏文件基准；并发/限速测试；长时间运行、race 与资源泄漏测试。
 
-**Status**: Not Started
+**Status**: Complete
+
+### M5.1: 路由统一与同 Endpoint 快路径
+
+**Goal**: 把 atomic rename、标准 bounded relay、声明式 SFTP server copy、Stage 4 `helper_same_host` 和 Level 2 direct 候选纳入同一个可解释、可持久、可恢复的 Planner/Plan 证据模型。
+
+**Success Criteria**: Job 创建前冻结 route/evidence version、选中路线、备选拒绝原因、能力版本、完整性策略、风险、part/final、预检和降级边界；执行器不静默改路；所有快路径仍只写 Job-owned part，并复用现有 conflict、verify、commit、restart 和 source-delete 后置条件；关闭快路径时与 Stage 2–4 byte/state 等价。
+
+**Tests**: 首个 RED 共享 route contract 覆盖同 Endpoint atomic rename、同 Endpoint relay/server-copy 候选、`helper_same_host`、跨 Endpoint bounded relay 和 production-closed Level 2 拒绝；route decision table、Plan JSON round-trip/restart、Worker route regression、共享 conflict/cancel/verify/commit/source-retention 套件，以及 Jobs/Log/TUI evidence snapshot。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: 首个 RED 共享 route contract 已按要求覆盖五类路线并转绿。Plan 持久化 v1 selected/candidate/reason/integrity/downgrade/risk/progress evidence，执行前反篡改校验；目录子 Plan 重新冻结自己的 part/final evidence；durable JobView、`job_created`/runtime downgrade Log 与 Jobs drawer 显示计划和真实路线。声明式 SFTP server-copy 仅在同一 SSH Endpoint、普通文件、显式 `server_copy` capability 与结构化 facet 同时存在时选中，冻结 capability revision/1 TiB hard ceiling，只写 Job-owned part，并由既有 Worker 独立计算 source/part SHA-256 后执行原有 conflict/commit。写前失败仅在 exact part 被证明不存在时持久降级 relay；未知 part 状态、context cancel/deadline 不降级；restart 复用已持久的真实路线且不重试 server-copy。共享 conflict/cancel/verify/commit 契约、执行中 cancel、响应丢失、损坏、能力/绑定/checkpoint 篡改与 complete route/Job/Log/TUI regressions 均绿色；CI-equivalent `make docs-check`、`make check`、`make lint` 和 focused race 通过。M5.1 退出门禁完成，后续 M5.2–M5.4 也已本地实现。
+
+### M5.2: Level 2 预检与跨主机直传
+
+**Goal**: 通过显式 non-release `testdata` fixture 交付版本化、有界、daemon-owned 的 Level 2 控制面与数据生命周期契约，以两个真实 sshd/SFTP 会话验证控制策略，同时让普通 runtime 保持 production distribution CLOSED；真实进程/网络隔离的双远端数据面是 Stage 6 组合门禁。
+
+**Success Criteria**: protocol/capability/network/address/write/temp/space/quota/auth/host-key/user/workspace/data/hash 每项都必须通过；目标先写唯一 part，目标 durable acknowledgement 才计进度；strong hash/fingerprint 证明来源未变；无 Agent forwarding、GSS delegation、secret/key/ticket/known_hosts 复制或宽松 host-key；普通 runtime 稳定记录 `production_distribution_closed` 并走 relay。
+
+**Tests**: bounded protocol/frame/deadline/heartbeat/cancel contract；逐项 unknown/fail 预检矩阵及零 direct mutation 断言；固定 OpenSSH argv/config 与 secret/pollution 扫描；两个真实 sshd/SFTP 控制会话加同进程 test-only 数据夹具，证明控制策略、隔离 data root 与完整 fixture 生命周期。按 ADR-0017，本门禁不声称远端网络数据面直达或 daemon 进程不承载内容；该组合证据属于 Stage 6。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: direct protocol v1 已冻结 request/Job/Endpoint/path/target-alias/source identity、14 项 ordered preflight、1 MiB/4-request/10-minute/heartbeat/cancel/progress/result limits；逐项 fail/unknown 均 0 direct stage 并 relay。仅同包 `_test.go` 可注入的 data facet 已证明 source→target staging、target durable checkpoint、part/final strong hash、shared Worker commit、daemon Provider content-read 计数为 0、expiry fresh preflight、in-flight cancel、lost-response exact restart adoption 与 absent-part safe relay downgrade。真实双 sshd/SFTP native gate 只证明两个隔离控制会话、strict host key/BatchMode、Agent/GSS/ControlMaster 禁用、隔离 data root 与 target root 无 credential material；数据 fixture 仍在同一测试进程本地访问 data root，真正进程/网络隔离的数据面证据已由 ADR-0017 递交 Stage 6。普通 `NewPlanner`/`NewWorker` 无注入入口，production 继续 `production_distribution_closed`。M5.2–M5.4 与 Stage 5 已完成。
+
+### M5.3: 降级、故障与语义等价
+
+**Goal**: 在 direct 与所有快路径的每个安全边界注入故障，证明降级、结果恢复和精确清理不改变冻结保证。
+
+**Success Criteria**: 写入前可安全 relay；已有 part 仅在 exact Job/source/target/checkpoint/hash/format 兼容时复用；commit response loss 先检查 final/part/strong fingerprint；未知结果不盲重放；move 不早删源；清理只作用于 exact verified Job-owned path；direct 与 relay 的 bytes、冲突、取消、事件、restart、integrity 和 source retention 等价。
+
+**Tests**: 网络/认证/空间/能力/source/target 变化、short/corrupt write、Helper crash/hang、daemon restart、cancel、checkpoint mismatch、commit response loss 和 source-delete uncertainty 矩阵；random/sparse/large direct-relay golden equivalence；浏览/Search/Preview/Edit/Cache 与无关 Job 可用性回归。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: expired preflight fail/unknown/malformed evidence now durably selects relay before direct write and restart honors that actual route without re-probing. Acknowledged exact parts are reused or removed only after exact Job/path/size/fingerprint/hash proof; drifted or unprovable parts remain isolated and block fallback. The fault matrix covers post-preflight network/auth/permission/space failures, mid-part disconnect/resume, hang/cancel, corrupt/short results, part-proof corruption, checkpoint mismatch, source/target drift, stage/commit/delete response loss and source-delete uncertainty. Direct/relay share ask/overwrite/skip/auto-rename, cancellation, durable Job/event, move deletion/source-retention and strong-integrity semantics; deterministic-random, sparse-shaped and multi-chunk large goldens produce identical bytes, SHA-256, final and outcome. Focused/full transfer, race and lint gates pass. Production Level 2 remains CLOSED. M5.3、M5.4 与 Stage 5 已完成。
+
+### M5.4: 规模、资源预算与公平调度
+
+**Goal**: 将 50k 目录、百万树和 100GB 稀疏文件纳入可重复门禁，并统一连接、进程、FD、goroutine、内存、队列、事件、日志、带宽和公平调度预算。
+
+**Success Criteria**: UI/IPC/数据库不全量物化大目录或树；遍历、transfer、hash 和 restart 的内存不随总节点/字节线性增长；全局/Endpoint/Job 配额、idle recovery、deterministic token bucket 和交互优先公平性可解释且有硬上限；大结果/事件/日志分页或截断并保留摘要；长稳无单调资源增长。
+
+**Tests**: 50,000-entry 首屏/滚动/过滤/render/RSS fixture；1,000,000-node browse/search/plan/copy/cancel/restart 资源曲线；100GB sparse local/SFTP relay/test-only direct pause/resume/restart/cancel/hash/limit；多 Endpoint/多大小 Job 的 fairness/backpressure/idle recovery；race、soak、benchmark 环境与趋势记录。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: Canonical `make test-scale` covers 50k windowed rendering, million-node Provider/Helper/discovery streams, actual/synthetic 100 GiB sparse-file bounded checkpoints, ADR-0017's same-state-machine pause/checksum/restart/rate/hash/commit decomposition, preview refusal, cancellation, connection admission/reuse, low-disk safety, bounded event/log behavior and low-capability degradation. One shared scheduler enforces global/both-Endpoint/Job integer token buckets, 4:1 weighted fairness, fixed/tightenable 256 KiB quantum, cancellation and safe future-token-only hot updates; rate-required Plans disable `uncontrolled` fast paths. A global/Endpoint/Job resource ledger accounts Job/queue/connection/SSH/Helper/FD/goroutine/memory/event/log dimensions with exact hard ceilings and idempotent release. ProviderSessions cap dynamic connections, roll back partial multi-Endpoint acquisition and close at the last lease. Directory child workers retain the scheduler while isolating journals; bounded result manifests disclose truncation. Job events are capped at 32 KiB and page at 1,000. The post-review current/oldstable/scale/high-repeat/real-dual-sshd/benchmark/independent-cache matrix, clean audit, two independent final reviews, and exact implementation-candidate push/PR Hosted runs `29577096235`/`29577098354` pass. Two PR-only macOS timing fixtures failed once while their same-SHA push companions passed, then passed targeted reruns without assertion changes. M5.4 and Stage 5 are complete; the status-only final SHA remains subject to the same exact Hosted/Ready-but-unmerged delivery rule.
 
 ## Stage 6: Hardening & 1.0 Release
 

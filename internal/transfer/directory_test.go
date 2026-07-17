@@ -2,8 +2,10 @@ package transfer
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 
@@ -61,13 +63,61 @@ func TestDiscoverDirectoryDoesNotFollowSymlinksAndRejectsDepthOverflow(t *testin
 	}
 }
 
+func TestDiscoverDirectoryConfigurationCanOnlyTightenFrozenHardCeilings(t *testing.T) {
+	t.Parallel()
+	implementation := newSyntheticDirectoryProvider(0)
+	for name, budget := range map[string]DiscoveryBudget{
+		"frontier": {QueueItems: 65, PageItems: 256, MaxDepth: 128},
+		"page":     {QueueItems: 64, PageItems: 257, MaxDepth: 128},
+		"depth":    {QueueItems: 64, PageItems: 256, MaxDepth: 129},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, _, err := DiscoverDirectory(context.Background(), implementation, implementation.root, budget); err == nil {
+				t.Fatalf("DiscoverDirectory(%+v) succeeded above hard ceiling", budget)
+			}
+		})
+	}
+}
+
 func TestDirectoryResultManifestHasHardPersistenceBound(t *testing.T) {
 	var result Result
 	for index := 0; index < maximumManifestItems+44; index++ {
 		appendItemResult(&result, ItemResult{RelativePath: strconv.Itoa(index), Status: ItemSucceeded})
 	}
-	if len(result.Manifest) != maximumManifestItems || result.ManifestTruncated != 44 {
+	var retained uint64
+	for range result.Manifest {
+		retained++
+	}
+	if len(result.Manifest) > maximumManifestItems || retained+result.ManifestTruncated != 300 {
 		t.Fatalf("manifest size/truncated = %d/%d", len(result.Manifest), result.ManifestTruncated)
+	}
+	encoded, err := json.Marshal(result.Manifest)
+	if err != nil || len(encoded) > maximumManifestJSONBytes {
+		t.Fatalf("manifest JSON = %d bytes, %v", len(encoded), err)
+	}
+}
+
+func TestDirectoryResultManifestHasHardJSONByteBound(t *testing.T) {
+	var result Result
+	longPath := strings.Repeat("x", 4*1024)
+	for index := 0; index < maximumManifestItems; index++ {
+		appendItemResult(&result, ItemResult{
+			RelativePath: longPath + strconv.Itoa(index),
+			Source:       domain.Location{EndpointID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", Path: domain.CanonicalPath("/" + longPath)},
+			Destination:  domain.Location{EndpointID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Path: domain.CanonicalPath("/" + longPath)},
+			Status:       ItemSucceeded,
+		})
+	}
+	encoded, err := json.Marshal(result.Manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > maximumManifestJSONBytes {
+		t.Fatalf("manifest JSON bytes = %d, ceiling = %d", len(encoded), maximumManifestJSONBytes)
+	}
+	if result.ManifestTruncated == 0 {
+		t.Fatal("long manifest was not truncated")
 	}
 }
 

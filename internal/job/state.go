@@ -38,7 +38,7 @@ var states = []State{
 var transitions = map[State]map[State]struct{}{
 	StateDraft:                set(StateAwaitingConfirmation, StateQueued, StateCanceled),
 	StateAwaitingConfirmation: set(StateQueued, StateCanceled),
-	StateQueued:               set(StateRunning, StatePaused, StateCanceled),
+	StateQueued:               set(StateRunning, StatePaused, StateFailed, StateCanceled),
 	StateRunning:              set(StateVerifying, StatePaused, StateWaitingAuth, StateWaitingConflict, StateRetryWait, StateFailed, StateCanceled),
 	StateVerifying:            set(StateCompleted, StateCompletedWithSourceRetained, StatePaused, StateWaitingAuth, StateWaitingConflict, StateRetryWait, StateFailed, StateCanceled),
 	StatePaused:               set(StateQueued, StateCanceled),

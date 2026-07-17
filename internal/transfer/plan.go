@@ -22,6 +22,11 @@ import (
 
 const DefaultBufferBytes = 256 * 1024
 
+const (
+	ServerCopyCapabilityVersion uint16 = 1
+	MaxServerCopyBytes          uint64 = 1 << 40
+)
+
 var planIDPattern = regexp.MustCompile(`^plan_[a-z2-7]{26}$`)
 
 type ClipboardKind string
@@ -101,6 +106,17 @@ type Intent struct {
 	Name                 string          `json:"name"`
 	ConflictPolicy       ConflictPolicy  `json:"conflict_policy"`
 	ConflictConfirmed    bool            `json:"conflict_confirmed"`
+	DirectPolicy         DirectPolicy    `json:"direct_policy"`
+	Bandwidth            BandwidthPolicy `json:"bandwidth,omitempty"`
+}
+
+type BandwidthPolicy struct {
+	Required          bool   `json:"required,omitempty"`
+	JobBytesPerSecond uint64 `json:"job_bytes_per_second,omitempty"`
+}
+
+func (policy BandwidthPolicy) requiresControl() bool {
+	return policy.Required || policy.JobBytesPerSecond > 0
 }
 
 type DeleteIntent struct {
@@ -113,6 +129,12 @@ type DeleteIntent struct {
 type CapabilityBinding struct {
 	Revision   domain.CapabilityRevision `json:"revision"`
 	Capability domain.Capability         `json:"capability"`
+}
+
+type ServerCopyBinding struct {
+	Revision   domain.CapabilityRevision `json:"revision"`
+	Capability domain.Capability         `json:"capability"`
+	MaxBytes   uint64                    `json:"max_bytes"`
 }
 
 type Plan struct {
@@ -136,6 +158,8 @@ type Plan struct {
 	SourceCapability                CapabilityBinding        `json:"source_capability"`
 	DestinationCapability           CapabilityBinding        `json:"destination_capability"`
 	Route                           Route                    `json:"route"`
+	DirectPolicy                    DirectPolicy             `json:"direct_policy"`
+	Bandwidth                       BandwidthPolicy          `json:"bandwidth,omitempty"`
 	Verification                    Verification             `json:"verification"`
 	ConflictPolicy                  ConflictPolicy           `json:"conflict_policy"`
 	BufferBytes                     uint32                   `json:"buffer_bytes"`
@@ -143,7 +167,10 @@ type Plan struct {
 	MoveStrategy                    MoveStrategy             `json:"move_strategy,omitempty"`
 	MoveCapability                  *CapabilityBinding       `json:"move_capability,omitempty"`
 	SourceDeleteCapability          *CapabilityBinding       `json:"source_delete_capability,omitempty"`
+	ServerCopy                      *ServerCopyBinding       `json:"server_copy,omitempty"`
 	SameHostCopy                    *SameHostCopyBinding     `json:"same_host_copy,omitempty"`
+	Level2Preflight                 *Level2PreflightBinding  `json:"level2_preflight,omitempty"`
+	RouteEvidence                   *RouteEvidence           `json:"route_evidence,omitempty"`
 	DeleteRecursive                 bool                     `json:"delete_recursive,omitempty"`
 	DeleteIrreversible              bool                     `json:"delete_irreversible,omitempty"`
 	DeleteTrash                     bool                     `json:"delete_trash,omitempty"`
@@ -208,6 +235,7 @@ func (resolver MapResolver) Resolve(endpointID domain.EndpointID) (providerapi.P
 type Planner struct {
 	resolver Resolver
 	sameHost SameHostCopyBackend
+	level2   level2PreflightBackend
 }
 
 func NewPlanner(resolver Resolver) *Planner { return &Planner{resolver: resolver} }
@@ -354,6 +382,8 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 			Capability: destinationCapability,
 		},
 		Route:                  chooseRoute(sourceProvider.Descriptor(), destinationProvider.Descriptor()),
+		DirectPolicy:           request.Intent.DirectPolicy,
+		Bandwidth:              request.Intent.Bandwidth,
 		Verification:           VerifySHA256,
 		ConflictPolicy:         request.Intent.ConflictPolicy,
 		BufferBytes:            DefaultBufferBytes,
@@ -373,7 +403,11 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 			}
 		}
 	}
-	planner.trySameHostCopy(ctx, &plan)
+	if !tryServerCopy(destinationProvider, sourceSnapshot, destinationSnapshot, &plan) {
+		planner.trySameHostCopy(ctx, &plan)
+	}
+	planner.tryLevel2Preflight(ctx, request, &plan)
+	freezeRouteEvidence(&plan)
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {
 		initialState = job.StateAwaitingConfirmation
@@ -647,6 +681,9 @@ func validateFreezeRequest(request FreezeRequest) error {
 	if request.Intent.DestinationDirectory.EndpointID == "" || request.Intent.DestinationDirectory.Path == "" {
 		return errors.New("freeze copy: invalid destination")
 	}
+	if request.Intent.Bandwidth.JobBytesPerSecond > MaxBandwidthBytesPerSecond {
+		return errors.New("freeze copy: bandwidth exceeds hard ceiling")
+	}
 	if request.Intent.Name == "" || request.Intent.Name == "." || request.Intent.Name == ".." || path.Base(request.Intent.Name) != request.Intent.Name || strings.IndexByte(request.Intent.Name, 0) >= 0 {
 		return errors.New("freeze copy: destination name is not one path component")
 	}
@@ -679,6 +716,26 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		return jobstore.CreateRequest{}, fmt.Errorf("freeze copy: encode frozen plan: %w", err)
 	}
 	planString := string(planJSON)
+	eventPayload := struct {
+		SelectedRoute     Route           `json:"selected_route"`
+		RouteReason       RouteReason     `json:"route_reason"`
+		IntegrityPolicy   IntegrityPolicy `json:"integrity_policy"`
+		Verification      Verification    `json:"verification"`
+		DowngradeBoundary string          `json:"downgrade_boundary"`
+		ProgressSemantics string          `json:"progress_semantics"`
+	}{}
+	if evidence := plan.RouteEvidence; evidence != nil {
+		eventPayload.SelectedRoute = evidence.Selected.Route
+		eventPayload.RouteReason = evidence.Selected.Reason
+		eventPayload.IntegrityPolicy = evidence.Integrity.Policy
+		eventPayload.Verification = evidence.Integrity.Verification
+		eventPayload.DowngradeBoundary = evidence.DowngradeBoundary
+		eventPayload.ProgressSemantics = evidence.ProgressSemantics
+	}
+	eventPayloadJSON, err := json.Marshal(eventPayload)
+	if err != nil {
+		return jobstore.CreateRequest{}, fmt.Errorf("freeze copy: encode route event evidence: %w", err)
+	}
 	steps := []jobstore.Step{
 		{Kind: "transfer", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 		{Kind: "verify", SourceJSON: &sourceString, DestinationJSON: &destinationString},
@@ -700,20 +757,21 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		}
 	}
 	create := jobstore.CreateRequest{
-		PlanID:          plan.PlanID,
-		RequestID:       request.RequestID,
-		JobID:           plan.JobID,
-		Kind:            string(plan.Kind),
-		SourceJSON:      sourceString,
-		DestinationJSON: &planString,
-		Route:           string(plan.Route),
-		Verification:    string(plan.Verification),
-		ConflictPolicy:  string(plan.ConflictPolicy),
-		RiskClass:       "filesystem_write",
-		InitialState:    initialState,
-		EventID:         request.EventID,
-		Now:             request.Now,
-		Steps:           steps,
+		PlanID:           plan.PlanID,
+		RequestID:        request.RequestID,
+		JobID:            plan.JobID,
+		Kind:             string(plan.Kind),
+		SourceJSON:       sourceString,
+		DestinationJSON:  &planString,
+		Route:            string(plan.Route),
+		Verification:     string(plan.Verification),
+		ConflictPolicy:   string(plan.ConflictPolicy),
+		RiskClass:        "filesystem_write",
+		InitialState:     initialState,
+		EventID:          request.EventID,
+		EventPayloadJSON: string(eventPayloadJSON),
+		Now:              request.Now,
+		Steps:            steps,
 	}
 	if initialState == job.StateAwaitingConfirmation {
 		create.InitialConflict = &jobstore.ConflictSeed{

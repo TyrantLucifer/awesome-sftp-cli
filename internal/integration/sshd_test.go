@@ -3,7 +3,6 @@
 package integration
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -23,6 +22,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
 )
@@ -444,7 +444,7 @@ type testSSHD struct {
 	root     string
 	port     int
 	command  *exec.Cmd
-	logs     bytes.Buffer
+	logs     testkit.ConcurrentBuffer
 	stopOnce sync.Once
 }
 

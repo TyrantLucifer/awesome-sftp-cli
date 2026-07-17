@@ -193,6 +193,7 @@ const (
 	CapabilityTail           CapabilityName = "tail"
 	CapabilityWatch          CapabilityName = "watch"
 	CapabilitySameHostCopy   CapabilityName = "same_host_copy"
+	CapabilityDirectTransfer CapabilityName = "direct_transfer"
 )
 
 var capabilityOrder = []CapabilityName{
@@ -203,6 +204,7 @@ var capabilityOrder = []CapabilityName{
 	CapabilityTail,
 	CapabilityWatch,
 	CapabilitySameHostCopy,
+	CapabilityDirectTransfer,
 }
 
 type CapabilityRequest struct {

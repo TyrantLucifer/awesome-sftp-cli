@@ -64,6 +64,213 @@ func TestManagerContinuesCreatedJobAfterClientContextCancellation(t *testing.T) 
 	}
 }
 
+func TestManagerDoesNotPersistQueuedJobWhenQueueAdmissionIsExhausted(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("queue admission"), ConflictAsk)
+	ctx := context.Background()
+	store, database := openTransferStore(t, ctx, testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	limits := HardResourceCeilings()
+	limits.QueuedJobs = 1
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: &testkit.SequenceGenerator{},
+		MaxConcurrent: 1, MaxQueued: 1, ResourceLimits: limits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	manager.mu.Lock()
+	manager.started = true
+	manager.mu.Unlock()
+	occupied, err := manager.scheduler.TryAcquireResources(ResourceRequest{
+		JobID: "job-occupies-queue", Usage: ResourceUsage{QueuedJobs: 1},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer occupied.Release()
+
+	_, err = manager.CreateCopy(ctx, Intent{
+		Clipboard: ClipboardCopy, Source: fixture.plan.Source,
+		DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name:                 fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if !errors.Is(err, ErrResourceExhausted) {
+		t.Fatalf("CreateCopy() error = %v, want ErrResourceExhausted", err)
+	}
+	jobs, listErr := store.List(ctx, 10)
+	if listErr != nil {
+		t.Fatal(listErr)
+	}
+	if len(jobs) != 0 {
+		t.Fatalf("durable Jobs after rejected queue admission = %#v, want none", jobs)
+	}
+}
+
+func TestManagerPermanentlyImpossibleExecutionResourceFailsDurableJob(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("impossible execution"), ConflictAsk)
+	ctx := context.Background()
+	store, database := openTransferStore(t, ctx, testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	created, _, err := store.Create(ctx, fixture.create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := HardResourceCeilings()
+	limits.MemoryBytes = 1
+	generator := &testkit.SequenceGenerator{}
+	if _, err := generator.New("evt_"); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: generator,
+		Now:           func() time.Time { return fixture.create.Now.Add(time.Second) },
+		MaxConcurrent: 1, MaxQueued: 1, ResourceLimits: limits,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	manager.execute(created.JobID)
+	got, err := store.Get(ctx, created.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != job.StateFailed {
+		t.Fatalf("state after permanently impossible execution admission = %q, transition error = %v, want failed", got.State, manager.transitionError(created.JobID))
+	}
+}
+
+func TestManagerDurablyFailsQueuedJobWhenPlanDecodeFails(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("invalid durable plan"), ConflictAsk)
+	ctx := context.Background()
+	store, database := openTransferStore(t, ctx, testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	created, _, err := store.Create(ctx, fixture.create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, `UPDATE operation_plans SET source_json='{' WHERE plan_id=?`, fixture.create.PlanID); err != nil {
+		t.Fatal(err)
+	}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return fixture.create.Now.Add(time.Second) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	manager.execute(created.JobID)
+	got, err := store.Get(ctx, created.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != job.StateFailed {
+		t.Fatalf("state after invalid durable plan = %q, transition error = %v, want failed", got.State, manager.transitionError(created.JobID))
+	}
+}
+
+func TestManagerTerminalTransitionFallsBackToBoundedPayload(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("payload"), ConflictAsk)
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	created, _, err := store.Create(context.Background(), fixture.create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator := &testkit.SequenceGenerator{}
+	for index := 0; index < 64; index++ {
+		if _, err := generator.New("skip_"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_125, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	running, err := manager.transition(created, job.StateRunning, "job_started", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifying, err := manager.transition(running, job.StateVerifying, "job_verifying", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := manager.persistTerminal(
+		verifying,
+		job.StateCompleted,
+		"job_completed",
+		"completed",
+		map[string]any{"manifest": strings.Repeat("x", jobstore.MaxEventPayloadBytes)},
+	)
+	if err != nil {
+		t.Fatalf("persist terminal with fallback: %v", err)
+	}
+	if completed.State != job.StateCompleted {
+		t.Fatalf("terminal state = %q, want completed", completed.State)
+	}
+	events, err := store.ListEvents(context.Background(), created.JobID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := events[len(events)-1]
+	if len(last.PayloadJSON) > jobstore.MaxEventPayloadBytes || !strings.Contains(last.PayloadJSON, "details_omitted") {
+		t.Fatalf("fallback event payload = %d bytes: %s", len(last.PayloadJSON), last.PayloadJSON)
+	}
+}
+
+func TestManagerSurfacesUnrecoverableTerminalTransitionFailure(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("payload"), ConflictAsk)
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	created, _, err := store.Create(context.Background(), fixture.create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator := &testkit.SequenceGenerator{}
+	for index := 0; index < 64; index++ {
+		if _, err := generator.New("skip_"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_126, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	running, err := manager.transition(created, job.StateRunning, "job_started", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifying, err := manager.transition(running, job.StateVerifying, "job_verifying", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.generator = failingIDGenerator{}
+	manager.fail(verifying, errors.New("execution failed"))
+
+	waitContext, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, waitErr := manager.Wait(waitContext, created.JobID)
+	if waitErr == nil || errors.Is(waitErr, context.DeadlineExceeded) || !strings.Contains(waitErr.Error(), "persist bounded terminal fallback") {
+		t.Fatalf("Wait() error = %v, want surfaced terminal transition failure", waitErr)
+	}
+}
+
+type failingIDGenerator struct{}
+
+func (failingIDGenerator) New(string) (string, error) {
+	return "", errors.New("ID generator unavailable")
+}
+
 func TestManagerRunsDurableDirectoryJobAndReportsItemProgress(t *testing.T) {
 	sourceRoot := t.TempDir()
 	destinationRoot := t.TempDir()
@@ -394,6 +601,64 @@ func TestManagerPauseAndResumeAreDurableJobControls(t *testing.T) {
 	}
 }
 
+func TestManagerResumeReusesPendingQueueItem(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("pause queued and resume"), ConflictAsk)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	gatedSource := &gatedReadProvider{Provider: fixture.source, started: started, release: release}
+	resolver := MapResolver{
+		fixture.source.Descriptor().ID:      gatedSource,
+		fixture.destination.Descriptor().ID: fixture.destination,
+	}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(1_800_000_301, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	first, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: fixture.plan.Source,
+		DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name:                 "first", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("first worker did not reach gated source read")
+	}
+	second, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: fixture.plan.Source,
+		DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name:                 "second", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Pause(context.Background(), second.JobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Resume(context.Background(), second.JobID); err != nil {
+		t.Fatalf("Resume(queued paused Job): %v", err)
+	}
+	close(release)
+	if completed := waitForTerminal(t, manager, first.JobID); completed.State != job.StateCompleted {
+		t.Fatalf("first state = %q, want completed", completed.State)
+	}
+	if completed := waitForTerminal(t, manager, second.JobID); completed.State != job.StateCompleted {
+		t.Fatalf("resumed queued state = %q, want completed", completed.State)
+	}
+}
+
 func TestManagerResumeRetriesDurableRetryWaitJob(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("retry-wait"), ConflictAsk)
 	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
@@ -699,6 +964,13 @@ func TestManagerUsesFrozenAtomicRenameFastPathWithoutStreaming(t *testing.T) {
 	completed := waitForTerminal(t, manager, created.JobID)
 	if completed.State != job.StateCompleted {
 		t.Fatalf("atomic rename Job state = %q", completed.State)
+	}
+	views, err := manager.JobViews(context.Background(), 10)
+	if err != nil || len(views) != 1 {
+		t.Fatalf("atomic rename Job views = %+v, %v", views, err)
+	}
+	if views[0].PlannedRoute != RouteAtomicRename || views[0].Route != RouteAtomicRename {
+		t.Fatalf("atomic rename Job view = %+v", views[0])
 	}
 	reads, writes := implementation.streamCounts()
 	if reads != 0 || writes != 0 {

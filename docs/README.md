@@ -11,7 +11,7 @@ This repository treats documentation as part of the product contract. A feature 
 5. [Implementation plan](../IMPLEMENTATION_PLAN.md) tracks stage-level execution.
 6. [Stage specifications](stages/) define scope, tests, exit criteria, and handoff requirements for each stage.
 7. [Testing strategy](testing/strategy.md) defines the validation ladder and required fixtures.
-8. [Stage verification](verification/stage-04.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 1–3 ledgers remain immutable historical evidence.
+8. [Stage verification](verification/stage-05.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 0–4 ledgers remain immutable historical evidence.
 9. [Project state](../PROJECT_STATE.md) is the short, current handoff for the next work session.
 
 ## Engineering gates
@@ -31,7 +31,7 @@ Read only as far as needed, in this order:
 2. the active stage in `IMPLEMENTATION_PLAN.md`
 3. `docs/product/feature-matrix.md`
 4. the active `docs/stages/NN-*.md`
-5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 4)
+5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 5)
 6. ADRs and interfaces linked by that stage
 7. the complete worktree status/manifest plus the last green validation commands recorded in the verification record and `PROJECT_STATE.md`
 
@@ -61,15 +61,13 @@ Before marking a stage complete:
 
 The temporary `.superpowers/` visual workspace is intentionally ignored and cannot be the only source of implementation evidence. Durable decisions and final task verdicts must be copied into the approved design, active verification record, and linked documents.
 
-## Stage 3 cold-start capsule
+## Stage 5 cold-start capsule
 
-Stage 3 is the Preview/Edit/Cache slice on `codex/stage3-preview-edit-cache`; its final local verdict belongs in [Stage 3 verification](verification/stage-03.md), whose delivery link points to PR #3's immutable exact candidate SHA/tree and final Hosted runs (a commit cannot contain its own SHA). Evidence never lives only in chat or a temporary directory. Stage 3 preserves Stage 1 browsing/auth/workspaces and routes every edit write-back through Stage 2's durable Plan/Job/part/verify/commit path.
+Stage 5 is active on fixed branch `codex/stage5-direct-transfer-scale` from the sole verified baseline `06415e1e9fe5ffa93999f112b64aee0bd35e5c75`. Its authoritative live ledger is [Stage 5 verification](verification/stage-05.md); Draft PR [#5](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/5) stays unmerged until the exact final push and PR matrices are green. A commit cannot contain its own SHA, so the final identity is bound by Git/PR/Hosted metadata after the last documentation commit, never inferred from a predecessor checkpoint.
 
-- SQLite head is Version 3: V2 owns cache/lease/edit-session catalog; V3 adds reconstructible edit decision details. V3 checksum is `16ae664c033fb1fae7da937eae6c4b19c6b05430fa3499fa5f0da8daa58e1ab4`; head-3 contract digest is `a523d6c4aeebb386780f7283b63aacb175cf0420027114edac51a032425615a2`.
-- Cache defaults are 2 GiB/4,096 managed objects globally, where objects are entries+materializations; the non-shared workspace share is 1 GiB. Live publication/handoff is serialized through admission, which may make room in at most four batches of 256 candidates before typed `resource_exhausted`. Startup lifecycle uses 256-item keyset pages for at most 64 batches (16,384 theoretical candidates, practically capped by 4,096 managed objects); it immediately reclaims only exact provably dead Preview handoffs and retains edit/open/upload references. Policies are `lru`, `ephemeral`, and `pinned_offline`; disconnected pinned reuse requires one exact revalidated historical fingerprint and is marked freshness `unknown`. Lease heartbeat/expiry/opener grace are 30 seconds/2 minutes/15 minutes.
-- Preview reads 64 KiB per request and retains/renders at most 512 KiB; JSON is 256 KiB/depth 64; output is 10,000 lines/4,096 spans, with bounded full Provider object metadata. Active image probing is 200 ms/256 bytes; terminal encoding is 4 MiB payload/6 MiB output/1,000,000 pixels. Conflict diff is 32 KiB per side/512 lines/64 KiB output. Edit baseline/observation and Stage 2 pre-publish checks include full streamed content SHA-256, so same-stat byte changes conflict. `!` is single-flight, 32 KiB, `Esc`-cancelable, capped at 15 minutes, and uses separate 1 MiB stdout/stderr rings.
-- Catalog/manifest inconsistency preserves bytes and fails closed. Existing manifests lack policy/dirty/reference/lease state, so Stage 3 does not claim automatic catalog reconstruction; unsafe cleanup and guessed rebuild are forbidden.
-- User behavior and exact key sequences are in the [Stage 3 user guide](user/preview-edit-cache.md); architecture and security contracts are [ADR-0014](architecture/adr/0014-stage3-cache-preview-and-edit-session-contracts.md) and [ADR-0015](architecture/adr/0015-stage3-external-process-shell-and-tty-contracts.md).
-- Stage 4–6 remain outside this slice: recursive search, Helper install/handshake/hash/watch/tail, cross-host direct/scale hardening, packaging/signing/notarization, and release readiness. Production Helper distribution remains **CLOSED** while real offline private-key custody/dual-control ceremony evidence is absent. The unique first Stage 4 implementation action is the RED Level 0 recursive filename-search contract over the standard SFTP Provider—bounded streaming pages, cancellation, generation isolation and explicit partial results—without invoking or distributing a Helper. Custody/recovery/revoke/rotation evidence remains a separate prerequisite before any production Helper artifact or remote install path.
+- M5.1–M5.4 are locally implemented: unified frozen route evidence, declared server copy, fixture-only Level 2 direct, safe downgrade/fault equivalence, 50k/million/100 GiB scale contracts, bounded BFS, shared bandwidth/resource scheduling, Endpoint lease reuse, bounded events/logs and reproducible trends.
+- Production Helper distribution and production Level 2 remain **CLOSED**. Ordinary runtime has no fixture backend/config switch and records `production_distribution_closed`; no Agent forwarding, Kerberos delegation, key/ticket/known-host copying or relaxed host-key policy is introduced.
+- ADR-0017 explicitly decomposes Stage 5's 100 GiB evidence: actual/synthetic 100 GiB executions prove 64-bit and fixed-resource/cancel boundaries, while the same Worker/Journal/Scheduler lifecycle proves pause/checksum/restart resume/rate/SHA-256/commit on sparse-shaped multi-quantum content. A complete physical 100 GiB LocalFS/SFTP run remains a Stage 6 nightly/release gate and is not claimed by the fast gate.
+- Stage 0–4 evidence remains immutable history. Stage 6 packaging, signing, notarization and release readiness have not started, so Stage 5 completion is not a 1.0 release claim.
 
-Final acceptance must run and record `make docs-check`, `make check`, `make lint`, `make supply-chain`, `make ci`, `go test -race ./...`, and `GOTOOLCHAIN=go1.25.12 make check`, plus the native/platform and pollution gates listed in the Stage 3 verification ledger. A new session must not infer green status from this capsule; it must follow the verification ledger to PR #3's exact-SHA delivery results and reconcile them with `PROJECT_STATE.md`.
+A new session must not infer final green status from this capsule. It must reconcile `PROJECT_STATE.md`, `IMPLEMENTATION_PLAN.md`, the feature matrix and the Stage 5 ledger, then require the listed CI-equivalent current/oldstable/race/scale/native/reproducibility/pollution gates, two fresh independent reviews, exact final push/PR Hosted success and a Ready-but-unmerged PR.

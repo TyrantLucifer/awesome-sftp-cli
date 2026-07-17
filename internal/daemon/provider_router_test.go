@@ -285,6 +285,67 @@ func TestProviderSessionJobLeaseOutlivesClientAndClosesAfterRelease(t *testing.T
 	}
 }
 
+func TestProviderSessionsBoundDynamicConnectionsAndReuseAdmissionAfterIdleRelease(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessionsWithLimits([]providerapi.Provider{local}, 4, ProviderSessionLimits{
+		MaxDynamicEndpoints: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := make(map[string]*closingProvider)
+	factory.SetSSHConnector(func(_ context.Context, hostAlias string) (providerapi.Provider, error) {
+		id := domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+		if hostAlias == "second" {
+			id = "ep_cccccccccccccccccccccccccc"
+		}
+		remote := &closingProvider{
+			Provider:   local,
+			descriptor: domain.Endpoint{ID: id, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias},
+			closed:     make(chan struct{}),
+		}
+		created[hostAlias] = remote
+		return remote, nil
+	})
+	session := factory.NewSession()
+	defer session.Close()
+
+	connect := func(alias string) error {
+		payload, marshalErr := json.Marshal(ipc.ProviderConnectSSHRequest{HostAlias: alias})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, handleErr := session.Handle(context.Background(), ProviderConnectSSH, payload)
+		return handleErr
+	}
+	if err := connect("first"); err != nil {
+		t.Fatalf("first connect: %v", err)
+	}
+	if err := connect("second"); !domain.IsCode(err, domain.CodeResourceExhausted) {
+		t.Fatalf("second connect error = %v, want resource_exhausted", err)
+	}
+	select {
+	case <-created["second"].closed:
+	case <-time.After(time.Second):
+		t.Fatal("provider rejected by admission was not closed")
+	}
+
+	firstRelease, err := json.Marshal(ipc.ProviderReleaseRequest{EndpointID: string(created["first"].descriptor.ID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Handle(context.Background(), ProviderRelease, firstRelease); err != nil {
+		t.Fatalf("release first: %v", err)
+	}
+	if err := connect("second"); err != nil {
+		t.Fatalf("connect after idle release: %v", err)
+	}
+	snapshot := factory.ResourceSnapshot()
+	if snapshot.DynamicEndpoints != 1 || snapshot.MaxDynamicEndpoints != 1 {
+		t.Fatalf("resource snapshot = %+v", snapshot)
+	}
+}
+
 func TestProviderSessionsAcquireRehydratesFrozenEndpointDescriptor(t *testing.T) {
 	local := testLocalProvider(t)
 	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
@@ -316,6 +377,100 @@ func TestProviderSessionsAcquireRehydratesFrozenEndpointDescriptor(t *testing.T)
 	case <-time.After(time.Second):
 		t.Fatal("rehydrated endpoint was not closed after Job release")
 	}
+}
+
+func TestProviderSessionsAcquireRollsBackEarlierRehydrationWhenLaterEndpointFails(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceDescriptor := domain.Endpoint{ID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Kind: domain.EndpointSSH, DisplayName: "source", SSHHostAlias: "source"}
+	destinationDescriptor := domain.Endpoint{ID: "ep_cccccccccccccccccccccccccc", Kind: domain.EndpointSSH, DisplayName: "destination", SSHHostAlias: "destination"}
+	remote := &closingProvider{Provider: local, descriptor: sourceDescriptor, closed: make(chan struct{})}
+	factory.SetEndpointConnector(func(_ context.Context, endpoint domain.Endpoint) (providerapi.Provider, error) {
+		if endpoint.ID == sourceDescriptor.ID {
+			return remote, nil
+		}
+		return nil, fmt.Errorf("connect %s: unavailable", endpoint.ID)
+	})
+	if _, err := factory.Acquire(context.Background(), transfer.Plan{
+		SourceEndpoint: sourceDescriptor, DestinationEndpoint: destinationDescriptor,
+	}); err == nil {
+		t.Fatal("Acquire() error = nil, want second endpoint failure")
+	}
+	select {
+	case <-remote.closed:
+	case <-time.After(time.Second):
+		t.Fatal("earlier rehydrated endpoint was not closed after Acquire rollback")
+	}
+	if _, err := factory.Resolve(sourceDescriptor.ID); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("Resolve(rolled back source) error = %v, want not_found", err)
+	}
+}
+
+func TestProviderSessionsConcurrentAcquireKeepsEndpointObservedByAnotherPlan(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sharedDescriptor := domain.Endpoint{ID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Kind: domain.EndpointSSH, DisplayName: "shared", SSHHostAlias: "shared"}
+	failingDescriptor := domain.Endpoint{ID: "ep_cccccccccccccccccccccccccc", Kind: domain.EndpointSSH, DisplayName: "failing", SSHHostAlias: "failing"}
+	secondDescriptor := domain.Endpoint{ID: "ep_dddddddddddddddddddddddddd", Kind: domain.EndpointSSH, DisplayName: "second", SSHHostAlias: "second"}
+	shared := &closingProvider{Provider: local, descriptor: sharedDescriptor, closed: make(chan struct{})}
+	second := &closingProvider{Provider: local, descriptor: secondDescriptor, closed: make(chan struct{})}
+	failingEntered := make(chan struct{})
+	releaseFailing := make(chan struct{})
+	secondEntered := make(chan struct{})
+	releaseSecond := make(chan struct{})
+	factory.SetEndpointConnector(func(_ context.Context, endpoint domain.Endpoint) (providerapi.Provider, error) {
+		switch endpoint.ID {
+		case sharedDescriptor.ID:
+			return shared, nil
+		case failingDescriptor.ID:
+			close(failingEntered)
+			<-releaseFailing
+			return nil, fmt.Errorf("connect %s: unavailable", endpoint.ID)
+		case secondDescriptor.ID:
+			close(secondEntered)
+			<-releaseSecond
+			return second, nil
+		default:
+			return nil, fmt.Errorf("unexpected endpoint %s", endpoint.ID)
+		}
+	})
+
+	firstDone := make(chan error, 1)
+	go func() {
+		_, acquireErr := factory.Acquire(context.Background(), transfer.Plan{
+			SourceEndpoint: sharedDescriptor, DestinationEndpoint: failingDescriptor,
+		})
+		firstDone <- acquireErr
+	}()
+	<-failingEntered
+	type acquireResult struct {
+		release func()
+		err     error
+	}
+	secondDone := make(chan acquireResult, 1)
+	go func() {
+		release, acquireErr := factory.Acquire(context.Background(), transfer.Plan{
+			SourceEndpoint: sharedDescriptor, DestinationEndpoint: secondDescriptor,
+		})
+		secondDone <- acquireResult{release: release, err: acquireErr}
+	}()
+	<-secondEntered
+	close(releaseFailing)
+	if err := <-firstDone; err == nil {
+		t.Fatal("first Acquire() error = nil, want later-endpoint failure")
+	}
+	close(releaseSecond)
+	result := <-secondDone
+	if result.err != nil {
+		t.Fatalf("concurrent Acquire() lost the shared endpoint: %v", result.err)
+	}
+	result.release()
 }
 
 func TestProviderSessionsRouteAuthPromptToClaimingSession(t *testing.T) {

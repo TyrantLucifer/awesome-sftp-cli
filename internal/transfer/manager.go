@@ -10,6 +10,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 )
@@ -22,19 +23,26 @@ type SyncBackIntent struct {
 }
 
 type ManagerConfig struct {
-	Store         *jobstore.Store
-	Resolver      Resolver
-	Generator     domain.Generator
-	Now           func() time.Time
-	MaxConcurrent int
-	MaxQueued     int
-	SameHostCopy  SameHostCopyBackend
+	Store           *jobstore.Store
+	Resolver        Resolver
+	Generator       domain.Generator
+	Now             func() time.Time
+	MaxConcurrent   int
+	MaxQueued       int
+	SameHostCopy    SameHostCopyBackend
+	SchedulerClock  foundation.Clock
+	SchedulerPolicy SchedulerPolicy
+	ResourceLimits  ResourceLimits
 }
 
 type JobView struct {
 	Snapshot       jobstore.Snapshot `json:"snapshot"`
 	Kind           OperationKind     `json:"kind"`
 	Route          Route             `json:"route"`
+	PlannedRoute   Route             `json:"planned_route"`
+	DowngradedFrom Route             `json:"downgraded_from,omitempty"`
+	RouteReason    RouteReason       `json:"route_reason,omitempty"`
+	RouteEvidence  *RouteEvidence    `json:"route_evidence,omitempty"`
 	Source         domain.Location   `json:"source"`
 	Final          domain.Location   `json:"final"`
 	Phase          Phase             `json:"phase,omitempty"`
@@ -52,53 +60,100 @@ type Manager struct {
 	resolver  Resolver
 	planner   *Planner
 	sameHost  SameHostCopyBackend
+	level2    level2DataBackend
 	generator domain.Generator
 	now       func() time.Time
 	queue     chan domain.JobID
+	scheduler *TransferScheduler
 
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	// queueMu serializes consumption of a queued item with a paused Job being
+	// resumed onto that same still-pending item.
+	queueMu sync.Mutex
 
-	mu      sync.Mutex
-	started bool
-	waiters map[domain.JobID][]chan struct{}
-	leases  map[domain.JobID]func()
-	workers int
+	mu               sync.Mutex
+	started          bool
+	waiters          map[domain.JobID][]chan struct{}
+	leases           map[domain.JobID]func()
+	queueLeases      map[domain.JobID]*ResourceLease
+	transitionErrors map[domain.JobID]error
+	workers          int
 }
 
 func NewManager(config ManagerConfig) (*Manager, error) {
 	if config.Store == nil || config.Resolver == nil || config.Generator == nil {
 		return nil, errors.New("new transfer manager: store, resolver, and generator are required")
 	}
-	if config.MaxConcurrent < 1 || config.MaxConcurrent > 32 {
-		return nil, errors.New("new transfer manager: concurrency is outside 1..32")
+	hard := HardResourceCeilings()
+	limits := config.ResourceLimits
+	if limits == (ResourceLimits{}) {
+		limits = hard
+	}
+	limits, err := TightenResourceLimits(limits)
+	if err != nil {
+		return nil, fmt.Errorf("new transfer manager: resource limits: %w", err)
+	}
+	if config.MaxConcurrent < 1 {
+		return nil, errors.New("new transfer manager: concurrency must be positive")
+	}
+	if uint32(config.MaxConcurrent) > limits.ActiveJobs { //nolint:gosec // positivity and hard ceiling are checked immediately above.
+		return nil, fmt.Errorf("new transfer manager: concurrency %d exceeds configured ceiling %d: %w", config.MaxConcurrent, limits.ActiveJobs, ErrResourceLimitExpansion)
 	}
 	if config.MaxQueued == 0 {
 		config.MaxQueued = defaultQueuedJobs
 	}
-	if config.MaxQueued < config.MaxConcurrent || config.MaxQueued > 4096 {
-		return nil, errors.New("new transfer manager: queue budget is outside concurrency..4096")
+	if config.MaxQueued < config.MaxConcurrent {
+		return nil, errors.New("new transfer manager: queue budget is below concurrency")
+	}
+	if uint32(config.MaxQueued) > limits.QueuedJobs { //nolint:gosec // positivity and hard ceiling are checked immediately above.
+		return nil, fmt.Errorf("new transfer manager: queue budget %d exceeds configured ceiling %d: %w", config.MaxQueued, limits.QueuedJobs, ErrResourceLimitExpansion)
 	}
 	now := config.Now
 	if now == nil {
 		now = time.Now
 	}
+	schedulerClock := config.SchedulerClock
+	if schedulerClock == nil {
+		schedulerClock = foundation.RealClock{}
+	}
+	scheduler, err := NewTransferSchedulerWithLimits(schedulerClock, config.SchedulerPolicy, limits)
+	if err != nil {
+		return nil, fmt.Errorf("new transfer manager: scheduler: %w", err)
+	}
 	rootContext, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		store:     config.Store,
-		resolver:  config.Resolver,
-		planner:   NewPlannerWithSameHost(config.Resolver, config.SameHostCopy),
-		sameHost:  config.SameHostCopy,
-		generator: config.Generator,
-		now:       now,
-		queue:     make(chan domain.JobID, config.MaxQueued),
-		ctx:       rootContext,
-		cancel:    cancel,
-		waiters:   make(map[domain.JobID][]chan struct{}),
-		leases:    make(map[domain.JobID]func()),
-		workers:   config.MaxConcurrent,
+		store:            config.Store,
+		resolver:         config.Resolver,
+		planner:          NewPlannerWithSameHost(config.Resolver, config.SameHostCopy),
+		sameHost:         config.SameHostCopy,
+		generator:        config.Generator,
+		now:              now,
+		queue:            make(chan domain.JobID, config.MaxQueued),
+		scheduler:        scheduler,
+		ctx:              rootContext,
+		cancel:           cancel,
+		waiters:          make(map[domain.JobID][]chan struct{}),
+		leases:           make(map[domain.JobID]func()),
+		queueLeases:      make(map[domain.JobID]*ResourceLease),
+		transitionErrors: make(map[domain.JobID]error),
+		workers:          config.MaxConcurrent,
 	}, nil
+}
+
+func (manager *Manager) UpdateBandwidthPolicy(policy SchedulerPolicy) error {
+	if manager == nil || manager.scheduler == nil {
+		return errors.New("update bandwidth policy: manager scheduler is unavailable")
+	}
+	return manager.scheduler.Update(policy)
+}
+
+func (manager *Manager) SchedulerSnapshot() SchedulerSnapshot {
+	if manager == nil || manager.scheduler == nil {
+		return SchedulerSnapshot{}
+	}
+	return manager.scheduler.Snapshot()
 }
 
 func (manager *Manager) Start(ctx context.Context) error {
@@ -181,17 +236,26 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
+	var queueLease *ResourceLease
 	var release func()
 	if create.InitialState == job.StateQueued {
+		queueLease, err = manager.acquireQueueLease(plan.JobID)
+		if err != nil {
+			return jobstore.Snapshot{}, err
+		}
 		if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
 			release, err = acquirer.Acquire(ctx, plan)
 			if err != nil {
+				queueLease.Release()
 				return jobstore.Snapshot{}, err
 			}
 		}
 	}
 	snapshot, _, err := manager.store.Create(ctx, create)
 	if err != nil {
+		if queueLease != nil {
+			queueLease.Release()
+		}
 		if release != nil {
 			release()
 		}
@@ -201,12 +265,17 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 		if release != nil {
 			manager.retainLease(snapshot.JobID, release)
 		}
-		if err := manager.enqueue(plan.JobID); err != nil {
+		if err := manager.enqueueWithLease(plan.JobID, queueLease); err != nil {
 			manager.releaseLease(snapshot.JobID)
 			return jobstore.Snapshot{}, err
 		}
-	} else if release != nil {
-		release()
+	} else {
+		if queueLease != nil {
+			queueLease.Release()
+		}
+		if release != nil {
+			release()
+		}
 	}
 	return snapshot, nil
 }
@@ -242,15 +311,21 @@ func (manager *Manager) CreateSyncBack(ctx context.Context, intent SyncBackInten
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
+	queueLease, err := manager.acquireQueueLease(plan.JobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
 	var release func()
 	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
 		release, err = acquirer.Acquire(ctx, plan)
 		if err != nil {
+			queueLease.Release()
 			return jobstore.Snapshot{}, err
 		}
 	}
 	snapshot, _, err := manager.store.Create(ctx, create)
 	if err != nil {
+		queueLease.Release()
 		if release != nil {
 			release()
 		}
@@ -259,7 +334,7 @@ func (manager *Manager) CreateSyncBack(ctx context.Context, intent SyncBackInten
 	if release != nil {
 		manager.retainLease(snapshot.JobID, release)
 	}
-	if err := manager.enqueue(plan.JobID); err != nil {
+	if err := manager.enqueueWithLease(plan.JobID, queueLease); err != nil {
 		manager.releaseLease(snapshot.JobID)
 		return jobstore.Snapshot{}, err
 	}
@@ -292,15 +367,21 @@ func (manager *Manager) CreateDelete(ctx context.Context, intent DeleteIntent) (
 	if err != nil {
 		return jobstore.Snapshot{}, err
 	}
+	queueLease, err := manager.acquireQueueLease(plan.JobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
 	var release func()
 	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
 		release, err = acquirer.Acquire(ctx, plan)
 		if err != nil {
+			queueLease.Release()
 			return jobstore.Snapshot{}, err
 		}
 	}
 	snapshot, _, err := manager.store.Create(ctx, create)
 	if err != nil {
+		queueLease.Release()
 		if release != nil {
 			release()
 		}
@@ -309,7 +390,7 @@ func (manager *Manager) CreateDelete(ctx context.Context, intent DeleteIntent) (
 	if release != nil {
 		manager.retainLease(snapshot.JobID, release)
 	}
-	if err := manager.enqueue(snapshot.JobID); err != nil {
+	if err := manager.enqueueWithLease(snapshot.JobID, queueLease); err != nil {
 		manager.releaseLease(snapshot.JobID)
 		return jobstore.Snapshot{}, err
 	}
@@ -365,10 +446,27 @@ func (manager *Manager) Resume(ctx context.Context, jobID domain.JobID) (jobstor
 	if snapshot.State != job.StatePaused && snapshot.State != job.StateWaitingAuth && snapshot.State != job.StateRetryWait {
 		return jobstore.Snapshot{}, fmt.Errorf("resume Job: state %q cannot be resumed", snapshot.State)
 	}
+	if snapshot.State == job.StatePaused {
+		manager.queueMu.Lock()
+		manager.mu.Lock()
+		pendingQueueItem := manager.queueLeases[jobID] != nil
+		manager.mu.Unlock()
+		if pendingQueueItem {
+			queued, transitionErr := manager.transition(snapshot, job.StateQueued, "job_resumed", map[string]string{"reason": "user"})
+			manager.queueMu.Unlock()
+			return queued, transitionErr
+		}
+		manager.queueMu.Unlock()
+	}
+	queueLease, err := manager.acquireQueueLease(jobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
 	if snapshot.PauseRequested {
 		value := false
 		snapshot, err = manager.updateControl(ctx, snapshot, &value, nil, "job_pause_cleared")
 		if err != nil {
+			queueLease.Release()
 			return jobstore.Snapshot{}, err
 		}
 	}
@@ -378,9 +476,10 @@ func (manager *Manager) Resume(ctx context.Context, jobID domain.JobID) (jobstor
 	}
 	queued, err := manager.transition(snapshot, job.StateQueued, eventKind, map[string]string{"reason": "user"})
 	if err != nil {
+		queueLease.Release()
 		return jobstore.Snapshot{}, err
 	}
-	if err := manager.enqueue(jobID); err != nil {
+	if err := manager.enqueueWithLease(jobID, queueLease); err != nil {
 		return jobstore.Snapshot{}, err
 	}
 	return queued, nil
@@ -426,8 +525,13 @@ func (manager *Manager) ResolveConflict(ctx context.Context, jobID domain.JobID,
 	if conflictIndex < 0 {
 		return jobstore.Snapshot{}, errors.New("resolve conflict: Job has no waiting conflict")
 	}
+	queueLease, err := manager.acquireQueueLease(jobID)
+	if err != nil {
+		return jobstore.Snapshot{}, err
+	}
 	eventID, err := domain.NewEventID(manager.generator)
 	if err != nil {
+		queueLease.Release()
 		return jobstore.Snapshot{}, err
 	}
 	applyScope := "item"
@@ -439,10 +543,11 @@ func (manager *Manager) ResolveConflict(ctx context.Context, jobID domain.JobID,
 		Resolution: string(resolution), ApplyScope: applyScope, EventID: eventID, Now: manager.now(),
 	})
 	if err != nil {
+		queueLease.Release()
 		return jobstore.Snapshot{}, err
 	}
 	manager.notify(jobID)
-	if err := manager.enqueue(jobID); err != nil {
+	if err := manager.enqueueWithLease(jobID, queueLease); err != nil {
 		return jobstore.Snapshot{}, err
 	}
 	return queued, nil
@@ -471,8 +576,12 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 		if err != nil {
 			return nil, err
 		}
+		plannedRoute := plan.Route
+		if plan.RouteEvidence != nil && plan.RouteEvidence.Selected.Route != "" {
+			plannedRoute = plan.RouteEvidence.Selected.Route
+		}
 		view := JobView{
-			Snapshot: snapshot, Kind: plan.Kind, Route: plan.Route, Source: plan.Source.Location, Final: plan.Final,
+			Snapshot: snapshot, Kind: plan.Kind, Route: plannedRoute, PlannedRoute: plannedRoute, RouteEvidence: plan.RouteEvidence, Source: plan.Source.Location, Final: plan.Final,
 			BytesTotal: plan.Source.Fingerprint.Size, Items: 1,
 		}
 		if plan.Source.Kind == domain.EntryDirectory {
@@ -487,6 +596,11 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			view.Phase = checkpoint.Phase
 			view.Bytes = checkpoint.Offset
 			view.Final = checkpoint.Final
+			if checkpoint.ActualRoute != "" {
+				view.Route = checkpoint.ActualRoute
+			}
+			view.DowngradedFrom = checkpoint.DowngradedFrom
+			view.RouteReason = checkpoint.RouteReason
 			if plan.Source.Kind == domain.EntryDirectory {
 				view.Items = checkpoint.Items
 			}
@@ -528,6 +642,9 @@ func (manager *Manager) waitUntil(ctx context.Context, jobID domain.JobID, done 
 		if done(snapshot.State) {
 			return snapshot, nil
 		}
+		if transitionErr := manager.transitionError(jobID); transitionErr != nil {
+			return snapshot, transitionErr
+		}
 		changed := make(chan struct{}, 1)
 		manager.mu.Lock()
 		manager.waiters[jobID] = append(manager.waiters[jobID], changed)
@@ -540,6 +657,10 @@ func (manager *Manager) waitUntil(ctx context.Context, jobID domain.JobID, done 
 		if done(latest.State) {
 			manager.removeWaiter(jobID, changed)
 			return latest, nil
+		}
+		if transitionErr := manager.transitionError(jobID); transitionErr != nil {
+			manager.removeWaiter(jobID, changed)
+			return latest, transitionErr
 		}
 		select {
 		case <-ctx.Done():
@@ -598,21 +719,36 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	if release != nil {
 		defer release()
 	}
+	manager.queueMu.Lock()
+	manager.releaseQueueLease(jobID)
 	snapshot, err := manager.store.Get(manager.ctx, jobID)
+	manager.queueMu.Unlock()
 	if err != nil || snapshot.State != job.StateQueued {
 		return
 	}
 	record, err := manager.store.GetPlan(manager.ctx, jobID)
 	if err != nil {
+		manager.fail(snapshot, fmt.Errorf("execute Job: load durable plan: %w", err))
 		return
 	}
 	plan, err := DecodePlan(record, jobID)
 	if err != nil {
+		manager.fail(snapshot, fmt.Errorf("execute Job: decode durable plan: %w", err))
 		return
 	}
+	defer manager.scheduler.ReleaseJob(plan.JobID)
 	if err := manager.applyConflictResolution(&plan); err != nil {
+		manager.fail(snapshot, fmt.Errorf("execute Job: apply durable conflict resolution: %w", err))
 		return
 	}
+	resourceLease, err := manager.scheduler.AcquireResources(manager.ctx, executionResourceRequest(plan))
+	if err != nil {
+		if manager.ctx.Err() == nil {
+			manager.fail(snapshot, fmt.Errorf("execute Job: acquire execution resources: %w", err))
+		}
+		return
+	}
+	defer resourceLease.Release()
 	snapshot, err = manager.transition(snapshot, job.StateRunning, "job_started", map[string]any{})
 	if err != nil {
 		return
@@ -636,7 +772,11 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		result, executeErr = manager.executeAtomicMove(plan)
 	} else {
 		journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
-		result, executeErr = NewWorkerWithSameHost(manager.resolver, journal, manager.sameHost).Execute(manager.ctx, plan, manager.control(jobID))
+		worker := &Worker{
+			resolver: manager.resolver, journal: journal, sameHost: manager.sameHost,
+			level2: manager.level2, scheduler: manager.scheduler,
+		}
+		result, executeErr = worker.Execute(manager.ctx, plan, manager.control(jobID))
 	}
 	if manager.ctx.Err() != nil {
 		return
@@ -647,9 +787,13 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	}
 	switch {
 	case errors.Is(executeErr, ErrPaused):
-		_, _ = manager.transition(current, job.StatePaused, "job_paused", map[string]any{"offset": result.Bytes})
+		if _, transitionErr := manager.transition(current, job.StatePaused, "job_paused", map[string]any{"offset": result.Bytes}); transitionErr != nil {
+			manager.fail(current, fmt.Errorf("persist paused state: %w", transitionErr))
+		}
 	case errors.Is(executeErr, ErrCanceled):
-		_, _ = manager.transitionTerminal(current, job.StateCanceled, "job_canceled", "canceled with resumable part retained", map[string]any{"offset": result.Bytes})
+		if _, transitionErr := manager.persistTerminal(current, job.StateCanceled, "job_canceled", "canceled with resumable part retained", map[string]any{"offset": result.Bytes}); transitionErr != nil {
+			manager.fail(current, fmt.Errorf("persist canceled state: %w", transitionErr))
+		}
 	case executeErr != nil:
 		manager.handleExecutionError(current, executeErr, result)
 	case result.Outcome == OutcomeWaitingConflict:
@@ -659,7 +803,21 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		}
 		manager.openConflict(current, plan, result.Final, reason)
 	default:
-		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", map[string]any{"sha256": result.SHA256})
+		verificationPayload := map[string]any{"sha256": result.SHA256}
+		checkpoint, checkpointErr := (JobJournal{Store: manager.store, StepIndex: 0}).Load(manager.ctx, jobID)
+		if checkpointErr != nil {
+			manager.handleExecutionError(current, checkpointErr, result)
+			return
+		}
+		if checkpoint != nil && checkpoint.ActualRoute != "" {
+			verificationPayload["planned_route"] = plan.Route
+			verificationPayload["actual_route"] = checkpoint.ActualRoute
+			verificationPayload["route_reason"] = checkpoint.RouteReason
+			if checkpoint.DowngradedFrom != "" {
+				verificationPayload["downgraded_from"] = checkpoint.DowngradedFrom
+			}
+		}
+		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", verificationPayload)
 		if transitionErr == nil {
 			terminalState := job.StateCompleted
 			eventKind := "job_completed"
@@ -684,12 +842,16 @@ func (manager *Manager) execute(jobID domain.JobID) {
 					summary = "destination verified and source deletion proved"
 				}
 			}
-			_, _ = manager.transitionTerminal(verifying, terminalState, eventKind, summary, map[string]any{
+			if _, terminalErr := manager.persistTerminal(verifying, terminalState, eventKind, summary, map[string]any{
 				"bytes": result.Bytes, "items": result.Items, "succeeded": result.Succeeded, "skipped": result.Skipped,
 				"failed": result.Failed, "manifest": result.Manifest, "manifest_truncated": result.ManifestTruncated,
 				"final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome, "move_reason": moveReason,
 				"preserved_destination": result.PreservedDestination,
-			})
+			}); terminalErr != nil {
+				manager.fail(verifying, fmt.Errorf("persist completed state: %w", terminalErr))
+			}
+		} else {
+			manager.fail(current, fmt.Errorf("persist verifying state: %w", transitionErr))
 		}
 	}
 }
@@ -756,11 +918,13 @@ func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, execute
 	var partial *PartialItemsError
 	if errors.As(executeErr, &partial) {
 		retryAt := manager.now().Add(time.Minute)
-		_, _ = manager.transitionRetry(snapshot, retryAt, map[string]any{
+		if _, transitionErr := manager.transitionRetry(snapshot, retryAt, map[string]any{
 			"error": "directory items require retry", "failed": result.Failed, "succeeded": result.Succeeded,
 			"skipped": result.Skipped, "items": result.Items, "manifest": result.Manifest,
 			"manifest_truncated": result.ManifestTruncated,
-		})
+		}); transitionErr != nil {
+			manager.fail(snapshot, fmt.Errorf("persist directory retry: %w", transitionErr))
+		}
 		return
 	}
 	var operationError *domain.OpError
@@ -772,26 +936,52 @@ func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, execute
 	if errors.As(executeErr, &operationError) {
 		switch operationError.Code {
 		case domain.CodeAuthRequired:
-			_, _ = manager.transition(snapshot, job.StateWaitingAuth, "job_waiting_auth", payload)
+			if _, transitionErr := manager.transition(snapshot, job.StateWaitingAuth, "job_waiting_auth", payload); transitionErr != nil {
+				manager.fail(snapshot, fmt.Errorf("persist waiting-auth state: %w", transitionErr))
+			}
 			return
 		case domain.CodeConflict, domain.CodeAlreadyExists:
-			_, _ = manager.transition(snapshot, job.StateWaitingConflict, "job_waiting_conflict", payload)
+			if _, transitionErr := manager.transition(snapshot, job.StateWaitingConflict, "job_waiting_conflict", payload); transitionErr != nil {
+				manager.fail(snapshot, fmt.Errorf("persist waiting-conflict state: %w", transitionErr))
+			}
 			return
 		case domain.CodeTransportInterrupted, domain.CodeTimeout, domain.CodeResourceExhausted:
 			retryAt := manager.now().Add(time.Minute)
-			_, _ = manager.transitionRetry(snapshot, retryAt, payload)
+			if _, transitionErr := manager.transitionRetry(snapshot, retryAt, payload); transitionErr != nil {
+				manager.fail(snapshot, fmt.Errorf("persist retry state: %w", transitionErr))
+			}
 			return
 		}
 	}
 	if result.PreservedDestination.Path != "" {
-		_, _ = manager.transitionTerminal(snapshot, job.StateFailed, "job_failed", safeErrorSummary(executeErr), payload)
+		manager.failWithPayload(snapshot, executeErr, payload)
 		return
 	}
 	manager.fail(snapshot, executeErr)
 }
 
 func (manager *Manager) fail(snapshot jobstore.Snapshot, failure error) {
-	_, _ = manager.transitionTerminal(snapshot, job.StateFailed, "job_failed", safeErrorSummary(failure), errorPayload(failure))
+	manager.failWithPayload(snapshot, failure, errorPayload(failure))
+
+}
+
+func (manager *Manager) failWithPayload(snapshot jobstore.Snapshot, failure error, payload any) {
+	if _, err := manager.persistTerminal(snapshot, job.StateFailed, "job_failed", safeErrorSummary(failure), payload); err != nil {
+		manager.recordTransitionError(snapshot.JobID, fmt.Errorf("persist terminal failure state: %w", err))
+	}
+}
+
+func (manager *Manager) recordTransitionError(jobID domain.JobID, failure error) {
+	manager.mu.Lock()
+	manager.transitionErrors[jobID] = failure
+	manager.mu.Unlock()
+	manager.notify(jobID)
+}
+
+func (manager *Manager) transitionError(jobID domain.JobID) error {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	return manager.transitionErrors[jobID]
 }
 
 func (manager *Manager) transition(snapshot jobstore.Snapshot, to job.State, kind string, payload any) (jobstore.Snapshot, error) {
@@ -804,6 +994,32 @@ func (manager *Manager) transitionRetry(snapshot jobstore.Snapshot, retryAt time
 
 func (manager *Manager) transitionTerminal(snapshot jobstore.Snapshot, to job.State, kind, summary string, payload any) (jobstore.Snapshot, error) {
 	return manager.transitionRequest(snapshot, to, kind, payload, nil, &summary)
+}
+
+func (manager *Manager) persistTerminal(snapshot jobstore.Snapshot, to job.State, kind, summary string, payload any) (jobstore.Snapshot, error) {
+	updated, err := manager.transitionTerminal(snapshot, to, kind, summary, payload)
+	if err == nil {
+		return updated, nil
+	}
+	latest, getErr := manager.store.Get(manager.ctx, snapshot.JobID)
+	if getErr != nil {
+		return jobstore.Snapshot{}, errors.Join(err, fmt.Errorf("reload terminal transition: %w", getErr))
+	}
+	if latest.State.Terminal() {
+		if latest.State == to {
+			return latest, nil
+		}
+		return jobstore.Snapshot{}, fmt.Errorf("terminal transition raced with state %q: %w", latest.State, err)
+	}
+	fallback := map[string]any{
+		"details_omitted": true,
+		"reason":          "terminal event payload or persistence retry",
+	}
+	updated, fallbackErr := manager.transitionTerminal(latest, to, kind, summary, fallback)
+	if fallbackErr != nil {
+		return jobstore.Snapshot{}, errors.Join(err, fmt.Errorf("persist bounded terminal fallback: %w", fallbackErr))
+	}
+	return updated, nil
 }
 
 func (manager *Manager) transitionRequest(snapshot jobstore.Snapshot, to job.State, kind string, payload any, retryAt *time.Time, summary *string) (jobstore.Snapshot, error) {
@@ -833,11 +1049,52 @@ func (manager *Manager) transitionRequest(snapshot jobstore.Snapshot, to job.Sta
 }
 
 func (manager *Manager) enqueue(jobID domain.JobID) error {
+	lease, err := manager.acquireQueueLease(jobID)
+	if err != nil {
+		return err
+	}
+	return manager.enqueueWithLease(jobID, lease)
+}
+
+func (manager *Manager) acquireQueueLease(jobID domain.JobID) (*ResourceLease, error) {
+	lease, err := manager.scheduler.TryAcquireResources(ResourceRequest{
+		JobID: jobID,
+		Usage: ResourceUsage{QueuedJobs: 1},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("enqueue Job: acquire queue resource: %w", err)
+	}
+	return lease, nil
+}
+
+func (manager *Manager) enqueueWithLease(jobID domain.JobID, lease *ResourceLease) error {
+	if lease == nil {
+		return errors.New("enqueue Job: queue resource lease is required")
+	}
+	manager.mu.Lock()
+	if manager.queueLeases[jobID] != nil {
+		manager.mu.Unlock()
+		lease.Release()
+		return fmt.Errorf("enqueue Job: Job %q is already queued", jobID)
+	}
+	manager.queueLeases[jobID] = lease
+	manager.mu.Unlock()
 	select {
 	case <-manager.ctx.Done():
+		manager.releaseQueueLease(jobID)
 		return errors.New("enqueue Job: transfer manager stopped")
 	case manager.queue <- jobID:
 		return nil
+	}
+}
+
+func (manager *Manager) releaseQueueLease(jobID domain.JobID) {
+	manager.mu.Lock()
+	lease := manager.queueLeases[jobID]
+	delete(manager.queueLeases, jobID)
+	manager.mu.Unlock()
+	if lease != nil {
+		lease.Release()
 	}
 }
 
@@ -879,9 +1136,60 @@ func (manager *Manager) releaseAllLeases() {
 	manager.mu.Lock()
 	leases := manager.leases
 	manager.leases = make(map[domain.JobID]func())
+	queueLeases := manager.queueLeases
+	manager.queueLeases = make(map[domain.JobID]*ResourceLease)
 	manager.mu.Unlock()
 	for _, release := range leases {
 		release()
+	}
+	for _, lease := range queueLeases {
+		lease.Release()
+	}
+}
+
+func executionResourceUsage(plan Plan) ResourceUsage {
+	sshEndpoints := make(map[domain.EndpointID]struct{}, 2)
+	for _, endpoint := range []domain.Endpoint{plan.SourceEndpoint, plan.DestinationEndpoint} {
+		if endpoint.ID != "" && endpoint.Kind == domain.EndpointSSH {
+			sshEndpoints[endpoint.ID] = struct{}{}
+		}
+	}
+	connections := uint32(len(sshEndpoints)) //nolint:gosec // the set has at most two entries.
+	helperProcesses := uint32(0)
+	if plan.Route == RouteHelperSameHost || plan.Route == RouteLevel2Direct {
+		helperProcesses = 1
+	}
+	return ResourceUsage{
+		ActiveJobs:      1,
+		Connections:     connections,
+		SSHProcesses:    connections,
+		HelperProcesses: helperProcesses,
+		FileDescriptors: 2 + 3*connections,
+		Goroutines:      1,
+		MemoryBytes:     uint64(plan.BufferBytes),
+	}
+}
+
+func executionResourceRequest(plan Plan) ResourceRequest {
+	endpointIDs := make([]domain.EndpointID, 0, 2)
+	endpointUsage := make(map[domain.EndpointID]ResourceUsage, 2)
+	for _, endpoint := range []domain.Endpoint{plan.SourceEndpoint, plan.DestinationEndpoint} {
+		if endpoint.ID == "" {
+			continue
+		}
+		usage, exists := endpointUsage[endpoint.ID]
+		if !exists {
+			endpointIDs = append(endpointIDs, endpoint.ID)
+			usage.ActiveJobs = 1
+		}
+		if endpoint.Kind == domain.EndpointSSH {
+			usage.Connections = 1
+		}
+		endpointUsage[endpoint.ID] = usage
+	}
+	return ResourceRequest{
+		JobID: plan.JobID, EndpointIDs: endpointIDs, Usage: executionResourceUsage(plan),
+		EndpointUsage: endpointUsage,
 	}
 }
 

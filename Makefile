@@ -30,7 +30,7 @@ BUILD_DIR ?= dist
 COVERAGE_DIR ?= coverage
 TOOL_MOD := -modfile=tools/go.mod
 
-.PHONY: fmt-check vet lint test test-contract test-race fuzz-smoke
+.PHONY: fmt-check vet lint test test-contract test-race test-scale bench-scale fuzz-smoke
 .PHONY: docs-check mod-check supply-chain build-all
 .PHONY: make-contract-scan make-contract make-contract-flags check ci
 
@@ -59,6 +59,14 @@ test-contract:
 test-race:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
 	"$(GO)" test -race -count=1 ./...
+
+test-scale:
+	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
+	"$(GO)" test -count=1 -run='(FiftyThousand|MillionNode|MillionEntries|HundredGiB|HardResource|ResourceLedger|TransferScheduler|DiscoverDirectoryDoesNotFollow|LocalOperationCancellation|ManagerClassifiesPermissionAndDiskFull|ProviderSessionsBoundDynamicConnections|JobEventPayloads|LargeJobEventHistory|RingRetainsOnlyBounded|RingQueryCapsPages|DaemonLogConcurrentWrites|Level0FilenameSearchStreamsBounded|Level2PolicyAndProductionClosure|Level2FrozenControlPlaneContainsNoCredential|OrchestrateHundredGiB)' ./internal/tui ./internal/search ./internal/helper ./internal/transfer ./internal/daemon ./internal/state/jobstore ./internal/diagnostic ./internal/externalpreviewer
+
+bench-scale:
+	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
+	GOMAXPROCS=1 "$(GO)" test -run='^$$' -bench='^Benchmark(Render|Move)FiftyThousandEntries$$' -benchtime=100x -count=3 -benchmem ./internal/tui
 
 fuzz-smoke:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)

@@ -71,6 +71,44 @@ func TestJobJournalResumesTransferAfterDatabaseAndWorkerRestart(t *testing.T) {
 	}
 }
 
+func TestJobJournalPersistsDirectIdentityAcrossDatabaseRestart(t *testing.T) {
+	ctx := context.Background()
+	fixture := newWorkerFixture(t, []byte("direct journal identity"), ConflictAsk)
+	root := testkit.PersistentTempDir(t)
+	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // state root must be owner-private
+		t.Fatal(err)
+	}
+	databasePath := filepath.Join(root, "state.sqlite3")
+	store, database := openTransferStore(t, ctx, databasePath, true)
+	if _, _, err := store.Create(ctx, fixture.create); err != nil {
+		t.Fatalf("create durable Job: %v", err)
+	}
+	want := Checkpoint{
+		JobID: fixture.plan.JobID, Phase: PhaseStreaming, Offset: 7,
+		SourceFingerprint: cloneFingerprint(fixture.plan.Source.Fingerprint),
+		Part:              fixture.plan.Part, Final: fixture.plan.Final,
+		ActualRoute: RouteLevel2Direct, RouteReason: ReasonLevel2PreflightPassed,
+		DirectFormatVersion: Level2DirectFormatVersion,
+		DirectNonce:         "0123456789abcdef0123456789abcdef",
+	}
+	if err := (JobJournal{Store: store, StepIndex: 0}).Save(ctx, want); err != nil {
+		t.Fatalf("save direct checkpoint: %v", err)
+	}
+	if err := database.Close(); err != nil {
+		t.Fatalf("close first database: %v", err)
+	}
+
+	restartedStore, restartedDatabase := openTransferStore(t, ctx, databasePath, false)
+	t.Cleanup(func() { _ = restartedDatabase.Close() })
+	got, err := (JobJournal{Store: restartedStore, StepIndex: 0}).Load(ctx, fixture.plan.JobID)
+	if err != nil {
+		t.Fatalf("load direct checkpoint after restart: %v", err)
+	}
+	if got == nil || got.DirectFormatVersion != want.DirectFormatVersion || got.DirectNonce != want.DirectNonce {
+		t.Fatalf("direct identity after restart = %#v, want format=%d nonce=%q", got, want.DirectFormatVersion, want.DirectNonce)
+	}
+}
+
 func openTransferStore(t *testing.T, ctx context.Context, databasePath string, initialize bool) (*jobstore.Store, *sql.DB) {
 	t.Helper()
 	uri := &url.URL{Scheme: "file", Path: databasePath, RawQuery: "_pragma=" + url.QueryEscape("wal_autocheckpoint(1000)")}

@@ -69,6 +69,29 @@ func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testi
 	done := make(chan error, 1)
 	go func() { done <- runDaemonWithPaths(daemonContext, paths, purpose) }()
 	client := waitForTestDaemon(t, paths, purpose)
+	observer, err := sql.Open("sqlite", "file:"+paths.DatabaseFile+"?mode=ro")
+	if err != nil {
+		t.Fatalf("open recovery observer: %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var queuedState job.State
+		if err := observer.QueryRowContext(ctx, "SELECT state FROM jobs WHERE job_id=?", jobIDs[job.StateQueued]).Scan(&queuedState); err != nil {
+			_ = observer.Close()
+			t.Fatalf("observe queued restart fixture: %v", err)
+		}
+		if queuedState == job.StateFailed {
+			break
+		}
+		if time.Now().After(deadline) {
+			_ = observer.Close()
+			t.Fatalf("queued restart fixture remained %q, want failed", queuedState)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := observer.Close(); err != nil {
+		t.Fatalf("close recovery observer: %v", err)
+	}
 	_ = client.Close()
 	stopDaemon()
 	select {
@@ -89,6 +112,14 @@ func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testi
 		want := before
 		wantVersion := int64(1)
 		wantSequence := int64(2)
+		// The restart fixture deliberately stores placeholder plan JSON. A queued
+		// Job is execution-eligible, so the daemon must close that invalid durable
+		// work as failed instead of silently stranding it in queued.
+		if before == job.StateQueued {
+			want = job.StateFailed
+			wantVersion++
+			wantSequence++
+		}
 		if before == job.StateRunning || before == job.StateVerifying {
 			want = job.StatePaused
 			wantVersion++
@@ -107,6 +138,9 @@ func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testi
 			t.Fatalf("count recovered %q events: %v", before, err)
 		}
 		wantEvents, wantRecovered := 1, 0
+		if before == job.StateQueued {
+			wantEvents = 2
+		}
 		if before == job.StateRunning || before == job.StateVerifying {
 			wantEvents, wantRecovered = 2, 1
 		}

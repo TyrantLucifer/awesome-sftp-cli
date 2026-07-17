@@ -99,6 +99,7 @@ func validSameHostCopyBinding(binding SameHostCopyBinding, endpointID domain.End
 
 func (planner *Planner) trySameHostCopy(ctx context.Context, plan *Plan) {
 	if planner.sameHost == nil || plan == nil || plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile ||
+		plan.Bandwidth.requiresControl() ||
 		plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID || plan.SourceEndpoint.Kind != domain.EndpointSSH ||
 		plan.DestinationEndpoint.Kind != domain.EndpointSSH {
 		return
@@ -145,7 +146,7 @@ func (worker *Worker) executeSameHostCopy(
 		stageDone := make(chan struct{})
 		controlled := make(chan ControlAction, 1)
 		if control != nil {
-			go monitorSameHostControl(stageCtx, control, *checkpoint, cancelStage, controlled, stageDone)
+			go monitorStagedCopyControl(stageCtx, control, *checkpoint, cancelStage, controlled, stageDone)
 		}
 		result, stageErr := worker.sameHost.StageCopy(stageCtx, SameHostCopyStageRequest{
 			Source: plan.Source.Location, Part: plan.Part, Final: plan.Final, JobID: plan.JobID,
@@ -204,7 +205,7 @@ func controlAction(control Control, checkpoint Checkpoint) ControlAction {
 	return control.Action(cloneCheckpoint(checkpoint))
 }
 
-func monitorSameHostControl(ctx context.Context, control Control, checkpoint Checkpoint, cancel context.CancelFunc, result chan<- ControlAction, done <-chan struct{}) {
+func monitorStagedCopyControl(ctx context.Context, control Control, checkpoint Checkpoint, cancel context.CancelFunc, result chan<- ControlAction, done <-chan struct{}) {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {
