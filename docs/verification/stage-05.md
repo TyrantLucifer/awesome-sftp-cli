@@ -65,7 +65,7 @@ test -z "$(git status --porcelain)"
 test -z "$(git ls-files 'dist/**' 'coverage/**' '.DS_Store' 'amsftp')"
 test -z "$(git ls-files | rg '(^|/)(id_(rsa|dsa|ecdsa|ed25519)|.*\.(pem|key))$')"
 test -z "$(git grep -n -E -- 'BEGIN (OPENSSH|RSA|EC|DSA|PRIVATE) PRIVATE KEY')"
-test -z "$(git grep -n 'newLevel2Fixture' -- ':!**/*_test.go')"
+test -z "$(git grep -n 'newLevel2Fixture' -- 'cmd/**' 'internal/**' ':!**/*_test.go')"
 ```
 
 ## Milestone evidence
