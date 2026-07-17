@@ -3,7 +3,7 @@
 - **Updated**: 2026-07-17
 - **Lifecycle**: Stage 5 In Progress
 - **Active stage**: Stage 5 — Direct Transfer & Scale
-- **Current milestone**: M5.2 — typed preflight and fixture data plane implemented; real dual-sshd closeout next
+- **Current milestone**: M5.3 — direct fault injection and semantic equivalence
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
@@ -59,7 +59,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Close M5.2 with the real isolated dual-sshd fixture and native authentication/host-key audit, then enter the remaining M5.3 fault/equivalence matrix. The typed v1 preflight, all 14 fail/unknown routes, test-only direct data plane, durable target progress, expiry revalidation, cancel, lost-response restart and proven absent-part relay downgrade are already green. Keep production Helper distribution and Level 2 CLOSED.
+Execute the remaining M5.3 fault/equivalence matrix: post-preflight capability/network/auth/space/source/target changes, short/corrupt write, exact cleanup/reuse, commit uncertainty and direct-vs-relay conflict/move/restart/integrity goldens. M5.2 typed preflight, fixture data plane and real dual-sshd/native auth boundary are complete. Keep production Helper distribution and Level 2 CLOSED.
 
 ## Current risks
 

@@ -1,6 +1,6 @@
 # Stage 5 Verification Record
 
-- **Status**: In Progress — M5.1 complete; M5.2 Level 2 preflight/control active
+- **Status**: In Progress — M5.1/M5.2 complete; M5.3 fault/equivalence active
 - **Updated**: 2026-07-17
 - **Repository root**: `/data00/home/tianchao.thatcher/projects/awsome-sftp-cli`
 - **Branch**: `codex/stage5-direct-transfer-scale`
@@ -41,13 +41,13 @@ Declared SFTP server-copy requires the same SSH Endpoint, a regular file, explic
 
 ### M5.2 — Level 2 preflight and direct transfer
 
-**Status: In Progress.** A lower-level, typed direct protocol v1 now shares the Helper/Planner contract without creating the pre-existing Helper→transfer import cycle. It freezes request/Job/Endpoint/path correlation, trusted destination SSH alias, 1 TiB ceiling, strong source identity/hash, ten-minute hard deadline, nonce, 1 MiB frame, four-request concurrency, heartbeat, request-context cancellation, target-durable progress and staged-not-committed result semantics. Every one of protocol/capability/network/address/write/temp/space/quota/auth/host-key/user/workspace/data/hash independently returns fail/unknown and selects relay with zero direct staging. Malformed, stale, reordered, weak, untrusted or altered evidence fails closed.
+**Status: Complete.** A lower-level, typed direct protocol v1 now shares the Helper/Planner contract without creating the pre-existing Helper→transfer import cycle. It freezes request/Job/Endpoint/path correlation, trusted destination SSH alias, 1 TiB ceiling, strong source identity/hash, ten-minute hard deadline, nonce, 1 MiB frame, four-request concurrency, heartbeat, request-context cancellation, target-durable progress and staged-not-committed result semantics. Every one of protocol/capability/network/address/write/temp/space/quota/auth/host-key/user/workspace/data/hash independently returns fail/unknown and selects relay with zero direct staging. Malformed, stale, reordered, weak, untrusted or altered evidence fails closed.
 
-Only same-package `_test.go` constructors can attach the unexported preflight/data facets. An all-pass fixture Plan stages directly between isolated source/target roots, persists target-durable acknowledgements, remotely strong-hashes part and final, and uses the shared Worker commit path while counting zero source/destination Provider content reads in the daemon. Expired evidence is freshly correlated and revalidated before target write; fail/unknown performs zero direct stage. In-flight cancel retains only the exact acknowledged part and never final/source-delete; a lost complete stage response restarts from the exact acknowledged checkpoint without retransmitting bytes; a failure proven before any target write durably records `level2_direct`→`sftp_relay`. Frozen evidence contains no command, argv, password, private-key, ticket, Agent/GSS, known-hosts, ControlMaster or ProxyCommand surface. Production constructors remain CLOSED and relay with `production_distribution_closed`. A real isolated dual-sshd fixture and the remaining fault/equivalence matrix are still pending before M5.2/M5.3 closeout.
+Only same-package `_test.go` constructors can attach the unexported preflight/data facets. An all-pass fixture Plan stages directly between isolated source/target roots, persists target-durable acknowledgements, remotely strong-hashes part and final, and uses the shared Worker commit path while counting zero source/destination Provider content reads in the daemon. Expired evidence is freshly correlated and revalidated before target write; fail/unknown performs zero direct stage. In-flight cancel retains only the exact acknowledged part and never final/source-delete; a lost complete stage response restarts from the exact acknowledged checkpoint without retransmitting bytes; a failure proven before any target write durably records `level2_direct`→`sftp_relay`. The native gate uses two independent real sshd/SFTP control sessions and isolated data roots, strict known-host verification and BatchMode, explicit Agent/GSS/ControlMaster disablement, direct remote-root data staging, zero daemon Provider content reads and a target-root credential-material scan. Frozen evidence contains no generic command or credential surface. Production constructors remain CLOSED and relay with `production_distribution_closed`.
 
 ### M5.3 — Downgrade, fault and semantic equivalence
 
-**Status: Not Started.**
+**Status: In Progress.** Safe write-before fallback, cancel, exact acknowledged restart adoption and response-loss foundations pass; the remaining injected fault and golden equivalence matrix is active.
 
 ### M5.4 — Scale, resource budgets and fair scheduling
 
@@ -64,7 +64,7 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | DIRECT-002 | IMPLEMENTED | Explicit capability + structural facet gate, immutable binding, exact part staging, independent strong verification, response-loss adoption, corruption isolation, safe absent-part fallback, restart, pre/in-flight cancellation and relay conflict/cancel equivalence pass the complete M5.1 local gate; exact-final Hosted evidence remains required for PASS. |
 | DIRECT-004 | IMPLEMENTED | Frozen user/workspace/data/integrity policy gates selection; explicit disablement and production closure select relay with stable reasons. Exact-final Hosted evidence remains required. |
 | DIRECT-005 | IMPLEMENTED | All 14 ordered required conditions independently fail/unknown to relay; malformed/stale evidence and expired execution evidence fail closed before direct write. Real dual-sshd closeout remains pending. |
-| DIRECT-006 | IMPLEMENTED | Typed control evidence has no credential/command surface and target authority comes only from the frozen Endpoint SSH alias; isolated topology/native audit remains pending. |
+| DIRECT-006 | IMPLEMENTED | Typed control evidence has no credential/command surface; the dual-sshd native gate proves strict known-host/BatchMode and explicit Agent/GSS/ControlMaster disablement with no credential material in the target data root. Exact-final Hosted evidence remains required. |
 | DIRECT-007 | IMPLEMENTED | Direct protocol/preflight/request/result/control limits, source identity/hash, part/final, target alias and expiry are durable and tamper-checked; expired evidence is revalidated. Exact-final evidence remains required. |
 | DIRECT-008 | IN PROGRESS | Proven absent-part write-before failure durably downgrades direct→relay; full mid-part/commit uncertainty matrix remains pending. |
 | DIRECT-009 | PENDING | Direct-relay golden equivalence not implemented. |
@@ -112,6 +112,7 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | M5.2 planner RED/GREEN | `go test ./internal/transfer -run '^TestLevel2' -count=1` | Initial compile RED for policy/binding/backend; PASS for all-pass direct, 28 fail/unknown relay cases, production closure, policy disablement, durable reload and tamper rejection. |
 | M5.2 fixture data plane | focused direct fixture, expiry, cancel, lost-response restart and absent-part downgrade tests | PASS: target-durable checkpoints, remote part/final hashes, zero daemon Provider content reads on direct, fresh expiry preflight, no commit/source delete on cancel, exact restart adoption and safe relay fallback. |
 | M5.2 focused packages/race/lint | `go test ./internal/directprotocol ./internal/helper ./internal/transfer -count=1`; `go test -race` on the same packages; `make lint` | PASS; lint reports 0 issues. |
+| M5.2 native dual remote | `AMSFTP_REAL_SSHD=1 go test -race ./internal/transfer -run '^TestLevel2NativeDualSSHD' -count=1` | PASS: two real sshd/SFTP control sessions, isolated data roots, strict host keys/BatchMode, Agent/GSS/ControlMaster off, direct bytes, remote hashes, zero daemon content reads and no target credential material. |
 
 ## Hosted CI instability classification
 

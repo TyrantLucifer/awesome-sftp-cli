@@ -278,9 +278,9 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: bounded protocol/frame/deadline/heartbeat/cancel contract；逐项 unknown/fail 预检矩阵及零 direct mutation 断言；固定 OpenSSH argv/config 与 secret/pollution 扫描；真实隔离 test-only 双远端 direct，证明数据面直达、daemon 控制面可审计且本地不承载完整内容。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
 
-**Current checkpoint**: direct protocol v1 已冻结 request/Job/Endpoint/path/target-alias/source identity、14 项 ordered preflight、1 MiB/4-request/10-minute/heartbeat/cancel/progress/result limits；逐项 fail/unknown 均 0 direct stage 并 relay。仅同包 `_test.go` 可注入的 data facet 已证明 source→target staging、target durable checkpoint、remote part/final strong hash、shared Worker commit、daemon 0 Provider content read、expiry fresh preflight、in-flight cancel、lost-response exact restart adoption 与 absent-part safe relay downgrade。普通 `NewPlanner`/`NewWorker` 无注入入口，production 继续 `production_distribution_closed`。M5.2 尚需真实隔离双 sshd 与 native auth/host-key evidence 后关闭。
+**Current checkpoint**: direct protocol v1 已冻结 request/Job/Endpoint/path/target-alias/source identity、14 项 ordered preflight、1 MiB/4-request/10-minute/heartbeat/cancel/progress/result limits；逐项 fail/unknown 均 0 direct stage 并 relay。仅同包 `_test.go` 可注入的 data facet 已证明 source→target staging、target durable checkpoint、remote part/final strong hash、shared Worker commit、daemon 0 Provider content read、expiry fresh preflight、in-flight cancel、lost-response exact restart adoption 与 absent-part safe relay downgrade。真实双 sshd/SFTP native gate 证明隔离控制会话、strict host key/BatchMode、Agent/GSS/ControlMaster 禁用、target data root 无 credential material。普通 `NewPlanner`/`NewWorker` 无注入入口，production 继续 `production_distribution_closed`。M5.2 完成，M5.3 开始。
 
 ### M5.3: 降级、故障与语义等价
 
@@ -290,7 +290,7 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 网络/认证/空间/能力/source/target 变化、short/corrupt write、Helper crash/hang、daemon restart、cancel、checkpoint mismatch、commit response loss 和 source-delete uncertainty 矩阵；random/sparse/large direct-relay golden equivalence；浏览/Search/Preview/Edit/Cache 与无关 Job 可用性回归。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
 
 ### M5.4: 规模、资源预算与公平调度
 
