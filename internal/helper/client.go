@@ -23,9 +23,13 @@ type ClientEvent struct {
 }
 
 type clientRequest struct {
-	events chan ClientEvent
-	stop   func() bool
+	events      chan ClientEvent
+	stop        func() bool
+	results     uint64
+	outputBytes uint64
 }
+
+const clientEventBuffer = 64
 
 type Client struct {
 	ctx        context.Context
@@ -46,9 +50,16 @@ type Client struct {
 	heartbeatStarted bool
 	heartbeatNonce   string
 	transportOnce    sync.Once
+	fatalOnce        sync.Once
+	onFatal          func(error)
+	requestDuration  time.Duration
 }
 
 func NewClient(parent context.Context, reader io.Reader, writer io.Writer, hello ClientHello) (*Client, error) {
+	return newClient(parent, reader, writer, hello, nil)
+}
+
+func newClient(parent context.Context, reader io.Reader, writer io.Writer, hello ClientHello, onFatal func(error)) (*Client, error) {
 	if parent == nil || reader == nil || writer == nil {
 		return nil, errors.New("create helper client: context and stdio are required")
 	}
@@ -86,6 +97,7 @@ func NewClient(parent context.Context, reader io.Reader, writer io.Writer, hello
 		ctx: ctx, cancel: cancel, reader: frameReader, write: write,
 		input: reader, output: writer, negotiated: negotiated,
 		requests: make(map[domain.RequestID]clientRequest), seen: make(map[domain.RequestID]struct{}), done: make(chan struct{}), pong: make(chan string, 1),
+		onFatal: onFatal, requestDuration: MaxHelperRequestDuration,
 	}
 	go client.readLoop()
 	return client, nil
@@ -177,7 +189,7 @@ func (c *Client) Start(ctx context.Context, requestID domain.RequestID, operatio
 	if err := validateJSONShape(trimmed); err != nil {
 		return nil, err
 	}
-	events := make(chan ClientEvent, 256)
+	events := make(chan ClientEvent, clientEventBuffer)
 	c.mu.Lock()
 	if c.closed || c.failure != nil {
 		failure := c.failure
@@ -202,7 +214,15 @@ func (c *Client) Start(ctx context.Context, requestID domain.RequestID, operatio
 		c.fail(fmt.Errorf("start helper request: write: %w", err))
 		return nil, err
 	}
-	stop := context.AfterFunc(ctx, func() { _ = c.Cancel(requestID) })
+	stopAfter := context.AfterFunc(ctx, func() { _ = c.Cancel(requestID) })
+	hardTimer := time.AfterFunc(c.requestDuration, func() {
+		c.failAndClose(errors.New("helper request exceeded the hard duration limit"))
+	})
+	stop := func() bool {
+		stopped := stopAfter()
+		hardStopped := hardTimer.Stop()
+		return stopped && hardStopped
+	}
 	c.mu.Lock()
 	request, stillActive := c.requests[requestID]
 	if stillActive {
@@ -432,12 +452,13 @@ func (c *Client) readLoop() {
 			c.fail(fmt.Errorf("helper session: unexpected server frame %q", envelope.Type))
 			return
 		}
-		c.mu.Lock()
-		request, exists := c.requests[envelope.RequestID]
-		c.mu.Unlock()
-		if !exists {
-			c.fail(errors.New("helper session: orphan or duplicate response"))
+		request, err := c.acceptResponse(envelope)
+		if err != nil {
+			c.failAndClose(err)
 			return
+		}
+		if envelope.Type == FrameComplete && request.stop != nil {
+			request.stop()
 		}
 		event := ClientEvent{Type: envelope.Type, RequestID: envelope.RequestID, Payload: append(json.RawMessage(nil), envelope.Payload...)}
 		select {
@@ -447,15 +468,31 @@ func (c *Client) readLoop() {
 			return
 		}
 		if envelope.Type == FrameComplete {
-			c.mu.Lock()
-			delete(c.requests, envelope.RequestID)
-			c.mu.Unlock()
-			if request.stop != nil {
-				request.stop()
-			}
 			close(request.events)
 		}
 	}
+}
+
+func (c *Client) acceptResponse(envelope Envelope) (clientRequest, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	request, exists := c.requests[envelope.RequestID]
+	if !exists {
+		return clientRequest{}, errors.New("helper session: orphan or duplicate response")
+	}
+	request.outputBytes += uint64(len(envelope.Payload))
+	if envelope.Type == FrameResult {
+		request.results++
+	}
+	if request.results > MaxHelperResults || request.outputBytes > MaxHelperOutputBytes {
+		return clientRequest{}, errors.New("helper session: response exceeded hard result or output limit")
+	}
+	if envelope.Type == FrameComplete {
+		delete(c.requests, envelope.RequestID)
+	} else {
+		c.requests[envelope.RequestID] = request
+	}
+	return request, nil
 }
 
 func (c *Client) fail(err error) {
@@ -464,6 +501,11 @@ func (c *Client) fail(err error) {
 		c.failure = err
 	}
 	c.mu.Unlock()
+	c.fatalOnce.Do(func() {
+		if c.onFatal != nil {
+			c.onFatal(err)
+		}
+	})
 	c.cancel()
 	c.failRequests(err)
 }

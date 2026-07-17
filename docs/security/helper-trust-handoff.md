@@ -9,7 +9,7 @@
 
 这个工作环境不能证明真实的离线设备、保险柜、具名 custodian、双人审批或恢复演练。因此仓库中没有 production Ed25519 public key，没有 production private key，也没有 production Helper 签名或产物。任何人都不得把下面的 RFC 8032 public test vectors 注册为 production trust set。
 
-Helper 分发继续 fail closed：只有本文件第 7 节全部由真实责任人签署，并且 production public key/key ID 已经由第 3 节的离线 ceremony 导出并复核后，Stage 4 才能开始任何 Helper 下载、上传或安装实现。在此之前只允许不依赖 Helper 的 Level 0 SFTP 搜索规划与实现。
+Helper 生产分发继续 fail closed：只有本文件第 7 节全部由真实责任人签署，并且 production public key/key ID 已经由第 3 节的离线 ceremony 导出并复核后，才允许任何 production Helper 下载、上传、安装入口或信任声明。Stage 4 可以用普通 runtime/config 无法开启的显式 non-release test fixture 实现并验证 lifecycle/protocol/fallback；production verifier 必须保持空 trust set，不能把 fixture 变成产品资产。
 
 **精确剩余 blocker**：尚未指定并验证真实 offline signing station、至少三名独立 custodian/approver 及其保管位置；production key generation、backup recovery、紧急撤销批准和 current/next 双 key 实操均未发生，也没有对应的具名签字记录。
 

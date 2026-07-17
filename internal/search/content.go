@@ -272,7 +272,7 @@ func (state *contentRunState) scanFile(ctx context.Context, implementation provi
 	if limit == 0 {
 		return StopByteLimit
 	}
-	readLimit := int64(limit)
+	readLimit := int64(limit) // #nosec G115 -- validated search budgets cap file and aggregate reads well below MaxInt64.
 	var expected *domain.Fingerprint
 	if entry.Fingerprint.Strength() != domain.FingerprintWeak {
 		copy := entry.Fingerprint
@@ -287,8 +287,8 @@ func (state *contentRunState) scanFile(ctx context.Context, implementation provi
 		return contextOrProviderReason(ctx)
 	}
 	defer handle.Close(context.Background())
-	data := make([]byte, 0, int(limit))
-	buffer := make([]byte, min(32*1024, int(limit)))
+	data := make([]byte, 0, int(limit))              // #nosec G115 -- validated MaxFileBytes fits in int on supported targets.
+	buffer := make([]byte, min(32*1024, int(limit))) // #nosec G115 -- validated MaxFileBytes fits in int on supported targets.
 	for uint64(len(data)) < limit {
 		n, readErr := handle.Read(ctx, buffer)
 		if n > 0 {
@@ -365,7 +365,7 @@ func (state *contentRunState) emitContentMatches(ctx context.Context, location d
 		if resultBytes > state.identity.Budget.MaxOutputBytes-state.outputBytes {
 			return StopByteLimit
 		}
-		result := ContentResult{Location: location, RelativePath: relative, Line: uint64(bytes.Count(data[:offset], []byte{'\n'})) + 1, Offset: uint64(offset), Snippet: string(snippet)}
+		result := ContentResult{Location: location, RelativePath: relative, Line: uint64(bytes.Count(data[:offset], []byte{'\n'})) + 1, Offset: uint64(offset), Snippet: string(snippet)} // #nosec G115 -- slice indexes and bytes.Count results are non-negative.
 		select {
 		case state.events <- ContentEvent{Identity: state.identity, Kind: ContentEventResult, Result: result}:
 			state.results++

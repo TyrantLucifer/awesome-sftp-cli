@@ -79,17 +79,17 @@ func (o *LocalOperations) Tail(parent context.Context, body json.RawMessage, emi
 		return Completion{}, errors.New("helper tail: request is invalid")
 	}
 	initial, err := os.Lstat(request.Path)
-	if err != nil || !initial.Mode().IsRegular() {
+	if err != nil || !initial.Mode().IsRegular() || initial.Size() < 0 {
 		return Completion{Status: "partial_results", Reason: "file_invalid"}, nil
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(request.DurationMS)*time.Millisecond)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(request.DurationMS)*time.Millisecond) // #nosec G115 -- validation caps duration at 30 seconds.
 	defer cancel()
 	offset := request.Offset
 	current := initial
 	var emitted uint64
 	readAvailable := func() error {
-		for uint64(current.Size()) > offset && emitted < request.MaxBytes {
-			file, err := os.Open(request.Path)
+		for current.Size() >= 0 && uint64(current.Size()) > offset && emitted < request.MaxBytes { // #nosec G115 -- the non-negative check precedes conversion.
+			file, err := os.Open(request.Path) // #nosec G304 -- request.Path passed strict absolute-path validation.
 			if err != nil {
 				return stopOperation("read_failed")
 			}
@@ -98,7 +98,11 @@ func (o *LocalOperations) Tail(parent context.Context, body json.RawMessage, emi
 				_ = file.Close()
 				return stopOperation("file_changed")
 			}
-			if _, err := file.Seek(int64(offset), io.SeekStart); err != nil {
+			if offset > uint64(current.Size()) { // #nosec G115 -- the loop guard established a non-negative size.
+				_ = file.Close()
+				return stopOperation("file_changed")
+			}
+			if _, err := file.Seek(int64(offset), io.SeekStart); err != nil { // #nosec G115 -- offset is bounded by a non-negative int64 file size above.
 				_ = file.Close()
 				return stopOperation("read_failed")
 			}
@@ -106,8 +110,9 @@ func (o *LocalOperations) Tail(parent context.Context, body json.RawMessage, emi
 			if request.MaxBytes-emitted < maximum {
 				maximum = request.MaxBytes - emitted
 			}
-			if uint64(current.Size())-offset < maximum {
-				maximum = uint64(current.Size()) - offset
+			currentSize := uint64(current.Size()) // #nosec G115 -- the loop guard requires a non-negative size.
+			if currentSize-offset < maximum {
+				maximum = currentSize - offset
 			}
 			buffer := make([]byte, int(maximum))
 			read, readErr := io.ReadFull(file, buffer)
@@ -122,8 +127,8 @@ func (o *LocalOperations) Tail(parent context.Context, body json.RawMessage, emi
 			if err := emit(FrameResult, chunk); err != nil {
 				return err
 			}
-			offset += uint64(read)
-			emitted += uint64(read)
+			offset += uint64(read)  // #nosec G115 -- io.ReadFull byte counts are non-negative.
+			emitted += uint64(read) // #nosec G115 -- io.ReadFull byte counts are non-negative.
 		}
 		return nil
 	}
@@ -151,7 +156,7 @@ func (o *LocalOperations) Tail(parent context.Context, body json.RawMessage, emi
 				if err := emit(FrameProgress, TailNotice{Type: "rotated", OldOffset: old, NewOffset: 0, RequiresRefresh: true}); err != nil {
 					return Completion{}, err
 				}
-			} else if uint64(latest.Size()) < offset {
+			} else if latest.Size() < 0 || uint64(latest.Size()) < offset { // #nosec G115 -- the negative case is checked first.
 				old := offset
 				offset = 0
 				current = latest
@@ -248,7 +253,7 @@ func snapshotDirectory(directory string, maximum uint64) (map[string]watchEntry,
 	if err != nil || !info.IsDir() {
 		return nil, errors.New("watch path is not a directory")
 	}
-	file, err := os.Open(directory)
+	file, err := os.Open(directory) // #nosec G304 -- directory passed strict absolute-path validation before this helper.
 	if err != nil {
 		return nil, err
 	}
@@ -306,14 +311,11 @@ func (o *LocalOperations) SameHostCopy(ctx context.Context, body json.RawMessage
 	if err := validateSameHostCopyRequest(request); err != nil {
 		return Completion{}, err
 	}
-	if _, err := os.Lstat(request.Final); !errors.Is(err, os.ErrNotExist) {
-		return Completion{Status: "partial_results", Reason: "destination_conflict"}, nil
-	}
 	sourceInfo, err := os.Lstat(request.Source)
-	if err != nil || !sourceInfo.Mode().IsRegular() || fingerprintOf(sourceInfo, nil) != request.ExpectedSource || uint64(sourceInfo.Size()) != request.ExpectedSize {
+	if err != nil || !sourceInfo.Mode().IsRegular() || sourceInfo.Size() < 0 || fingerprintOf(sourceInfo, nil) != request.ExpectedSource || uint64(sourceInfo.Size()) != request.ExpectedSize { // #nosec G115 -- the negative case is rejected first.
 		return Completion{Status: "partial_results", Reason: "source_changed"}, nil
 	}
-	source, err := os.Open(request.Source)
+	source, err := os.Open(request.Source) // #nosec G304 -- source passed strict absolute-path validation.
 	if err != nil {
 		return Completion{Status: "partial_results", Reason: "source_unreadable"}, nil
 	}
@@ -385,9 +387,6 @@ func (o *LocalOperations) SameHostCopy(ctx context.Context, body json.RawMessage
 	if digestAfter, sizeAfter, err := hashLocalFile(request.Part, request.MaxBytes); err != nil || digestAfter != digest || sizeAfter != total {
 		return Completion{Status: "partial_results", Reason: "part_verify_failed"}, nil
 	}
-	if _, err := os.Lstat(request.Final); !errors.Is(err, os.ErrNotExist) {
-		return Completion{Status: "partial_results", Reason: "destination_conflict"}, nil
-	}
 	result := SameHostCopyResult{Part: request.Part, Size: total, SHA256: digest, Fingerprint: fingerprintOf(finalSourceInfo, nil), Committed: false}
 	if err := emit(FrameResult, result); err != nil {
 		return Completion{}, err
@@ -412,7 +411,7 @@ func validateSameHostCopyRequest(request SameHostCopyRequest) error {
 	if request.Part != wantPart {
 		return errors.New("helper same-host copy: part does not match frozen Planner grammar")
 	}
-	if request.ExpectedSize == 0 || request.MaxBytes < request.ExpectedSize || request.MaxBytes > 2<<30 || len(request.ExpectedSHA256) != 64 || !isLowerHex(request.ExpectedSHA256) {
+	if request.MaxBytes == 0 || request.MaxBytes < request.ExpectedSize || request.MaxBytes > 2<<30 || len(request.ExpectedSHA256) != 64 || !isLowerHex(request.ExpectedSHA256) {
 		return errors.New("helper same-host copy: expected content identity is invalid")
 	}
 	return nil
@@ -427,16 +426,16 @@ func removeExactLocalFile(path string, expected os.FileInfo) {
 }
 
 func hashLocalFile(path string, maximum uint64) (string, uint64, error) {
-	file, err := os.Open(path)
+	file, err := os.Open(path) // #nosec G304 -- path is the validated request part path.
 	if err != nil {
 		return "", 0, err
 	}
 	defer file.Close()
 	hash := sha256.New()
-	limited := &io.LimitedReader{R: file, N: int64(maximum) + 1}
+	limited := &io.LimitedReader{R: file, N: int64(maximum) + 1} // #nosec G115 -- same-host request validation caps maximum at 2 GiB.
 	written, err := io.Copy(hash, limited)
-	if err != nil || uint64(written) > maximum {
-		return "", uint64(written), errors.New("hash file exceeds limit")
+	if err != nil || written < 0 || uint64(written) > maximum {
+		return "", uint64(max(written, 0)), errors.New("hash file exceeds limit")
 	}
 	return hex.EncodeToString(hash.Sum(nil)), uint64(written), nil
 }

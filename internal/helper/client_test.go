@@ -3,7 +3,10 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net"
+	"strings"
 	"testing"
 	"time"
 
@@ -73,8 +76,120 @@ func TestHelperClientHandshakeStreamsAndCancelsOneRequestWithoutClosingSession(t
 	if client.Level() != 1 || client.Failure() != nil {
 		t.Fatalf("client degraded after request cancel: level=%d failure=%v", client.Level(), client.Failure())
 	}
-	client.Close()
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
 	if err := <-serviceDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHelperClientMayStartNextRequestImmediatelyAfterCompleteAtConcurrencyOne(t *testing.T) {
+	serverSide, clientSide := net.Pipe()
+	serviceDone := make(chan error, 1)
+	go func() {
+		serviceDone <- Serve(context.Background(), serverSide, serverSide, ServiceConfig{
+			Server: ServerConfig{
+				Protocol: 1, HelperVersion: Version{Major: 4}, MaximumFrame: MaxHelperFrameBytes, MaximumConcurrent: 1,
+				Capabilities: []Capability{{Name: CapabilityStrongHash, Version: 1}},
+			},
+			MaximumRequestDuration: time.Second,
+			Handlers: map[CapabilityName]RequestHandler{
+				CapabilityStrongHash: func(context.Context, json.RawMessage, EmitFunc) (Completion, error) {
+					return Completion{Status: "complete", Reason: "none"}, nil
+				},
+			},
+		})
+	}()
+	client, err := NewClient(context.Background(), clientSide, clientSide, ClientHello{
+		MinimumProtocol: 1, MaximumProtocol: 1, MaximumFrame: MaxHelperFrameBytes, MaximumConcurrent: 1,
+		ClientVersion: Version{Major: 4}, Capabilities: []CapabilityRequest{{Name: CapabilityStrongHash, MaximumVersion: 1}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	alphabet := "abcdefghijklmnopqrstuvwxyz234567"
+	for index := 0; index < 100; index++ {
+		requestID := domain.RequestID("req_" + strings.Repeat("a", 24) + string([]byte{alphabet[index/32], alphabet[index%32]}))
+		events, err := client.Start(context.Background(), requestID, CapabilityStrongHash, json.RawMessage(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		event := <-events
+		if event.Type != FrameComplete {
+			t.Fatalf("request %d terminal = %#v", index, event)
+		}
+	}
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-serviceDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestHelperClientRejectsInboundResultAndOutputBudgetOverflow(t *testing.T) {
+	requestID := domain.RequestID("req_yyyyyyyyyyyyyyyyyyyyyyyyyy")
+	client := &Client{requests: map[domain.RequestID]clientRequest{
+		requestID: {events: make(chan ClientEvent, 1), results: MaxHelperResults},
+	}}
+	if _, err := client.acceptResponse(Envelope{Type: FrameResult, RequestID: requestID, Payload: json.RawMessage(`{}`)}); err == nil {
+		t.Fatal("client accepted a result beyond its hard per-request limit")
+	}
+	client.requests[requestID] = clientRequest{events: make(chan ClientEvent, 1), outputBytes: MaxHelperOutputBytes}
+	if _, err := client.acceptResponse(Envelope{Type: FrameProgress, RequestID: requestID, Payload: json.RawMessage(`{}`)}); err == nil {
+		t.Fatal("client accepted output beyond its hard per-request byte limit")
+	}
+}
+
+func TestHelperClientHardRequestDeadlineTriggersFatalTransportHook(t *testing.T) {
+	serverSide, clientSide := net.Pipe()
+	serviceDone := make(chan error, 1)
+	go func() {
+		serviceDone <- Serve(context.Background(), serverSide, serverSide, ServiceConfig{
+			Server: ServerConfig{
+				Protocol: 1, HelperVersion: Version{Major: 4}, MaximumFrame: MaxHelperFrameBytes, MaximumConcurrent: 1,
+				Capabilities: []Capability{{Name: CapabilityStrongHash, Version: 1}},
+			},
+			MaximumRequestDuration: time.Second,
+			Handlers: map[CapabilityName]RequestHandler{CapabilityStrongHash: func(ctx context.Context, _ json.RawMessage, _ EmitFunc) (Completion, error) {
+				<-ctx.Done()
+				return Completion{Status: "canceled", Reason: "canceled"}, nil
+			}},
+		})
+	}()
+	fatal := make(chan error, 1)
+	client, err := newClient(context.Background(), clientSide, clientSide, ClientHello{
+		MinimumProtocol: 1, MaximumProtocol: 1, MaximumFrame: MaxHelperFrameBytes, MaximumConcurrent: 1,
+		ClientVersion: Version{Major: 4}, Capabilities: []CapabilityRequest{{Name: CapabilityStrongHash, MaximumVersion: 1}},
+	}, func(err error) { fatal <- err })
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.requestDuration = 20 * time.Millisecond
+	events, err := client.Start(context.Background(), "req_qqqqqqqqqqqqqqqqqqqqqqqqqq", CapabilityStrongHash, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case event := <-events:
+		if event.Err == nil || !strings.Contains(event.Err.Error(), "hard duration") {
+			t.Fatalf("deadline event = %#v", event)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("hard request deadline did not fail the request")
+	}
+	select {
+	case err := <-fatal:
+		if !strings.Contains(err.Error(), "hard duration") {
+			t.Fatalf("fatal hook error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("hard request deadline did not trigger the fatal transport hook")
+	}
+	_ = client.Close()
+	_ = serverSide.Close()
+	if err := <-serviceDone; err != nil && !strings.Contains(err.Error(), "closed") {
 		t.Fatal(err)
 	}
 }
@@ -129,7 +244,7 @@ func TestHelperClientHeartbeatKeepsResponsiveSessionAndFailsClosedOnTimeout(t *t
 		}
 		_ = client.Close()
 		_ = serverSide.Close()
-		if err := <-serviceDone; err != nil {
+		if err := <-serviceDone; err != nil && !errors.Is(err, io.ErrClosedPipe) && !errors.Is(err, net.ErrClosed) {
 			t.Fatal(err)
 		}
 	})

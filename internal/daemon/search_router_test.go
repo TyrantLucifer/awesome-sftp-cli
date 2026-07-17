@@ -114,10 +114,10 @@ func TestProviderSessionRejectsDuplicateAndUnknownSearchCursors(t *testing.T) {
 	}
 	request := ipc.SearchFilenameStartRequest{Identity: ipc.EncodeSearchIdentity(identity)}
 	_ = handlePayload[ipc.SearchFilenameStartResponse](t, session, SearchFilenameStart, request)
-	if _, err := handleRawSearch(session, SearchFilenameStart, request); !domain.IsCode(err, domain.CodeConflict) {
+	if err := handleRawSearch(session, SearchFilenameStart, request); !domain.IsCode(err, domain.CodeConflict) {
 		t.Fatalf("duplicate start error = %v, want conflict", err)
 	}
-	if _, err := handleRawSearch(session, SearchFilenameNext, ipc.SearchFilenameNextRequest{RequestID: "req_cccccccccccccccccccccccccc", Limit: 1}); !domain.IsCode(err, domain.CodeNotFound) {
+	if err := handleRawSearch(session, SearchFilenameNext, ipc.SearchFilenameNextRequest{RequestID: "req_cccccccccccccccccccccccccc", Limit: 1}); !domain.IsCode(err, domain.CodeNotFound) {
 		t.Fatalf("unknown next error = %v, want not_found", err)
 	}
 }
@@ -160,7 +160,7 @@ func TestProviderSessionCancelDrainsToCanceledTerminal(t *testing.T) {
 	if event.Kind != search.EventTerminal || event.Terminal.Status != search.StatusCanceled || event.Terminal.StopReason != search.StopCanceled {
 		t.Fatalf("cancel terminal = %#v", event)
 	}
-	if _, err := handleRawSearch(session, SearchFilenameNext, ipc.SearchFilenameNextRequest{RequestID: started.RequestID, Limit: 1}); !domain.IsCode(err, domain.CodeNotFound) {
+	if err := handleRawSearch(session, SearchFilenameNext, ipc.SearchFilenameNextRequest{RequestID: started.RequestID, Limit: 1}); !domain.IsCode(err, domain.CodeNotFound) {
 		t.Fatalf("drained cursor error = %v, want not_found", err)
 	}
 }
@@ -289,10 +289,11 @@ func newSearchLocalProvider(t *testing.T) (*localfs.Provider, string) {
 	return implementation, root
 }
 
-func handleRawSearch(session Session, name string, request any) (any, error) {
+func handleRawSearch(session Session, name string, request any) error {
 	payload, err := json.Marshal(request)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	return session.Handle(context.Background(), name, payload)
+	_, err = session.Handle(context.Background(), name, payload)
+	return err
 }

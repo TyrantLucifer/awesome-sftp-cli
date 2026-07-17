@@ -463,6 +463,33 @@ func TestConnectionRecoveryStateIsPaneLocalAndReplacesCapabilities(t *testing.T)
 	}
 }
 
+func TestPaneCapabilityRefreshUpdatesOnlyCurrentEndpointRevision(t *testing.T) {
+	model := testModel(t)
+	endpoint := domain.Endpoint{ID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: domain.EndpointSSH, DisplayName: "remote"}
+	location := domain.Location{EndpointID: endpoint.ID, Path: "/"}
+	oldSnapshot := mustCapabilitySnapshot(t, "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", 7, "read")
+	model, _ = Reduce(model, PaneConnected{Pane: Left, Endpoint: endpoint, Location: location, State: domain.StateReady, CapabilityGeneration: 7, Capabilities: oldSnapshot})
+	refreshed, err := domain.NewCapabilitySnapshot(oldSnapshot.Revision, true, []domain.Capability{
+		{Name: "read", Version: 1},
+		{Name: "helper_status", Version: 1, Constraints: []domain.CapabilityConstraint{{Name: "level", Value: "0"}, {Name: "reason", Value: "session_failed"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	model, _ = Reduce(model, PaneCapabilitiesRefreshed{Pane: Left, EndpointID: endpoint.ID, Capabilities: refreshed})
+	status, ok := model.Panes[Left].Capabilities.Lookup("helper_status")
+	if !ok || len(status.Constraints) != 2 || status.Constraints[1].Value != "session_failed" {
+		t.Fatalf("refreshed helper status = %#v", status)
+	}
+	stale := refreshed
+	stale.Revision.Generation++
+	before := model.Panes[Left].Capabilities
+	model, _ = Reduce(model, PaneCapabilitiesRefreshed{Pane: Left, EndpointID: endpoint.ID, Capabilities: stale})
+	if !reflect.DeepEqual(model.Panes[Left].Capabilities, before) {
+		t.Fatal("stale capability revision replaced the current pane snapshot")
+	}
+}
+
 func TestEndpointSwitchCommitsEndpointAndLocationOnFirstSuccessfulPage(t *testing.T) {
 	model := testModel(t)
 	oldCapabilities := mustCapabilitySnapshot(t, "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", 9, "read")

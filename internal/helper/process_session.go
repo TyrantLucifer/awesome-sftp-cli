@@ -16,6 +16,11 @@ import (
 
 const MaxHelperStderrBytes = 64 * 1024
 
+const (
+	DefaultHelperHeartbeatInterval = 30 * time.Second
+	DefaultHelperHeartbeatTimeout  = 10 * time.Second
+)
+
 type OpenSSHSessionConfig struct {
 	SSHPath           string
 	HostAlias         string
@@ -52,6 +57,10 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 	if (config.HeartbeatInterval == 0) != (config.HeartbeatTimeout == 0) {
 		return nil, errors.New("start helper OpenSSH session: heartbeat interval and timeout must be enabled together")
 	}
+	if config.HeartbeatInterval == 0 {
+		config.HeartbeatInterval = DefaultHelperHeartbeatInterval
+		config.HeartbeatTimeout = DefaultHelperHeartbeatTimeout
+	}
 	arguments, err := HelperSSHArguments(config.SSHPath, config.HostAlias, config.Plan)
 	if err != nil {
 		return nil, err
@@ -62,6 +71,7 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 	}
 	processContext, cancel := context.WithCancel(parent)
 	command := exec.CommandContext(processContext, arguments[0], arguments[1:]...) // #nosec G204 -- executable identity and frozen argv are revalidated below.
+	configureHelperProcess(command)
 	if config.Environment != nil {
 		command.Env = append([]string(nil), config.Environment...)
 	}
@@ -90,21 +100,24 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 		return nil, errors.New("start helper OpenSSH session: executable changed before start")
 	}
 	collector := &helperStderrBuffer{redactions: append([]string(nil), config.Redact...), cancel: cancel}
+	if err := command.Start(); err != nil {
+		cancel()
+		return nil, fmt.Errorf("start helper OpenSSH session: start: %w", err)
+	}
 	stderrDone := make(chan struct{})
 	go func() {
 		_, _ = io.Copy(collector, stderrPipe)
 		close(stderrDone)
 	}()
-	if err := command.Start(); err != nil {
-		cancel()
-		<-stderrDone
-		return nil, fmt.Errorf("start helper OpenSSH session: start: %w", err)
-	}
+	stopTermination := context.AfterFunc(processContext, func() { terminateHelperProcess(command) })
 	wait := make(chan error, 1)
-	go func() { wait <- command.Wait() }()
+	go func() {
+		wait <- command.Wait()
+		stopTermination()
+	}()
 	handshakeContext, stopHandshake := context.WithTimeout(processContext, config.HandshakeTimeout)
 	stopOnTimeout := context.AfterFunc(handshakeContext, cancel)
-	client, err := NewClient(processContext, stdout, stdin, config.Hello)
+	client, err := newClient(processContext, stdout, stdin, config.Hello, func(error) { cancel() })
 	stopOnTimeout()
 	stopHandshake()
 	if err != nil {
@@ -118,14 +131,12 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 		}
 		return nil, fmt.Errorf("start helper OpenSSH session: handshake: %w: %s", err, collector.String())
 	}
-	if config.HeartbeatInterval != 0 {
-		if err := client.EnableHeartbeat(config.HeartbeatInterval, config.HeartbeatTimeout); err != nil {
-			_ = client.Close()
-			cancel()
-			<-wait
-			<-stderrDone
-			return nil, err
-		}
+	if err := client.EnableHeartbeat(config.HeartbeatInterval, config.HeartbeatTimeout); err != nil {
+		_ = client.Close()
+		cancel()
+		<-wait
+		<-stderrDone
+		return nil, err
 	}
 	return &ProcessSession{client: client, cancel: cancel, wait: wait, stderrDone: stderrDone, stderr: collector}, nil
 }
@@ -174,7 +185,7 @@ func (b *helperStderrBuffer) Write(value []byte) (int, error) {
 		b.data = append(b.data, value[:count]...)
 	}
 	if len(value) > available {
-		b.discarded += uint64(len(value) - max(available, 0))
+		b.discarded += uint64(len(value) - max(available, 0)) // #nosec G115 -- subtraction is positive under the enclosing condition.
 		b.overflow.Do(b.cancel)
 	}
 	b.mu.Unlock()

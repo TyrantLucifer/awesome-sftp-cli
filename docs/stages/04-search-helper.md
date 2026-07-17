@@ -40,7 +40,7 @@
 - Stage 1–3 的标准 SFTP、守护进程会话、后台 Job、预览流、缓存预算和 TUI 抽屉保持为 Level 0 基线。
 - Helper 安装和调用必须继续使用系统 OpenSSH/SFTP 与现有认证边界，不建立第二套凭据或网络入口。
 - Helper 的 same-host copy、hash 和 tail/watch 必须接入既有 Planner、Job、Preview 与诊断接口，不能形成不可恢复旁路。
-- Helper 分发必须实现 [ADR-0010](../architecture/adr/0010-helper-artifact-trust-and-distribution.md)；Stage 3 应已交付第一组 public key/key ID、custody/恢复、撤销窗口与轮换演练。未满足时只允许推进 Level 0 SFTP 搜索基线。
+- Helper 分发必须实现 [ADR-0010](../architecture/adr/0010-helper-artifact-trust-and-distribution.md)。生产 key custody/恢复/轮换未满足，因此生产分发与普通运行时安装面保持 **CLOSED**；Stage 4 仍可用仅由同包测试显式注入、production verifier 永不信任的 `testdata` non-release fixture 闭合完整 Level 1 lifecycle/protocol/Planner 验证，不能把该证据表述为 production asset 或 custody 完成。
 
 ### Level 0 — 标准 SFTP
 
@@ -86,7 +86,7 @@
 4. cwd/RealPath只作compatibility preflight；safe-home component≤255，target match后检查Endpoint high-water。
 5. 之后才local artifact expected+1/size≤128MiB/SHA-256；再派生≤1000-byte path，read-only逐级验证ancestor并列create plan。
 6. final actual-plan consent；取消或变化不得创建目录/temp/content。
-7. 确认后创建/复核exact0700目录，以44-byte CSPRNG basename和`O_EXCL`开temp；首byte前handle`Chmod(0600)`+handle/path attrs复核。写signed size、client expected+1回读复算，通过才chmod0700并standard no-replace publish；不posix-rename/delete-first，final重验。
+7. 确认后创建/复核exact0700目录，以44-byte CSPRNG basename和`O_EXCL`开temp；首byte前handle`Chmod(0600)`+handle/path attrs复核。写signed size、client expected+1回读复算，通过才chmod0700并以ADR-0016要求的OpenSSH hardlink target-exists-fails publish；扩展缺失即fail closed，不SFTP rename/posix-rename/delete-first，final重验。
 8. 每次enable/exec重跑current policy→fresh binding/target/high-water→ancestor/final/hash；helper argv含GSS delegation off与ControlMaster/Path/Persist off，最后恰一restricted string。byte0 preface、stderr cap与framed handshake通过才enabled；业务path/pattern只走stdin。
 
 升级并行安装新版本，成功后切换；旧版本在无活跃会话后清理。移除只删除本项目版本化目录内已验证文件，不递归删除模糊路径。SFTP uid/mode 依赖受信 sshd/root/admin/ACL/LSM/export policy 如实执行普通 POSIX DAC，不能证明所有 other principal 都不可访问；same-euid/root/admin/server 主动进程属于信任边界。受管环境只有第二 principal 真实拒绝测试通过后才可声明用户隔离。扩大边界必须新增稳定 file-id/handle-publish 与可验证 authorization 能力 ADR。
@@ -175,7 +175,7 @@
 - [ ] preliminary consent明确observed uid/path未知且取消时0 probe；final consent展示fresh numeric uid/actual plan且不伪称username，取消时0 app-tree create/content，任一manifest/probe/attrs变化强制重新probe/确认。
 - [ ] Stage4四target只用testdata non-release fixture；production verifier拒绝fixture key，installable binary/curated dist/production helper assets不含fixture材料（自动source archive除外），production manifests保持Planned直到Stage6 final bytes/sign-notary链。
 - [ ] Helper manifest 的 Ed25519 签名、key ID、key/artifact 撤销、OS/arch/protocol/`min_client`、canonical 数值版本、fresh-install 旧签名重放、release floor、high-water mark、同版本同/异 hash 和降级策略通过规范/负向/轮换测试；创建 temp 前拒绝分支保持 application-managed install tree 零创建/零内容写入，不把 sshd/shell审计副作用误写成整个远端零写。
-- [ ] Helper 经当前-policy Ed25519/撤销/denylist/floor/high-water、128 MiB/expected+1、显式 shared-session-stable-home policy、absolute root-owned utilities、non-root uid+SFTP/exec namespace compatibility、safe absolute home/component 与1000-byte路径上限、无可写祖先、exclusive-open 后首字节前 `Chmod(0600)`/双复核、上传前后 SHA-256、standard no-replace、每次 exec raw metadata 重验与受限 command-string 后才启用；不覆盖 final、不递归/模糊删除、不执行校验失败对象，也不误报 node/mount/object 或 ACL/same-euid/root/server 隔离保证。
+- [ ] Helper 经当前-policy Ed25519/撤销/denylist/floor/high-water、128 MiB/expected+1、显式 shared-session-stable-home policy、absolute root-owned utilities、non-root uid+SFTP/exec namespace compatibility、safe absolute home/component 与1000-byte路径上限、无可写祖先、exclusive-open 后首字节前 `Chmod(0600)`/双复核、上传前后 SHA-256、OpenSSH hardlink target-exists-fails publication、每次 exec raw metadata 重验与受限 command-string 后才启用；扩展缺失时fail closed，不覆盖 final、不递归/模糊删除、不执行校验失败对象，也不误报 node/mount/object 或 ACL/same-euid/root/server 隔离保证。
 - [ ] validated absolute local ssh path、OpenSSH 8.9 shell `-c`、最后恰一 remote-command arg、uname 四个支持映射/未知值、poisoned PATH 0-hit、safe absolute home 与 component/path 255/256/1000/1001 边界、profile `cd /tmp`、SessionType/RemoteCommand、ForceCommand/custom shell/`sshrc` banner、SFTP `-d`/chroot、双节点同 path 异 bytes、stdout byte0 preface、stderr 65536/65537 和 client-upgrade revoke/floor 负向矩阵全部安全降级 Level 0。
 - [ ] Helper不监听/常驻/提权；fresh transport不请求GSS delegation、不复用ControlMaster，protocol/日志/DB不传入或持久化Askpass/ticket/agent内容；报告明确remote same-euid既有cache/root/server是环境边界。
 - [ ] 缺失、错误架构、被篡改、版本错配、协议畸形、超时和崩溃均安全降级 Level 0。

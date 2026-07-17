@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"math"
 	"regexp"
+	"sync"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
@@ -34,12 +35,18 @@ var (
 	ErrVersionConflict   = errors.New("job state version conflict")
 	planIDPattern        = regexp.MustCompile(`^plan_[a-z2-7]{26}$`)
 	eventKindPattern     = regexp.MustCompile(`^[a-z][a-z0-9_]{0,63}$`)
+	lowerHexPattern      = regexp.MustCompile(`^[0-9a-f]+$`)
 )
 
 type Store struct {
-	database *sql.DB
-	walGuard *wal.FileGuard
+	database             *sql.DB
+	walGuard             *wal.FileGuard
+	referenceCoordinator *helperReferenceCoordinator
 }
+
+type helperReferenceCoordinator struct{ lease chan struct{} }
+
+var helperReferenceCoordinators sync.Map
 
 type Step struct {
 	Kind            string
@@ -211,7 +218,8 @@ func New(ctx context.Context, database *sql.DB) (*Store, error) {
 	if err := errors.Join(guardErr, closeErr); err != nil {
 		return nil, fmt.Errorf("new job store: %w", err)
 	}
-	return &Store{database: database, walGuard: guard}, nil
+	coordinator := helperReferenceCoordinatorFor(database)
+	return &Store{database: database, walGuard: guard, referenceCoordinator: coordinator}, nil
 }
 
 // CheckpointIdle truncates the WAL while the store has no active write batch.
@@ -320,6 +328,93 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 		return Snapshot{}, false, err
 	}
 	return snapshot, duplicate, nil
+}
+
+// AcquireHelperJobAdmission serializes the complete Helper-capable planning
+// and persistence window against artifact removal. Callers acquire it before
+// asking a live Helper to prepare a binding and release it only after Store.Create.
+func (store *Store) AcquireHelperJobAdmission(ctx context.Context) (func(), error) {
+	return store.acquireReferenceLease(ctx)
+}
+
+// AcquireHelperRemoval holds the same exclusive admission lease used by
+// Create while checking every non-terminal durable Job for an exact Helper
+// artifact reference. The returned release must remain held through remote
+// removal and enabled-state commit.
+func (store *Store) AcquireHelperRemoval(ctx context.Context, endpointID domain.EndpointID, artifact domain.HelperArtifactID) (func(), error) {
+	if _, err := domain.ParseEndpointID(string(endpointID)); err != nil {
+		return nil, fmt.Errorf("acquire Helper removal: %w", err)
+	}
+	if artifact.ProtocolMajor == 0 || artifact.Version == "" || artifact.OS == "" || artifact.Arch == "" ||
+		len(artifact.SHA256) != 64 || !lowerHexPattern.MatchString(artifact.SHA256) {
+		return nil, errors.New("acquire Helper removal: artifact identity is invalid")
+	}
+	release, err := store.acquireReferenceLease(ctx)
+	if err != nil {
+		return nil, err
+	}
+	keep := false
+	defer func() {
+		if !keep {
+			release()
+		}
+	}()
+	readContext, cancel := wal.ReaderContext(ctx)
+	defer cancel()
+	rows, err := store.database.QueryContext(readContext, `SELECT p.destination_json
+		FROM operation_plans p JOIN jobs j ON j.plan_id=p.plan_id
+		WHERE p.route='helper_same_host'
+		AND j.state NOT IN ('completed','completed_with_source_retained','failed','canceled')`)
+	if err != nil {
+		return nil, fmt.Errorf("acquire Helper removal: list durable references: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var encoded string
+		if err := rows.Scan(&encoded); err != nil {
+			return nil, fmt.Errorf("acquire Helper removal: scan durable reference: %w", err)
+		}
+		var plan struct {
+			SameHostCopy *struct {
+				EndpointID domain.EndpointID       `json:"endpoint_id"`
+				ArtifactID domain.HelperArtifactID `json:"artifact_id"`
+			} `json:"same_host_copy"`
+		}
+		if err := json.Unmarshal([]byte(encoded), &plan); err != nil || plan.SameHostCopy == nil {
+			return nil, errors.New("acquire Helper removal: durable same-host plan is not reconstructible")
+		}
+		if plan.SameHostCopy.EndpointID == endpointID && plan.SameHostCopy.ArtifactID == artifact {
+			return nil, errors.New("acquire Helper removal: artifact is pinned by a non-terminal durable Job")
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("acquire Helper removal: read durable references: %w", err)
+	}
+	keep = true
+	return release, nil
+}
+
+func (store *Store) acquireReferenceLease(ctx context.Context) (func(), error) {
+	if store == nil || store.referenceCoordinator == nil || store.referenceCoordinator.lease == nil {
+		return nil, errors.New("job store: Helper reference lease is unavailable")
+	}
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-store.referenceCoordinator.lease:
+	}
+	var once sync.Once
+	return func() { once.Do(func() { store.referenceCoordinator.lease <- struct{}{} }) }, nil
+}
+
+func helperReferenceCoordinatorFor(database *sql.DB) *helperReferenceCoordinator {
+	if existing, ok := helperReferenceCoordinators.Load(database); ok {
+		return existing.(*helperReferenceCoordinator)
+	}
+	created := &helperReferenceCoordinator{lease: make(chan struct{}, 1)}
+	created.lease <- struct{}{}
+	actual, _ := helperReferenceCoordinators.LoadOrStore(database, created)
+	return actual.(*helperReferenceCoordinator)
 }
 
 func (store *Store) ListConflicts(ctx context.Context, jobID domain.JobID) ([]ConflictRecord, error) {

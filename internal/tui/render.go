@@ -156,6 +156,9 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if active.CapabilityGeneration != 0 {
 		status += fmt.Sprintf(" | caps:%d@%d", len(active.Capabilities.Items), active.CapabilityGeneration)
 	}
+	if helper := renderHelperStatus(active.Capabilities); helper != "" {
+		status += " | " + helper
+	}
 	direction := "↑"
 	if active.Sort.Descending {
 		direction = "↓"
@@ -222,6 +225,35 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 		renderCacheClearModal(surface, model, width, height)
 	}
 	return stats
+}
+
+func renderHelperStatus(snapshot domain.CapabilitySnapshot) string {
+	capability, ok := snapshot.Lookup("helper_status")
+	if !ok {
+		return ""
+	}
+	values := make(map[string]string, len(capability.Constraints))
+	for _, constraint := range capability.Constraints {
+		values[constraint.Name] = constraint.Value
+	}
+	level := values["level"]
+	if level != "0" && level != "1" {
+		return "helper:unknown"
+	}
+	result := "helper:L" + level
+	if level == "1" {
+		if version := values["version"]; version != "" {
+			result += " v" + SanitizeTerminalText(version)
+		}
+		if capabilities := values["capabilities"]; capabilities != "" {
+			result += " [" + SanitizeTerminalText(capabilities) + "]"
+		}
+		return result
+	}
+	if reason := values["reason"]; reason != "" {
+		result += " " + SanitizeTerminalText(reason)
+	}
+	return result
 }
 
 func renderCacheClearModal(surface Surface, model Model, width, height int) {
@@ -499,7 +531,7 @@ func renderJobsDrawer(surface Surface, jobs []transfer.JobView, cursor, y, width
 		if view.WaitingReason != "" {
 			state += " (" + view.WaitingReason + ")"
 		}
-		line := fmt.Sprintf("%s  %s  %d item(s)  %s  %s → %s", state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal), view.Source.Path, view.Final.Path)
+		line := fmt.Sprintf("%s  %s  %s  %d item(s)  %s  %s → %s", view.Route, state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal), view.Source.Path, view.Final.Path)
 		rowStyle := StylePreview
 		if start+row == cursor {
 			rowStyle = StyleCursor

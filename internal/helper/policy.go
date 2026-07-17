@@ -8,15 +8,10 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 )
 
-type ArtifactID struct {
-	Version Version
-	OS      string
-	Arch    string
-	SHA256  string
-}
+type ArtifactID = domain.HelperArtifactID
 
 func (m Manifest) ArtifactID() ArtifactID {
-	return ArtifactID{Version: m.Version, OS: m.OS, Arch: m.Arch, SHA256: m.SHA256}
+	return ArtifactID{ProtocolMajor: m.ProtocolMajor, Version: m.Version.String(), OS: m.OS, Arch: m.Arch, SHA256: m.SHA256}
 }
 
 type FloorKey struct {

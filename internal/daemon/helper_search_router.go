@@ -103,9 +103,13 @@ func startHelperContent(ctx context.Context, implementation providerapi.Provider
 }
 
 func helperSearchBudget(depth uint32, entries, results, output uint64, duration time.Duration, page uint32) helperruntime.OperationSearchBudget {
+	var durationMillis uint64
+	if duration > 0 {
+		durationMillis = uint64(duration / time.Millisecond)
+	}
 	return helperruntime.OperationSearchBudget{
 		MaxDepth: depth, MaxEntries: entries, MaxResults: results, MaxOutputBytes: output,
-		MaxDurationMS: uint64(duration / time.Millisecond), PageEntries: page,
+		MaxDurationMS: durationMillis, PageEntries: page,
 	}
 }
 
@@ -122,8 +126,12 @@ func validateHelperSearchSnapshot(ctx context.Context, implementation providerap
 
 func adaptHelperFilename(ctx context.Context, implementation providerapi.Provider, client *helperruntime.Client, identity search.Identity, input <-chan helperruntime.ClientEvent, output chan<- search.Event) {
 	defer close(output)
-	terminalSent := false
 	for event := range input {
+		if ctx.Err() != nil {
+			_ = client.Cancel(identity.RequestID)
+			output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusCanceled, StopReason: search.StopCanceled}}
+			return
+		}
 		if err := validateHelperSearchSnapshot(ctx, implementation, identity.EndpointID, identity.SessionID, identity.EndpointGeneration); err != nil {
 			_ = client.Cancel(identity.RequestID)
 			output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusPartial, StopReason: search.StopGenerationChanged}}
@@ -176,18 +184,24 @@ func adaptHelperFilename(ctx context.Context, implementation providerapi.Provide
 				return
 			}
 			output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: filenameTerminal(completion)}
-			terminalSent = true
 			return
 		}
 	}
-	if !terminalSent {
-		output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusPartial, StopReason: search.StopProviderError}}
+	if ctx.Err() != nil {
+		output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusCanceled, StopReason: search.StopCanceled}}
+		return
 	}
+	output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusPartial, StopReason: search.StopProviderError}}
 }
 
 func adaptHelperContent(ctx context.Context, implementation providerapi.Provider, client *helperruntime.Client, identity search.ContentIdentity, input <-chan helperruntime.ClientEvent, output chan<- search.ContentEvent) {
 	defer close(output)
 	for event := range input {
+		if ctx.Err() != nil {
+			_ = client.Cancel(identity.RequestID)
+			output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusCanceled, StopReason: search.StopCanceled}}
+			return
+		}
 		if err := validateHelperSearchSnapshot(ctx, implementation, identity.EndpointID, identity.SessionID, identity.EndpointGeneration); err != nil {
 			_ = client.Cancel(identity.RequestID)
 			output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusPartial, StopReason: search.StopGenerationChanged}}
@@ -243,6 +257,10 @@ func adaptHelperContent(ctx context.Context, implementation providerapi.Provider
 			output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: contentTerminal(completion)}
 			return
 		}
+	}
+	if ctx.Err() != nil {
+		output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusCanceled, StopReason: search.StopCanceled}}
+		return
 	}
 	output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusPartial, StopReason: search.StopProviderError}}
 }

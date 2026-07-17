@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 
@@ -705,6 +706,7 @@ func (s *providerSession) snapshot(ctx context.Context, payload json.RawMessage)
 		constraints := append([]domain.CapabilityConstraint(nil), item.Constraints...)
 		items[index] = ipc.WireCapability{Name: item.Name, Version: item.Version, Constraints: constraints}
 	}
+	items = append(items, s.helperStatusCapability(snapshot.EndpointID))
 	return ipc.ProviderSnapshotResponse{
 		EndpointID: string(snapshot.EndpointID),
 		SessionID:  string(snapshot.SessionID),
@@ -713,6 +715,42 @@ func (s *providerSession) snapshot(ctx context.Context, payload json.RawMessage)
 		Complete:   snapshot.Capabilities.Complete,
 		Items:      items,
 	}, nil
+}
+
+func (s *providerSession) helperStatusCapability(endpointID domain.EndpointID) ipc.WireCapability {
+	s.mu.Lock()
+	client := s.helpers[endpointID]
+	s.mu.Unlock()
+	constraints := []domain.CapabilityConstraint{
+		{Name: "level", Value: "0"},
+		{Name: "reason", Value: "not_available"},
+		{Name: "recovery", Value: "continue with Level 0; enable a verified Helper explicitly when available"},
+	}
+	if client == nil {
+		return ipc.WireCapability{Name: "helper_status", Version: 1, Constraints: constraints}
+	}
+	if client.Level() == 0 {
+		reason := "disabled"
+		if client.Failure() != nil {
+			reason = "session_failed"
+		}
+		constraints[1].Value = reason
+		constraints[2].Value = "retry explicitly or continue with Level 0"
+		return ipc.WireCapability{Name: "helper_status", Version: 1, Constraints: constraints}
+	}
+	negotiated := client.Negotiated()
+	capabilities := make([]string, 0, len(negotiated.Capabilities))
+	for _, capability := range negotiated.Capabilities {
+		capabilities = append(capabilities, string(capability.Name))
+	}
+	sort.Strings(capabilities)
+	return ipc.WireCapability{Name: "helper_status", Version: 1, Constraints: []domain.CapabilityConstraint{
+		{Name: "level", Value: "1"},
+		{Name: "version", Value: negotiated.HelperVersion},
+		{Name: "capabilities", Value: strings.Join(capabilities, ",")},
+		{Name: "reason", Value: "none"},
+		{Name: "recovery", Value: "disable Helper or continue with automatic Level 0 fallback"},
+	}}
 }
 
 func (s *providerSession) normalize(ctx context.Context, payload json.RawMessage) (any, error) {

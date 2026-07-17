@@ -121,6 +121,7 @@ type InstallRequest struct {
 	Verifier       Verifier
 	Policy         Policy
 	HighWater      *HighWater
+	State          *StateStore
 	Consent        InstallConsent
 	Remote         InstallRemote
 	Artifact       ArtifactOpener
@@ -157,7 +158,7 @@ type snapshotCheck struct {
 }
 
 func (i Installer) Install(ctx context.Context, request InstallRequest) (InstallResult, error) {
-	if ctx == nil || request.EndpointID == "" || request.Consent == nil || request.Remote == nil || request.Artifact == nil || request.HighWater == nil || request.Handshake == nil {
+	if ctx == nil || request.EndpointID == "" || request.Consent == nil || request.Remote == nil || request.Artifact == nil || request.HighWater == nil && request.State == nil || request.HighWater != nil && request.State != nil || request.Handshake == nil {
 		return InstallResult{}, errors.New("install helper: request is incomplete")
 	}
 	rawManifest := append([]byte(nil), request.RawManifest...)
@@ -165,6 +166,11 @@ func (i Installer) Install(ctx context.Context, request InstallRequest) (Install
 	manifest, err := verifyCurrentPolicy(request.Verifier, request.Policy, rawManifest, rawSignature)
 	if err != nil {
 		return InstallResult{}, err
+	}
+	if request.State != nil {
+		if err := request.State.StageMetadata(request.EndpointID, rawManifest, rawSignature); err != nil {
+			return InstallResult{}, fmt.Errorf("install helper: persist exact signed metadata: %w", err)
+		}
 	}
 	preliminary := PreliminaryConsent{
 		EndpointID:       request.EndpointID,
@@ -187,7 +193,7 @@ func (i Installer) Install(ctx context.Context, request InstallRequest) (Install
 	if err != nil {
 		return InstallResult{}, err
 	}
-	decision, err := request.HighWater.Check(request.EndpointID, manifest, request.Repair)
+	decision, err := checkInstallHighWater(request, manifest)
 	if err != nil {
 		return InstallResult{}, err
 	}
@@ -229,9 +235,9 @@ func (i Installer) Install(ctx context.Context, request InstallRequest) (Install
 	}
 	second, err := inspectInstallSnapshot(ctx, request.Remote, manifest)
 	if err != nil {
-		return InstallResult{}, fmt.Errorf("%w: %v", ErrPlanChanged, err)
+		return InstallResult{}, fmt.Errorf("%w: %w", ErrPlanChanged, err)
 	}
-	secondDecision, err := request.HighWater.Check(request.EndpointID, manifest, request.Repair)
+	secondDecision, err := checkInstallHighWater(request, manifest)
 	if err != nil {
 		return InstallResult{}, err
 	}
@@ -245,7 +251,7 @@ func (i Installer) Install(ctx context.Context, request InstallRequest) (Install
 		if err := request.Handshake(ctx, second.Plan.FinalPath, manifest); err != nil {
 			return InstallResult{}, fmt.Errorf("install helper: existing artifact handshake: %w", err)
 		}
-		if err := request.HighWater.Commit(request.EndpointID, manifest); err != nil {
+		if err := commitInstalledState(request, manifest, second.Plan.FinalPath, rawSignature); err != nil {
 			return InstallResult{}, err
 		}
 		return InstallResult{FinalPath: second.Plan.FinalPath, Decision: secondDecision, Enabled: true}, nil
@@ -318,10 +324,24 @@ func (i Installer) Install(ctx context.Context, request InstallRequest) (Install
 	if err := request.Handshake(ctx, second.Plan.FinalPath, manifest); err != nil {
 		return InstallResult{}, fmt.Errorf("install helper: handshake: %w", err)
 	}
-	if err := request.HighWater.Commit(request.EndpointID, manifest); err != nil {
+	if err := commitInstalledState(request, manifest, second.Plan.FinalPath, rawSignature); err != nil {
 		return InstallResult{}, err
 	}
 	return InstallResult{FinalPath: second.Plan.FinalPath, Decision: secondDecision, Enabled: true}, nil
+}
+
+func checkInstallHighWater(request InstallRequest, manifest Manifest) (HighWaterDecision, error) {
+	if request.State != nil {
+		return request.State.Check(request.EndpointID, manifest, request.Repair)
+	}
+	return request.HighWater.Check(request.EndpointID, manifest, request.Repair)
+}
+
+func commitInstalledState(request InstallRequest, manifest Manifest, finalPath string, rawSignature []byte) error {
+	if request.State != nil {
+		return request.State.CommitEnabled(request.EndpointID, manifest, rawSignature, finalPath)
+	}
+	return request.HighWater.Commit(request.EndpointID, manifest)
 }
 
 func verifyCurrentPolicy(verifier Verifier, policy Policy, rawManifest, rawSignature []byte) (Manifest, error) {
@@ -339,10 +359,17 @@ func verifyCurrentPolicy(verifier Verifier, policy Policy, rawManifest, rawSigna
 }
 
 func inspectInstallSnapshot(ctx context.Context, remote InstallRemote, manifest Manifest) (installSnapshot, error) {
+	if err := validateProbeUtilities(ctx, remote, nil); err != nil {
+		return installSnapshot{}, err
+	}
 	observation, err := remote.Probe(ctx)
 	if err != nil {
 		return installSnapshot{}, fmt.Errorf("install helper: binding probe: %w", err)
 	}
+	return inspectInstallSnapshotFromObservation(ctx, remote, manifest, observation)
+}
+
+func inspectInstallSnapshotFromObservation(ctx context.Context, remote InstallRemote, manifest Manifest, observation Observation) (installSnapshot, error) {
 	if observation.Target != manifest.Target() {
 		return installSnapshot{}, errors.New("install helper: observed target does not match signed target")
 	}
@@ -357,6 +384,26 @@ func inspectInstallSnapshot(ctx context.Context, remote InstallRemote, manifest 
 		return installSnapshot{}, errors.New("install helper: SFTP and exec namespaces do not share the canonical home")
 	}
 	snapshot := installSnapshot{Observation: observation, RealHome: realHome}
+	if err := validateProbeUtilities(ctx, remote, &snapshot); err != nil {
+		return installSnapshot{}, err
+	}
+	homeAttrs, err := remote.Lstat(ctx, observation.Home)
+	if err != nil || homeAttrs.Kind != RemoteDirectory || homeAttrs.UID != observation.UID || homeAttrs.Mode&0022 != 0 || homeAttrs.Mode&^uint32(0777) != 0 {
+		return installSnapshot{}, errors.New("install helper: canonical home attributes are unsafe")
+	}
+	snapshot.checks = append(snapshot.checks, snapshotCheck{Path: observation.Home, Exists: true, Attrs: homeAttrs})
+	plan, err := DeriveInstallPlan(observation.Home, manifest)
+	if err != nil {
+		return installSnapshot{}, err
+	}
+	snapshot.Plan = plan
+
+	// Existing ancestor/final inspection follows only after binding and utility
+	// validation have succeeded in both namespaces.
+	return inspectInstallPlanPaths(ctx, remote, manifest, snapshot)
+}
+
+func validateProbeUtilities(ctx context.Context, remote InstallRemote, snapshot *installSnapshot) error {
 	for _, utility := range []struct {
 		path string
 		kind RemoteKind
@@ -369,20 +416,17 @@ func inspectInstallSnapshot(ctx context.Context, remote InstallRemote, manifest 
 	} {
 		attrs, err := remote.Lstat(ctx, utility.path)
 		if err != nil || attrs.Kind != utility.kind || attrs.UID != 0 || attrs.Mode&0022 != 0 || attrs.Mode&^uint32(0777) != 0 || utility.kind == RemoteRegular && attrs.Mode&0111 == 0 {
-			return installSnapshot{}, fmt.Errorf("install helper: absolute utility %q is not root-owned and immutable to group/other", utility.path)
+			return fmt.Errorf("install helper: absolute utility %q is not root-owned and immutable to group/other", utility.path)
 		}
-		snapshot.checks = append(snapshot.checks, snapshotCheck{Path: utility.path, Exists: true, Attrs: attrs})
+		if snapshot != nil {
+			snapshot.checks = append(snapshot.checks, snapshotCheck{Path: utility.path, Exists: true, Attrs: attrs})
+		}
 	}
-	homeAttrs, err := remote.Lstat(ctx, observation.Home)
-	if err != nil || homeAttrs.Kind != RemoteDirectory || homeAttrs.UID != observation.UID || homeAttrs.Mode&0022 != 0 || homeAttrs.Mode&^uint32(0777) != 0 {
-		return installSnapshot{}, errors.New("install helper: canonical home attributes are unsafe")
-	}
-	snapshot.checks = append(snapshot.checks, snapshotCheck{Path: observation.Home, Exists: true, Attrs: homeAttrs})
-	plan, err := DeriveInstallPlan(observation.Home, manifest)
-	if err != nil {
-		return installSnapshot{}, err
-	}
-	snapshot.Plan = plan
+	return nil
+}
+
+func inspectInstallPlanPaths(ctx context.Context, remote InstallRemote, manifest Manifest, snapshot installSnapshot) (installSnapshot, error) {
+	plan := snapshot.Plan
 	for index, directory := range plan.Directories {
 		attrs, err := remote.Lstat(ctx, directory)
 		if errors.Is(err, ErrRemoteNotExist) {
@@ -395,9 +439,9 @@ func inspectInstallSnapshot(ctx context.Context, remote InstallRemote, manifest 
 		}
 		valid := attrs.Kind == RemoteDirectory && attrs.Mode&^uint32(0777) == 0
 		if index < 2 {
-			valid = valid && (attrs.UID == 0 || attrs.UID == observation.UID) && attrs.Mode&0022 == 0
+			valid = valid && (attrs.UID == 0 || attrs.UID == snapshot.Observation.UID) && attrs.Mode&0022 == 0
 		} else {
-			valid = valid && exactOwned(attrs, observation.UID, RemoteDirectory, 0700, 0)
+			valid = valid && exactOwned(attrs, snapshot.Observation.UID, RemoteDirectory, 0700, 0)
 		}
 		if !valid {
 			return installSnapshot{}, fmt.Errorf("install helper: ancestor %q attributes are unsafe", directory)
@@ -412,7 +456,7 @@ func inspectInstallSnapshot(ctx context.Context, remote InstallRemote, manifest 
 	if err != nil {
 		return installSnapshot{}, fmt.Errorf("install helper: lstat final: %w", err)
 	}
-	if !exactOwned(finalAttrs, observation.UID, RemoteRegular, 0700, manifest.Size) {
+	if !exactOwned(finalAttrs, snapshot.Observation.UID, RemoteRegular, 0700, manifest.Size) {
 		return installSnapshot{}, errors.New("install helper: existing final attributes do not match signed artifact")
 	}
 	if err := validateRemoteArtifact(ctx, remote, plan.FinalPath, manifest); err != nil {
@@ -508,7 +552,8 @@ func streamArtifactToHandle(ctx context.Context, opener ArtifactOpener, handle R
 		}
 		want := len(buffer)
 		if uint64(want) > remaining {
-			want = int(remaining)
+			// remaining is smaller than len(buffer), so it always fits in int.
+			want = int(remaining) // #nosec G115 -- bounded by the 32 KiB buffer length.
 		}
 		read, readErr := reader.Read(buffer[:want])
 		if read > 0 {

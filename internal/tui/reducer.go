@@ -440,6 +440,19 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		}
 		model.Panes[action.Pane] = pane
 		return model, nil
+	case PaneCapabilitiesRefreshed:
+		if !validPane(action.Pane) || action.EndpointID == "" {
+			return model, nil
+		}
+		pane := model.Panes[action.Pane].clone()
+		if pane.Endpoint.ID != action.EndpointID || pane.Capabilities.Revision.SessionID == "" ||
+			action.Capabilities.Revision != pane.Capabilities.Revision {
+			return model, nil
+		}
+		pane.Capabilities = action.Capabilities
+		pane.CapabilityGeneration = action.Capabilities.Revision.Generation
+		model.Panes[action.Pane] = pane
+		return model, nil
 	case WorkspaceSaveResult:
 		if action.Message != "" {
 			model.Notice = action.Message

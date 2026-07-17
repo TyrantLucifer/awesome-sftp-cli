@@ -19,6 +19,7 @@ const (
 	MaxHelperRequestDuration = 10 * time.Minute
 	MaxHelperResults         = 100_000
 	MaxHelperOutputBytes     = 64 << 20
+	maxHelperTerminalBytes   = 4 << 10
 )
 
 type RequestPayload struct {
@@ -62,6 +63,10 @@ func (w *serviceWriter) send(envelope Envelope, payload any) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	return w.sendEncoded(envelope, rawPayload)
+}
+
+func (w *serviceWriter) sendEncoded(envelope Envelope, rawPayload json.RawMessage) (int, error) {
 	envelope.Payload = rawPayload
 	raw, err := EncodeHelperEnvelope(envelope)
 	if err != nil {
@@ -72,7 +77,7 @@ func (w *serviceWriter) send(envelope Envelope, payload any) (int, error) {
 	if err := w.writer.WriteFrame(raw); err != nil {
 		return 0, err
 	}
-	return len(raw), nil
+	return len(rawPayload), nil
 }
 
 type activeRequest struct{ cancel context.CancelFunc }
@@ -162,6 +167,14 @@ func Serve(ctx context.Context, reader io.Reader, writer io.Writer, config Servi
 			if len(trimmedBody) == 0 || trimmedBody[0] != '{' {
 				return errors.New("serve helper: request body must be an object")
 			}
+			activeMu.Lock()
+			_, duplicate := seen[envelope.RequestID]
+			if duplicate {
+				activeMu.Unlock()
+				return errors.New("serve helper: request ID reuse is forbidden")
+			}
+			seen[envelope.RequestID] = struct{}{}
+			activeMu.Unlock()
 			if _, ok := available[request.Operation]; !ok || config.Handlers[request.Operation] == nil {
 				if err := sendRejected(out, envelope.RequestID, "capability_unavailable", "requested capability was not negotiated"); err != nil {
 					return err
@@ -169,11 +182,6 @@ func Serve(ctx context.Context, reader io.Reader, writer io.Writer, config Servi
 				continue
 			}
 			activeMu.Lock()
-			_, duplicate := seen[envelope.RequestID]
-			if duplicate {
-				activeMu.Unlock()
-				return errors.New("serve helper: request ID reuse is forbidden")
-			}
 			if len(active) >= int(negotiated.MaximumConcurrent) {
 				activeMu.Unlock()
 				if err := sendRejected(out, envelope.RequestID, "concurrency_limit", "maximum concurrent requests reached"); err != nil {
@@ -183,18 +191,21 @@ func Serve(ctx context.Context, reader io.Reader, writer io.Writer, config Servi
 			}
 			requestCtx, cancel := context.WithTimeout(serviceCtx, config.MaximumRequestDuration)
 			active[envelope.RequestID] = activeRequest{cancel: cancel}
-			seen[envelope.RequestID] = struct{}{}
 			activeMu.Unlock()
 			requests.Add(1)
 			go func(runCtx context.Context, requestID domain.RequestID, body json.RawMessage, handler RequestHandler, requestCancel context.CancelFunc) {
 				defer requests.Done()
-				defer func() {
-					requestCancel()
-					activeMu.Lock()
-					delete(active, requestID)
-					activeMu.Unlock()
-				}()
-				runRequest(runCtx, out, requestID, body, handler)
+				var finishOnce sync.Once
+				finish := func() {
+					finishOnce.Do(func() {
+						requestCancel()
+						activeMu.Lock()
+						delete(active, requestID)
+						activeMu.Unlock()
+					})
+				}
+				defer finish()
+				runRequest(runCtx, out, requestID, body, handler, finish)
 			}(requestCtx, envelope.RequestID, append(json.RawMessage(nil), trimmedBody...), config.Handlers[request.Operation], cancel)
 		default:
 			return fmt.Errorf("serve helper: client frame type %q is forbidden", envelope.Type)
@@ -202,9 +213,17 @@ func Serve(ctx context.Context, reader io.Reader, writer io.Writer, config Servi
 	}
 }
 
-func runRequest(ctx context.Context, out *serviceWriter, requestID domain.RequestID, body json.RawMessage, handler RequestHandler) {
+func runRequest(ctx context.Context, out *serviceWriter, requestID domain.RequestID, body json.RawMessage, handler RequestHandler, beforeComplete func()) {
+	runRequestWithOutputLimit(ctx, out, requestID, body, handler, beforeComplete, MaxHelperOutputBytes)
+}
+
+func runRequestWithOutputLimit(ctx context.Context, out *serviceWriter, requestID domain.RequestID, body json.RawMessage, handler RequestHandler, beforeComplete func(), maximumOutputBytes uint64) {
 	var results uint64
 	var outputBytes uint64
+	var payloadBudget uint64
+	if maximumOutputBytes > maxHelperTerminalBytes {
+		payloadBudget = maximumOutputBytes - maxHelperTerminalBytes
+	}
 	budgetExceeded := false
 	emit := func(kind FrameType, payload any) error {
 		if kind != FrameResult && kind != FrameProgress {
@@ -221,24 +240,32 @@ func runRequest(ctx context.Context, out *serviceWriter, requestID domain.Reques
 		if err != nil {
 			return err
 		}
-		if outputBytes+uint64(len(encoded)) > MaxHelperOutputBytes {
+		if outputBytes+uint64(len(encoded)) > payloadBudget {
 			budgetExceeded = true
 			return errors.New("helper handler: output byte limit reached")
 		}
-		written, err := out.send(Envelope{Version: 1, Type: kind, RequestID: requestID}, payload)
+		written, err := out.sendEncoded(Envelope{Version: 1, Type: kind, RequestID: requestID}, encoded)
 		if err != nil {
 			return err
 		}
 		if kind == FrameResult {
 			results++
 		}
-		outputBytes += uint64(written)
+		outputBytes += uint64(written) // #nosec G115 -- send reports a non-negative encoded byte count.
 		return nil
 	}
 	completion, handlerErr := handler(ctx, body, emit)
 	if handlerErr != nil {
 		message := sanitizeHelperError(handlerErr.Error())
-		_, _ = out.send(Envelope{Version: 1, Type: FrameError, RequestID: requestID}, StructuredError{Code: "operation_failed", Message: message, Retryable: false})
+		failure := StructuredError{Code: "operation_failed", Message: message, Retryable: false}
+		encoded, marshalErr := json.Marshal(failure)
+		if marshalErr == nil && outputBytes+uint64(len(encoded)) <= payloadBudget {
+			if written, sendErr := out.sendEncoded(Envelope{Version: 1, Type: FrameError, RequestID: requestID}, encoded); sendErr == nil {
+				outputBytes += uint64(written) // #nosec G115 -- sendEncoded reports a non-negative payload byte count.
+			}
+		} else {
+			budgetExceeded = true
+		}
 		if completion.Status == "" {
 			completion = Completion{Status: "partial_results", Reason: "operation_failed"}
 		}
@@ -257,12 +284,25 @@ func runRequest(ctx context.Context, out *serviceWriter, requestID domain.Reques
 		}
 	}
 	if !validCompletion(completion) {
-		_, _ = out.send(Envelope{Version: 1, Type: FrameError, RequestID: requestID}, StructuredError{Code: "capability_violation", Message: "handler returned an invalid completion", Retryable: false})
+		failure := StructuredError{Code: "capability_violation", Message: "handler returned an invalid completion", Retryable: false}
+		encoded, marshalErr := json.Marshal(failure)
+		if marshalErr == nil && outputBytes+uint64(len(encoded)) <= payloadBudget {
+			if written, sendErr := out.sendEncoded(Envelope{Version: 1, Type: FrameError, RequestID: requestID}, encoded); sendErr == nil {
+				outputBytes += uint64(written) // #nosec G115 -- sendEncoded reports a non-negative payload byte count.
+			}
+		}
 		completion = Completion{Status: "partial_results", Reason: "capability_violation"}
 	}
 	completion.Results = results
 	completion.OutputBytes = outputBytes
-	_, _ = out.send(Envelope{Version: 1, Type: FrameComplete, RequestID: requestID}, completion)
+	// A client may submit its next request as soon as it observes Complete. Make
+	// the concurrency slot available before that terminal frame becomes visible.
+	beforeComplete()
+	encoded, err := json.Marshal(completion)
+	if err != nil || outputBytes+uint64(len(encoded)) > maximumOutputBytes {
+		return
+	}
+	_, _ = out.sendEncoded(Envelope{Version: 1, Type: FrameComplete, RequestID: requestID}, encoded)
 }
 
 func validCompletion(completion Completion) bool {
@@ -273,12 +313,15 @@ func validCompletion(completion Completion) bool {
 		return false
 	}
 	for index := range completion.Reason {
-		value := completion.Reason[index]
-		if !(value >= 'a' && value <= 'z' || value >= '0' && value <= '9' || value == '_') {
+		if !isCompletionReasonByte(completion.Reason[index]) {
 			return false
 		}
 	}
 	return true
+}
+
+func isCompletionReasonByte(value byte) bool {
+	return value >= 'a' && value <= 'z' || value >= '0' && value <= '9' || value == '_'
 }
 
 func sendRejected(out *serviceWriter, requestID domain.RequestID, code, message string) error {
@@ -310,11 +353,15 @@ func sanitizeHelperError(message string) string {
 
 func isLowerHex(value string) bool {
 	for index := range value {
-		if !(value[index] >= '0' && value[index] <= '9' || value[index] >= 'a' && value[index] <= 'f') {
+		if !isLowerHexByte(value[index]) {
 			return false
 		}
 	}
 	return true
+}
+
+func isLowerHexByte(value byte) bool {
+	return value >= '0' && value <= '9' || value >= 'a' && value <= 'f'
 }
 
 func bytesTrimSpace(value []byte) []byte {

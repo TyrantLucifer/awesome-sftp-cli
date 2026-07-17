@@ -13,7 +13,7 @@ import (
 )
 
 const (
-	HelperPreface         = "amsftp-helper-stdio-v1\n"
+	HelperPreface         = "amsftp-helper-wire-v1\n"
 	MaxHelperFrameBytes   = 1 * 1024 * 1024
 	MaxHelperJSONDepth    = 8
 	MaxHelperStringBytes  = 4096

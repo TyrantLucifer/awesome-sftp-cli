@@ -9,6 +9,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -172,6 +173,81 @@ func TestLocalOperationCancellationLatency(t *testing.T) {
 	}
 }
 
+func TestMillionNodeHelperFilenameFixtureStreamsWithoutMaterializingTree(t *testing.T) {
+	operations := NewLocalOperations()
+	var maximumAlloc uint64
+	operations.walk = func(ctx context.Context, _ string, _ OperationSearchBudget, _ bool, _ string, visit localVisitFunc) error {
+		entry := syntheticLocalEntry{info: syntheticLocalInfo{mode: 0o600, size: 1}}
+		for index := 0; index < 1_000_000; index++ {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			entry.name = "ordinary"
+			if index%10_000 == 0 {
+				entry.name = "target"
+			}
+			if err := visit("/fixture/"+entry.name, entry.name, entry, entry.info, 1); err != nil {
+				return err
+			}
+			if index%10_000 == 0 {
+				var memory runtime.MemStats
+				runtime.ReadMemStats(&memory)
+				if memory.Alloc > maximumAlloc {
+					maximumAlloc = memory.Alloc
+				}
+			}
+		}
+		return nil
+	}
+	var before runtime.MemStats
+	runtime.GC()
+	runtime.ReadMemStats(&before)
+	started := time.Now()
+	first := time.Duration(0)
+	results := 0
+	completion, err := operations.FilenameSearch(context.Background(), marshalBody(t, FilenameSearchRequest{
+		Scope: "/fixture", Pattern: "target", Match: "name", Types: FilenameTypes{Files: true},
+		Budget: OperationSearchBudget{MaxDepth: 2, MaxEntries: 1_000_000, MaxResults: 101, MaxOutputBytes: 1 << 20, MaxDurationMS: 10_000, PageEntries: 128},
+	}), func(kind FrameType, _ any) error {
+		if kind == FrameResult {
+			results++
+			if first == 0 {
+				first = time.Since(started)
+			}
+		}
+		return nil
+	})
+	if err != nil || completion.Status != "complete" || results != 100 || first == 0 || first > 250*time.Millisecond {
+		t.Fatalf("completion=%#v results=%d first=%s err=%v", completion, results, first, err)
+	}
+	if maximumAlloc > before.Alloc+96<<20 {
+		t.Fatalf("million-node Helper fixture allocation grew by %d bytes", maximumAlloc-before.Alloc)
+	}
+	t.Logf("first_result=%s peak_alloc_delta=%d results=%d", first, maximumAlloc-before.Alloc, results)
+}
+
+type syntheticLocalEntry struct {
+	name string
+	info syntheticLocalInfo
+}
+
+func (entry syntheticLocalEntry) Name() string               { return entry.name }
+func (entry syntheticLocalEntry) IsDir() bool                { return false }
+func (entry syntheticLocalEntry) Type() os.FileMode          { return 0 }
+func (entry syntheticLocalEntry) Info() (os.FileInfo, error) { return entry.info, nil }
+
+type syntheticLocalInfo struct {
+	mode os.FileMode
+	size int64
+}
+
+func (info syntheticLocalInfo) Name() string       { return "fixture" }
+func (info syntheticLocalInfo) Size() int64        { return info.size }
+func (info syntheticLocalInfo) Mode() os.FileMode  { return info.mode }
+func (info syntheticLocalInfo) ModTime() time.Time { return time.Unix(0, 0) }
+func (info syntheticLocalInfo) IsDir() bool        { return false }
+func (info syntheticLocalInfo) Sys() any           { return nil }
+
 func TestLocalTailDetectsTruncateAndRotateAsHints(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "tail.log")
@@ -191,9 +267,10 @@ func TestLocalTailDetectsTruncateAndRotateAsHints(t *testing.T) {
 	var notices []TailNotice
 	var chunks []TailChunk
 	completion, err := operations.Tail(context.Background(), marshalBody(t, TailRequest{Path: file, Offset: 3, MaxBytes: 64, DurationMS: 80, PollIntervalMS: 10}), func(kind FrameType, payload any) error {
-		if kind == FrameProgress {
+		switch kind {
+		case FrameProgress:
 			notices = append(notices, payload.(TailNotice))
-		} else if kind == FrameResult {
+		case FrameResult:
 			chunks = append(chunks, payload.(TailChunk))
 		}
 		return nil
@@ -267,7 +344,7 @@ func TestLocalSameHostCopyStagesOnlyExactPlannerPartAndNeverCommitsFinal(t *test
 	if _, err := os.Lstat(final); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("helper committed final: %v", err)
 	}
-	if got, err := os.ReadFile(part); err != nil || !bytes.Equal(got, data) {
+	if got, err := os.ReadFile(part); err != nil || !bytes.Equal(got, data) { // #nosec G304 -- part is inside t.TempDir.
 		t.Fatalf("part=%q err=%v", got, err)
 	}
 	bad := request

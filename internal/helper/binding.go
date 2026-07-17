@@ -36,7 +36,7 @@ func ParseBindingProbe(raw []byte) (Observation, error) {
 	if len(fields) != 6 || fields[5] != "" || fields[0] != "amsftp-helper-bind-v1" {
 		return Observation{}, errors.New("parse helper binding probe: framing or header is invalid")
 	}
-	uid, err := parseCanonicalUint(fields[1], 10, 1, 2147483647)
+	uid, err := parseCanonicalUint(fields[1], 10, 2147483647)
 	if err != nil {
 		return Observation{}, errors.New("parse helper binding probe: uid is invalid")
 	}
@@ -47,7 +47,7 @@ func ParseBindingProbe(raw []byte) (Observation, error) {
 	if err != nil {
 		return Observation{}, err
 	}
-	return Observation{UID: uint32(uid), Home: fields[2], Target: target}, nil
+	return Observation{UID: uint32(uid), Home: fields[2], Target: target}, nil // #nosec G115 -- parser caps UID at 2^31-1 above.
 }
 
 func normalizeProbeTarget(osName, architecture string) (Target, error) {
@@ -85,12 +85,16 @@ func ValidateSafeHome(home string) error {
 		}
 		for index := range component {
 			value := component[index]
-			if !(value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z' || value >= '0' && value <= '9' || value == '.' || value == '_' || value == '-') {
+			if !isSafeHomeByte(value) {
 				return errors.New("safe helper home: path component contains an unsafe byte")
 			}
 		}
 	}
 	return nil
+}
+
+func isSafeHomeByte(value byte) bool {
+	return value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z' || value >= '0' && value <= '9' || value == '.' || value == '_' || value == '-'
 }
 
 type InstallPlan struct {
@@ -147,7 +151,7 @@ func HelperSSHArguments(sshPath, hostAlias string, plan InstallPlan) ([]string, 
 	if err := openssh.ValidateHostAlias(hostAlias); err != nil {
 		return nil, fmt.Errorf("build helper SSH arguments: %w", err)
 	}
-	if plan.FinalPath == "" || len(plan.FinalPath) > MaxHelperRemotePathBytes || path.Clean(plan.FinalPath) != plan.FinalPath {
+	if !isSafeHelperExecutablePath(plan.FinalPath) {
 		return nil, errors.New("build helper SSH arguments: final path is invalid")
 	}
 	command := "exec " + plan.FinalPath + " helper serve"
@@ -174,6 +178,34 @@ func HelperSSHArguments(sshPath, hostAlias string, plan InstallPlan) ([]string, 
 		hostAlias,
 		command,
 	}, nil
+}
+
+func isSafeHelperExecutablePath(value string) bool {
+	if value == "" || value == "/" || len(value) > MaxHelperRemotePathBytes || !path.IsAbs(value) || path.Clean(value) != value {
+		return false
+	}
+	components := strings.Split(value[1:], "/")
+	for _, component := range components {
+		if component == "" || len(component) > 255 || !allBytes(component, isSafeHomeByte) {
+			return false
+		}
+	}
+	if len(components) < 9 {
+		return false
+	}
+	suffix := components[len(components)-8:]
+	if suffix[0] != ".local" || suffix[1] != "lib" || suffix[2] != "amsftp" || suffix[3] != "helpers" || suffix[7] != "amsftp" || !strings.HasPrefix(suffix[4], "p") {
+		return false
+	}
+	if _, err := parseCanonicalUint(strings.TrimPrefix(suffix[4], "p"), 5, 65535); err != nil {
+		return false
+	}
+	if _, err := parseReleaseVersion(suffix[5]); err != nil {
+		return false
+	}
+	target := strings.Split(suffix[6], "-")
+	return len(target) == 3 && (target[0] == "darwin" || target[0] == "linux") &&
+		(target[1] == "amd64" || target[1] == "arm64") && len(target[2]) == 64 && isLowerHex(target[2])
 }
 
 func validateAbsoluteExecutable(value string) error {

@@ -1,6 +1,6 @@
 # Stage 4 Verification Record
 
-- **Status**: In Progress — M4.1 Complete; M4.2/M4.3 implementation in progress
+- **Status**: In Progress — M4.1 Complete; M4.2–M4.4 focused implementation complete, final candidate gates pending
 - **Updated**: 2026-07-17
 - **Repository root**: `/Users/bytedance/Downloads/projects/awesome-mac-sftp`
 - **Branch**: `codex/stage4-search-helper`
@@ -37,17 +37,27 @@ The synthetic million-node Provider generates only the requested 128-entry page.
 
 The current internal lifecycle freezes canonical Manifest v1 and 89-byte detached signature parsing, Ed25519/key-ID verification, empty production trust, current-policy floors/revocation/denylist, monotonic version/hash decisions, strict safe-home/target/path derivation, two consents, fresh-plan drift rejection, expected+1 artifact reads, exclusive unpredictable temp upload, pre-first-byte chmod/handle/path checks, client readback, no-replace publication, final verification and post-handshake high-water update. The fixture private key exists only in `_test.go`; the sole artifact is `internal/helper/testdata/nonrelease-helper-fixture.txt`.
 
-The fresh OpenSSH process session uses the exact restricted command builder, forces GSS delegation and all ControlMaster settings off, requires the Helper preface at stdout byte zero, concurrently drains/redacts stderr with a 65,536-byte hard cap, and enables bounded heartbeat failure. Protected metadata/high-water persistence, a real SFTP install adapter and binding probe, runtime consent UI, every-exec freshness, disable/remove, and the hostile OpenSSH/native matrix remain pending.
+The fresh OpenSSH process session uses the exact restricted command builder, forces GSS delegation and all ControlMaster settings off, requires the Helper preface at stdout byte zero, concurrently drains/redacts stderr with an exact 65,536-byte accepted boundary, rejects byte 65,537, and kills its OpenSSH process group on explicit close, heartbeat failure, hard request deadline, or protocol failure.
+
+Exact raw signed metadata is now durably staged before probe in a 0700/0600 content-addressed store. Its atomic index separates the enabled bit from persistent Endpoint/protocol/target version/hash high-water, fails closed on missing/corrupt/symlink metadata, caps records and metadata files at 4,096, and preserves high-water across disable/remove and restart. `PrepareEnable` reloads exact bytes and repeats current policy, fresh binding/target/namespace/ancestor/final attributes and full remote hash before validating exact protocol/version/independent capabilities.
+
+The `pkg/sftp` adapter requires raw UID/mode attributes, exact 0600 handle operations, exclusive create, readback and exact removal. It rejects ordinary create-then-chmod `Mkdir` because that exposes an umask-dependent permission window, and requires a construction-time raw-MKDIR primitive whose Stage 4 fixture creates with exact `0700`; the production packet implementation remains intentionally absent while distribution is CLOSED. Testing proved a nominal SFTP v3 server may replace on rename, so publication deliberately requires OpenSSH `hardlink@openssh.com` target-exists-fails and refuses servers without it; it never uses replacement rename or delete-first. Utility attributes are checked before and after probe, the formal executable must match the full content-addressed grammar, and exact removal uses the Job Store's admission/removal lease to scan exact artifact IDs in non-terminal durable plans. [ADR-0016](../architecture/adr/0016-stage4-search-helper-runtime-contracts.md) records these fail-closed decisions. Final hostile OpenSSH/native/pollution gates remain pending.
 
 ### M4.3 — Helper search
 
 **Status: In Progress.**
 
-Protocol v1 now has strict envelopes and payloads, 1 MiB frames, depth/string/capability/concurrency bounds, independent capability negotiation, request-ID non-reuse, concurrent result/progress/error/complete streams, cancel, operation timeout and nonce heartbeat. The built-in scanner supplies bounded filename/content search without shell interpolation. Daemon routing uses Helper only after independent capability negotiation, preserves the exact Level 0 identity, emits partial results on Helper failure, and never mixes fallback results into the same request. A closed Helper causes the next request to use Level 0 while the Provider snapshot remains healthy.
+Protocol v1 now has the ADR-0010-frozen `amsftp-helper-wire-v1` byte-zero preface, strict envelopes and payloads, 1 MiB frames, depth/string/capability/concurrency bounds, independent capability negotiation, permanent request-ID non-reuse including rejected requests, concurrent result/progress/error/complete streams, cancel, operation timeout and mandatory nonce heartbeat. Server and client use payload-byte accounting, release a concurrency slot before exposing `complete`, and independently cap every request at ten minutes, 100,000 results and 64 MiB. The built-in scanner supplies bounded filename/content search without shell interpolation. Daemon routing uses Helper only after independent capability negotiation, preserves the exact Level 0 identity, reports canceled contexts (including an empty closed Helper stream) as canceled before Provider snapshot validation, emits partial results on Helper failure, and never mixes fallback results into the same request. A closed Helper causes the next request to use Level 0 while the Provider snapshot remains healthy.
+
+The million-node Helper synthetic walk traverses one million generated entries without a retained tree, streams 100 results, reports its first result in about 0.29 ms and observed about 3.5 MiB peak allocation delta on the development host. Protocol seed fuzz tests exercise envelope, manifest, and signature parsers.
 
 ### M4.4 — Enhanced capabilities and degradation closure
 
-**Status: Not Started.**
+**Status: In Progress.** Focused implementation is complete; final cross-platform and fault gates remain pending.
+
+`strong_hash` returns SHA-256, file identity and compute time, and invalidates a mid-read change. `disk_stats` reports statfs total/available with quota explicitly unknown. Tail reports truncate/rotation and byte/time limits; watch is explicitly loss-possible, coalesced, and refresh-required.
+
+Planner selects `helper_same_host` only for a regular-file copy within one SSH Endpoint after independent `strong_hash` and `same_host_copy` negotiation. The concrete Helper session is bound to that exact EndpointID, and Helper size/mtime at Provider precision/available file ID/existing SHA-256 must agree with the frozen Provider FileRef. The frozen Plan carries exact Endpoint, protocol, Helper version, OS/architecture/artifact SHA, capability version and source SHA-256/size/identity. Manager holds the shared Job Store admission lease from before Helper preparation through durable creation; exact removal takes the same coordinator and scans every non-terminal durable plan. Helper may create only the standard `.part-<JobID>` location. The existing Worker then verifies, applies conflict policy, commits, checkpoints and adopts an exact response-lost part after restart. Durable Manager, overwrite, cancel propagation, route visibility and fallback-to-relay-at-plan-time tests are green. The TUI refreshes each ready SSH pane's dynamic Helper status through a one-at-a-time one-second snapshot loop and rejects stale Endpoint/session/generation actions. The production Manager still receives no fixture backend while distribution is CLOSED.
 
 ## Command ledger
 
@@ -64,7 +74,29 @@ Protocol v1 now has strict envelopes and payloads, 1 MiB frames, depth/string/ca
 | M4.2/M4.3 focused packages | `go test ./internal/app ./internal/helper ./internal/search ./internal/daemon ./internal/tui ./internal/integration -count=1` | PASS |
 | Helper/client race repetition | `go test -race ./internal/helper -run 'TestHelperClient(Heartbeat\|Handshake\|Protocol)' -count=10` | PASS |
 | Helper route race | `go test -race ./internal/helper ./internal/daemon ./internal/search -count=1` | PASS |
+| durable state/fresh enable/SFTP adapter | `go test ./internal/helper -run 'Test(StateStore\|PrepareEnable\|SFTPInstallRemote\|OpenSSHBindingProbe)' -count=1` | PASS |
+| same-host Planner/Job path | `go test ./internal/transfer -run 'Test(PlannerSelectsSameHost\|WorkerStagesSameHost\|WorkerAdoptsExact\|SameHostRoute\|ManagerPersistsAndExecutesSameHost\|SameHostWorkerPropagates)' -count=1 -v` | PASS |
+| Helper million fixture | `go test ./internal/helper -run TestMillionNodeHelper -count=1 -v` | PASS; first result 290.583 µs, peak allocation delta 3,457,368 bytes, 100 streamed results |
+| current focused packages | `go test ./internal/helper ./internal/transfer ./internal/daemon ./internal/tui ./internal/app ./internal/search -count=1` | PASS |
+| current focused vet | `go vet ./internal/helper ./internal/transfer ./internal/daemon ./internal/tui ./internal/app ./internal/search` | PASS |
+| current focused race | `go test -race ./internal/helper ./internal/transfer ./internal/daemon ./internal/tui ./internal/search -count=1` | PASS |
+| independent-review fixes | `go test ./... -count=1 -timeout=10m` | PASS |
+| independent-review focused race | `go test -race ./internal/helper ./internal/transfer ./internal/daemon ./internal/tui ./internal/app ./internal/search -count=1 -timeout=10m` | PASS |
+| Helper completion ordering stress | `go test ./internal/helper -run '^TestHelperClientMayStartNextRequestImmediatelyAfterCompleteAtConcurrencyOne$' -count=100 -timeout=60s` | PASS |
+| real temporary-sshd Level 0 search | `AMSFTP_REAL_SSHD=1 go test ./internal/integration -run '^TestRealSSHDLevel0Search$' -count=1 -v -timeout=2m` | PASS: the named test ran and completed in 0.43 s |
+| current docs/lint/diff | `make docs-check && git diff --check && make lint` | PASS; golangci-lint reports 0 issues |
+| final independent-review fixes | removal/admission, process fatal hook, request-ID rejection reuse, unified output budget, empty cancel, FileID/hash negative tests | PASS; independent re-review reports no remaining blockers |
+| removal/admission repetition | `go test ./internal/state/jobstore -run '^TestHelperRemovalLeaseRejectsPinnedArtifactAndExcludesNewJobAdmission$' -count=20` and Manager prepare→create test `-count=20` | PASS |
+| protocol/process repetition | focused request-ID/output-budget/heartbeat/hard-deadline tests `-count=20` | PASS |
+| final focused race | `go test -race ./internal/state/jobstore ./internal/transfer ./internal/helper ./internal/daemon -count=1 -timeout=7m` | PASS |
+| Go 1.25.12 oldstable | `GOTOOLCHAIN=go1.25.12 BUILD_DIR=/tmp/... COVERAGE_DIR=/tmp/... make check` | PASS after responsive-heartbeat shutdown repetition `-count=100` |
+| final cold-start/documentation review | Feature Matrix, production CLOSED, focused Helper/removal/transfer tests, docs check | PASS; no remaining blockers |
+| final current gate | `BUILD_DIR=/tmp/... COVERAGE_DIR=/tmp/... make ci` | PASS; unit/contract/docs/tidy/verify/lint/full race/fuzz/vulnerability/workflow/four-target build |
+| final reproducibility | two independent `-trimpath -buildvcs=false` builds for darwin/linux × arm64/amd64, compared byte-for-byte | PASS |
+| final real SFTP search | `AMSFTP_REAL_SSHD=1 go test ./internal/integration -run '^TestRealSSHDLevel0Search$' -count=1 -v -timeout=2m` | PASS; named test ran in 0.53 s |
+| final hostile process fixture | focused restricted argv/binding probe/process session/production-trust tests | PASS |
+| final production pollution | production binary string scan plus tracked `dist/**`/`coverage/**` scan | PASS; no fixture key/artifact/child-mode marker or tracked generated output |
 
 ## Pending final gates
 
-All Stage 4 local/current-oldstable, native/Hosted, temporary-sshd, protocol, lifecycle, million-node resource, fault, security/pollution, independent review and cold-start gates remain pending. Feature Matrix rows remain Planned until implementation and focused evidence exist, and cannot become Verified before the exact final candidate passes every required gate.
+Independent security/correctness and cold-start/documentation re-reviews report no remaining blockers. Exact current/oldstable, real temporary-sshd, hostile process fixture, reproducibility and production-pollution gates are green. Native/Hosted exact-SHA jobs, including the repository's full OpenSSH/auth/provenance matrix, remain pending. Focused implementation rows are `Implemented`; none may become `Verified` before the exact final candidate passes its required gates.

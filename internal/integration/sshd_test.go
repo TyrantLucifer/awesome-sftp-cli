@@ -28,6 +28,15 @@ import (
 )
 
 func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
+	runRealOpenSSHSFTP(t, false)
+}
+
+func TestRealSSHDLevel0Search(t *testing.T) {
+	runRealOpenSSHSFTP(t, true)
+}
+
+func runRealOpenSSHSFTP(t *testing.T, searchOnly bool) {
+	t.Helper()
 	if os.Getenv("AMSFTP_REAL_SSHD") != "1" {
 		t.Skip("set AMSFTP_REAL_SSHD=1 in an isolated account")
 	}
@@ -91,6 +100,9 @@ func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {
 	assertContainsEntry(t, ctx, first, "endpoint-first.txt")
 	assertContainsEntry(t, ctx, second, "endpoint-second.txt")
 	assertLevel0SFTPSearch(t, ctx, first, firstServer.root)
+	if searchOnly {
+		return
+	}
 	assertBidirectionalDurableTransfer(t, ctx, first, firstServer.root)
 	assertDualRemoteDirectoryRelay(t, ctx, first, second, firstServer.root, secondServer.root)
 	assertDualRemoteDirectoryRelay(t, ctx, first, first, firstServer.root, firstServer.root)

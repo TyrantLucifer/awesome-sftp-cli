@@ -1176,6 +1176,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	startIntent(tui.Intent{Kind: tui.IntentEditRecoverable})
 	jobRefreshTicker := time.NewTicker(500 * time.Millisecond)
 	defer jobRefreshTicker.Stop()
+	helperStatusTicker := time.NewTicker(time.Second)
+	defer helperStatusTicker.Stop()
+	helperStatusRefresh := make(chan struct{}, 1)
 	leaseHeartbeatTicker := time.NewTicker(cache.DefaultLeaseHeartbeat)
 	defer leaseHeartbeatTicker.Stop()
 	var pendingTerminalImage *tui.PreviewTerminalImage
@@ -1197,6 +1200,24 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				startIntent(tui.Intent{Kind: tui.IntentJobList})
 			case tui.DrawerLog:
 				startIntent(tui.Intent{Kind: tui.IntentDiagnosticList, Limit: 256})
+			}
+		case <-helperStatusTicker.C:
+			targets := make([]helperStatusRefreshTarget, 0, 2)
+			for pane := tui.Left; pane <= tui.Right; pane++ {
+				state := model.Panes[pane]
+				if state.Endpoint.Kind == domain.EndpointSSH && state.Connection == domain.StateReady && state.Capabilities.Revision.SessionID != "" {
+					targets = append(targets, helperStatusRefreshTarget{pane: pane, endpointID: state.Endpoint.ID})
+				}
+			}
+			if len(targets) != 0 {
+				select {
+				case helperStatusRefresh <- struct{}{}:
+					go func(activeClient *daemon.Client, targets []helperStatusRefreshTarget) {
+						defer func() { <-helperStatusRefresh }()
+						refreshHelperStatus(runCtx, activeClient, targets, actions)
+					}(client, targets)
+				default:
+				}
 			}
 		case <-leaseHeartbeatTicker.C:
 			if err := editFlow.Heartbeat(runCtx); err != nil {
@@ -1360,6 +1381,32 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			for _, intent := range intents {
 				startIntent(intent)
 			}
+		}
+	}
+}
+
+type helperStatusRefreshTarget struct {
+	pane       tui.PaneID
+	endpointID domain.EndpointID
+}
+
+func refreshHelperStatus(ctx context.Context, client *daemon.Client, targets []helperStatusRefreshTarget, actions chan<- tui.Action) {
+	for _, target := range targets {
+		refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		var response ipc.ProviderSnapshotResponse
+		err := client.Call(refreshCtx, daemon.ProviderSnapshot, ipc.ProviderSnapshotRequest{EndpointID: string(target.endpointID)}, &response)
+		cancel()
+		if err != nil {
+			continue
+		}
+		capabilities, err := capabilitySnapshotFromWire(response)
+		if err != nil {
+			continue
+		}
+		select {
+		case actions <- tui.PaneCapabilitiesRefreshed{Pane: target.pane, EndpointID: target.endpointID, Capabilities: capabilities}:
+		case <-ctx.Done():
+			return
 		}
 	}
 }

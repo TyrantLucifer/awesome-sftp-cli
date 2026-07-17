@@ -94,6 +94,22 @@ func TestHelperFreshSSHArgumentsHaveOneRestrictedCommandAndNoBusinessInput(t *te
 	}
 }
 
+func TestHelperSSHArgumentsRejectsUntrustedExecutablePathBytes(t *testing.T) {
+	for _, finalPath := range []string{
+		"relative/helper",
+		"/home/alice/helper;id",
+		"/home/alice/$(id)",
+		"/home/alice/`id`",
+		"/home/alice/helper with space",
+		"/home/alice/helper'quoted",
+		"/home/alice/helper",
+	} {
+		if _, err := HelperSSHArguments("/usr/bin/ssh", "work-host", InstallPlan{FinalPath: finalPath}); err == nil {
+			t.Fatalf("unsafe helper executable path %q was accepted", finalPath)
+		}
+	}
+}
+
 func TestArtifactValidationStreamsExpectedPlusOneAndMatchesManifest(t *testing.T) {
 	data := []byte("amsftp Stage 4 fixture only\n")
 	raw := manifestForArtifact(t, data)

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -30,6 +32,9 @@ func TestInstallerRequiresTwoBoundConsentsAndPublishesWithoutReplacement(t *test
 	}
 	if fixture.remote.publishReplace {
 		t.Fatal("installer requested replacement publication")
+	}
+	if !orderedSubsequence(fixture.remote.events, []string{"utility_lstat:/usr", "probe"}) {
+		t.Fatalf("binding probe ran before absolute utility validation: %#v", fixture.remote.events)
 	}
 	wantOrder := []string{"open_exclusive", "handle_chmod:0600", "handle_stat", "path_lstat", "write", "handle_chmod:0700", "publish_no_replace", "handshake"}
 	if !orderedSubsequence(fixture.remote.events, wantOrder) {
@@ -148,6 +153,40 @@ func TestInstallerNeverWritesFirstByteWhenExclusiveHandleGateFails(t *testing.T)
 	}
 }
 
+func TestInstallerPersistsExactMetadataBeforeProbeAndEnabledHighWaterAfterHandshake(t *testing.T) {
+	fixture := newInstallerFixture(t)
+	store, err := NewStateStore(filepath.Join(t.TempDir(), "state"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.request.State = store
+	fixture.request.HighWater = nil
+	fixture.consent.beforePreliminary = func() {
+		entries, readErr := os.ReadDir(store.root)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(entries) != 1 || !strings.HasPrefix(entries[0].Name(), "metadata-") {
+			t.Fatalf("metadata before preliminary consent = %#v", entries)
+		}
+	}
+	result, err := fixture.installer.Install(context.Background(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := NewStateStore(store.root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := reopened.LoadEnabled(fixture.request.EndpointID, fixture.manifest.ProtocolMajor, fixture.manifest.Target())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.FinalPath != result.FinalPath || !bytes.Equal(record.RawManifest, fixture.request.RawManifest) || !bytes.Equal(record.RawSignature, fixture.request.RawSignature) {
+		t.Fatalf("persistent enabled record = %#v", record)
+	}
+}
+
 type installerFixture struct {
 	installer Installer
 	request   InstallRequest
@@ -177,6 +216,7 @@ func newInstallerFixture(t *testing.T) *installerFixture {
 			"/usr/bin":        {Kind: RemoteDirectory, UID: 0, Mode: 0755},
 			"/usr/bin/printf": {Kind: RemoteRegular, UID: 0, Mode: 0755},
 			"/usr/bin/id":     {Kind: RemoteRegular, UID: 0, Mode: 0755},
+			"/usr/bin/pwd":    {Kind: RemoteRegular, UID: 0, Mode: 0755},
 			"/usr/bin/uname":  {Kind: RemoteRegular, UID: 0, Mode: 0755},
 			"/home/alice":     {Kind: RemoteDirectory, UID: 1001, Mode: 0700},
 		},
@@ -189,7 +229,7 @@ func newInstallerFixture(t *testing.T) *installerFixture {
 	}
 	highWater := NewHighWater()
 	request := InstallRequest{
-		EndpointID:     domain.EndpointID("ep_stage4fixture00000000000000"),
+		EndpointID:     domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"),
 		EndpointLabel:  "fixture endpoint",
 		RawManifest:    rawManifest,
 		RawSignature:   fixtureSignature(t, rawManifest),
@@ -230,9 +270,13 @@ type fakeInstallConsent struct {
 	probesAtPreliminary int
 	mutationsAtFinal    int
 	afterFinal          func()
+	beforePreliminary   func()
 }
 
 func (c *fakeInstallConsent) ApprovePreliminary(_ context.Context, view PreliminaryConsent) (PreliminaryApproval, error) {
+	if c.beforePreliminary != nil {
+		c.beforePreliminary()
+	}
 	c.preliminaryView = view
 	c.probesAtPreliminary = c.remote.probes
 	return c.preliminary, nil
@@ -263,6 +307,7 @@ type fakeInstallRemote struct {
 }
 
 func (r *fakeInstallRemote) Probe(context.Context) (Observation, error) {
+	r.events = append(r.events, "probe")
 	r.probes++
 	if len(r.probeResults) == 0 {
 		return Observation{}, errors.New("unexpected probe")
@@ -275,6 +320,9 @@ func (r *fakeInstallRemote) Probe(context.Context) (Observation, error) {
 func (r *fakeInstallRemote) RealPath(context.Context, string) (string, error) { return r.realPath, nil }
 
 func (r *fakeInstallRemote) Lstat(_ context.Context, path string) (RemoteAttrs, error) {
+	if path == "/usr" || strings.HasPrefix(path, "/usr/bin") {
+		r.events = append(r.events, "utility_lstat:"+path)
+	}
 	if path == r.openedTemp {
 		r.events = append(r.events, "path_lstat")
 	}

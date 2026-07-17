@@ -129,10 +129,15 @@ type ItemResult struct {
 type Worker struct {
 	resolver Resolver
 	journal  Journal
+	sameHost SameHostCopyBackend
 }
 
 func NewWorker(resolver Resolver, journal Journal) *Worker {
 	return &Worker{resolver: resolver, journal: journal}
+}
+
+func NewWorkerWithSameHost(resolver Resolver, journal Journal, backend SameHostCopyBackend) *Worker {
+	return &Worker{resolver: resolver, journal: journal, sameHost: backend}
 }
 
 func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (Result, error) {
@@ -193,6 +198,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	if checkpoint != nil {
 		current = cloneCheckpoint(*checkpoint)
+	}
+	if plan.Route == RouteHelperSameHost && current.Phase == PhasePrepared {
+		return worker.executeSameHostCopy(ctx, plan, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
 	}
 
 	if current.Phase == PhaseVerified || current.Phase == PhaseWaitingConflict || current.Phase == PhaseCommitting {
@@ -656,6 +664,19 @@ func validateExecution(plan Plan) error {
 	}
 	if plan.Verification != VerifySHA256 {
 		return errors.New("execute transfer: unsupported verification")
+	}
+	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay && plan.Route != RouteHelperSameHost {
+		return errors.New("execute transfer: unsupported route")
+	}
+	if plan.Route == RouteHelperSameHost {
+		if plan.Version != 1 || plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile ||
+			plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID || plan.SourceEndpoint.Kind != domain.EndpointSSH ||
+			plan.DestinationEndpoint.Kind != domain.EndpointSSH || plan.SameHostCopy == nil ||
+			!validSameHostCopyBinding(*plan.SameHostCopy, plan.SourceEndpoint.ID, plan.Source.Fingerprint) {
+			return errors.New("execute transfer: invalid Helper same-host route")
+		}
+	} else if plan.SameHostCopy != nil {
+		return errors.New("execute transfer: unexpected Helper same-host binding")
 	}
 	if plan.Source.Kind == domain.EntryFile && plan.Discovery != nil {
 		return errors.New("execute transfer: file plan has a directory discovery budget")

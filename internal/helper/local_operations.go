@@ -7,11 +7,13 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"syscall"
 	"time"
 	"unicode/utf8"
 
@@ -104,6 +106,7 @@ type FileFingerprint struct {
 	Size           uint64 `json:"size"`
 	Mode           uint32 `json:"mode"`
 	ModifiedUnixNS int64  `json:"modified_unix_ns"`
+	FileID         string `json:"file_id,omitempty"`
 }
 
 type StrongHashResult struct {
@@ -130,9 +133,13 @@ type LocalOperations struct {
 	afterHashChunk func()
 	afterTailPoll  func()
 	afterWatchPoll func()
+	walk           localWalkFunc
 }
 
-func NewLocalOperations() *LocalOperations { return &LocalOperations{} }
+type localVisitFunc func(string, string, os.DirEntry, os.FileInfo, uint32) error
+type localWalkFunc func(context.Context, string, OperationSearchBudget, bool, string, localVisitFunc) error
+
+func NewLocalOperations() *LocalOperations { return &LocalOperations{walk: walkLocal} }
 
 func NewLocalServiceConfig(version Version) ServiceConfig {
 	operations := NewLocalOperations()
@@ -180,10 +187,10 @@ func (o *LocalOperations) FilenameSearch(parent context.Context, body json.RawMe
 	if err := validateFilenameRequest(request); err != nil {
 		return Completion{}, err
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(request.Budget.MaxDurationMS)*time.Millisecond)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(request.Budget.MaxDurationMS)*time.Millisecond) // #nosec G115 -- validation caps duration at 30 seconds.
 	defer cancel()
 	state := &operationState{requestBudget: request.Budget, emit: emit}
-	err := walkLocal(ctx, request.Scope, request.Budget, request.IncludeHidden, request.Ignore, func(fullPath, relative string, entry os.DirEntry, info os.FileInfo, depth uint32) error {
+	err := o.walk(ctx, request.Scope, request.Budget, request.IncludeHidden, request.Ignore, func(fullPath, relative string, entry os.DirEntry, info os.FileInfo, depth uint32) error {
 		state.entries++
 		if state.entries > request.Budget.MaxEntries {
 			return stopOperation("entry_limit")
@@ -197,7 +204,7 @@ func (o *LocalOperations) FilenameSearch(parent context.Context, body json.RawMe
 		if selected && containsPattern(candidate, request.Pattern, request.CaseSensitive) {
 			result := FilenameSearchResult{RelativePath: filepath.ToSlash(relative), Kind: kind, Mode: uint32(info.Mode().Perm()), ModifiedUnixNS: info.ModTime().UnixNano()}
 			if info.Size() > 0 {
-				result.Size = uint64(info.Size())
+				result.Size = uint64(info.Size()) // #nosec G115 -- guarded positive immediately above.
 			}
 			if err := state.emitResult(result); err != nil {
 				return err
@@ -233,12 +240,12 @@ func (o *LocalOperations) ContentSearch(parent context.Context, body json.RawMes
 	if err != nil {
 		return Completion{}, err
 	}
-	ctx, cancel := context.WithTimeout(parent, time.Duration(request.Budget.MaxDurationMS)*time.Millisecond)
+	ctx, cancel := context.WithTimeout(parent, time.Duration(request.Budget.MaxDurationMS)*time.Millisecond) // #nosec G115 -- validation caps duration at 30 seconds.
 	defer cancel()
 	state := &operationState{requestBudget: request.Budget.OperationSearchBudget, emit: emit}
 	var files uint64
 	var readBytes uint64
-	err = walkLocal(ctx, request.Scope, request.Budget.OperationSearchBudget, request.IncludeHidden, "none", func(fullPath, relative string, entry os.DirEntry, info os.FileInfo, depth uint32) error {
+	err = o.walk(ctx, request.Scope, request.Budget.OperationSearchBudget, request.IncludeHidden, "none", func(fullPath, relative string, entry os.DirEntry, info os.FileInfo, depth uint32) error {
 		state.entries++
 		if state.entries > request.Budget.MaxEntries {
 			return stopOperation("entry_limit")
@@ -302,10 +309,10 @@ func validateContentOperationRequest(request ContentSearchRequest) (*regexp.Rege
 }
 
 func (o *LocalOperations) scanContentFile(ctx context.Context, fullPath, relative string, before os.FileInfo, request ContentSearchRequest, matcher *regexp.Regexp, state *operationState, readBytes *uint64) (string, error) {
-	if uint64(before.Size()) > request.Budget.MaxFileBytes {
+	if before.Size() < 0 || uint64(before.Size()) > request.Budget.MaxFileBytes { // #nosec G115 -- the negative case is rejected first.
 		return "file_byte_limit", nil
 	}
-	file, err := os.Open(fullPath)
+	file, err := os.Open(fullPath) // #nosec G304 -- fullPath is derived below a validated absolute search scope.
 	if err != nil {
 		if errors.Is(err, os.ErrPermission) {
 			return "permission_denied", nil
@@ -318,7 +325,7 @@ func (o *LocalOperations) scanContentFile(ctx context.Context, fullPath, relativ
 		return "file_changed", nil
 	}
 	limit := request.Budget.MaxFileBytes + 1
-	data, err := io.ReadAll(io.LimitReader(file, int64(limit)))
+	data, err := io.ReadAll(io.LimitReader(file, int64(limit))) // #nosec G115 -- request validation caps limit at 64 MiB + 1.
 	if err != nil {
 		return "provider_error", nil
 	}
@@ -362,7 +369,7 @@ func (o *LocalOperations) scanContentFile(ctx context.Context, fullPath, relativ
 			}
 			snippet := strings.Join(byteLinesToStrings(lines[start:end]), "\n")
 			snippet = truncateUTF8(snippet, int(request.Budget.MaxSnippetBytes))
-			result := ContentSearchResult{RelativePath: relative, Line: uint64(lineIndex + 1), Column: uint64(match[0] + 1), Offset: offset + uint64(match[0]), Snippet: snippet}
+			result := ContentSearchResult{RelativePath: relative, Line: uint64(lineIndex + 1), Column: uint64(match[0] + 1), Offset: offset + uint64(match[0]), Snippet: snippet} // #nosec G115 -- indexes come from in-memory slices and are non-negative.
 			if err := state.emitResult(result); err != nil {
 				return "", err
 			}
@@ -387,7 +394,7 @@ func (o *LocalOperations) StrongHash(ctx context.Context, body json.RawMessage, 
 		return Completion{}, errors.New("helper strong hash: request is invalid")
 	}
 	before, err := os.Lstat(request.Path)
-	if err != nil || !before.Mode().IsRegular() || uint64(before.Size()) > request.MaxBytes {
+	if err != nil || !before.Mode().IsRegular() || before.Size() < 0 || uint64(before.Size()) > request.MaxBytes { // #nosec G115 -- the negative case is rejected first.
 		return Completion{Status: "partial_results", Reason: "file_invalid"}, nil
 	}
 	file, err := os.Open(request.Path)
@@ -431,7 +438,7 @@ func (o *LocalOperations) StrongHash(ctx context.Context, body json.RawMessage, 
 	}
 	handleAfter, handleErr := file.Stat()
 	pathAfter, pathErr := os.Lstat(request.Path)
-	valid := handleErr == nil && pathErr == nil && sameFileSnapshot(handleBefore, handleAfter) && os.SameFile(handleAfter, pathAfter) && sameFileSnapshot(handleAfter, pathAfter) && total == uint64(handleAfter.Size())
+	valid := handleErr == nil && pathErr == nil && handleAfter.Size() >= 0 && sameFileSnapshot(handleBefore, handleAfter) && os.SameFile(handleAfter, pathAfter) && sameFileSnapshot(handleAfter, pathAfter) && total == uint64(handleAfter.Size()) // #nosec G115 -- the non-negative check is part of this conjunction.
 	result := StrongHashResult{
 		Algorithm: "sha256", Fingerprint: fingerprintOf(handleAfter, before),
 		ComputedAtUnixNS: time.Now().UnixNano(), Valid: valid,
@@ -459,14 +466,14 @@ func (o *LocalOperations) DiskStats(_ context.Context, body json.RawMessage, emi
 	}
 	var status unix.Statfs_t
 	if err := unix.Statfs(request.Path, &status); err != nil {
-		return Completion{Status: "partial_results", Reason: "statfs_failed"}, nil
+		return Completion{Status: "partial_results", Reason: "statfs_failed"}, nil //nolint:nilerr // The protocol models this query failure as a partial completion.
 	}
 	blockSize := uint64(status.Bsize)
-	total, overflow := multiplyUint64(uint64(status.Blocks), blockSize)
+	total, overflow := multiplyUint64(status.Blocks, blockSize)
 	if overflow {
 		return Completion{Status: "partial_results", Reason: "overflow"}, nil
 	}
-	available, overflow := multiplyUint64(uint64(status.Bavail), blockSize)
+	available, overflow := multiplyUint64(status.Bavail, blockSize)
 	if overflow {
 		return Completion{Status: "partial_results", Reason: "overflow"}, nil
 	}
@@ -480,13 +487,13 @@ type stopOperation string
 
 func (s stopOperation) Error() string { return string(s) }
 
-func walkLocal(ctx context.Context, root string, budget OperationSearchBudget, includeHidden bool, ignore string, visit func(string, string, os.DirEntry, os.FileInfo, uint32) error) error {
+func walkLocal(ctx context.Context, root string, budget OperationSearchBudget, includeHidden bool, ignore string, visit localVisitFunc) error {
 	var walk func(string, string, uint32) error
 	walk = func(directory, relativeDirectory string, depth uint32) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		file, err := os.Open(directory)
+		file, err := os.Open(directory) // #nosec G304 -- directory is rooted beneath the validated absolute request scope.
 		if err != nil {
 			return stopOperation("permission_denied")
 		}
@@ -681,7 +688,19 @@ func fingerprintOf(preferred, fallback os.FileInfo) FileFingerprint {
 	if info == nil {
 		return FileFingerprint{}
 	}
-	return FileFingerprint{Size: uint64(info.Size()), Mode: uint32(info.Mode().Perm()), ModifiedUnixNS: info.ModTime().UnixNano()}
+	size := info.Size()
+	if size < 0 {
+		return FileFingerprint{}
+	}
+	return FileFingerprint{Size: uint64(size), Mode: uint32(info.Mode().Perm()), ModifiedUnixNS: info.ModTime().UnixNano(), FileID: localFileID(info)}
+}
+
+func localFileID(info os.FileInfo) string {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", stat.Dev, stat.Ino)
 }
 
 func multiplyUint64(left, right uint64) (uint64, bool) {

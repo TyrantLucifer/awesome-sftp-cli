@@ -28,11 +28,13 @@ type ManagerConfig struct {
 	Now           func() time.Time
 	MaxConcurrent int
 	MaxQueued     int
+	SameHostCopy  SameHostCopyBackend
 }
 
 type JobView struct {
 	Snapshot       jobstore.Snapshot `json:"snapshot"`
 	Kind           OperationKind     `json:"kind"`
+	Route          Route             `json:"route"`
 	Source         domain.Location   `json:"source"`
 	Final          domain.Location   `json:"final"`
 	Phase          Phase             `json:"phase,omitempty"`
@@ -49,6 +51,7 @@ type Manager struct {
 	store     *jobstore.Store
 	resolver  Resolver
 	planner   *Planner
+	sameHost  SameHostCopyBackend
 	generator domain.Generator
 	now       func() time.Time
 	queue     chan domain.JobID
@@ -85,7 +88,8 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	return &Manager{
 		store:     config.Store,
 		resolver:  config.Resolver,
-		planner:   NewPlanner(config.Resolver),
+		planner:   NewPlannerWithSameHost(config.Resolver, config.SameHostCopy),
+		sameHost:  config.SameHostCopy,
 		generator: config.Generator,
 		now:       now,
 		queue:     make(chan domain.JobID, config.MaxQueued),
@@ -157,6 +161,14 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 	planID, err := manager.generator.New("plan_")
 	if err != nil {
 		return jobstore.Snapshot{}, fmt.Errorf("create copy Job: generate plan ID: %w", err)
+	}
+	if manager.sameHost != nil && intent.Source.Kind == domain.EntryFile && intent.Source.Location.EndpointID != "" &&
+		intent.Source.Location.EndpointID == intent.DestinationDirectory.EndpointID {
+		releaseAdmission, err := manager.store.AcquireHelperJobAdmission(ctx)
+		if err != nil {
+			return jobstore.Snapshot{}, fmt.Errorf("create copy Job: acquire Helper admission lease: %w", err)
+		}
+		defer releaseAdmission()
 	}
 	plan, create, err := manager.planner.FreezeCopy(ctx, FreezeRequest{
 		Intent:    intent,
@@ -460,7 +472,7 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			return nil, err
 		}
 		view := JobView{
-			Snapshot: snapshot, Kind: plan.Kind, Source: plan.Source.Location, Final: plan.Final,
+			Snapshot: snapshot, Kind: plan.Kind, Route: plan.Route, Source: plan.Source.Location, Final: plan.Final,
 			BytesTotal: plan.Source.Fingerprint.Size, Items: 1,
 		}
 		if plan.Source.Kind == domain.EntryDirectory {
@@ -624,7 +636,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		result, executeErr = manager.executeAtomicMove(plan)
 	} else {
 		journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
-		result, executeErr = NewWorker(manager.resolver, journal).Execute(manager.ctx, plan, manager.control(jobID))
+		result, executeErr = NewWorkerWithSameHost(manager.resolver, journal, manager.sameHost).Execute(manager.ctx, plan, manager.control(jobID))
 	}
 	if manager.ctx.Err() != nil {
 		return

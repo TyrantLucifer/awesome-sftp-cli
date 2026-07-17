@@ -781,6 +781,11 @@ type PaneConnectionChanged struct {
 	State   domain.ConnectionState
 	Message string
 }
+type PaneCapabilitiesRefreshed struct {
+	Pane         PaneID
+	EndpointID   domain.EndpointID
+	Capabilities domain.CapabilitySnapshot
+}
 type WorkspaceSaveResult struct {
 	Name    string
 	Message string
@@ -871,41 +876,42 @@ type CacheCleared struct {
 	Message        string
 }
 
-func (KeyPress) isAction()              {}
-func (CountDigit) isAction()            {}
-func (TextInput) isAction()             {}
-func (Resize) isAction()                {}
-func (BeginListing) isAction()          {}
-func (ListingPage) isAction()           {}
-func (ListingFailed) isAction()         {}
-func (SetFilter) isAction()             {}
-func (BeginPreview) isAction()          {}
-func (PreviewChunk) isAction()          {}
-func (PreviewTerminalImage) isAction()  {}
-func (BeginSearch) isAction()           {}
-func (SearchEvents) isAction()          {}
-func (SearchFailed) isAction()          {}
-func (BeginContentSearch) isAction()    {}
-func (ContentSearchEvents) isAction()   {}
-func (ContentSearchFailed) isAction()   {}
-func (AuthChallengeReceived) isAction() {}
-func (PaneConnected) isAction()         {}
-func (PaneConnectionChanged) isAction() {}
-func (WorkspaceSaveResult) isAction()   {}
-func (ClipboardCaptured) isAction()     {}
-func (DeletePrepared) isAction()        {}
-func (RenamePrepared) isAction()        {}
-func (JobCreated) isAction()            {}
-func (JobsLoaded) isAction()            {}
-func (JobUpdated) isAction()            {}
-func (DiagnosticsLoaded) isAction()     {}
-func (CommandCompleted) isAction()      {}
-func (EditSessionObserved) isAction()   {}
-func (EditLaunchReady) isAction()       {}
-func (EditSessionFinished) isAction()   {}
-func (EditSessionFailed) isAction()     {}
-func (EditRecoveryLoaded) isAction()    {}
-func (CacheCleared) isAction()          {}
+func (KeyPress) isAction()                  {}
+func (CountDigit) isAction()                {}
+func (TextInput) isAction()                 {}
+func (Resize) isAction()                    {}
+func (BeginListing) isAction()              {}
+func (ListingPage) isAction()               {}
+func (ListingFailed) isAction()             {}
+func (SetFilter) isAction()                 {}
+func (BeginPreview) isAction()              {}
+func (PreviewChunk) isAction()              {}
+func (PreviewTerminalImage) isAction()      {}
+func (BeginSearch) isAction()               {}
+func (SearchEvents) isAction()              {}
+func (SearchFailed) isAction()              {}
+func (BeginContentSearch) isAction()        {}
+func (ContentSearchEvents) isAction()       {}
+func (ContentSearchFailed) isAction()       {}
+func (AuthChallengeReceived) isAction()     {}
+func (PaneConnected) isAction()             {}
+func (PaneConnectionChanged) isAction()     {}
+func (PaneCapabilitiesRefreshed) isAction() {}
+func (WorkspaceSaveResult) isAction()       {}
+func (ClipboardCaptured) isAction()         {}
+func (DeletePrepared) isAction()            {}
+func (RenamePrepared) isAction()            {}
+func (JobCreated) isAction()                {}
+func (JobsLoaded) isAction()                {}
+func (JobUpdated) isAction()                {}
+func (DiagnosticsLoaded) isAction()         {}
+func (CommandCompleted) isAction()          {}
+func (EditSessionObserved) isAction()       {}
+func (EditLaunchReady) isAction()           {}
+func (EditSessionFinished) isAction()       {}
+func (EditSessionFailed) isAction()         {}
+func (EditRecoveryLoaded) isAction()        {}
+func (CacheCleared) isAction()              {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

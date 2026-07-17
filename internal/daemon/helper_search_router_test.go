@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
@@ -100,6 +101,70 @@ func TestProviderSessionFallsBackToLevel0AfterHelperSessionCloses(t *testing.T) 
 	if response.EndpointID != string(implementation.Descriptor().ID) || response.SessionID != string(snapshot.SessionID) {
 		t.Fatalf("Provider snapshot after Helper failure = %#v", response)
 	}
+	status := findWireCapability(response.Items, "helper_status")
+	if constraintValue(status.Constraints, "level") != "0" || constraintValue(status.Constraints, "reason") != "disabled" {
+		t.Fatalf("Helper degradation status = %#v", status)
+	}
+}
+
+func TestProviderSnapshotReportsNegotiatedHelperLevelVersionAndIndependentCapabilities(t *testing.T) {
+	implementation, _ := newSearchLocalProvider(t)
+	client := newDaemonHelperClient(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{implementation}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	factory.helpers[implementation.Descriptor().ID] = client
+	session := factory.NewSession()
+	defer session.Close()
+	response := handlePayload[ipc.ProviderSnapshotResponse](t, session, ProviderSnapshot, ipc.ProviderSnapshotRequest{EndpointID: string(implementation.Descriptor().ID)})
+	status := findWireCapability(response.Items, "helper_status")
+	if constraintValue(status.Constraints, "level") != "1" || constraintValue(status.Constraints, "version") != "4.0.0" || constraintValue(status.Constraints, "capabilities") != "content_search,filename_search" {
+		t.Fatalf("Helper negotiated status = %#v", status)
+	}
+}
+
+func TestCanceledHelperSearchIsNotMisreportedAsGenerationChange(t *testing.T) {
+	implementation, root := newSearchLocalProvider(t)
+	snapshot, err := implementation.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := newDaemonHelperClient(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	identity := search.Identity{
+		RequestID: "req_zzzzzzzzzzzzzzzzzzzzzzzzzz", EndpointID: implementation.Descriptor().ID,
+		SessionID: snapshot.SessionID, EndpointGeneration: snapshot.Capabilities.Revision.Generation,
+		Scope: domain.Location{EndpointID: implementation.Descriptor().ID, Path: domain.CanonicalPath(root)},
+	}
+	input := make(chan helperruntime.ClientEvent, 1)
+	input <- helperruntime.ClientEvent{Type: helperruntime.FrameComplete, RequestID: identity.RequestID, Payload: json.RawMessage(`{"status":"canceled","reason":"canceled"}`)}
+	close(input)
+	output := make(chan search.Event, 1)
+	adaptHelperFilename(ctx, implementation, client, identity, input, output)
+	event := <-output
+	if event.Kind != search.EventTerminal || event.Terminal.Status != search.StatusCanceled || event.Terminal.StopReason != search.StopCanceled {
+		t.Fatalf("canceled Helper terminal = %#v", event)
+	}
+	emptyFilename := make(chan helperruntime.ClientEvent)
+	close(emptyFilename)
+	emptyFilenameOutput := make(chan search.Event, 1)
+	adaptHelperFilename(ctx, implementation, client, identity, emptyFilename, emptyFilenameOutput)
+	if event := <-emptyFilenameOutput; event.Terminal.Status != search.StatusCanceled || event.Terminal.StopReason != search.StopCanceled {
+		t.Fatalf("empty canceled filename stream terminal = %#v", event)
+	}
+	contentIdentity := search.ContentIdentity{
+		RequestID: identity.RequestID, EndpointID: identity.EndpointID, SessionID: identity.SessionID,
+		EndpointGeneration: identity.EndpointGeneration, Scope: identity.Scope,
+	}
+	emptyContent := make(chan helperruntime.ClientEvent)
+	close(emptyContent)
+	emptyContentOutput := make(chan search.ContentEvent, 1)
+	adaptHelperContent(ctx, implementation, client, contentIdentity, emptyContent, emptyContentOutput)
+	if event := <-emptyContentOutput; event.Terminal.Status != search.StatusCanceled || event.Terminal.StopReason != search.StopCanceled {
+		t.Fatalf("empty canceled content stream terminal = %#v", event)
+	}
 }
 
 func newDaemonHelperClient(t *testing.T) *helperruntime.Client {
@@ -171,4 +236,22 @@ func collectContentSearch(t *testing.T, session Session, identity search.Content
 		started.Done = page.Done
 	}
 	return events
+}
+
+func findWireCapability(items []ipc.WireCapability, name domain.CapabilityName) ipc.WireCapability {
+	for _, item := range items {
+		if item.Name == name {
+			return item
+		}
+	}
+	return ipc.WireCapability{}
+}
+
+func constraintValue(items []domain.CapabilityConstraint, name string) string {
+	for _, item := range items {
+		if item.Name == name {
+			return item.Value
+		}
+	}
+	return ""
 }

@@ -94,7 +94,7 @@ func ParseManifestV1(raw []byte) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	protocol, err := parseCanonicalUint(values[1], 5, 1, 65535)
+	protocol, err := parseCanonicalUint(values[1], 5, 65535)
 	if err != nil {
 		return Manifest{}, errors.New("parse helper manifest: protocol_major is invalid")
 	}
@@ -104,7 +104,7 @@ func ParseManifestV1(raw []byte) (Manifest, error) {
 	if values[3] != "amd64" && values[3] != "arm64" {
 		return Manifest{}, errors.New("parse helper manifest: arch is invalid")
 	}
-	size, err := parseCanonicalUint(values[4], 9, 1, MaxHelperArtifactBytes)
+	size, err := parseCanonicalUint(values[4], 9, MaxHelperArtifactBytes)
 	if err != nil {
 		return Manifest{}, errors.New("parse helper manifest: size is invalid")
 	}
@@ -118,7 +118,7 @@ func ParseManifestV1(raw []byte) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	return Manifest{Raw: append([]byte(nil), raw...), Version: version, ProtocolMajor: uint16(protocol), OS: values[2], Arch: values[3], Size: size, SHA256: values[5], KeyID: values[6], MinClient: minimum}, nil
+	return Manifest{Raw: append([]byte(nil), raw...), Version: version, ProtocolMajor: uint16(protocol), OS: values[2], Arch: values[3], Size: size, SHA256: values[5], KeyID: values[6], MinClient: minimum}, nil // #nosec G115 -- parser caps protocol at MaxHelperProtocolMajor.
 }
 
 func parseReleaseVersion(value string) (Version, error) {
@@ -143,12 +143,12 @@ func parseReleaseVersion(value string) (Version, error) {
 	return Version{Major: parsed[0], Minor: parsed[1], Patch: parsed[2]}, nil
 }
 
-func parseCanonicalUint(value string, maximumDigits int, minimum, maximum uint64) (uint64, error) {
+func parseCanonicalUint(value string, maximumDigits int, maximum uint64) (uint64, error) {
 	if len(value) == 0 || len(value) > maximumDigits || value[0] == '0' || !allBytes(value, func(current byte) bool { return current >= '0' && current <= '9' }) {
 		return 0, errors.New("invalid canonical integer")
 	}
 	parsed, err := strconv.ParseUint(value, 10, 64)
-	if err != nil || parsed < minimum || parsed > maximum {
+	if err != nil || parsed == 0 || parsed > maximum {
 		return 0, errors.New("integer outside bounds")
 	}
 	return parsed, nil
