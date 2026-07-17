@@ -1,0 +1,5 @@
+{
+  "schema_version": 1,
+  "ipc": {"max_frame_bytes": 8388608},
+  "listing": {"default_page_size": 256, "max_page_size": 4096}
+}

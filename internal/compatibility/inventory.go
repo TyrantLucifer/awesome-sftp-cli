@@ -24,6 +24,23 @@ type Boundary struct {
 	Owner         string
 }
 
+type HistoricalSourceStatus string
+
+const (
+	HistoricalSourceCaptured        HistoricalSourceStatus = "captured"
+	HistoricalSourceCaptureRequired HistoricalSourceStatus = "capture-required-before-M6.2-mutation"
+)
+
+type HistoricalSource struct {
+	Boundary         string
+	Version          string
+	ProvenanceCommit string
+	Status           HistoricalSourceStatus
+	Fixture          string
+	SHA256           string
+	Owner            string
+}
+
 func Inventory() []Boundary {
 	return []Boundary{
 		{Name: "cli contract", Current: fmt.Sprint(app.PublicCLIContractVersion), Reads: "1", Writes: "1", OnUnsupported: "unknown command or output version rejected", Owner: "internal/app"},
@@ -38,10 +55,38 @@ func Inventory() []Boundary {
 	}
 }
 
+func HistoricalSources() []HistoricalSource {
+	return []HistoricalSource{
+		{Boundary: "config document", Version: "1", ProvenanceCommit: "312bcccbcbd54246bbe5ff9babf4f14560449176", Status: HistoricalSourceCaptured, Fixture: "internal/compatibility/testdata/historical/config-v1-exact-main.json", SHA256: "8c7c60ffcb676a47669b45fbb01334dde662984d6fdfcf5a25983d226cf24e04", Owner: "internal/config"},
+		{Boundary: "workspace document", Version: "1", ProvenanceCommit: "e07413d46f516f8b0f92c61d006927c1aa319f0f", Status: HistoricalSourceCaptured, Fixture: "internal/compatibility/testdata/historical/workspace-v1-stage1.json", SHA256: "9b8b085174b455805cd38a899702cad1363e6b1cf19a4bc98b5b715ebf9c8220", Owner: "internal/workspace"},
+		{Boundary: "workspace document", Version: "2", ProvenanceCommit: "8bbb0f144583bbff10746ebdb22f82f86b4655e6", Status: HistoricalSourceCaptured, Fixture: "internal/compatibility/testdata/historical/workspace-v2-stage3.json", SHA256: "1f137d8470e2d005d1672df39fb3c8bf6c7107b766ce9b62d3581c92680cdd40", Owner: "internal/workspace"},
+		{Boundary: "sqlite state", Version: "1", ProvenanceCommit: "486a63f90be51c0d79a454bef52e9e3302df5250", Status: HistoricalSourceCaptureRequired, Fixture: "internal/compatibility/testdata/historical/sqlite-v1-stage2.sqlite", Owner: "internal/state/migration"},
+		{Boundary: "sqlite state", Version: "2", ProvenanceCommit: "4eb1961b7b3b5495620fb1f6fcb3b88c52a4fba9", Status: HistoricalSourceCaptureRequired, Fixture: "internal/compatibility/testdata/historical/sqlite-v2-stage3.sqlite", Owner: "internal/state/migration"},
+		{Boundary: "sqlite state", Version: "3", ProvenanceCommit: "939ba9c5d978b8ea5bf2aadd3485831d78b533c2e", Status: HistoricalSourceCaptureRequired, Fixture: "internal/compatibility/testdata/historical/sqlite-v3-stage3.sqlite", Owner: "internal/state/migration"},
+		{Boundary: "cache entry manifest", Version: "1", ProvenanceCommit: "8a4ada06836b9ed71c72b40949d6b87d8e1f849a", Status: HistoricalSourceCaptureRequired, Fixture: "internal/compatibility/testdata/historical/cache-entry-manifest-v1-stage3.json", Owner: "internal/cachefs"},
+		{Boundary: "cache materialization manifest", Version: "1", ProvenanceCommit: "8a4ada06836b9ed71c72b40949d6b87d8e1f849a", Status: HistoricalSourceCaptureRequired, Fixture: "internal/compatibility/testdata/historical/cache-materialization-manifest-v1-stage3.json", Owner: "internal/cachefs"},
+		{Boundary: "helper release manifest", Version: "1", ProvenanceCommit: "145b50ae871aa91f8acc0505d2b6b9bd19bae742", Status: HistoricalSourceCaptureRequired, Fixture: "internal/compatibility/testdata/historical/helper-release-manifest-v1-stage4.txt", Owner: "internal/helper"},
+		{Boundary: "helper state index", Version: "1", ProvenanceCommit: "145b50ae871aa91f8acc0505d2b6b9bd19bae742", Status: HistoricalSourceCaptureRequired, Fixture: "internal/compatibility/testdata/historical/helper-state-index-v1-stage4.json", Owner: "internal/helper"},
+		{Boundary: "helper metadata", Version: "1", ProvenanceCommit: "145b50ae871aa91f8acc0505d2b6b9bd19bae742", Status: HistoricalSourceCaptureRequired, Fixture: "internal/compatibility/testdata/historical/helper-metadata-v1-stage4.json", Owner: "internal/helper"},
+	}
+}
+
 func SnapshotText() string {
 	lines := make([]string, 0, len(Inventory()))
 	for _, boundary := range Inventory() {
 		lines = append(lines, fmt.Sprintf("%s | current %s | reads %s | writes %s | %s | %s", boundary.Name, boundary.Current, boundary.Reads, boundary.Writes, boundary.OnUnsupported, boundary.Owner))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func HistoricalSourceSnapshotText() string {
+	lines := make([]string, 0, len(HistoricalSources()))
+	for _, source := range HistoricalSources() {
+		digest := source.SHA256
+		if digest == "" {
+			digest = "-"
+		}
+		lines = append(lines, fmt.Sprintf("%s v%s | %s | %s | %s | %s | %s", source.Boundary, source.Version, source.ProvenanceCommit, source.Status, source.Fixture, digest, source.Owner))
 	}
 	return strings.Join(lines, "\n")
 }
@@ -56,5 +101,16 @@ func Markdown() string {
 		fmt.Fprintf(&output, "| %s | %s | %s | %s | %s | `%s` |\n", boundary.Name, boundary.Current, boundary.Reads, boundary.Writes, boundary.OnUnsupported, boundary.Owner)
 	}
 	output.WriteString("\nThe SQLite `1-3` read range includes forward migration to head 3; it is not a promise that arbitrary historical or newer databases are writable. Cache catalog tables were introduced by SQLite schema 2, while cache filesystem manifests remain an independently validated format 1. Helper release-manifest writes are release-only and production distribution remains CLOSED until the protected signing/notarization/byte-binding gates pass.\n")
+	output.WriteString("\n## Frozen historical source inventory\n\n")
+	output.WriteString("This inventory freezes the complete set of persistent source formats before M6.2 migration code changes. A `captured` row has repository bytes pinned by SHA-256 and a current-owner reader test. Every remaining row must become `captured` before its owner is changed in M6.2; a planned path is not migration evidence. Provenance names the commit that first wrote the source format, except the config sample which intentionally comes from the frozen exact-main baseline.\n\n")
+	output.WriteString("| Source | Version | Provenance commit | Capture status | Fixture | SHA-256 | Owner |\n")
+	output.WriteString("|---|---:|---|---|---|---|---|\n")
+	for _, source := range HistoricalSources() {
+		digest := source.SHA256
+		if digest == "" {
+			digest = "-"
+		}
+		fmt.Fprintf(&output, "| %s | %s | `%s` | %s | `%s` | `%s` | `%s` |\n", source.Boundary, source.Version, source.ProvenanceCommit, source.Status, source.Fixture, digest, source.Owner)
+	}
 	return output.String()
 }
