@@ -11,6 +11,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/retrypolicy"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 )
 
@@ -44,6 +45,7 @@ type Config struct {
 	Transfer      TransferConfig `json:"transfer"`
 	Preview       PreviewConfig  `json:"preview"`
 	Search        SearchConfig   `json:"search"`
+	Retry         RetryConfig    `json:"retry"`
 	External      ExternalConfig `json:"external,omitempty"`
 	Keymap        KeymapConfig   `json:"keymap,omitempty"`
 }
@@ -117,6 +119,11 @@ type ContentSearchConfig struct {
 	MaxDurationMS     int64  `json:"max_duration_ms"`
 }
 
+type RetryConfig struct {
+	ReconnectDelaysMS []int64 `json:"reconnect_delays_ms"`
+	JobRetryDelayMS   int64   `json:"job_retry_delay_ms"`
+}
+
 type CommandConfig struct {
 	Executable string   `json:"executable"`
 	Args       []string `json:"argv"`
@@ -147,6 +154,11 @@ func Default() Config {
 	imageLimits := preview.DefaultImageOutputLimits()
 	filenameBudget := search.DefaultFilenameBudget()
 	contentBudget := search.DefaultContentBudget()
+	reconnectDelays := retrypolicy.DefaultReconnectDelays()
+	reconnectDelaysMS := make([]int64, len(reconnectDelays))
+	for index, delay := range reconnectDelays {
+		reconnectDelaysMS[index] = delay.Milliseconds()
+	}
 	return Config{
 		SchemaVersion: SchemaVersion,
 		IPC: IPCConfig{
@@ -186,6 +198,10 @@ func Default() Config {
 				MaxOutputBytes: contentBudget.MaxOutputBytes,
 				MaxDurationMS:  contentBudget.MaxDuration.Milliseconds(),
 			},
+		},
+		Retry: RetryConfig{
+			ReconnectDelaysMS: reconnectDelaysMS,
+			JobRetryDelayMS:   retrypolicy.DefaultJobDelay.Milliseconds(),
 		},
 	}
 }
@@ -265,6 +281,9 @@ func (c Config) Validate() error {
 		return err
 	}
 	if err := c.Search.validate(); err != nil {
+		return err
+	}
+	if err := c.Retry.validate(); err != nil {
 		return err
 	}
 	if err := c.External.validate(); err != nil {
@@ -396,6 +415,34 @@ func (c SearchConfig) validate() error {
 	contentDurationLimit := maximumContent.MaxDuration.Milliseconds()
 	if c.Content.MaxDurationMS < 1 || c.Content.MaxDurationMS > contentDurationLimit {
 		return fmt.Errorf("search.content.max_duration_ms must be within 1..%d", contentDurationLimit)
+	}
+	return nil
+}
+
+func (c RetryConfig) validate() error {
+	defaultDelays := retrypolicy.DefaultReconnectDelays()
+	if c.ReconnectDelaysMS == nil {
+		return errors.New("retry.reconnect_delays_ms must be an array; use [] to disable automatic reconnects")
+	}
+	if len(c.ReconnectDelaysMS) > len(defaultDelays) {
+		return fmt.Errorf("retry.reconnect_delays_ms must contain at most %d delays", len(defaultDelays))
+	}
+	var previous int64
+	for index, value := range c.ReconnectDelaysMS {
+		minimum := defaultDelays[index].Milliseconds()
+		maximum := retrypolicy.MaxReconnectDelay.Milliseconds()
+		if value < minimum || value > maximum {
+			return fmt.Errorf("retry.reconnect_delays_ms[%d] must be within %d..%d", index, minimum, maximum)
+		}
+		if index > 0 && value < previous {
+			return fmt.Errorf("retry.reconnect_delays_ms[%d] must not be less than the previous delay", index)
+		}
+		previous = value
+	}
+	minimumJobDelay := retrypolicy.DefaultJobDelay.Milliseconds()
+	maximumJobDelay := retrypolicy.MaxJobDelay.Milliseconds()
+	if c.JobRetryDelayMS < minimumJobDelay || c.JobRetryDelayMS > maximumJobDelay {
+		return fmt.Errorf("retry.job_retry_delay_ms must be within %d..%d", minimumJobDelay, maximumJobDelay)
 	}
 	return nil
 }

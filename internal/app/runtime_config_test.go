@@ -3,6 +3,7 @@
 package app
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -77,5 +78,20 @@ func TestRuntimeSearchBudgetsUseValidatedConfiguration(t *testing.T) {
 	}
 	if filename != wantFilename || content != wantContent {
 		t.Fatalf("runtime search budgets = %#v / %#v, want %#v / %#v", filename, content, wantFilename, wantContent)
+	}
+}
+
+func TestRuntimeRetrySettingsUseValidatedConfiguration(t *testing.T) {
+	policy, jobDelay := runtimeRetrySettings(config.RetryConfig{
+		ReconnectDelaysMS: []int64{200, 400}, JobRetryDelayMS: 120_000,
+	})
+	if want := []time.Duration{200 * time.Millisecond, 400 * time.Millisecond}; !reflect.DeepEqual(policy.Delays, want) {
+		t.Fatalf("runtime reconnect delays = %v, want %v", policy.Delays, want)
+	}
+	if policy.Sleep == nil || policy.Jitter == nil {
+		t.Fatal("runtime reconnect policy omitted sleep or jitter behavior")
+	}
+	if jobDelay != 2*time.Minute {
+		t.Fatalf("runtime Job retry delay = %v, want %v", jobDelay, 2*time.Minute)
 	}
 }

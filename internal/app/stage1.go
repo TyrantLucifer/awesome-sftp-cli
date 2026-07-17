@@ -319,9 +319,10 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	sessions.SetEndpointConnector(connectEndpoint)
 	if jobStore != nil {
 		maxConcurrent, maxQueued, schedulerPolicy := runtimeTransferLimits(applicationConfig.Transfer)
+		_, jobRetryDelay := runtimeRetrySettings(applicationConfig.Retry)
 		manager, err := transfer.NewManager(transfer.ManagerConfig{
 			Store: jobStore, Resolver: sessions, Generator: generator, MaxConcurrent: maxConcurrent, MaxQueued: maxQueued,
-			SchedulerPolicy: schedulerPolicy,
+			SchedulerPolicy: schedulerPolicy, RetryDelay: jobRetryDelay,
 		})
 		if err != nil {
 			return err
@@ -498,6 +499,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	}
 	previewRenderLimits, previewImageLimits := runtimePreviewLimits(applicationConfig.Preview)
 	filenameSearchBudget, contentSearchBudget := runtimeSearchBudgets(applicationConfig.Search)
+	clientReconnectPolicy, _ := runtimeRetrySettings(applicationConfig.Retry)
 	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
 	reprobeTerminalImages := func() {
 		terminalImageCapability.Reprobe(append([]string(nil), os.Environ()...))
@@ -1106,7 +1108,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		connectionCtx, epoch := connectionAttempts.Begin(runCtx, pane)
 		go func() {
 			result := connectionResult{pane: pane, epoch: epoch, host: start.host, recovery: recovery, switching: switching}
-			result.err = runReconnect(connectionCtx, defaultReconnectPolicy(), func() error {
+			result.err = runReconnect(connectionCtx, clientReconnectPolicy, func() error {
 				var connectErr error
 				result.endpoint, result.location, result.state, result.capabilities, connectErr = resolveStartLocation(connectionCtx, activeClient, activeLocal, start)
 				result.capabilityGeneration = result.capabilities.Revision.Generation
@@ -1154,7 +1156,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		go func() {
 			result := daemonRecoveryResult{}
-			result.client, result.err = connectDaemonAfterLoss(runCtx, defaultReconnectPolicy(), func(ctx context.Context) (*daemon.Client, error) {
+			result.client, result.err = connectDaemonAfterLoss(runCtx, clientReconnectPolicy, func(ctx context.Context) (*daemon.Client, error) {
 				return connectDaemon(ctx, paths, purpose)
 			})
 			if result.err == nil {

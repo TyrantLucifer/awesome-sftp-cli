@@ -64,6 +64,14 @@ func runtimeSearchBudgets(input config.SearchConfig) (search.Budget, search.Cont
 		}
 }
 
+func runtimeRetrySettings(input config.RetryConfig) (reconnectPolicy, time.Duration) {
+	delays := make([]time.Duration, len(input.ReconnectDelaysMS))
+	for index, milliseconds := range input.ReconnectDelaysMS {
+		delays[index] = time.Duration(milliseconds) * time.Millisecond
+	}
+	return newReconnectPolicy(delays), time.Duration(input.JobRetryDelayMS) * time.Millisecond
+}
+
 type externalRuntimeConfig struct {
 	editor    externalprocess.ResolvedCommand
 	editorErr error

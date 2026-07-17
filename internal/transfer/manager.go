@@ -12,6 +12,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/retrypolicy"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 )
 
@@ -33,6 +34,7 @@ type ManagerConfig struct {
 	SchedulerClock  foundation.Clock
 	SchedulerPolicy SchedulerPolicy
 	ResourceLimits  ResourceLimits
+	RetryDelay      time.Duration
 }
 
 type JobView struct {
@@ -56,15 +58,16 @@ type JobView struct {
 
 // Manager owns transfer execution independently from any client connection.
 type Manager struct {
-	store     *jobstore.Store
-	resolver  Resolver
-	planner   *Planner
-	sameHost  SameHostCopyBackend
-	level2    level2DataBackend
-	generator domain.Generator
-	now       func() time.Time
-	queue     chan domain.JobID
-	scheduler *TransferScheduler
+	store      *jobstore.Store
+	resolver   Resolver
+	planner    *Planner
+	sameHost   SameHostCopyBackend
+	level2     level2DataBackend
+	generator  domain.Generator
+	now        func() time.Time
+	retryDelay time.Duration
+	queue      chan domain.JobID
+	scheduler  *TransferScheduler
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -114,6 +117,13 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	if now == nil {
 		now = time.Now
 	}
+	retryDelay := config.RetryDelay
+	if retryDelay == 0 {
+		retryDelay = retrypolicy.DefaultJobDelay
+	}
+	if retryDelay < retrypolicy.DefaultJobDelay || retryDelay > retrypolicy.MaxJobDelay {
+		return nil, fmt.Errorf("new transfer manager: retry delay must be within %s..%s", retrypolicy.DefaultJobDelay, retrypolicy.MaxJobDelay)
+	}
 	schedulerClock := config.SchedulerClock
 	if schedulerClock == nil {
 		schedulerClock = foundation.RealClock{}
@@ -130,6 +140,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		sameHost:         config.SameHostCopy,
 		generator:        config.Generator,
 		now:              now,
+		retryDelay:       retryDelay,
 		queue:            make(chan domain.JobID, config.MaxQueued),
 		scheduler:        scheduler,
 		ctx:              rootContext,
@@ -917,7 +928,7 @@ func (manager *Manager) control(jobID domain.JobID) Control {
 func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, executeErr error, result Result) {
 	var partial *PartialItemsError
 	if errors.As(executeErr, &partial) {
-		retryAt := manager.now().Add(time.Minute)
+		retryAt := manager.nextRetryAt()
 		if _, transitionErr := manager.transitionRetry(snapshot, retryAt, map[string]any{
 			"error": "directory items require retry", "failed": result.Failed, "succeeded": result.Succeeded,
 			"skipped": result.Skipped, "items": result.Items, "manifest": result.Manifest,
@@ -946,7 +957,7 @@ func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, execute
 			}
 			return
 		case domain.CodeTransportInterrupted, domain.CodeTimeout, domain.CodeResourceExhausted:
-			retryAt := manager.now().Add(time.Minute)
+			retryAt := manager.nextRetryAt()
 			if _, transitionErr := manager.transitionRetry(snapshot, retryAt, payload); transitionErr != nil {
 				manager.fail(snapshot, fmt.Errorf("persist retry state: %w", transitionErr))
 			}
@@ -990,6 +1001,10 @@ func (manager *Manager) transition(snapshot jobstore.Snapshot, to job.State, kin
 
 func (manager *Manager) transitionRetry(snapshot jobstore.Snapshot, retryAt time.Time, payload any) (jobstore.Snapshot, error) {
 	return manager.transitionRequest(snapshot, job.StateRetryWait, "job_retry_wait", payload, &retryAt, nil)
+}
+
+func (manager *Manager) nextRetryAt() time.Time {
+	return manager.now().Add(manager.retryDelay)
 }
 
 func (manager *Manager) transitionTerminal(snapshot jobstore.Snapshot, to job.State, kind, summary string, payload any) (jobstore.Snapshot, error) {
