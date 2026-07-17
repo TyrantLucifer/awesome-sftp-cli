@@ -9,13 +9,29 @@ import (
 	"runtime"
 	"time"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 	"golang.org/x/sys/unix"
 )
+
+func runtimeCacheLimits(input config.CacheConfig) cache.Limits {
+	return cache.Limits{
+		GlobalBytes: input.GlobalBytes, GlobalEntries: input.GlobalEntries,
+		WorkspaceBytes: input.WorkspaceBytes, MaxCandidates: input.MaxEvictionCandidates,
+	}
+}
+
+func runtimeTransferLimits(input config.TransferConfig) (int, int, transfer.SchedulerPolicy) {
+	return input.MaxConcurrent, input.MaxQueued, transfer.SchedulerPolicy{
+		GlobalBytesPerSecond: input.GlobalBytesPerSecond, EndpointBytesPerSecond: input.EndpointBytesPerSecond,
+		JobBytesPerSecond: input.JobBytesPerSecond,
+	}
+}
 
 type externalRuntimeConfig struct {
 	editor    externalprocess.ResolvedCommand
@@ -29,32 +45,32 @@ func loadApplicationConfig(path string) (config.Config, error) {
 	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
 		return config.Default(), nil
 	} else if err != nil {
-		return config.Config{}, fmt.Errorf("inspect config: %w", err)
+		return config.Config{}, fmt.Errorf("inspect config %q: %w", path, err)
 	}
 	if err := platform.ValidatePrivateFile(path, platform.ValidatePersistent); err != nil {
-		return config.Config{}, fmt.Errorf("validate config: %w", err)
+		return config.Config{}, fmt.Errorf("validate config %q: %w", path, err)
 	}
 	descriptor, err := unix.Open(path, unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NOFOLLOW, 0)
 	if err != nil {
-		return config.Config{}, fmt.Errorf("open config: %w", err)
+		return config.Config{}, fmt.Errorf("open config %q: %w", path, err)
 	}
 	file := os.NewFile(uintptr(descriptor), path)
 	if file == nil {
 		_ = unix.Close(descriptor)
-		return config.Config{}, errors.New("open config: invalid descriptor")
+		return config.Config{}, fmt.Errorf("open config %q: invalid descriptor", path)
 	}
 	defer file.Close()
 	opened, err := file.Stat()
 	if err != nil || !opened.Mode().IsRegular() {
-		return config.Config{}, fmt.Errorf("open config: invalid regular file")
+		return config.Config{}, fmt.Errorf("open config %q: invalid regular file", path)
 	}
 	current, err := os.Lstat(path)
 	if err != nil || !os.SameFile(opened, current) {
-		return config.Config{}, errors.New("open config: file identity changed")
+		return config.Config{}, fmt.Errorf("open config %q: file identity changed", path)
 	}
 	decoded, err := config.Decode(file)
 	if err != nil {
-		return config.Config{}, err
+		return config.Config{}, fmt.Errorf("config %q: %w", path, err)
 	}
 	return decoded, nil
 }

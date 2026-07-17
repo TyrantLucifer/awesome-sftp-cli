@@ -123,6 +123,10 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return err
 	}
 	defer lock.Close()
+	applicationConfig, err := loadApplicationConfig(paths.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("load daemon configuration: %w", err)
+	}
 	generator := &domain.RandomGenerator{}
 	var stateDatabase *sql.DB
 	var jobStore *jobstore.Store
@@ -242,7 +246,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		}
 		var cacheManager *cachemanager.Manager
 		if cacheErr == nil {
-			cacheManager, cacheErr = cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), cache.DefaultLimits())
+			cacheManager, cacheErr = cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), runtimeCacheLimits(applicationConfig.Cache))
 		}
 		var lifecycle cachemanager.StartupLifecycleResult
 		if cacheErr == nil {
@@ -314,8 +318,10 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	})
 	sessions.SetEndpointConnector(connectEndpoint)
 	if jobStore != nil {
+		maxConcurrent, maxQueued, schedulerPolicy := runtimeTransferLimits(applicationConfig.Transfer)
 		manager, err := transfer.NewManager(transfer.ManagerConfig{
-			Store: jobStore, Resolver: sessions, Generator: generator, MaxConcurrent: 4, MaxQueued: 128,
+			Store: jobStore, Resolver: sessions, Generator: generator, MaxConcurrent: maxConcurrent, MaxQueued: maxQueued,
+			SchedulerPolicy: schedulerPolicy,
 		})
 		if err != nil {
 			return err

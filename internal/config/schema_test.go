@@ -24,6 +24,11 @@ func TestDefaultConfigIsValid(t *testing.T) {
 			DefaultPageSize: 256,
 			MaxPageSize:     4096,
 		},
+		Cache: CacheConfig{
+			GlobalBytes: 2 << 30, GlobalEntries: 4096,
+			WorkspaceBytes: 1 << 30, MaxEvictionCandidates: 256,
+		},
+		Transfer: TransferConfig{MaxConcurrent: 4, MaxQueued: 128},
 	}
 
 	got := Default()
@@ -44,6 +49,49 @@ func TestDecodeAcceptsContextKeymapRemap(t *testing.T) {
 	want := []keymap.Override{{Context: keymap.ContextVisual, Input: "n", Action: keymap.ActionDown}}
 	if !reflect.DeepEqual(got.Keymap.Bindings, want) {
 		t.Fatalf("keymap bindings = %#v, want %#v", got.Keymap.Bindings, want)
+	}
+}
+
+func TestDefaultCacheAndTransferSettingsFreezeCurrentRuntimeBehavior(t *testing.T) {
+	got := Default()
+	if got.Cache != (CacheConfig{GlobalBytes: 2 << 30, GlobalEntries: 4096, WorkspaceBytes: 1 << 30, MaxEvictionCandidates: 256}) {
+		t.Fatalf("cache defaults = %#v", got.Cache)
+	}
+	if got.Transfer != (TransferConfig{MaxConcurrent: 4, MaxQueued: 128}) {
+		t.Fatalf("transfer defaults = %#v", got.Transfer)
+	}
+}
+
+func TestDecodeAppliesPartialCacheAndTransferSettings(t *testing.T) {
+	input := `{"schema_version":1,"cache":{"global_bytes":1073741824},"transfer":{"max_concurrent":2,"global_bytes_per_second":1048576}}`
+	got, err := Decode(strings.NewReader(input))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Cache.GlobalBytes != 1<<30 || got.Cache.GlobalEntries != 4096 || got.Cache.MaxEvictionCandidates != 256 {
+		t.Fatalf("partial cache = %#v", got.Cache)
+	}
+	if got.Transfer.MaxConcurrent != 2 || got.Transfer.MaxQueued != 128 || got.Transfer.GlobalBytesPerSecond != 1<<20 {
+		t.Fatalf("partial transfer = %#v", got.Transfer)
+	}
+}
+
+func TestCacheAndTransferSettingsCanOnlyTightenFrozenCeilings(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "cache bytes", input: `{"schema_version":1,"cache":{"global_bytes":2147483649}}`, want: "cache.global_bytes"},
+		{name: "workspace above global", input: `{"schema_version":1,"cache":{"global_bytes":1024,"workspace_bytes":2048}}`, want: "cache.workspace_bytes"},
+		{name: "concurrency", input: `{"schema_version":1,"transfer":{"max_concurrent":5}}`, want: "transfer.max_concurrent"},
+		{name: "queue below concurrency", input: `{"schema_version":1,"transfer":{"max_concurrent":4,"max_queued":3}}`, want: "transfer.max_queued"},
+		{name: "bandwidth", input: `{"schema_version":1,"transfer":{"global_bytes_per_second":1099511627777}}`, want: "transfer.global_bytes_per_second"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertDecodeErrorContains(t, test.input, test.want)
+		})
 	}
 }
 

@@ -76,6 +76,19 @@ Omitted fields inherit these current defaults:
     "default_page_size": 256,
     "max_page_size": 4096
   },
+  "cache": {
+    "global_bytes": 2147483648,
+    "global_entries": 4096,
+    "workspace_bytes": 1073741824,
+    "max_eviction_candidates": 256
+  },
+  "transfer": {
+    "max_concurrent": 4,
+    "max_queued": 128,
+    "global_bytes_per_second": 0,
+    "endpoint_bytes_per_second": 0,
+    "job_bytes_per_second": 0
+  },
   "external": {
     "previewers": []
   }
@@ -84,8 +97,12 @@ Omitted fields inherit these current defaults:
 
 `ipc.max_frame_bytes` may be tightened but cannot exceed the protocol maximum of 8 MiB. Listing sizes must be nonzero, `default_page_size` cannot exceed `max_page_size`, and `max_page_size` cannot exceed 4096.
 
+`cache` can only tighten the existing safety ceilings: 2 GiB and 4096 global entries, 1 GiB per workspace, and 256 eviction candidates. A workspace byte limit must not exceed the effective global byte limit. The daemon validates and freezes these values when it constructs the cache manager.
+
+`transfer.max_concurrent` and `transfer.max_queued` can only tighten the existing ceilings of 4 active Jobs and 128 queued Jobs. Global, per-Endpoint, and per-Job byte rates accept `0` for the existing unlimited behavior or a positive value no greater than 1 TiB/s. These settings are read by the daemon and frozen into the manager/scheduler; changing the file does not alter already planned Jobs or a running daemon.
+
 `external.editor` and `external.opener` are structured commands with `executable` and an `argv` array. They are executed directly, never concatenated into a shell command. A previewer adds a unique name, bounded media-type or extension match, structured command, timeout, input limit, and completeness requirement. Command strings reject control characters and all counts and byte sizes have hard ceilings.
 
-The schema is not yet complete for every Stage 6 setting. Cache quota, concurrency, bandwidth, integrity, retry, Helper, direct-transfer, retention, diagnostic, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
+The schema is not yet complete for every Stage 6 setting. Integrity, retry, built-in preview, search, Helper, direct-transfer, retention, diagnostic, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
 
 The `keymap.bindings` section is now implemented for the `normal` and `visual` contexts. Each entry contains `context`, a single-rune `input`, and a documented remappable `action`. Exact defaults, reserved dangerous/sequence actions, count behavior, and the deliberate macro/named-register exclusion are in the [keymap reference](keymap.md). The other sections listed above remain open.

@@ -25,12 +25,21 @@ const (
 	maxExternalMatchItems           = 64
 	maxExternalTimeoutMS     int64  = 120_000
 	maxExternalInputBytes    int64  = 1 << 30
+	maxCacheGlobalBytes      int64  = 2 << 30
+	maxCacheGlobalEntries           = 4096
+	maxCacheWorkspaceBytes   int64  = 1 << 30
+	maxCacheCandidates              = 256
+	maxTransferConcurrent           = 4
+	maxTransferQueued               = 128
+	maxBandwidthBytesPerSec  uint64 = 1 << 40
 )
 
 type Config struct {
 	SchemaVersion int            `json:"schema_version"`
 	IPC           IPCConfig      `json:"ipc"`
 	Listing       ListingConfig  `json:"listing"`
+	Cache         CacheConfig    `json:"cache"`
+	Transfer      TransferConfig `json:"transfer"`
 	External      ExternalConfig `json:"external,omitempty"`
 	Keymap        KeymapConfig   `json:"keymap,omitempty"`
 }
@@ -42,6 +51,21 @@ type IPCConfig struct {
 type ListingConfig struct {
 	DefaultPageSize uint32 `json:"default_page_size"`
 	MaxPageSize     uint32 `json:"max_page_size"`
+}
+
+type CacheConfig struct {
+	GlobalBytes           int64 `json:"global_bytes"`
+	GlobalEntries         int   `json:"global_entries"`
+	WorkspaceBytes        int64 `json:"workspace_bytes"`
+	MaxEvictionCandidates int   `json:"max_eviction_candidates"`
+}
+
+type TransferConfig struct {
+	MaxConcurrent          int    `json:"max_concurrent"`
+	MaxQueued              int    `json:"max_queued"`
+	GlobalBytesPerSecond   uint64 `json:"global_bytes_per_second"`
+	EndpointBytesPerSecond uint64 `json:"endpoint_bytes_per_second"`
+	JobBytesPerSecond      uint64 `json:"job_bytes_per_second"`
 }
 
 type CommandConfig struct {
@@ -79,6 +103,11 @@ func Default() Config {
 			DefaultPageSize: 256,
 			MaxPageSize:     hardMaxPageSize,
 		},
+		Cache: CacheConfig{
+			GlobalBytes: maxCacheGlobalBytes, GlobalEntries: maxCacheGlobalEntries,
+			WorkspaceBytes: maxCacheWorkspaceBytes, MaxEvictionCandidates: maxCacheCandidates,
+		},
+		Transfer: TransferConfig{MaxConcurrent: maxTransferConcurrent, MaxQueued: maxTransferQueued},
 	}
 }
 
@@ -147,11 +176,55 @@ func (c Config) Validate() error {
 			c.Listing.MaxPageSize,
 		)
 	}
+	if err := c.Cache.validate(); err != nil {
+		return err
+	}
+	if err := c.Transfer.validate(); err != nil {
+		return err
+	}
 	if err := c.External.validate(); err != nil {
 		return fmt.Errorf("external: %w", err)
 	}
 	if _, err := keymap.New(c.Keymap.Bindings); err != nil {
 		return fmt.Errorf("keymap: %w", err)
+	}
+	return nil
+}
+
+func (c CacheConfig) validate() error {
+	if c.GlobalBytes < 1 || c.GlobalBytes > maxCacheGlobalBytes {
+		return fmt.Errorf("cache.global_bytes must be within 1..%d", maxCacheGlobalBytes)
+	}
+	if c.GlobalEntries < 1 || c.GlobalEntries > maxCacheGlobalEntries {
+		return fmt.Errorf("cache.global_entries must be within 1..%d", maxCacheGlobalEntries)
+	}
+	if c.WorkspaceBytes < 1 || c.WorkspaceBytes > maxCacheWorkspaceBytes || c.WorkspaceBytes > c.GlobalBytes {
+		return fmt.Errorf("cache.workspace_bytes must be within 1..min(cache.global_bytes,%d)", maxCacheWorkspaceBytes)
+	}
+	if c.MaxEvictionCandidates < 1 || c.MaxEvictionCandidates > maxCacheCandidates {
+		return fmt.Errorf("cache.max_eviction_candidates must be within 1..%d", maxCacheCandidates)
+	}
+	return nil
+}
+
+func (c TransferConfig) validate() error {
+	if c.MaxConcurrent < 1 || c.MaxConcurrent > maxTransferConcurrent {
+		return fmt.Errorf("transfer.max_concurrent must be within 1..%d", maxTransferConcurrent)
+	}
+	if c.MaxQueued < c.MaxConcurrent || c.MaxQueued > maxTransferQueued {
+		return fmt.Errorf("transfer.max_queued must be within transfer.max_concurrent..%d", maxTransferQueued)
+	}
+	for _, item := range []struct {
+		name  string
+		value uint64
+	}{
+		{name: "global_bytes_per_second", value: c.GlobalBytesPerSecond},
+		{name: "endpoint_bytes_per_second", value: c.EndpointBytesPerSecond},
+		{name: "job_bytes_per_second", value: c.JobBytesPerSecond},
+	} {
+		if item.value > maxBandwidthBytesPerSec {
+			return fmt.Errorf("transfer.%s must be within 0..%d", item.name, maxBandwidthBytesPerSec)
+		}
 	}
 	return nil
 }

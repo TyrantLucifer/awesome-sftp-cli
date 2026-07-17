@@ -373,6 +373,32 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 }
 
+func TestDaemonRejectsInvalidConfigurationBeforePersistentStateMutation(t *testing.T) {
+	runtimeRoot := t.TempDir()
+	persistent := testkit.PersistentTempDir(t)
+	for _, directory := range []string{runtimeRoot, persistent} {
+		if err := os.Chmod(directory, 0o700); err != nil { // #nosec G302 -- owner-only roots are required by the daemon contract.
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(persistent, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"schema_version":1,"cache":{"global_entries":5000}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := platform.Paths{
+		ConfigFile: configPath, StateDir: filepath.Join(persistent, "state"), CacheDir: filepath.Join(persistent, "cache"),
+		LogFile: filepath.Join(persistent, "log", "daemon.jsonl"), RuntimeDir: runtimeRoot,
+		ControlSocket: filepath.Join(runtimeRoot, "control-v1.sock"), LockFile: filepath.Join(runtimeRoot, "daemon.lock"),
+	}
+	err := runDaemonWithPaths(context.Background(), paths, platform.ValidateRuntimeFallback)
+	if err == nil || !strings.Contains(err.Error(), configPath) || !strings.Contains(err.Error(), "cache.global_entries") {
+		t.Fatalf("daemon config error = %v", err)
+	}
+	if _, err := os.Lstat(paths.StateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state directory mutated before config validation: %v", err)
+	}
+}
+
 func TestParseDaemonArgsRequiresOneExactExplicitMigrationResumeFlag(t *testing.T) {
 	t.Parallel()
 
