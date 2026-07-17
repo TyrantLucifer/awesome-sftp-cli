@@ -25,6 +25,7 @@ func TestCreateJobIsTransactionalAndRequestIdempotent(t *testing.T) {
 	ctx := context.Background()
 	store, database := newTestStore(t, ctx)
 	request := createRequest(t, 1)
+	request.EventPayloadJSON = `{"selected_route":"sftp_relay"}`
 	created, duplicate, err := store.Create(ctx, request)
 	if err != nil {
 		t.Fatalf("create job: %v", err)
@@ -51,6 +52,10 @@ func TestCreateJobIsTransactionalAndRequestIdempotent(t *testing.T) {
 	assertCount(t, ctx, database, "job_steps", 2)
 	assertCount(t, ctx, database, "job_events", 1)
 	assertCount(t, ctx, database, "request_dedup", 1)
+	events, err := store.ListEvents(ctx, request.JobID, 0, 1)
+	if err != nil || len(events) != 1 || events[0].PayloadJSON != request.EventPayloadJSON {
+		t.Fatalf("created event = (%+v, %v), want custom durable payload", events, err)
+	}
 	if err := store.CheckpointIdle(ctx); err != nil {
 		t.Fatalf("checkpoint idle store: %v", err)
 	}

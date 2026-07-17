@@ -19,6 +19,7 @@ type RouteReason string
 const (
 	ReasonSameEndpointAtomicRename     RouteReason = "same_endpoint_atomic_rename"
 	ReasonServerCopySelected           RouteReason = "server_copy_capability_selected"
+	ReasonServerCopyFailedBeforeWrite  RouteReason = "server_copy_failed_part_absent"
 	ReasonServerCopyUnavailable        RouteReason = "server_copy_unavailable"
 	ReasonHelperSameHostSelected       RouteReason = "helper_same_host_selected"
 	ReasonHelperSameHostUnavailable    RouteReason = "helper_same_host_unavailable"
@@ -93,7 +94,7 @@ func freezeRouteEvidence(plan *Plan) {
 			serverCopy := RouteDecision{Route: RouteSFTPServerCopy, Reason: ReasonServerCopySelected, Eligible: true}
 			evidence.Candidates = append(evidence.Candidates, serverCopy)
 			evidence.Selected = serverCopy
-			evidence.DowngradeBoundary = "frozen_route_no_silent_downgrade"
+			evidence.DowngradeBoundary = "before_target_write_part_absent"
 			evidence.ProgressSemantics = "phase_only"
 		} else {
 			evidence.Candidates = append(evidence.Candidates, RouteDecision{

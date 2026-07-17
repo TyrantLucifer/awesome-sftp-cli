@@ -55,22 +55,23 @@ type Step struct {
 }
 
 type CreateRequest struct {
-	PlanID          string
-	RequestID       domain.RequestID
-	JobID           domain.JobID
-	Kind            string
-	SourceJSON      string
-	DestinationJSON *string
-	Route           string
-	Verification    string
-	ConflictPolicy  string
-	RiskClass       string
-	InitialState    job.State
-	EventID         domain.EventID
-	Now             time.Time
-	Steps           []Step
-	InitialConflict *ConflictSeed
-	EditSession     *EditSessionBinding
+	PlanID           string
+	RequestID        domain.RequestID
+	JobID            domain.JobID
+	Kind             string
+	SourceJSON       string
+	DestinationJSON  *string
+	Route            string
+	Verification     string
+	ConflictPolicy   string
+	RiskClass        string
+	InitialState     job.State
+	EventID          domain.EventID
+	EventPayloadJSON string
+	Now              time.Time
+	Steps            []Step
+	InitialConflict  *ConflictSeed
+	EditSession      *EditSessionBinding
 }
 
 // EditSessionBinding moves a durable dirty edit session into uploading while
@@ -241,6 +242,9 @@ func (store *Store) CheckpointIdle(ctx context.Context) (returnErr error) {
 }
 
 func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot, bool, error) {
+	if request.EventPayloadJSON == "" {
+		request.EventPayloadJSON = `{}`
+	}
 	if err := validateCreate(request); err != nil {
 		return Snapshot{}, false, err
 	}
@@ -311,7 +315,7 @@ func (store *Store) Create(ctx context.Context, request CreateRequest) (Snapshot
 				return fmt.Errorf("bind edit session Job: %w", err)
 			}
 		}
-		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, 1, ?, 'job_created', '{}', ?)", request.JobID, request.EventID, request.Now.Unix()); err != nil {
+		if _, err := writer.ExecContext(ctx, "INSERT INTO job_events(job_id, sequence, event_id, kind, payload_json, created_at_unix) VALUES(?, 1, ?, 'job_created', ?, ?)", request.JobID, request.EventID, request.EventPayloadJSON, request.Now.Unix()); err != nil {
 			return fmt.Errorf("create Job event: %w", err)
 		}
 		response, err = marshalJobResponse(request.JobID)
@@ -1208,7 +1212,10 @@ func validateCreate(request CreateRequest) error {
 	if err := wal.ValidateTransactionBudgets(createWALBudgets(len(request.Steps), request.InitialConflict != nil, request.EditSession != nil)); err != nil {
 		return fmt.Errorf("create Job: %w", err)
 	}
-	values := []string{request.Kind, request.SourceJSON, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass}
+	if !json.Valid([]byte(request.EventPayloadJSON)) {
+		return errors.New("create Job: invalid event payload JSON")
+	}
+	values := []string{request.Kind, request.SourceJSON, request.Route, request.Verification, request.ConflictPolicy, request.RiskClass, request.EventPayloadJSON}
 	if request.DestinationJSON != nil {
 		values = append(values, *request.DestinationJSON)
 	}

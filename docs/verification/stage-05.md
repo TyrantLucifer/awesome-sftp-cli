@@ -1,6 +1,6 @@
 # Stage 5 Verification Record
 
-- **Status**: In Progress — M5.1 route unification
+- **Status**: In Progress — M5.1 complete; M5.2 Level 2 preflight/control active
 - **Updated**: 2026-07-17
 - **Repository root**: `/data00/home/tianchao.thatcher/projects/awsome-sftp-cli`
 - **Branch**: `codex/stage5-direct-transfer-scale`
@@ -29,17 +29,19 @@ The development shell initially lacked the installed Go SDK on `PATH`; `/home/ti
 - Existing `local`, `sftp_relay`, and `helper_same_host` Plans remain compatible. New candidates are `atomic_rename`, `sftp_server_copy`, and test-only `level2_direct`.
 - Integrity policies are `baseline`, `strong`, and `require_strong`; metadata preservation evidence remains separate.
 - `FreezeCopy`/mutation planning freezes the evidence before durable Job creation. The Worker cannot silently reroute and remains the sole verify/commit/source-delete owner.
-- M5.2 is closed until the M5.1 shared route contract, route regression, Plan persistence/restart, and Jobs/Log/TUI evidence gates pass.
+- M5.1's shared route contract, route regression, Plan persistence/restart, and Jobs/Log/TUI evidence gates pass. M5.2 is open, while executable Level 2 remains fixture-only and production distribution remains CLOSED.
 
 ## Milestone evidence
 
 ### M5.1 — Route unification and same-Endpoint fast paths
 
-**Status: In Progress.** Baseline, code-boundary audit, durable plan, verification skeleton and accepted ADR are complete. The required first implementation action was a shared route contract which failed in all five cases because the frozen Plan had no `route_evidence`. The implementation freezes v1 evidence for atomic rename, same-Endpoint server/Helper candidates, bounded relay and production-closed Level 2; records selected/candidate stable reasons, strong integrity, part/final, downgrade, risk and progress semantics; rejects altered evidence before execution; re-freezes derived directory item Plans; round-trips through the durable Job store; and exposes the same evidence through JobView and the Jobs drawer. Declared SFTP server-copy now requires the same SSH Endpoint, a regular file, explicit versioned `server_copy` capability, an actual structural facet, a frozen 1 TiB hard ceiling and exact source size. Planning performs no write. Execution durably records the exact Job-owned part intent, never lets the facet publish final, independently hashes source and part, and reuses the existing Worker conflict/commit path. Capability-only/facet-only claims remain relay; altered bindings fail before execution; same-size corruption retains part and never publishes final; a lost successful response is adopted only after full verification; pre-stage cancel performs zero copy calls and zero part writes. Complete explicit fallback/equivalence, restart and Log/UI regressions remain pending.
+**Status: Complete.** Baseline, code-boundary audit, durable plan, accepted ADR and exit gates are complete. The required first implementation action was a shared route contract which failed in all five cases because the frozen Plan had no `route_evidence`. The implementation freezes v1 evidence for atomic rename, same-Endpoint server/Helper candidates, bounded relay and production-closed Level 2; records selected/candidate stable reasons, strong integrity, part/final, downgrade, risk and progress semantics; rejects altered evidence and checkpoint route reasons before I/O; re-freezes derived directory item Plans; round-trips through the durable Job store; and exposes the same evidence through JobView, `job_created`/runtime Log events and the Jobs drawer.
+
+Declared SFTP server-copy requires the same SSH Endpoint, a regular file, explicit versioned `server_copy` capability, an actual structural facet, a frozen 1 TiB hard ceiling and exact source size. Planning performs no write. Execution durably records the exact Job-owned part intent, never lets the facet publish final, independently hashes source and part, and reuses the existing Worker conflict/commit path. Capability-only/facet-only claims remain relay; altered bindings fail before execution; same-size corruption retains part and never publishes final; a lost successful response is adopted only after full verification. A failed server-copy may become relay only after an exact stat proves the frozen part absent, recording `server_copy_failed_part_absent`; unknown part state, context cancellation and deadlines never downgrade. Restart resumes the durable actual relay route without retrying server-copy. Server-copy and relay produce identical conflict outcomes for ask/overwrite/skip/auto-rename and identical public cancellation facts: canceled outcome, zero committed bytes, absent final and retained source. Phase-only server-copy propagates durable cancellation to the in-flight facet within the bounded control poll. CI-equivalent full check/lint and focused race gates pass.
 
 ### M5.2 — Level 2 preflight and direct transfer
 
-**Status: Not Started.** Production distribution remains CLOSED.
+**Status: In Progress.** The first action is the bounded versioned protocol/control RED plus table-driven per-condition preflight RED. Production distribution remains CLOSED; no executable fixture backend is reachable from ordinary runtime/configuration.
 
 ### M5.3 — Downgrade, fault and semantic equivalence
 
@@ -57,14 +59,14 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 |---|---|---|
 | CONN-010 | PENDING | Controlled connection reuse and idle recovery not implemented. |
 | JOB-009 | PENDING | Job/global bandwidth policy and deterministic token bucket not implemented. |
-| DIRECT-002 | IMPLEMENTED | Explicit capability + structural facet gate, immutable binding, exact part staging, independent strong verification, response-loss adoption, corruption isolation and pre-write cancellation pass focused tests; full M5.1/Hosted gates pending before exact PASS. |
+| DIRECT-002 | IMPLEMENTED | Explicit capability + structural facet gate, immutable binding, exact part staging, independent strong verification, response-loss adoption, corruption isolation, safe absent-part fallback, restart, pre/in-flight cancellation and relay conflict/cancel equivalence pass the complete M5.1 local gate; exact-final Hosted evidence remains required for PASS. |
 | DIRECT-004 | PENDING | Explicit direct policy and route disclosure not implemented. |
 | DIRECT-005 | PENDING | Per-condition Level 2 preflight matrix not implemented. |
 | DIRECT-006 | PENDING | No-forwarding/delegation/copy integration evidence not implemented. |
 | DIRECT-007 | IN PROGRESS | Route evidence v1 is durable and tamper-checked before execution; full Level 2 preflight/expiry evidence remains pending. |
 | DIRECT-008 | PENDING | Safe pre-commit downgrade matrix not implemented. |
 | DIRECT-009 | PENDING | Direct-relay golden equivalence not implemented. |
-| DIRECT-010 | IN PROGRESS | JobView and Jobs drawer show stable selected reason/integrity/downgrade, including `production_distribution_closed`; Log/runtime downgrade matrix remains pending. |
+| DIRECT-010 | IMPLEMENTED | JobView, Jobs drawer and `job_created` Log show selected reason/integrity/downgrade/progress; runtime safe fallback durably shows planned→actual route and stable reason. Exact-final Hosted evidence remains required for PASS. |
 | SCALE-001 | PENDING | 50k directory production-scale gate not implemented. |
 | SCALE-002 | PENDING | Million-tree transfer/plan gate not implemented. |
 | SCALE-003 | PENDING | 100GB sparse local/relay/direct gate not implemented. |
@@ -98,7 +100,17 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | M5.1 recovery identity RED/GREEN | `go test ./internal/transfer -run '^TestWorkerRejectsCheckpointThatDoesNotMatchFrozenRouteIdentity$' -count=1 -v` | Initial FAIL: foreign checkpoint part was accepted and executed; PASS after shared pre-I/O source/part/final identity validation. |
 | M5.1 server-copy transfer regression | `go test ./internal/transfer -count=1` | PASS. |
 | M5.1 server-copy lint | `make lint` | PASS: golangci-lint reports 0 issues after replacing dynamic-path fixture I/O with Provider I/O. |
+| M5.1 safe fallback RED/GREEN | focused `TestWorkerFallsBackToRelayOnlyAfterServerCopyProvesPartAbsent`, restart and unknown-part tests | Initial RED exposed no fallback contract; PASS after persisting server-copy→relay only when exact part is absent. Unknown/permission state does not downgrade and restart does not retry server-copy. |
+| M5.1 conflict/cancel equivalence | `TestServerCopyAndRelayShareCommitConflictContract` and `TestServerCopyAndRelayShareCancellationContract` | PASS for ask/overwrite/skip/auto-rename plus canceled/zero-commit/final-absent/source-retained public state. |
+| M5.1 in-flight cancellation RED/GREEN | `TestWorkerServerCopyPropagatesDurableCancelDuringStage` | Initial FAIL after 500 ms because server-copy did not observe durable control; PASS after sharing the bounded staged-copy control monitor. Context cancellation/deadline has a separate regression proving no relay downgrade. |
+| M5.1 durable route identity | safe-downgrade Manager/JobView/Log test plus selected-reason tamper test | PASS: `job_created` carries selected route/reason/integrity/boundary/progress, runtime event carries planned/actual/reason, JobView survives restart, and forged checkpoint reason is rejected pre-I/O. |
+| M5.1 complete current gate | `make docs-check && make check && make lint` | PASS in CI-equivalent environment; transfer coverage 70.5%, lint 0 issues. |
+| M5.1 focused race | `go test -race ./internal/transfer ./internal/tui ./internal/state/jobstore -count=1` | PASS. |
+
+## Hosted CI instability classification
+
+Commit `4aacfc8d8cb275b3b0abf70962418c9dd29d9510` predates the complete fallback slice but supplies an exact cross-run instability comparison. [Push run 29562430669](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29562430669) failed only `native (macos-15-intel)` when the existing `TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically` observed the control socket absent after its startup wait; the same SHA's PR macOS Intel native job passed. [PR run 29562433196](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29562433196) failed only `oldstable (ubuntu-22.04)` when the existing Helper stderr-overflow process fixture unexpectedly completed below its observed drain boundary; the same SHA's push Ubuntu 22 oldstable job passed. All Stage 5 code tests, quality/auth/build/reproducibility and the opposite companion jobs were green. The failures are mutually non-reproducing existing timing fixtures, not Stage 5 route failures; no unrelated assertion or timeout was changed. The complete M5.1 candidate will receive fresh push/PR Hosted runs and neither old run is accepted as final evidence.
 
 ## Pending closeout gates
 
-M5.1–M5.4, all 22 independent feature PASS cells, current/oldstable/native/platform/filesystem/auth/route/direct/fault/scale/resource/soak/reproducibility/pollution gates, two independent final reviews, exact final push and PR Hosted CI remain pending. The PR must remain Draft until M5.1 reviewable MVP exists and may become Ready only after every final gate is green; it must not be merged automatically.
+M5.2–M5.4, all 22 independent feature PASS cells, final current/oldstable/native/platform/filesystem/auth/route/direct/fault/scale/resource/soak/reproducibility/pollution gates, two independent final reviews, exact final push and PR Hosted CI remain pending. The PR remains Draft and may become Ready only after every final gate is green; it must not be merged automatically.

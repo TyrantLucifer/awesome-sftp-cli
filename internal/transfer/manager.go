@@ -35,6 +35,9 @@ type JobView struct {
 	Snapshot       jobstore.Snapshot `json:"snapshot"`
 	Kind           OperationKind     `json:"kind"`
 	Route          Route             `json:"route"`
+	PlannedRoute   Route             `json:"planned_route"`
+	DowngradedFrom Route             `json:"downgraded_from,omitempty"`
+	RouteReason    RouteReason       `json:"route_reason,omitempty"`
 	RouteEvidence  *RouteEvidence    `json:"route_evidence,omitempty"`
 	Source         domain.Location   `json:"source"`
 	Final          domain.Location   `json:"final"`
@@ -473,7 +476,7 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			return nil, err
 		}
 		view := JobView{
-			Snapshot: snapshot, Kind: plan.Kind, Route: plan.Route, RouteEvidence: plan.RouteEvidence, Source: plan.Source.Location, Final: plan.Final,
+			Snapshot: snapshot, Kind: plan.Kind, Route: plan.Route, PlannedRoute: plan.Route, RouteEvidence: plan.RouteEvidence, Source: plan.Source.Location, Final: plan.Final,
 			BytesTotal: plan.Source.Fingerprint.Size, Items: 1,
 		}
 		if plan.Source.Kind == domain.EntryDirectory {
@@ -488,6 +491,11 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			view.Phase = checkpoint.Phase
 			view.Bytes = checkpoint.Offset
 			view.Final = checkpoint.Final
+			if checkpoint.ActualRoute != "" {
+				view.Route = checkpoint.ActualRoute
+			}
+			view.DowngradedFrom = checkpoint.DowngradedFrom
+			view.RouteReason = checkpoint.RouteReason
 			if plan.Source.Kind == domain.EntryDirectory {
 				view.Items = checkpoint.Items
 			}
@@ -660,7 +668,19 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		}
 		manager.openConflict(current, plan, result.Final, reason)
 	default:
-		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", map[string]any{"sha256": result.SHA256})
+		verificationPayload := map[string]any{"sha256": result.SHA256}
+		checkpoint, checkpointErr := (JobJournal{Store: manager.store, StepIndex: 0}).Load(manager.ctx, jobID)
+		if checkpointErr != nil {
+			manager.handleExecutionError(current, checkpointErr, result)
+			return
+		}
+		if checkpoint != nil && checkpoint.DowngradedFrom != "" {
+			verificationPayload["planned_route"] = plan.Route
+			verificationPayload["actual_route"] = checkpoint.ActualRoute
+			verificationPayload["downgraded_from"] = checkpoint.DowngradedFrom
+			verificationPayload["route_reason"] = checkpoint.RouteReason
+		}
+		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", verificationPayload)
 		if transitionErr == nil {
 			terminalState := job.StateCompleted
 			eventKind := "job_completed"

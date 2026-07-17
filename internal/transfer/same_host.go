@@ -145,7 +145,7 @@ func (worker *Worker) executeSameHostCopy(
 		stageDone := make(chan struct{})
 		controlled := make(chan ControlAction, 1)
 		if control != nil {
-			go monitorSameHostControl(stageCtx, control, *checkpoint, cancelStage, controlled, stageDone)
+			go monitorStagedCopyControl(stageCtx, control, *checkpoint, cancelStage, controlled, stageDone)
 		}
 		result, stageErr := worker.sameHost.StageCopy(stageCtx, SameHostCopyStageRequest{
 			Source: plan.Source.Location, Part: plan.Part, Final: plan.Final, JobID: plan.JobID,
@@ -204,7 +204,7 @@ func controlAction(control Control, checkpoint Checkpoint) ControlAction {
 	return control.Action(cloneCheckpoint(checkpoint))
 }
 
-func monitorSameHostControl(ctx context.Context, control Control, checkpoint Checkpoint, cancel context.CancelFunc, result chan<- ControlAction, done <-chan struct{}) {
+func monitorStagedCopyControl(ctx context.Context, control Control, checkpoint Checkpoint, cancel context.CancelFunc, result chan<- ControlAction, done <-chan struct{}) {
 	ticker := time.NewTicker(25 * time.Millisecond)
 	defer ticker.Stop()
 	for {

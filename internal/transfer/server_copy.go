@@ -10,6 +10,8 @@ import (
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 )
 
+var errServerCopySafeFallback = errors.New("server copy failed before target write")
+
 type serverCopyProvider interface {
 	ServerCopy(
 		context.Context,
@@ -75,15 +77,18 @@ func (worker *Worker) executeServerCopy(
 	buffer []byte,
 ) (Result, error) {
 	if plan.ServerCopy == nil {
-		return Result{}, planError(domain.CodeCapabilityLost, "stage_server_copy", plan.Part, "frozen server-copy capability is unavailable", domain.RetryAfterReplan)
+		return Result{}, errServerCopySafeFallback
 	}
 	serverCopy, ok := destinationProvider.(serverCopyProvider)
 	if !ok {
-		return Result{}, planError(domain.CodeCapabilityLost, "stage_server_copy", plan.Part, "server-copy facet disappeared", domain.RetryAfterReplan)
+		return Result{}, errServerCopySafeFallback
 	}
 	if err := requireFrozenCapability(ctx, destinationProvider, plan.Part, CapabilityBinding{
 		Revision: plan.ServerCopy.Revision, Capability: plan.ServerCopy.Capability,
 	}); err != nil {
+		if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
+			return Result{}, fmt.Errorf("%w: %w", errServerCopySafeFallback, err)
+		}
 		return Result{}, err
 	}
 	if !checkpointExists {
@@ -99,14 +104,36 @@ func (worker *Worker) executeServerCopy(
 		if action := controlAction(control, *checkpoint); action != ControlContinue {
 			return controlledServerCopyResult(plan, *checkpoint, action)
 		}
-		returned, stageErr := serverCopy.ServerCopy(ctx, plan.Source.Location, plan.Part, cloneFingerprint(plan.Source.Fingerprint), plan.ServerCopy.MaxBytes)
+		stageCtx, cancelStage := context.WithCancel(ctx)
+		stageDone := make(chan struct{})
+		controlled := make(chan ControlAction, 1)
+		if control != nil {
+			go monitorStagedCopyControl(stageCtx, control, *checkpoint, cancelStage, controlled, stageDone)
+		}
+		returned, stageErr := serverCopy.ServerCopy(stageCtx, plan.Source.Location, plan.Part, cloneFingerprint(plan.Source.Fingerprint), plan.ServerCopy.MaxBytes)
+		close(stageDone)
+		cancelStage()
+		select {
+		case action := <-controlled:
+			return controlledServerCopyResult(plan, *checkpoint, action)
+		default:
+		}
+		if action := controlAction(control, *checkpoint); action != ControlContinue {
+			return controlledServerCopyResult(plan, *checkpoint, action)
+		}
 		if stageErr == nil && (returned.Location != plan.Part || returned.Kind != domain.EntryFile) {
 			return Result{}, planError(domain.CodeIntegrityFailed, "stage_server_copy", plan.Part, "server-copy facet returned an invalid staging result", domain.RetryNever)
 		}
+		if errors.Is(stageErr, context.Canceled) || errors.Is(stageErr, context.DeadlineExceeded) {
+			return Result{}, stageErr
+		}
 		partEntry, err = destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
 		if err != nil {
-			if stageErr != nil {
-				return Result{}, stageErr
+			if stageErr != nil && domain.IsCode(err, domain.CodeNotFound) {
+				return Result{}, fmt.Errorf("%w: %w", errServerCopySafeFallback, stageErr)
+			}
+			if stageErr == nil && domain.IsCode(err, domain.CodeNotFound) {
+				return Result{}, planError(domain.CodeIntegrityFailed, "stage_server_copy", plan.Part, "server-copy facet reported success without a part", domain.RetryNever)
 			}
 			return Result{}, err
 		}

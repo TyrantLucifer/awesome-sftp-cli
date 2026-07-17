@@ -695,6 +695,26 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		return jobstore.CreateRequest{}, fmt.Errorf("freeze copy: encode frozen plan: %w", err)
 	}
 	planString := string(planJSON)
+	eventPayload := struct {
+		SelectedRoute     Route           `json:"selected_route"`
+		RouteReason       RouteReason     `json:"route_reason"`
+		IntegrityPolicy   IntegrityPolicy `json:"integrity_policy"`
+		Verification      Verification    `json:"verification"`
+		DowngradeBoundary string          `json:"downgrade_boundary"`
+		ProgressSemantics string          `json:"progress_semantics"`
+	}{}
+	if evidence := plan.RouteEvidence; evidence != nil {
+		eventPayload.SelectedRoute = evidence.Selected.Route
+		eventPayload.RouteReason = evidence.Selected.Reason
+		eventPayload.IntegrityPolicy = evidence.Integrity.Policy
+		eventPayload.Verification = evidence.Integrity.Verification
+		eventPayload.DowngradeBoundary = evidence.DowngradeBoundary
+		eventPayload.ProgressSemantics = evidence.ProgressSemantics
+	}
+	eventPayloadJSON, err := json.Marshal(eventPayload)
+	if err != nil {
+		return jobstore.CreateRequest{}, fmt.Errorf("freeze copy: encode route event evidence: %w", err)
+	}
 	steps := []jobstore.Step{
 		{Kind: "transfer", SourceJSON: &sourceString, DestinationJSON: &destinationString},
 		{Kind: "verify", SourceJSON: &sourceString, DestinationJSON: &destinationString},
@@ -716,20 +736,21 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 		}
 	}
 	create := jobstore.CreateRequest{
-		PlanID:          plan.PlanID,
-		RequestID:       request.RequestID,
-		JobID:           plan.JobID,
-		Kind:            string(plan.Kind),
-		SourceJSON:      sourceString,
-		DestinationJSON: &planString,
-		Route:           string(plan.Route),
-		Verification:    string(plan.Verification),
-		ConflictPolicy:  string(plan.ConflictPolicy),
-		RiskClass:       "filesystem_write",
-		InitialState:    initialState,
-		EventID:         request.EventID,
-		Now:             request.Now,
-		Steps:           steps,
+		PlanID:           plan.PlanID,
+		RequestID:        request.RequestID,
+		JobID:            plan.JobID,
+		Kind:             string(plan.Kind),
+		SourceJSON:       sourceString,
+		DestinationJSON:  &planString,
+		Route:            string(plan.Route),
+		Verification:     string(plan.Verification),
+		ConflictPolicy:   string(plan.ConflictPolicy),
+		RiskClass:        "filesystem_write",
+		InitialState:     initialState,
+		EventID:          request.EventID,
+		EventPayloadJSON: string(eventPayloadJSON),
+		Now:              request.Now,
+		Steps:            steps,
 	}
 	if initialState == job.StateAwaitingConfirmation {
 		create.InitialConflict = &jobstore.ConflictSeed{

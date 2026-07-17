@@ -29,6 +29,9 @@ type checkpointLocationPayload struct {
 	Items              uint64             `json:"items,omitempty"`
 	CurrentPath        string             `json:"current_path,omitempty"`
 	DirectoryRootOwned bool               `json:"directory_root_owned,omitempty"`
+	ActualRoute        Route              `json:"actual_route,omitempty"`
+	DowngradedFrom     Route              `json:"downgraded_from,omitempty"`
+	RouteReason        RouteReason        `json:"route_reason,omitempty"`
 }
 
 func (journal JobJournal) Load(ctx context.Context, jobID domain.JobID) (*Checkpoint, error) {
@@ -64,6 +67,9 @@ func (journal JobJournal) Load(ctx context.Context, jobID domain.JobID) (*Checkp
 		Items:              location.Items,
 		CurrentPath:        location.CurrentPath,
 		DirectoryRootOwned: location.DirectoryRootOwned,
+		ActualRoute:        location.ActualRoute,
+		DowngradedFrom:     location.DowngradedFrom,
+		RouteReason:        location.RouteReason,
 	}, nil
 }
 
@@ -84,6 +90,9 @@ func (journal JobJournal) Save(ctx context.Context, checkpoint Checkpoint) error
 		Items:              checkpoint.Items,
 		CurrentPath:        checkpoint.CurrentPath,
 		DirectoryRootOwned: checkpoint.DirectoryRootOwned,
+		ActualRoute:        checkpoint.ActualRoute,
+		DowngradedFrom:     checkpoint.DowngradedFrom,
+		RouteReason:        checkpoint.RouteReason,
 	})
 	if err != nil {
 		return fmt.Errorf("save transfer checkpoint: encode part identity: %w", err)

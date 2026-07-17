@@ -533,10 +533,21 @@ func renderJobsDrawer(surface Surface, jobs []transfer.JobView, cursor, y, width
 		}
 		route := string(view.Route)
 		if evidence := view.RouteEvidence; evidence != nil {
-			if evidence.Selected.Route != "" {
+			if route == "" && evidence.Selected.Route != "" {
 				route = string(evidence.Selected.Route)
 			}
-			details := []string{string(evidence.Selected.Reason), string(evidence.Integrity.Policy)}
+			reason := view.RouteReason
+			if reason == "" {
+				reason = evidence.Selected.Reason
+			}
+			if view.DowngradedFrom != "" {
+				planned := view.PlannedRoute
+				if planned == "" {
+					planned = view.DowngradedFrom
+				}
+				route = string(planned) + "→" + route
+			}
+			details := []string{string(reason), string(evidence.Integrity.Policy)}
 			for _, detail := range []string{evidence.Risk, evidence.DowngradeBoundary, evidence.ProgressSemantics} {
 				if detail != "" {
 					details = append(details, detail)

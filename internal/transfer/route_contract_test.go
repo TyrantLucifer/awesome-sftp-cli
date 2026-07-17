@@ -8,10 +8,15 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 func TestPlannerFreezesUnifiedRouteEvidenceBeforeDurableJobCreation(t *testing.T) {
@@ -137,6 +142,9 @@ func TestPlannerSelectsDeclaredServerCopyOnlyWithCapabilityAndFacet(t *testing.T
 	}
 	if reason := jsonString(t, selected, "reason"); reason != "server_copy_capability_selected" {
 		t.Fatalf("selected reason = %q, want server_copy_capability_selected", reason)
+	}
+	if boundary := jsonString(t, evidence, "downgrade_boundary"); boundary != "before_target_write_part_absent" {
+		t.Fatalf("downgrade boundary = %q", boundary)
 	}
 	assertRouteCandidateJSON(t, evidence, "sftp_relay", "bounded_relay_default")
 	if implementation.copyCalls != 0 {
@@ -308,6 +316,233 @@ func TestWorkerServerCopyResponseLossAdoptsOnlyVerifiedPart(t *testing.T) {
 	}
 }
 
+func TestWorkerFallsBackToRelayOnlyAfterServerCopyProvesPartAbsent(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, nil)
+	implementation.failBeforeWrite = true
+	journal := &volatileJournal{}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	result, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeCompleted || implementation.copyCalls != 1 {
+		t.Fatalf("result = %+v, server copy calls = %d", result, implementation.copyCalls)
+	}
+	checkpoint, err := journal.Load(context.Background(), plan.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint == nil || checkpoint.ActualRoute != RouteSFTPRelay || checkpoint.DowngradedFrom != RouteSFTPServerCopy ||
+		checkpoint.RouteReason != ReasonServerCopyFailedBeforeWrite {
+		t.Fatalf("downgrade checkpoint = %+v", checkpoint)
+	}
+	if _, err := readRouteTestFile(context.Background(), implementation, plan.Final); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestWorkerRestartResumesPersistedRelayDowngradeWithoutRetryingServerCopy(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, nil)
+	checkpoint := Checkpoint{
+		JobID:             plan.JobID,
+		Phase:             PhasePrepared,
+		SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
+		Part:              plan.Part,
+		Final:             plan.Final,
+		ActualRoute:       RouteSFTPRelay,
+		DowngradedFrom:    RouteSFTPServerCopy,
+		RouteReason:       ReasonServerCopyFailedBeforeWrite,
+	}
+	journal := &volatileJournal{checkpoint: &checkpoint}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	result, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeCompleted || implementation.copyCalls != 0 {
+		t.Fatalf("result = %+v, server copy calls = %d", result, implementation.copyCalls)
+	}
+}
+
+func TestCheckpointRouteIdentityRejectsTamperedStableReason(t *testing.T) {
+	plan, _ := newRouteServerCopyPlan(t, nil)
+	checkpoint := Checkpoint{
+		JobID:             plan.JobID,
+		Phase:             PhasePrepared,
+		SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
+		Part:              plan.Part,
+		Final:             plan.Final,
+		ActualRoute:       plan.Route,
+		RouteReason:       ReasonServerCopyFailedBeforeWrite,
+	}
+	if checkpointMatchesPlan(checkpoint, plan) {
+		t.Fatal("checkpoint with a forged selected-route reason matched the frozen plan")
+	}
+}
+
+func TestWorkerDoesNotFallbackWhenServerCopyPartStateIsUnknown(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, nil)
+	implementation.failBeforeWrite = true
+	implementation.unknownPartAfterFailure = true
+	journal := &volatileJournal{}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	if _, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil); !domain.IsCode(err, domain.CodePermissionDenied) {
+		t.Fatalf("error = %v, want permission_denied", err)
+	}
+	checkpoint, err := journal.Load(context.Background(), plan.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint == nil || checkpoint.ActualRoute != RouteSFTPServerCopy || checkpoint.DowngradedFrom != "" {
+		t.Fatalf("unknown part state silently downgraded: %+v", checkpoint)
+	}
+	if _, statErr := implementation.endpointKindProvider.Stat(context.Background(), providerapi.StatRequest{Location: plan.Final}); !domain.IsCode(statErr, domain.CodeNotFound) {
+		t.Fatalf("final was published after unknown part state: %v", statErr)
+	}
+}
+
+func TestServerCopyAndRelayShareCommitConflictContract(t *testing.T) {
+	for _, policy := range []ConflictPolicy{ConflictAsk, ConflictOverwrite, ConflictSkip, ConflictAutoRename} {
+		t.Run(string(policy), func(t *testing.T) {
+			relay := executeRouteConflictContract(t, false, policy)
+			serverCopy := executeRouteConflictContract(t, true, policy)
+			if !reflect.DeepEqual(serverCopy, relay) {
+				t.Fatalf("server-copy result = %+v, relay result = %+v", serverCopy, relay)
+			}
+		})
+	}
+}
+
+type routeConflictObservation struct {
+	Outcome      Outcome
+	Bytes        uint64
+	SHA256       string
+	FinalPath    domain.CanonicalPath
+	PartRetained bool
+	FinalPayload string
+}
+
+func executeRouteConflictContract(t *testing.T, serverCopy bool, policy ConflictPolicy) routeConflictObservation {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source"), []byte("shared source bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH)
+	var implementation providerapi.Provider = base
+	if serverCopy {
+		implementation = &routeServerCopyProvider{endpointKindProvider: base, root: root, advertise: true}
+	}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	planner := NewPlanner(resolver)
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination"))
+	request.Intent.Name = "copied"
+	request.Intent.ConflictPolicy = policy
+	request.Intent.ConflictConfirmed = policy == ConflictOverwrite
+	plan, _, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "destination", "copied"), []byte("commit race"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewWorker(resolver, &volatileJournal{}).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := readRouteTestFile(context.Background(), implementation, result.Final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return routeConflictObservation{
+		Outcome: result.Outcome, Bytes: result.Bytes, SHA256: result.SHA256, FinalPath: result.Final.Path,
+		PartRetained: result.PartRetained, FinalPayload: string(payload),
+	}
+}
+
+func TestManagerJobViewPersistsPlannedAndActualRouteAfterSafeDowngrade(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source"), []byte("durable downgrade"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH)
+	implementation := &routeServerCopyProvider{endpointKindProvider: base, root: root, advertise: true, failBeforeWrite: true}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(1_800_000_000, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: reference, DestinationDirectory: normalizePlanTest(t, implementation, "/destination"),
+		Name: "copied", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("state = %q", completed.State)
+	}
+	views, err := manager.JobViews(context.Background(), 10)
+	if err != nil || len(views) != 1 {
+		t.Fatalf("views = %+v, error = %v", views, err)
+	}
+	view := views[0]
+	if view.PlannedRoute != RouteSFTPServerCopy || view.Route != RouteSFTPRelay ||
+		view.DowngradedFrom != RouteSFTPServerCopy || view.RouteReason != ReasonServerCopyFailedBeforeWrite {
+		t.Fatalf("durable route view = %+v", view)
+	}
+	events, err := store.ListEvents(context.Background(), created.JobID, 0, 32)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	createdEvidenceFound := false
+	for _, event := range events {
+		if event.Kind == "job_created" && strings.Contains(event.PayloadJSON, `"selected_route":"sftp_server_copy"`) &&
+			strings.Contains(event.PayloadJSON, `"route_reason":"server_copy_capability_selected"`) &&
+			strings.Contains(event.PayloadJSON, `"integrity_policy":"strong"`) &&
+			strings.Contains(event.PayloadJSON, `"downgrade_boundary":"before_target_write_part_absent"`) &&
+			strings.Contains(event.PayloadJSON, `"progress_semantics":"phase_only"`) {
+			createdEvidenceFound = true
+		}
+		if event.Kind == "job_verifying" && strings.Contains(event.PayloadJSON, `"planned_route":"sftp_server_copy"`) &&
+			strings.Contains(event.PayloadJSON, `"actual_route":"sftp_relay"`) &&
+			strings.Contains(event.PayloadJSON, `"route_reason":"server_copy_failed_part_absent"`) {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("durable Log events do not disclose route downgrade: %+v", events)
+	}
+	if !createdEvidenceFound {
+		t.Fatalf("durable Log creation event does not disclose selected route evidence: %+v", events)
+	}
+}
+
 func TestWorkerServerCopyRejectsCorruptPartWithoutPublishingFinal(t *testing.T) {
 	plan, implementation := newRouteServerCopyPlan(t, nil)
 	implementation.corrupt = true
@@ -338,6 +573,81 @@ func TestWorkerServerCopyCancelBeforeStageDoesNotWrite(t *testing.T) {
 	}
 	if _, statErr := implementation.Stat(context.Background(), providerapi.StatRequest{Location: plan.Part}); !domain.IsCode(statErr, domain.CodeNotFound) {
 		t.Fatalf("part was written after pre-stage cancel: %v", statErr)
+	}
+}
+
+func TestServerCopyAndRelayShareCancellationContract(t *testing.T) {
+	relay := observeRouteCancellationContract(t, false)
+	serverCopy := observeRouteCancellationContract(t, true)
+	if !reflect.DeepEqual(serverCopy, relay) {
+		t.Fatalf("server-copy cancellation = %+v, relay cancellation = %+v", serverCopy, relay)
+	}
+}
+
+func TestWorkerServerCopyPropagatesDurableCancelDuringStage(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, nil)
+	implementation.stageStarted = make(chan struct{})
+	implementation.blockStageUntilCanceled = true
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	var cancelRequested atomic.Bool
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewWorker(resolver, &volatileJournal{}).Execute(context.Background(), plan, ControlFunc(func(Checkpoint) ControlAction {
+			if cancelRequested.Load() {
+				return ControlCancel
+			}
+			return ControlContinue
+		}))
+		done <- err
+	}()
+	select {
+	case <-implementation.stageStarted:
+	case <-time.After(time.Second):
+		t.Fatal("server copy did not begin")
+	}
+	cancelRequested.Store(true)
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrCanceled) {
+			t.Fatalf("error = %v, want canceled", err)
+		}
+	case <-time.After(500 * time.Millisecond):
+		t.Fatal("durable cancel did not interrupt server copy")
+	}
+	if _, statErr := implementation.Stat(context.Background(), providerapi.StatRequest{Location: plan.Final}); !domain.IsCode(statErr, domain.CodeNotFound) {
+		t.Fatalf("final was exposed after cancel: %v", statErr)
+	}
+	if payload, err := readRouteTestFile(context.Background(), implementation, plan.Source.Location); err != nil || string(payload) != "frozen server copy payload" {
+		t.Fatalf("source after cancel = %q, error = %v", payload, err)
+	}
+}
+
+func TestWorkerServerCopyContextCancellationNeverBecomesRelayDowngrade(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, nil)
+	implementation.stageStarted = make(chan struct{})
+	implementation.blockStageUntilCanceled = true
+	journal := &volatileJournal{}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewWorker(MapResolver{implementation.Descriptor().ID: implementation}, journal).Execute(ctx, plan, nil)
+		done <- err
+	}()
+	select {
+	case <-implementation.stageStarted:
+	case <-time.After(time.Second):
+		t.Fatal("server copy did not begin")
+	}
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("error = %v, want context canceled", err)
+	}
+	checkpoint, err := journal.Load(context.Background(), plan.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint == nil || checkpoint.ActualRoute != RouteSFTPServerCopy || checkpoint.DowngradedFrom != "" {
+		t.Fatalf("context cancellation silently downgraded route: %+v", checkpoint)
 	}
 }
 
@@ -497,11 +807,25 @@ type routeServerCopyProvider struct {
 	advertise                 bool
 	responseErr               error
 	corrupt                   bool
+	failBeforeWrite           bool
+	unknownPartAfterFailure   bool
+	serverCopyFailed          bool
 	copyCalls                 int
+	stageStarted              chan struct{}
+	blockStageUntilCanceled   bool
 	capabilityVersion         uint16
 	driftDestination          bool
 	omitDestinationCapability bool
 	snapshotCalls             int
+}
+
+func (provider *routeServerCopyProvider) Stat(ctx context.Context, request providerapi.StatRequest) (domain.Entry, error) {
+	if provider.unknownPartAfterFailure && provider.serverCopyFailed && strings.Contains(string(request.Location.Path), ".part-") {
+		return domain.Entry{}, &domain.OpError{
+			Code: domain.CodePermissionDenied, Message: "part state unknown", Operation: "stat", EndpointID: request.Location.EndpointID,
+		}
+	}
+	return provider.endpointKindProvider.Stat(ctx, request)
 }
 
 func (provider *routeServerCopyProvider) Snapshot(ctx context.Context) (domain.EndpointSnapshot, error) {
@@ -543,6 +867,17 @@ func (provider *routeServerCopyProvider) ServerCopy(
 	}
 	if !reflect.DeepEqual(entry.Fingerprint, expected) || entry.Metadata.Size == nil || *entry.Metadata.Size > maxBytes {
 		return domain.Entry{}, &domain.OpError{Code: domain.CodeConflict, Message: "source changed", Operation: "server_copy", EndpointID: source.EndpointID}
+	}
+	if provider.stageStarted != nil {
+		close(provider.stageStarted)
+	}
+	if provider.blockStageUntilCanceled {
+		<-ctx.Done()
+		return domain.Entry{}, ctx.Err()
+	}
+	if provider.failBeforeWrite {
+		provider.serverCopyFailed = true
+		return domain.Entry{}, errors.New("server copy failed before write")
 	}
 	payload, err := readRouteTestFile(ctx, provider, source)
 	if err != nil {
@@ -588,6 +923,10 @@ func (provider *routeServerCopyCapabilityOnlyProvider) Snapshot(ctx context.Cont
 }
 
 func newRouteServerCopyPlan(t *testing.T, responseErr error) (Plan, *routeServerCopyProvider) {
+	return newRouteCopyPlan(t, true, responseErr)
+}
+
+func newRouteCopyPlan(t *testing.T, advertise bool, responseErr error) (Plan, *routeServerCopyProvider) {
 	t.Helper()
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
@@ -597,7 +936,7 @@ func newRouteServerCopyPlan(t *testing.T, responseErr error) (Plan, *routeServer
 		t.Fatal(err)
 	}
 	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH)
-	implementation := &routeServerCopyProvider{endpointKindProvider: base, root: root, advertise: true, responseErr: responseErr}
+	implementation := &routeServerCopyProvider{endpointKindProvider: base, root: root, advertise: advertise, responseErr: responseErr}
 	planner := NewPlanner(MapResolver{implementation.Descriptor().ID: implementation})
 	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
 	if err != nil {
@@ -608,6 +947,30 @@ func newRouteServerCopyPlan(t *testing.T, responseErr error) (Plan, *routeServer
 		t.Fatal(err)
 	}
 	return plan, implementation
+}
+
+type routeCancellationObservation struct {
+	Canceled    bool
+	Bytes       uint64
+	FinalAbsent bool
+	Source      string
+}
+
+func observeRouteCancellationContract(t *testing.T, serverCopy bool) routeCancellationObservation {
+	t.Helper()
+	plan, implementation := newRouteCopyPlan(t, serverCopy, nil)
+	result, executeErr := NewWorker(MapResolver{implementation.Descriptor().ID: implementation}, &volatileJournal{}).Execute(
+		context.Background(), plan, ControlFunc(func(Checkpoint) ControlAction { return ControlCancel }),
+	)
+	_, finalErr := implementation.Stat(context.Background(), providerapi.StatRequest{Location: plan.Final})
+	source, sourceErr := readRouteTestFile(context.Background(), implementation, plan.Source.Location)
+	if sourceErr != nil {
+		t.Fatal(sourceErr)
+	}
+	return routeCancellationObservation{
+		Canceled: errors.Is(executeErr, ErrCanceled), Bytes: result.Bytes,
+		FinalAbsent: domain.IsCode(finalErr, domain.CodeNotFound), Source: string(source),
+	}
 }
 
 func readRouteTestFile(ctx context.Context, provider providerapi.Provider, location domain.Location) ([]byte, error) {

@@ -66,6 +66,9 @@ type Checkpoint struct {
 	Items              uint64             `json:"items,omitempty"`
 	CurrentPath        string             `json:"current_path,omitempty"`
 	DirectoryRootOwned bool               `json:"directory_root_owned,omitempty"`
+	ActualRoute        Route              `json:"actual_route,omitempty"`
+	DowngradedFrom     Route              `json:"downgraded_from,omitempty"`
+	RouteReason        RouteReason        `json:"route_reason,omitempty"`
 }
 
 type Journal interface {
@@ -198,15 +201,30 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
 		Part:              plan.Part,
 		Final:             plan.Final,
+		ActualRoute:       plan.Route,
+		RouteReason:       plannedRouteReason(plan),
 	}
 	if checkpoint != nil {
 		current = cloneCheckpoint(*checkpoint)
+		if current.ActualRoute == "" {
+			current.ActualRoute = plan.Route
+			current.RouteReason = plannedRouteReason(plan)
+		}
 	}
 	if plan.Route == RouteHelperSameHost && current.Phase == PhasePrepared {
 		return worker.executeSameHostCopy(ctx, plan, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
 	}
-	if plan.Route == RouteSFTPServerCopy && current.Phase == PhasePrepared {
-		return worker.executeServerCopy(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
+	if plan.Route == RouteSFTPServerCopy && current.ActualRoute != RouteSFTPRelay && current.Phase == PhasePrepared {
+		result, serverCopyErr := worker.executeServerCopy(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
+		if !errors.Is(serverCopyErr, errServerCopySafeFallback) {
+			return result, serverCopyErr
+		}
+		current.ActualRoute = RouteSFTPRelay
+		current.DowngradedFrom = RouteSFTPServerCopy
+		current.RouteReason = ReasonServerCopyFailedBeforeWrite
+		if err := worker.journal.Save(ctx, current); err != nil {
+			return Result{}, fmt.Errorf("execute transfer: persist safe route downgrade: %w", err)
+		}
 	}
 
 	if current.Phase == PhaseVerified || current.Phase == PhaseWaitingConflict || current.Phase == PhaseCommitting {
@@ -419,10 +437,28 @@ func checkpointMatchesPlan(checkpoint Checkpoint, plan Plan) bool {
 		return false
 	}
 	if checkpoint.Phase != PhaseCommitting && checkpoint.Phase != PhaseCommitted {
-		return checkpoint.Final == plan.Final
+		return checkpoint.Final == plan.Final && validCheckpointRoute(checkpoint, plan)
 	}
 	return checkpoint.Final.EndpointID == plan.DestinationDirectory.EndpointID &&
-		path.Dir(string(checkpoint.Final.Path)) == string(plan.DestinationDirectory.Path)
+		path.Dir(string(checkpoint.Final.Path)) == string(plan.DestinationDirectory.Path) && validCheckpointRoute(checkpoint, plan)
+}
+
+func validCheckpointRoute(checkpoint Checkpoint, plan Plan) bool {
+	if checkpoint.ActualRoute == "" {
+		return checkpoint.DowngradedFrom == "" && checkpoint.RouteReason == ""
+	}
+	if checkpoint.ActualRoute == plan.Route {
+		return checkpoint.DowngradedFrom == "" && checkpoint.RouteReason == plannedRouteReason(plan)
+	}
+	return checkpoint.ActualRoute == RouteSFTPRelay && checkpoint.DowngradedFrom == plan.Route &&
+		plan.Route == RouteSFTPServerCopy && checkpoint.RouteReason == ReasonServerCopyFailedBeforeWrite
+}
+
+func plannedRouteReason(plan Plan) RouteReason {
+	if plan.RouteEvidence != nil && plan.RouteEvidence.Selected.Route == plan.Route {
+		return plan.RouteEvidence.Selected.Reason
+	}
+	return ""
 }
 
 func (worker *Worker) closeAndRefreshCheckpoint(ctx context.Context, destination providerapi.Provider, handle providerapi.WriteHandle, checkpoint *Checkpoint) error {
