@@ -22,9 +22,14 @@ const (
 )
 
 type Config struct {
-	MaxBytes int64
-	Backups  int
-	Level    *slog.LevelVar
+	MaxBytes     int64
+	Backups      int
+	RingCapacity int
+	Level        *slog.LevelVar
+}
+
+func DefaultConfig() Config {
+	return Config{MaxBytes: defaultMaxBytes, Backups: defaultBackups, RingCapacity: defaultRingCapacity}
 }
 
 type DaemonLog struct {
@@ -62,7 +67,7 @@ func OpenDaemon(path string, config Config) (*DaemonLog, error) {
 	if level == nil {
 		level = &slog.LevelVar{}
 	}
-	records := NewRing(0)
+	records := NewRing(config.RingCapacity)
 	return &DaemonLog{
 		Logger:  slog.New(newFanoutHandler(NewJSONHandler(writer, level), NewRingHandler(records, level))),
 		Level:   level,

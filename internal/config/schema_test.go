@@ -50,6 +50,9 @@ func TestDefaultConfigIsValid(t *testing.T) {
 		Retry:          RetryConfig{ReconnectDelaysMS: []int64{100, 250, 500}, JobRetryDelayMS: 60_000},
 		Integrity:      IntegrityConfig{TransferPolicy: "strong"},
 		DirectTransfer: DirectTransferConfig{Enabled: false},
+		Diagnostic: DiagnosticConfig{
+			LogMaxBytes: 4 * 1024 * 1024, LogBackups: 3, RingRecords: 1000,
+		},
 	}
 
 	got := Default()
@@ -58,6 +61,37 @@ func TestDefaultConfigIsValid(t *testing.T) {
 	}
 	if err := got.Validate(); err != nil {
 		t.Fatalf("Default().Validate() returned error: %v", err)
+	}
+}
+
+func TestDecodeAppliesPartialDiagnosticSettings(t *testing.T) {
+	got, err := Decode(strings.NewReader(`{"schema_version":1,"diagnostic":{"log_max_bytes":1048576,"log_backups":2,"ring_records":500}}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := DiagnosticConfig{LogMaxBytes: 1 << 20, LogBackups: 2, RingRecords: 500}
+	if got.Diagnostic != want {
+		t.Fatalf("diagnostic settings = %#v, want %#v", got.Diagnostic, want)
+	}
+}
+
+func TestDiagnosticSettingsCanOnlyTightenFrozenCeilings(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{name: "log too small", input: `{"schema_version":1,"diagnostic":{"log_max_bytes":255}}`, want: "diagnostic.log_max_bytes"},
+		{name: "log too large", input: `{"schema_version":1,"diagnostic":{"log_max_bytes":4194305}}`, want: "diagnostic.log_max_bytes"},
+		{name: "zero backups", input: `{"schema_version":1,"diagnostic":{"log_backups":0}}`, want: "diagnostic.log_backups"},
+		{name: "too many backups", input: `{"schema_version":1,"diagnostic":{"log_backups":4}}`, want: "diagnostic.log_backups"},
+		{name: "zero records", input: `{"schema_version":1,"diagnostic":{"ring_records":0}}`, want: "diagnostic.ring_records"},
+		{name: "too many records", input: `{"schema_version":1,"diagnostic":{"ring_records":1001}}`, want: "diagnostic.ring_records"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			assertDecodeErrorContains(t, test.input, test.want)
+		})
 	}
 }
 

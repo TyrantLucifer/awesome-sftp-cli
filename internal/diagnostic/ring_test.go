@@ -35,14 +35,16 @@ func TestRingRetainsOnlyBoundedSanitizedRecords(t *testing.T) {
 
 func TestOpenDaemonFansOutToBoundedRing(t *testing.T) {
 	path := filepath.Join(testkit.PersistentTempDir(t), "logs", "daemon.jsonl")
-	log, err := OpenDaemon(path, Config{})
+	log, err := OpenDaemon(path, Config{RingCapacity: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = log.Close() })
-	log.Logger.Error("secret", Component("daemon"), Event("failed"), slog.String("path", "/secret"))
+	for index := 0; index < 3; index++ {
+		log.Logger.Error("secret", Component("daemon"), Event("failed"), slog.Int("index", index), slog.String("path", "/secret"))
+	}
 	page := log.Records.Query(Query{})
-	if len(page.Records) != 1 || page.Records[0].Message != persistentMessage || page.Records[0].Event != "failed" {
+	if len(page.Records) != 2 || page.Records[0].Sequence != 2 || page.Records[0].Message != persistentMessage || page.Records[0].Event != "failed" {
 		t.Fatalf("records = %#v", page.Records)
 	}
 }

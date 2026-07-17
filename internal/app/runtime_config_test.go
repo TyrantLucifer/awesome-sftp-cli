@@ -9,6 +9,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
@@ -19,6 +20,14 @@ func TestRuntimeCacheLimitsUseValidatedConfiguration(t *testing.T) {
 	want := cache.Limits{GlobalBytes: 1024, GlobalEntries: 10, WorkspaceBytes: 512, MaxCandidates: 3}
 	if got := runtimeCacheLimits(input); got != want {
 		t.Fatalf("runtime cache limits = %#v, want %#v", got, want)
+	}
+}
+
+func TestRuntimeDiagnosticConfigUsesValidatedConfiguration(t *testing.T) {
+	input := config.DiagnosticConfig{LogMaxBytes: 1024, LogBackups: 2, RingRecords: 100}
+	want := diagnostic.Config{MaxBytes: 1024, Backups: 2, RingCapacity: 100}
+	if got := runtimeDiagnosticConfig(input); got != want {
+		t.Fatalf("runtime diagnostic config = %#v, want %#v", got, want)
 	}
 }
 

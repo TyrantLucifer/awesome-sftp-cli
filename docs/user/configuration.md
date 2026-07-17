@@ -138,6 +138,11 @@ Omitted fields inherit these current defaults:
   "direct_transfer": {
     "enabled": false
   },
+  "diagnostic": {
+    "log_max_bytes": 4194304,
+    "log_backups": 3,
+    "ring_records": 1000
+  },
   "external": {
     "previewers": []
   }
@@ -160,8 +165,10 @@ Omitted fields inherit these current defaults:
 
 `direct_transfer.enabled` is a read-only representation of the production distribution boundary and must remain `false`. Setting it to `true` is a configuration error. The ordinary client therefore cannot enable the fixture-only Level 2 backend or its workspace/data policy gates; cross-Endpoint transfers continue to use the bounded relay route with `production_distribution_closed` evidence. Opening this boundary requires the separate Stage 6 custody, signing, notarization, final-byte manifest, and release gates—not a local configuration change.
 
+`diagnostic.log_max_bytes` sets the owner-private JSON daemon log's per-file limit and must remain between 256 bytes and the existing 4 MiB ceiling. `diagnostic.log_backups` retains between one and the existing three rotated files. `diagnostic.ring_records` bounds the in-memory, already-redacted daemon diagnostic history between one and the existing 1000-record ceiling. The daemon freezes all three values at startup. The ring limit also applies when corrupt or newer persistent state forces the read-only degraded logger; no configuration value enables raw messages, paths, credentials, file content, extra fields, automatic upload, or a broader log level.
+
 `external.editor` and `external.opener` are structured commands with `executable` and an `argv` array. They are executed directly, never concatenated into a shell command. A previewer adds a unique name, bounded media-type or extension match, structured command, timeout, input limit, and completeness requirement. Command strings reject control characters and all counts and byte sizes have hard ceilings.
 
-The schema is not yet complete for every Stage 6 setting. Helper, retention, diagnostic, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
+The schema is not yet complete for every Stage 6 setting. Helper, retention, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
 
 The `keymap.bindings` section is now implemented for the `normal` and `visual` contexts. Each entry contains `context`, a single-rune `input`, and a documented remappable `action`. Exact defaults, reserved dangerous/sequence actions, count behavior, and the deliberate macro/named-register exclusion are in the [keymap reference](keymap.md). The other sections listed above remain open.

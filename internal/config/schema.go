@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/retrypolicy"
@@ -49,6 +50,7 @@ type Config struct {
 	Retry          RetryConfig          `json:"retry"`
 	Integrity      IntegrityConfig      `json:"integrity"`
 	DirectTransfer DirectTransferConfig `json:"direct_transfer"`
+	Diagnostic     DiagnosticConfig     `json:"diagnostic"`
 	External       ExternalConfig       `json:"external,omitempty"`
 	Keymap         KeymapConfig         `json:"keymap,omitempty"`
 }
@@ -135,6 +137,12 @@ type DirectTransferConfig struct {
 	Enabled bool `json:"enabled"`
 }
 
+type DiagnosticConfig struct {
+	LogMaxBytes int64 `json:"log_max_bytes"`
+	LogBackups  int   `json:"log_backups"`
+	RingRecords int   `json:"ring_records"`
+}
+
 type CommandConfig struct {
 	Executable string   `json:"executable"`
 	Args       []string `json:"argv"`
@@ -161,6 +169,7 @@ type KeymapConfig struct {
 }
 
 func Default() Config {
+	diagnosticDefaults := diagnostic.DefaultConfig()
 	renderLimits := preview.DefaultLimits()
 	imageLimits := preview.DefaultImageOutputLimits()
 	filenameBudget := search.DefaultFilenameBudget()
@@ -216,6 +225,11 @@ func Default() Config {
 		},
 		Integrity:      IntegrityConfig{TransferPolicy: string(transfer.DefaultIntegrityPolicy())},
 		DirectTransfer: DirectTransferConfig{Enabled: transfer.ProductionDirectTransferOpen},
+		Diagnostic: DiagnosticConfig{
+			LogMaxBytes: diagnosticDefaults.MaxBytes,
+			LogBackups:  diagnosticDefaults.Backups,
+			RingRecords: diagnosticDefaults.RingCapacity,
+		},
 	}
 }
 
@@ -306,11 +320,28 @@ func (c Config) Validate() error {
 	if c.DirectTransfer.Enabled != transfer.ProductionDirectTransferOpen {
 		return errors.New("production direct transfer distribution is closed; direct_transfer.enabled must be false")
 	}
+	if err := c.Diagnostic.validate(); err != nil {
+		return err
+	}
 	if err := c.External.validate(); err != nil {
 		return fmt.Errorf("external: %w", err)
 	}
 	if _, err := keymap.New(c.Keymap.Bindings); err != nil {
 		return fmt.Errorf("keymap: %w", err)
+	}
+	return nil
+}
+
+func (c DiagnosticConfig) validate() error {
+	maximum := diagnostic.DefaultConfig()
+	if c.LogMaxBytes < 256 || c.LogMaxBytes > maximum.MaxBytes {
+		return fmt.Errorf("diagnostic.log_max_bytes must be within 256..%d", maximum.MaxBytes)
+	}
+	if c.LogBackups < 1 || c.LogBackups > maximum.Backups {
+		return fmt.Errorf("diagnostic.log_backups must be within 1..%d", maximum.Backups)
+	}
+	if c.RingRecords < 1 || c.RingRecords > maximum.RingCapacity {
+		return fmt.Errorf("diagnostic.ring_records must be within 1..%d", maximum.RingCapacity)
 	}
 	return nil
 }

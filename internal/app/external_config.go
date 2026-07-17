@@ -11,6 +11,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
@@ -25,6 +26,12 @@ func runtimeCacheLimits(input config.CacheConfig) cache.Limits {
 	return cache.Limits{
 		GlobalBytes: input.GlobalBytes, GlobalEntries: input.GlobalEntries,
 		WorkspaceBytes: input.WorkspaceBytes, MaxCandidates: input.MaxEvictionCandidates,
+	}
+}
+
+func runtimeDiagnosticConfig(input config.DiagnosticConfig) diagnostic.Config {
+	return diagnostic.Config{
+		MaxBytes: input.LogMaxBytes, Backups: input.LogBackups, RingCapacity: input.RingRecords,
 	}
 }
 

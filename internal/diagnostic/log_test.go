@@ -95,6 +95,13 @@ func TestDaemonLogLevelCanChangeAtRuntime(t *testing.T) {
 	}
 }
 
+func TestDefaultConfigFreezesDiagnosticResourceCeilings(t *testing.T) {
+	want := Config{MaxBytes: 4 * 1024 * 1024, Backups: 3, RingCapacity: 1000}
+	if got := DefaultConfig(); got != want {
+		t.Fatalf("DefaultConfig() = %#v, want %#v", got, want)
+	}
+}
+
 func TestOpenDaemonLogRotatesWithinBoundAndUsesPrivateModes(t *testing.T) {
 	path := filepath.Join(testkit.PersistentTempDir(t), "private", "daemon.jsonl")
 	log, err := OpenDaemon(path, Config{MaxBytes: 300, Backups: 2})

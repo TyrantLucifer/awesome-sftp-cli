@@ -176,8 +176,9 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	}
 	var logger *slog.Logger
 	var diagnosticRecords *diagnostic.Ring
+	diagnosticConfig := runtimeDiagnosticConfig(applicationConfig.Diagnostic)
 	if stateOpenErr == nil {
-		daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
+		daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnosticConfig)
 		if err != nil {
 			return err
 		}
@@ -190,7 +191,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		// A rejected/corrupt/newer state database must not trigger any further
 		// persistent writes. Stage 1 browsing remains available with an
 		// in-memory diagnostic logger and no mutation store.
-		diagnosticRecords = diagnostic.NewRing(0)
+		diagnosticRecords = diagnostic.NewRing(diagnosticConfig.RingCapacity)
 		logger = slog.New(diagnostic.NewRingHandler(diagnosticRecords, nil))
 		logger.Error("persistent state unavailable; mutation disabled", diagnostic.Component("state"), diagnostic.Event("read_only_degraded"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
 	}
