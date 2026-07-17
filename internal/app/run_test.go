@@ -31,6 +31,7 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 		{name: "askpass", args: []string{"askpass", "Password:"}, wantRole: app.RoleAskpass, wantArgs: []string{"Password:"}},
 		{name: "helper", args: []string{"helper", "serve"}, wantRole: app.RoleHelper, wantArgs: []string{"serve"}},
 		{name: "config", args: []string{"config", "validate"}, wantRole: app.RoleConfig, wantArgs: []string{"validate"}},
+		{name: "completion", args: []string{"completion", "zsh"}, wantRole: app.RoleCompletion, wantArgs: []string{"zsh"}},
 	}
 
 	for _, tt := range tests {
@@ -52,11 +53,12 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 				}
 			}
 			handlers := app.Handlers{
-				Client:  record(app.RoleClient),
-				Daemon:  record(app.RoleDaemon),
-				Askpass: record(app.RoleAskpass),
-				Helper:  record(app.RoleHelper),
-				Config:  record(app.RoleConfig),
+				Client:     record(app.RoleClient),
+				Daemon:     record(app.RoleDaemon),
+				Askpass:    record(app.RoleAskpass),
+				Helper:     record(app.RoleHelper),
+				Config:     record(app.RoleConfig),
+				Completion: record(app.RoleCompletion),
 			}
 
 			var stdout bytes.Buffer

@@ -55,7 +55,7 @@ const authenticationTimeout = 2 * time.Minute
 const durableLocalEndpointID domain.EndpointID = "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func DefaultHandlers() Handlers {
-	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: runHelper, Config: runConfig}
+	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: runHelper, Config: runConfig, Completion: runCompletion}
 }
 
 func runHelper(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {

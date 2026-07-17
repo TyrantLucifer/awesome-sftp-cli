@@ -43,6 +43,19 @@ Every failed job is recorded with exact SHA/tree, workflow/run/job, platform ima
 
 Only a subsequent complete exact-candidate matrix can become final release evidence. Reruns do not erase the original failure or its classification.
 
+### Initial Draft-PR CI classification
+
+Plan-only commit `59c0d2003e41a6ec798fc696bcffcd4d72526622` produced failed push run [29581551106](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29581551106) and PR run [29581560324](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29581560324) on attempt 1. The failures were outside the documentation-only change:
+
+| Failed leg | Observed failure | Same-SHA companion | No-change rerun |
+|---|---|---|---|
+| push auth-integration | Stage 1 replacement-daemon wait timed out after the OpenSSH auth cases passed | PR auth-integration passed | push attempt 2 passed |
+| push oldstable Ubuntu 24.04 | existing remote-command cancel fixture reached start deadline before command bytes | PR oldstable Ubuntu 24.04 passed | push attempt 2 passed |
+| push native Ubuntu 22.04 | existing Level 2 in-flight cancel result timing fixture | PR native Ubuntu 22.04 passed | push attempt 2 passed |
+| PR oldstable macOS 15 Intel | existing Helper exact-stderr-cap reader observed zero bytes | push oldstable macOS 15 Intel passed | PR attempt 2 passed |
+
+Both failed-only attempt 2 reruns completed `success` without code, assertion, timeout, or workflow changes. Classification: **environment/known timing fixtures, not introduced code**. Attempts 1 remain preserved and neither attempt is final release evidence.
+
 ## Milestone status
 
 | Milestone | Status | Evidence |
@@ -54,7 +67,7 @@ Only a subsequent complete exact-candidate matrix can become final release evide
 
 ## Feature status
 
-REL-001 and REL-011 are `In Progress` after the versioned-default, config command, redacted machine output, and stable exit-code contracts. The other 21 Stage 6-owned rows remain `Planned`: WORK-006, VIM-013, VIM-014, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, REL-002 through REL-010, and REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
+REL-001, REL-002, and REL-011 are `In Progress` after the versioned-default, config command, redacted machine output, stable exit-code, and help/man/completion parity contracts. The other 20 Stage 6-owned rows remain `Planned`: WORK-006, VIM-013, VIM-014, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, REL-003 through REL-010, and REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
 
 ## Exit criteria
 
@@ -77,3 +90,5 @@ Production Helper distribution and production Level 2 stay **CLOSED**. Opening t
 | M6.1 config CLI/machine-output RED | `go test ./internal/app ./internal/config -run='(TestRunReturnsStableTypedExitCode\|TestWriteRedactedEffectiveConfig)' -count=1` | Intended compile FAIL: no `config` role, typed exit contract, redacted effective writer, or output-version contract existed |
 | M6.1 config CLI/machine-output GREEN | `go test ./internal/app ./internal/config -count=1`; focused `-race` on both packages | PASS: `config validate`/`print-effective`, explicit private-file validation, output v1, argv redaction/non-mutation, exit 0–8 snapshot, dispatch and error-channel contracts green |
 | M6.1 config CLI complete local gate | CI-equivalent `make check`; `make lint`; `make docs-check`; `git diff --check` | PASS after adding precise `#nosec G302` rationale for the two test-only owner-private 0700 directories; no product permission or lint rule was weakened |
+| M6.1 help/man/completion RED | `go test ./internal/app -run='(TestPublicHelpManAndCompletionsShareCommandFacts\|TestRunCompletion\|TestCommittedManPage)' -count=1` | Intended compile FAIL: no shared public CLI facts, man renderer, completion renderer, or completion command existed |
+| M6.1 help/man/completion GREEN | focused `go test` and `go test -race ./internal/app -count=1`; `make lint`; `make docs-check` | PASS: ordered facts drive help/man and bash/zsh/fish static completions; committed man parity and forbidden remote/auth operation scans green; lint 0 issues |

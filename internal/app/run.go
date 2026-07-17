@@ -8,22 +8,15 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
 )
 
-const usage = `Usage:
-  amsftp [<location> [<location>]]
-  amsftp --workspace <name>
-  amsftp config <validate|print-effective> [<path>]
-  amsftp [client|daemon|askpass|helper] [arguments...]
-  amsftp [--help|--version]
-`
-
 type Handler func(context.Context, []string, io.Writer, io.Writer) error
 
 type Handlers struct {
-	Client  Handler
-	Daemon  Handler
-	Askpass Handler
-	Helper  Handler
-	Config  Handler
+	Client     Handler
+	Daemon     Handler
+	Askpass    Handler
+	Helper     Handler
+	Config     Handler
+	Completion Handler
 }
 
 func Run(
@@ -40,7 +33,7 @@ func Run(
 	}
 
 	if invocation.ShowHelp {
-		fmt.Fprint(stdout, usage)
+		fmt.Fprint(stdout, Usage())
 		return int(ExitSuccess)
 	}
 	if invocation.ShowVersion {
@@ -73,6 +66,8 @@ func (h Handlers) handler(role Role) Handler {
 		return h.Helper
 	case RoleConfig:
 		return h.Config
+	case RoleCompletion:
+		return h.Completion
 	default:
 		return nil
 	}
