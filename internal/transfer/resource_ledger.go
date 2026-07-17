@@ -29,6 +29,7 @@ type ResourceRequest struct {
 	EndpointIDs      []domain.EndpointID
 	Usage            ResourceUsage
 	PerEndpointUsage ResourceUsage
+	EndpointUsage    map[domain.EndpointID]ResourceUsage
 }
 
 type ResourceSnapshot struct {
@@ -138,12 +139,14 @@ func (ledger *ResourceLedger) canEverAcquireLocked(request ResourceRequest) erro
 	if err := usageFits(ResourceUsage{}, request.Usage, ledger.limits); err != nil {
 		return err
 	}
-	perEndpoint := endpointUsage(request)
-	if perEndpoint.ActiveJobs > ledger.limits.ActiveJobsPerEndpoint && len(request.EndpointIDs) > 0 {
-		return fmt.Errorf("%w: per-endpoint active Job ceiling %d", ErrResourceExhausted, ledger.limits.ActiveJobsPerEndpoint)
-	}
-	if perEndpoint.Connections > ledger.limits.ConnectionsPerEndpoint && len(request.EndpointIDs) > 0 {
-		return fmt.Errorf("%w: per-endpoint connection ceiling %d", ErrResourceExhausted, ledger.limits.ConnectionsPerEndpoint)
+	for _, endpointID := range request.EndpointIDs {
+		perEndpoint := endpointUsage(request, endpointID)
+		if perEndpoint.ActiveJobs > ledger.limits.ActiveJobsPerEndpoint {
+			return fmt.Errorf("%w: endpoint %s active Job ceiling %d", ErrResourceExhausted, endpointID, ledger.limits.ActiveJobsPerEndpoint)
+		}
+		if perEndpoint.Connections > ledger.limits.ConnectionsPerEndpoint {
+			return fmt.Errorf("%w: endpoint %s connection ceiling %d", ErrResourceExhausted, endpointID, ledger.limits.ConnectionsPerEndpoint)
+		}
 	}
 	return nil
 }
@@ -194,7 +197,19 @@ func normalizeResourceRequest(request ResourceRequest) (ResourceRequest, error) 
 		endpoints = append(endpoints, endpointID)
 	}
 	request.EndpointIDs = endpoints
-	if len(endpoints) > 0 && request.PerEndpointUsage == (ResourceUsage{}) {
+	if len(request.EndpointUsage) > 0 && request.PerEndpointUsage != (ResourceUsage{}) {
+		return ResourceRequest{}, errors.New("resource request cannot combine uniform and endpoint-specific usage")
+	}
+	if len(request.EndpointUsage) > 0 {
+		cloned := make(map[domain.EndpointID]ResourceUsage, len(request.EndpointUsage))
+		for endpointID, usage := range request.EndpointUsage {
+			if _, exists := seen[endpointID]; !exists {
+				return ResourceRequest{}, fmt.Errorf("resource request usage has unknown endpoint ID %q", endpointID)
+			}
+			cloned[endpointID] = usage
+		}
+		request.EndpointUsage = cloned
+	} else if len(endpoints) > 0 && request.PerEndpointUsage == (ResourceUsage{}) {
 		request.PerEndpointUsage = request.Usage
 	}
 	return request, nil
@@ -208,8 +223,8 @@ func (ledger *ResourceLedger) canAcquireLocked(request ResourceRequest) error {
 	if err := usageFits(ledger.total, request.Usage, limits); err != nil {
 		return err
 	}
-	perEndpoint := endpointUsage(request)
 	for _, endpointID := range request.EndpointIDs {
+		perEndpoint := endpointUsage(request, endpointID)
 		current := ledger.perEndpoint[endpointID]
 		if exceeds32(current.ActiveJobs, perEndpoint.ActiveJobs, limits.ActiveJobsPerEndpoint) {
 			return fmt.Errorf("%w: endpoint %s active Job ceiling %d", ErrResourceExhausted, endpointID, limits.ActiveJobsPerEndpoint)
@@ -260,8 +275,8 @@ func usageFits(current, requested ResourceUsage, limits ResourceLimits) error {
 func (ledger *ResourceLedger) acquireLocked(request ResourceRequest) {
 	ledger.total = addUsage(ledger.total, request.Usage)
 	ledger.perJob[request.JobID] = addUsage(ledger.perJob[request.JobID], request.Usage)
-	perEndpoint := endpointUsage(request)
 	for _, endpointID := range request.EndpointIDs {
+		perEndpoint := endpointUsage(request, endpointID)
 		ledger.perEndpoint[endpointID] = addUsage(ledger.perEndpoint[endpointID], perEndpoint)
 	}
 }
@@ -275,8 +290,8 @@ func (ledger *ResourceLedger) release(request ResourceRequest) {
 	} else {
 		ledger.perJob[request.JobID] = jobUsage
 	}
-	perEndpoint := endpointUsage(request)
 	for _, endpointID := range request.EndpointIDs {
+		perEndpoint := endpointUsage(request, endpointID)
 		remaining := subtractUsage(ledger.perEndpoint[endpointID], perEndpoint)
 		if remaining == (ResourceUsage{}) {
 			delete(ledger.perEndpoint, endpointID)
@@ -289,7 +304,10 @@ func (ledger *ResourceLedger) release(request ResourceRequest) {
 	ledger.mu.Unlock()
 }
 
-func endpointUsage(request ResourceRequest) ResourceUsage {
+func endpointUsage(request ResourceRequest, endpointID domain.EndpointID) ResourceUsage {
+	if request.EndpointUsage != nil {
+		return request.EndpointUsage[endpointID]
+	}
 	if request.PerEndpointUsage != (ResourceUsage{}) {
 		return request.PerEndpointUsage
 	}

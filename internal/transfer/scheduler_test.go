@@ -701,8 +701,10 @@ func TestExecutionResourceRequestChargesOneConnectionToEachEndpoint(t *testing.T
 	if request.Usage.Connections != 2 {
 		t.Fatalf("global connections = %d, want 2", request.Usage.Connections)
 	}
-	if request.PerEndpointUsage.Connections != 1 || request.PerEndpointUsage.ActiveJobs != 1 {
-		t.Fatalf("per-endpoint usage = %+v, want one connection and one active Job", request.PerEndpointUsage)
+	for endpointID, usage := range request.EndpointUsage {
+		if usage.Connections != 1 || usage.ActiveJobs != 1 {
+			t.Fatalf("endpoint %s usage = %+v, want one connection and one active Job", endpointID, usage)
+		}
 	}
 	limits := HardResourceCeilings()
 	limits.ConnectionsPerEndpoint = 1
@@ -712,6 +714,36 @@ func TestExecutionResourceRequestChargesOneConnectionToEachEndpoint(t *testing.T
 	}
 	if _, err := ledger.TryAcquire(request); err != nil {
 		t.Fatalf("two-endpoint Job with one connection per endpoint: %v", err)
+	}
+}
+
+func TestExecutionResourceRequestDoesNotChargeConnectionsToLocalEndpoints(t *testing.T) {
+	plan := Plan{
+		JobID:               "job-local-endpoints",
+		SourceEndpoint:      domain.Endpoint{ID: "endpoint-local-a", Kind: domain.EndpointLocal},
+		DestinationEndpoint: domain.Endpoint{ID: "endpoint-local-b", Kind: domain.EndpointLocal},
+		BufferBytes:         4096,
+	}
+	request := executionResourceRequest(plan)
+	if request.Usage.Connections != 0 {
+		t.Fatalf("global connections = %d, want 0", request.Usage.Connections)
+	}
+	limits := HardResourceCeilings()
+	limits.ConnectionsPerEndpoint = 0
+	ledger, err := NewResourceLedger(limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := ledger.TryAcquire(request)
+	if err != nil {
+		t.Fatalf("local-only Job with zero per-endpoint connection budget: %v", err)
+	}
+	defer lease.Release()
+	got := ledger.Snapshot()
+	for endpointID, usage := range got.PerEndpoint {
+		if usage.Connections != 0 || usage.ActiveJobs != 1 {
+			t.Fatalf("endpoint %s usage = %+v, want one active Job and zero connections", endpointID, usage)
+		}
 	}
 }
 

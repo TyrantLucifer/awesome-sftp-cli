@@ -69,6 +69,9 @@ type Manager struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
+	// queueMu serializes consumption of a queued item with a paused Job being
+	// resumed onto that same still-pending item.
+	queueMu sync.Mutex
 
 	mu               sync.Mutex
 	started          bool
@@ -443,6 +446,18 @@ func (manager *Manager) Resume(ctx context.Context, jobID domain.JobID) (jobstor
 	if snapshot.State != job.StatePaused && snapshot.State != job.StateWaitingAuth && snapshot.State != job.StateRetryWait {
 		return jobstore.Snapshot{}, fmt.Errorf("resume Job: state %q cannot be resumed", snapshot.State)
 	}
+	if snapshot.State == job.StatePaused {
+		manager.queueMu.Lock()
+		manager.mu.Lock()
+		pendingQueueItem := manager.queueLeases[jobID] != nil
+		manager.mu.Unlock()
+		if pendingQueueItem {
+			queued, transitionErr := manager.transition(snapshot, job.StateQueued, "job_resumed", map[string]string{"reason": "user"})
+			manager.queueMu.Unlock()
+			return queued, transitionErr
+		}
+		manager.queueMu.Unlock()
+	}
 	queueLease, err := manager.acquireQueueLease(jobID)
 	if err != nil {
 		return jobstore.Snapshot{}, err
@@ -694,7 +709,6 @@ func (manager *Manager) workerLoop() {
 		case <-manager.ctx.Done():
 			return
 		case jobID := <-manager.queue:
-			manager.releaseQueueLease(jobID)
 			manager.execute(jobID)
 		}
 	}
@@ -705,20 +719,26 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	if release != nil {
 		defer release()
 	}
+	manager.queueMu.Lock()
+	manager.releaseQueueLease(jobID)
 	snapshot, err := manager.store.Get(manager.ctx, jobID)
+	manager.queueMu.Unlock()
 	if err != nil || snapshot.State != job.StateQueued {
 		return
 	}
 	record, err := manager.store.GetPlan(manager.ctx, jobID)
 	if err != nil {
+		manager.fail(snapshot, fmt.Errorf("execute Job: load durable plan: %w", err))
 		return
 	}
 	plan, err := DecodePlan(record, jobID)
 	if err != nil {
+		manager.fail(snapshot, fmt.Errorf("execute Job: decode durable plan: %w", err))
 		return
 	}
 	defer manager.scheduler.ReleaseJob(plan.JobID)
 	if err := manager.applyConflictResolution(&plan); err != nil {
+		manager.fail(snapshot, fmt.Errorf("execute Job: apply durable conflict resolution: %w", err))
 		return
 	}
 	resourceLease, err := manager.scheduler.AcquireResources(manager.ctx, executionResourceRequest(plan))
@@ -1151,14 +1171,25 @@ func executionResourceUsage(plan Plan) ResourceUsage {
 }
 
 func executionResourceRequest(plan Plan) ResourceRequest {
+	endpointIDs := make([]domain.EndpointID, 0, 2)
+	endpointUsage := make(map[domain.EndpointID]ResourceUsage, 2)
+	for _, endpoint := range []domain.Endpoint{plan.SourceEndpoint, plan.DestinationEndpoint} {
+		if endpoint.ID == "" {
+			continue
+		}
+		usage, exists := endpointUsage[endpoint.ID]
+		if !exists {
+			endpointIDs = append(endpointIDs, endpoint.ID)
+			usage.ActiveJobs = 1
+		}
+		if endpoint.Kind == domain.EndpointSSH {
+			usage.Connections = 1
+		}
+		endpointUsage[endpoint.ID] = usage
+	}
 	return ResourceRequest{
-		JobID:       plan.JobID,
-		EndpointIDs: []domain.EndpointID{plan.SourceEndpoint.ID, plan.DestinationEndpoint.ID},
-		Usage:       executionResourceUsage(plan),
-		PerEndpointUsage: ResourceUsage{
-			ActiveJobs:  1,
-			Connections: 1,
-		},
+		JobID: plan.JobID, EndpointIDs: endpointIDs, Usage: executionResourceUsage(plan),
+		EndpointUsage: endpointUsage,
 	}
 }
 
