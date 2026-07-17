@@ -9,6 +9,7 @@ const (
 	RoleDaemon  Role = "daemon"
 	RoleAskpass Role = "askpass"
 	RoleHelper  Role = "helper"
+	RoleConfig  Role = "config"
 )
 
 type Invocation struct {
@@ -38,6 +39,8 @@ func ParseInvocation(args []string) (Invocation, error) {
 		return Invocation{Role: RoleAskpass}, nil
 	case string(RoleHelper):
 		return Invocation{Role: RoleHelper}, nil
+	case string(RoleConfig):
+		return Invocation{Role: RoleConfig}, nil
 	case "--help":
 		return Invocation{Role: RoleClient, ShowHelp: true}, nil
 	case "--version":

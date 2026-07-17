@@ -54,7 +54,7 @@ Only a subsequent complete exact-candidate matrix can become final release evide
 
 ## Feature status
 
-REL-001 is `In Progress` after the first versioned-default decode contract. The other 22 Stage 6-owned rows remain `Planned`: WORK-006, VIM-013, VIM-014, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, and REL-002 through REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
+REL-001 and REL-011 are `In Progress` after the versioned-default, config command, redacted machine output, and stable exit-code contracts. The other 21 Stage 6-owned rows remain `Planned`: WORK-006, VIM-013, VIM-014, JOB-010, HELP-013, SEC-012, SEC-014, OBS-009, OBS-010, PLAT-003, PLAT-009, REL-002 through REL-010, and REL-012. Shared rows that remain `In Progress` are not advanced by this evidence.
 
 ## Exit criteria
 
@@ -74,3 +74,6 @@ Production Helper distribution and production Level 2 stay **CLOSED**. Opening t
 | M6.1 config defaults RED | `go test ./internal/config -run='^TestDecode(AppliesDocumentedDefaultsToOmittedFields\|RequiresExplicitSchemaVersion)$' -count=1 -v` | Intended FAIL: minimal explicit-version document produced `ipc.max_frame_bytes must be greater than zero`; missing version remained rejected |
 | M6.1 config defaults GREEN | `go test ./internal/config -count=1` | PASS: omitted fields inherit the single documented `Default()` source; explicit schema version remains required; unknown/trailing/invalid explicit values remain rejected |
 | M6.1 config integration gate | `go test ./internal/app ./internal/config -count=1`; CI-equivalent `make check` | PASS: application loading regression and complete unit/provider/docs/tidy/verify gate green; config coverage 88.6% |
+| M6.1 config CLI/machine-output RED | `go test ./internal/app ./internal/config -run='(TestRunReturnsStableTypedExitCode\|TestWriteRedactedEffectiveConfig)' -count=1` | Intended compile FAIL: no `config` role, typed exit contract, redacted effective writer, or output-version contract existed |
+| M6.1 config CLI/machine-output GREEN | `go test ./internal/app ./internal/config -count=1`; focused `-race` on both packages | PASS: `config validate`/`print-effective`, explicit private-file validation, output v1, argv redaction/non-mutation, exit 0–8 snapshot, dispatch and error-channel contracts green |
+| M6.1 config CLI complete local gate | CI-equivalent `make check`; `make lint`; `make docs-check`; `git diff --check` | PASS after adding precise `#nosec G302` rationale for the two test-only owner-private 0700 directories; no product permission or lint rule was weakened |

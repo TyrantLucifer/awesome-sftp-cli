@@ -11,6 +11,7 @@ import (
 const usage = `Usage:
   amsftp [<location> [<location>]]
   amsftp --workspace <name>
+  amsftp config <validate|print-effective> [<path>]
   amsftp [client|daemon|askpass|helper] [arguments...]
   amsftp [--help|--version]
 `
@@ -22,6 +23,7 @@ type Handlers struct {
 	Daemon  Handler
 	Askpass Handler
 	Helper  Handler
+	Config  Handler
 }
 
 func Run(
@@ -34,29 +36,29 @@ func Run(
 	invocation, err := ParseInvocation(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "amsftp: %v\n", err)
-		return 2
+		return int(ExitUsage)
 	}
 
 	if invocation.ShowHelp {
 		fmt.Fprint(stdout, usage)
-		return 0
+		return int(ExitSuccess)
 	}
 	if invocation.ShowVersion {
 		fmt.Fprintln(stdout, buildinfo.Current())
-		return 0
+		return int(ExitSuccess)
 	}
 
 	handler := handlers.handler(invocation.Role)
 	if handler == nil {
 		fmt.Fprintf(stderr, "amsftp: %s handler is not configured\n", invocation.Role)
-		return 1
+		return int(ExitInternal)
 	}
 	if err := handler(ctx, roleArgs(args, invocation.Role), stdout, stderr); err != nil {
 		fmt.Fprintf(stderr, "amsftp: %s handler: %v\n", invocation.Role, err)
-		return 1
+		return int(exitCode(err))
 	}
 
-	return 0
+	return int(ExitSuccess)
 }
 
 func (h Handlers) handler(role Role) Handler {
@@ -69,6 +71,8 @@ func (h Handlers) handler(role Role) Handler {
 		return h.Askpass
 	case RoleHelper:
 		return h.Helper
+	case RoleConfig:
+		return h.Config
 	default:
 		return nil
 	}
