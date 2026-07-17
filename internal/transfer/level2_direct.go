@@ -19,6 +19,8 @@ const Level2DirectFormatVersion uint16 = 1
 
 var errLevel2SafeRelayFallback = errors.New("direct transfer may safely fall back to relay")
 var errLevel2CleanedPartRelayFallback = errors.New("direct transfer cleaned its exact part and may safely fall back to relay")
+var errLevel2HeartbeatTimeout = errors.New("direct transfer heartbeat timed out")
+var errLevel2RequestDeadline = errors.New("direct transfer request deadline elapsed")
 
 type Level2StageRequest struct {
 	FormatVersion   uint16          `json:"format_version"`
@@ -150,11 +152,20 @@ func (worker *Worker) executeLevel2Direct(
 		return controlledSameHostResult(plan, *checkpoint, action)
 	}
 
-	stageCtx, cancelStage := context.WithCancel(ctx)
+	requestDeadline := time.Unix(plan.Level2Preflight.Request.DeadlineUnix, 0)
+	deadlineCtx, cancelDeadline := context.WithDeadlineCause(ctx, requestDeadline, errLevel2RequestDeadline)
+	defer cancelDeadline()
+	stageCtx, cancelStage := context.WithCancelCause(deadlineCtx)
 	stageDone := make(chan struct{})
+	heartbeat := make(chan struct{}, 1)
+	heartbeatTimeout := time.Duration(plan.Level2Preflight.Request.Control.HeartbeatTimeoutMS) * time.Millisecond
+	if worker.level2HeartbeatTimeout > 0 {
+		heartbeatTimeout = worker.level2HeartbeatTimeout
+	}
+	go monitorLevel2Heartbeat(stageCtx, heartbeatTimeout, heartbeat, stageDone, cancelStage)
 	controlled := make(chan ControlAction, 1)
 	if control != nil {
-		go monitorStagedCopyControl(stageCtx, control, *checkpoint, cancelStage, controlled, stageDone)
+		go monitorStagedCopyControl(stageCtx, control, *checkpoint, func() { cancelStage(context.Canceled) }, controlled, stageDone)
 	}
 	var progressMu sync.Mutex
 	progressCheckpoint := cloneCheckpoint(*checkpoint)
@@ -169,7 +180,7 @@ func (worker *Worker) executeLevel2Direct(
 			validateLowerHexIdentity(progress.PrefixSHA256, 64) != nil {
 			return errors.New("execute direct: invalid target progress acknowledgement")
 		}
-		entry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+		entry, err := destinationProvider.Stat(stageCtx, providerapi.StatRequest{Location: plan.Part})
 		if err != nil {
 			return err
 		}
@@ -182,10 +193,18 @@ func (worker *Worker) executeLevel2Direct(
 		progressCheckpoint.PartFingerprint = cloneFingerprint(entry.Fingerprint)
 		progressCheckpoint.DirectFormatVersion = Level2DirectFormatVersion
 		progressCheckpoint.DirectNonce = plan.Level2Preflight.Request.Nonce
-		return worker.journal.Save(ctx, progressCheckpoint)
+		if err := worker.journal.Save(stageCtx, progressCheckpoint); err != nil {
+			return err
+		}
+		select {
+		case heartbeat <- struct{}{}:
+		default:
+		}
+		return nil
 	})
+	stageCause := context.Cause(stageCtx)
 	close(stageDone)
-	cancelStage()
+	cancelStage(context.Canceled)
 	select {
 	case action := <-controlled:
 		return controlledSameHostResult(plan, progressCheckpoint, action)
@@ -193,6 +212,10 @@ func (worker *Worker) executeLevel2Direct(
 	}
 	if action := controlAction(control, progressCheckpoint); action != ControlContinue {
 		return controlledSameHostResult(plan, progressCheckpoint, action)
+	}
+	if errors.Is(stageCause, errLevel2HeartbeatTimeout) || errors.Is(stageCause, errLevel2RequestDeadline) {
+		return Result{Final: plan.Final, Bytes: progressCheckpoint.Offset, PartRetained: progressCheckpoint.Offset > 0},
+			planError(domain.CodeTimeout, "stage_direct", plan.Part, stageCause.Error(), domain.RetryAfterReconnect)
 	}
 	if stageErr != nil {
 		if progressCheckpoint.Offset == 0 && ctx.Err() == nil {
@@ -260,6 +283,40 @@ func (worker *Worker) executeLevel2Direct(
 	}
 	*checkpoint = progressCheckpoint
 	return worker.commit(ctx, plan, destinationProvider, destination, progressCheckpoint, buffer)
+}
+
+func monitorLevel2Heartbeat(
+	ctx context.Context,
+	timeout time.Duration,
+	heartbeat <-chan struct{},
+	done <-chan struct{},
+	cancel context.CancelCauseFunc,
+) {
+	if timeout <= 0 {
+		cancel(errLevel2HeartbeatTimeout)
+		return
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-done:
+			return
+		case <-heartbeat:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(timeout)
+		case <-timer.C:
+			cancel(errLevel2HeartbeatTimeout)
+			return
+		}
+	}
 }
 
 func cleanupExactDirectPartForRelay(

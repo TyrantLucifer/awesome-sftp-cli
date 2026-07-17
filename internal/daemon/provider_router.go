@@ -613,9 +613,14 @@ func (s *ProviderSessions) Acquire(ctx context.Context, plan transfer.Plan) (fun
 	if plan.DestinationEndpoint.ID != plan.SourceEndpoint.ID {
 		descriptors = append(descriptors, plan.DestinationEndpoint)
 	}
+	created := make([]domain.EndpointID, 0, len(descriptors))
 	for _, descriptor := range descriptors {
-		if err := s.ensureEndpoint(ctx, descriptor); err != nil {
-			return nil, err
+		installed, err := s.ensureEndpoint(ctx, descriptor)
+		if err != nil {
+			return nil, errors.Join(err, s.rollbackCreatedEndpoints(created))
+		}
+		if installed {
+			created = append(created, descriptor.ID)
 		}
 	}
 	s.mu.Lock()
@@ -623,7 +628,8 @@ func (s *ProviderSessions) Acquire(ctx context.Context, plan transfer.Plan) (fun
 		entry := s.endpoints[descriptor.ID]
 		if entry == nil || entry.implementation.Descriptor() != descriptor {
 			s.mu.Unlock()
-			return nil, &domain.OpError{Code: domain.CodeNotFound, Message: "frozen endpoint is not attached", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone}
+			acquireErr := &domain.OpError{Code: domain.CodeNotFound, Message: "frozen endpoint is not attached", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone}
+			return nil, errors.Join(acquireErr, s.rollbackCreatedEndpoints(created))
 		}
 	}
 	for _, descriptor := range descriptors {
@@ -640,7 +646,7 @@ func (s *ProviderSessions) Acquire(ctx context.Context, plan transfer.Plan) (fun
 	}, nil
 }
 
-func (s *ProviderSessions) ensureEndpoint(ctx context.Context, descriptor domain.Endpoint) error {
+func (s *ProviderSessions) ensureEndpoint(ctx context.Context, descriptor domain.Endpoint) (bool, error) {
 	s.mu.Lock()
 	entry := s.endpoints[descriptor.ID]
 	connector := s.connectEndpoint
@@ -648,25 +654,25 @@ func (s *ProviderSessions) ensureEndpoint(ctx context.Context, descriptor domain
 	s.mu.Unlock()
 	if entry != nil {
 		if entry.implementation.Descriptor() != descriptor {
-			return &domain.OpError{Code: domain.CodeConflict, Message: "endpoint ID has different frozen identity", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterConflict}, Effect: domain.EffectNone}
+			return false, &domain.OpError{Code: domain.CodeConflict, Message: "endpoint ID has different frozen identity", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterConflict}, Effect: domain.EffectNone}
 		}
-		return nil
+		return false, nil
 	}
 	if connector == nil {
-		return &domain.OpError{Code: domain.CodeNotFound, Message: "frozen endpoint is not attached", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone}
+		return false, &domain.OpError{Code: domain.CodeNotFound, Message: "frozen endpoint is not attached", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone}
 	}
 	if atCapacity {
-		return dynamicEndpointLimitError(descriptor.ID, s.maxDynamicEndpoints)
+		return false, dynamicEndpointLimitError(descriptor.ID, s.maxDynamicEndpoints)
 	}
 	implementation, err := connector(ctx, descriptor)
 	if err != nil {
-		return err
+		return false, err
 	}
 	if implementation == nil || implementation.Descriptor() != descriptor {
 		if closer, ok := implementation.(interface{ Close() error }); ok {
 			_ = closer.Close()
 		}
-		return &domain.OpError{Code: domain.CodeIntegrityFailed, Message: "endpoint connector returned different identity", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+		return false, &domain.OpError{Code: domain.CodeIntegrityFailed, Message: "endpoint connector returned different identity", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 	}
 	s.mu.Lock()
 	if current := s.endpoints[descriptor.ID]; current != nil {
@@ -675,19 +681,43 @@ func (s *ProviderSessions) ensureEndpoint(ctx context.Context, descriptor domain
 			_ = closer.Close()
 		}
 		if current.implementation.Descriptor() != descriptor {
-			return &domain.OpError{Code: domain.CodeConflict, Message: "endpoint changed during reconnect", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterConflict}, Effect: domain.EffectNone}
+			return false, &domain.OpError{Code: domain.CodeConflict, Message: "endpoint changed during reconnect", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterConflict}, Effect: domain.EffectNone}
 		}
-		return nil
+		return false, nil
 	}
 	if s.dynamicEndpointCountLocked() >= s.maxDynamicEndpoints {
 		s.mu.Unlock()
 		if closer, ok := implementation.(interface{ Close() error }); ok {
 			_ = closer.Close()
 		}
-		return dynamicEndpointLimitError(descriptor.ID, s.maxDynamicEndpoints)
+		return false, dynamicEndpointLimitError(descriptor.ID, s.maxDynamicEndpoints)
 	}
 	s.endpoints[descriptor.ID] = &endpointLease{implementation: implementation}
 	s.mu.Unlock()
+	return true, nil
+}
+
+func (s *ProviderSessions) rollbackCreatedEndpoints(endpointIDs []domain.EndpointID) error {
+	var rollbackErr error
+	for index := len(endpointIDs) - 1; index >= 0; index-- {
+		rollbackErr = errors.Join(rollbackErr, s.releaseIdleEndpoint(endpointIDs[index]))
+	}
+	return rollbackErr
+}
+
+func (s *ProviderSessions) releaseIdleEndpoint(endpointID domain.EndpointID) error {
+	s.mu.Lock()
+	entry := s.endpoints[endpointID]
+	if entry == nil || entry.permanent || entry.sessions != 0 || entry.jobs != 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	delete(s.endpoints, endpointID)
+	implementation := entry.implementation
+	s.mu.Unlock()
+	if closer, ok := implementation.(interface{ Close() error }); ok {
+		return closer.Close()
+	}
 	return nil
 }
 

@@ -83,7 +83,7 @@ func freezeRouteEvidence(plan *Plan) {
 	evidence := RouteEvidence{
 		Version: RouteEvidenceVersion,
 		Integrity: RouteIntegrityEvidence{
-			Policy:       IntegrityStrong,
+			Policy:       routeIntegrityPolicy(*plan),
 			Verification: plan.Verification,
 			Algorithm:    "sha256",
 		},
@@ -178,9 +178,16 @@ func freezeRouteEvidence(plan *Plan) {
 	plan.RouteEvidence = &evidence
 }
 
+func routeIntegrityPolicy(plan Plan) IntegrityPolicy {
+	if plan.DirectPolicy.Integrity == IntegrityRequireStrong {
+		return IntegrityRequireStrong
+	}
+	return IntegrityStrong
+}
+
 func validRouteEvidence(plan Plan) bool {
 	if plan.RouteEvidence == nil {
-		return true
+		return plan.Route == RouteLocal || plan.Route == RouteSFTPRelay || plan.Route == RouteHelperSameHost
 	}
 	expected := plan
 	expected.RouteEvidence = nil

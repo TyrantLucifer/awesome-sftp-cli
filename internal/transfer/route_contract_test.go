@@ -89,6 +89,16 @@ func TestPlannerFreezesUnifiedRouteEvidenceBeforeDurableJobCreation(t *testing.T
 	}
 }
 
+func TestLevel2RouteEvidencePreservesRequireStrongPolicy(t *testing.T) {
+	_, plan, _, _, _, _ := newLevel2DirectPlanFixture(t)
+	if plan.RouteEvidence == nil {
+		t.Fatal("Level 2 plan has no route evidence")
+	}
+	if got := plan.RouteEvidence.Integrity.Policy; got != IntegrityRequireStrong {
+		t.Fatalf("integrity policy = %q, want %q", got, IntegrityRequireStrong)
+	}
+}
+
 func TestValidateExecutionRejectsTamperedRouteEvidence(t *testing.T) {
 	original := freezeCrossEndpointRouteContractPlan(t)
 	tests := []struct {
@@ -111,6 +121,19 @@ func TestValidateExecutionRejectsTamperedRouteEvidence(t *testing.T) {
 			test.tamper(plan.RouteEvidence)
 			if err := validateExecution(plan); err == nil {
 				t.Fatal("validateExecution accepted tampered route evidence")
+			}
+		})
+	}
+}
+
+func TestValidateExecutionRejectsMissingEvidenceForStage5FastPaths(t *testing.T) {
+	serverCopy, _ := newRouteServerCopyPlan(t, nil)
+	_, level2, _, _, _, _ := newLevel2DirectPlanFixture(t)
+	for name, plan := range map[string]Plan{"server_copy": serverCopy, "level2": level2} {
+		t.Run(name, func(t *testing.T) {
+			plan.RouteEvidence = nil
+			if err := validateExecution(plan); err == nil {
+				t.Fatal("validateExecution accepted missing fast-path route evidence")
 			}
 		})
 	}

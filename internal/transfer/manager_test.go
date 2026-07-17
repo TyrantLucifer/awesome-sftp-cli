@@ -64,6 +64,106 @@ func TestManagerContinuesCreatedJobAfterClientContextCancellation(t *testing.T) 
 	}
 }
 
+func TestManagerTerminalTransitionFallsBackToBoundedPayload(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("payload"), ConflictAsk)
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	created, _, err := store.Create(context.Background(), fixture.create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator := &testkit.SequenceGenerator{}
+	for index := 0; index < 64; index++ {
+		if _, err := generator.New("skip_"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_125, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	running, err := manager.transition(created, job.StateRunning, "job_started", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifying, err := manager.transition(running, job.StateVerifying, "job_verifying", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed, err := manager.persistTerminal(
+		verifying,
+		job.StateCompleted,
+		"job_completed",
+		"completed",
+		map[string]any{"manifest": strings.Repeat("x", jobstore.MaxEventPayloadBytes)},
+	)
+	if err != nil {
+		t.Fatalf("persist terminal with fallback: %v", err)
+	}
+	if completed.State != job.StateCompleted {
+		t.Fatalf("terminal state = %q, want completed", completed.State)
+	}
+	events, err := store.ListEvents(context.Background(), created.JobID, 0, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := events[len(events)-1]
+	if len(last.PayloadJSON) > jobstore.MaxEventPayloadBytes || !strings.Contains(last.PayloadJSON, "details_omitted") {
+		t.Fatalf("fallback event payload = %d bytes: %s", len(last.PayloadJSON), last.PayloadJSON)
+	}
+}
+
+func TestManagerSurfacesUnrecoverableTerminalTransitionFailure(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("payload"), ConflictAsk)
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	created, _, err := store.Create(context.Background(), fixture.create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator := &testkit.SequenceGenerator{}
+	for index := 0; index < 64; index++ {
+		if _, err := generator.New("skip_"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: generator,
+		Now: func() time.Time { return time.Unix(1_800_000_126, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	running, err := manager.transition(created, job.StateRunning, "job_started", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	verifying, err := manager.transition(running, job.StateVerifying, "job_verifying", map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.generator = failingIDGenerator{}
+	manager.fail(verifying, errors.New("execution failed"))
+
+	waitContext, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	_, waitErr := manager.Wait(waitContext, created.JobID)
+	if waitErr == nil || errors.Is(waitErr, context.DeadlineExceeded) || !strings.Contains(waitErr.Error(), "persist bounded terminal fallback") {
+		t.Fatalf("Wait() error = %v, want surfaced terminal transition failure", waitErr)
+	}
+}
+
+type failingIDGenerator struct{}
+
+func (failingIDGenerator) New(string) (string, error) {
+	return "", errors.New("ID generator unavailable")
+}
+
 func TestManagerRunsDurableDirectoryJobAndReportsItemProgress(t *testing.T) {
 	sourceRoot := t.TempDir()
 	destinationRoot := t.TempDir()
@@ -699,6 +799,13 @@ func TestManagerUsesFrozenAtomicRenameFastPathWithoutStreaming(t *testing.T) {
 	completed := waitForTerminal(t, manager, created.JobID)
 	if completed.State != job.StateCompleted {
 		t.Fatalf("atomic rename Job state = %q", completed.State)
+	}
+	views, err := manager.JobViews(context.Background(), 10)
+	if err != nil || len(views) != 1 {
+		t.Fatalf("atomic rename Job views = %+v, %v", views, err)
+	}
+	if views[0].PlannedRoute != RouteAtomicRename || views[0].Route != RouteAtomicRename {
+		t.Fatalf("atomic rename Job view = %+v", views[0])
 	}
 	reads, writes := implementation.streamCounts()
 	if reads != 0 || writes != 0 {

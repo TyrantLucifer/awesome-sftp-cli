@@ -73,6 +73,17 @@ func (c *ManualClock) NewTimer(duration time.Duration) Timer {
 	return timer
 }
 
+// NextTimerDeadline exposes the earliest registered timer so tests can avoid
+// advancing the manual clock before a concurrent waiter has armed its timer.
+func (c *ManualClock) NextTimerDeadline() (time.Time, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.timers) == 0 {
+		return time.Time{}, false
+	}
+	return c.timers[0].deadline, true
+}
+
 func (c *ManualClock) Advance(duration time.Duration) {
 	if duration < 0 {
 		panic("foundation.ManualClock.Advance: negative duration")

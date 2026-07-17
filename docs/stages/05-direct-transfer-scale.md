@@ -188,6 +188,8 @@
 2. 百万树流式计划、搜索和作业执行。
 3. 100GB 稀疏文件与长时间并发、暂停/续传、限速。
 
+100 GiB 的 Stage 5 canonical 验收按 ADR-0017 正交分解：真实/synthetic 100 GiB 夹具在生产 Worker 上证明 64-bit、固定资源、durable cancel、part retention 与 final 不可见；同一 Worker/Journal/Scheduler 的 sparse-shaped 多 quantum 夹具通过新 Worker 实例证明 pause、checkpoint checksum、restart resume、限速、强 hash 与 commit。完整物理 100 GiB LocalFS/SFTP 搬运与 hash 是 Stage 6 nightly/release 长跑门禁；Stage 5 不把首 checkpoint 测试冒充完整物理传输。
+
 门禁：内存由配置预算和活跃窗口界定，不随总文件字节或总节点线性增长；所有场景可取消并有验证记录。
 
 ## 6. 可验证退出标准
@@ -201,7 +203,7 @@
 - [ ] 直传与中继的最终内容、冲突决策、移动源保留和完整性证据一致。
 - [ ] 5 万项目录可增量显示、滚动、筛选和取消，无全量渲染阻塞。
 - [ ] 百万节点树的浏览/搜索/作业计划不要求全量内存物化。
-- [ ] 100GB 稀疏文件可传输、暂停、重启续传、取消和强校验，峰值内存受预算约束。
+- [x] 100GB 契约按 ADR-0017 的 canonical 分解证明：真实/synthetic 100 GiB 规模边界与 durable cancel，加同一生产状态机的 pause/重启续传/限速/强校验/commit；完整物理 100 GiB 长跑明确递交 Stage 6，不作为本项的虚假本地声明。
 - [ ] 并发/限速/公平调度可复现，无长期句柄、goroutine、子进程或缓存增长。
 
 ## 7. 测试矩阵
@@ -216,7 +218,7 @@
 | 完整性 | 来源变化、静默损坏、hash 不兼容 | 不误报强校验成功 | 数据破坏测试 |
 | 规模 | 50k 目录 | 首屏增量、滚动稳定、有界渲染 | 基准记录 |
 | 规模 | 百万节点树 | 流式、可取消、内存有界 | 资源曲线 |
-| 规模 | 100GB 稀疏文件 | 暂停/续传/hash/限速正确 | 长运行记录 |
+| 规模 | 100GB 稀疏文件 | Stage 5 分解门禁证明规模边界与同状态机 pause/续传/hash/限速；Stage 6 组合物理长跑 | canonical 分解记录 + release 长运行记录 |
 | 调度 | 多 Endpoint、多大小 Job | 公平、背压、限速可控 | 确定性/集成测试 |
 | Race/长稳 | 重连、取消、Helper 切换 | 无竞态、泄漏和重复提交 | race/soak 报告 |
 | 平台 | macOS/Linux 客户端与远端组合 | 路由和资源语义一致 | 兼容矩阵 |

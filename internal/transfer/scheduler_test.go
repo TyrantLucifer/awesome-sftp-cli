@@ -3,7 +3,9 @@ package transfer
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -240,6 +242,7 @@ func TestTransferSchedulerWeightedRoundRobinNeverStarvesBulk(t *testing.T) {
 
 	want := []string{"interactive-1", "interactive-2", "interactive-3", "interactive-4", "bulk-1"}
 	for index, expected := range want {
+		waitForManualClockTimerAtOrBefore(t, clock, clock.Now().Add(time.Second))
 		clock.Advance(time.Second)
 		waitForSchedulerGrantAndWaiter(t, scheduler, uint64(index+2), len(want)-index-1)
 		select {
@@ -282,6 +285,54 @@ func TestTransferSchedulerHotRateUpdateOnlyAffectsFutureTokens(t *testing.T) {
 	assertNoGrant(t, done)
 	clock.Advance(time.Millisecond)
 	assertGrant(t, done)
+}
+
+func TestTransferSchedulerRejectsHotUpdateThatWouldStrandQueuedGrant(t *testing.T) {
+	clock := foundation.NewManualClock(time.Unix(3_500, 0))
+	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
+		GlobalBytesPerSecond: 8,
+		BurstBytes:           8,
+		QuantumBytes:         8,
+	})
+	request := BandwidthRequest{JobID: "job-hot-update", Class: ScheduleBulk, Bytes: 8}
+	if err := scheduler.Wait(context.Background(), request); err != nil {
+		t.Fatalf("consume initial burst: %v", err)
+	}
+	done := waitForGrant(t, scheduler, request)
+	if err := scheduler.Update(SchedulerPolicy{
+		GlobalBytesPerSecond: 8,
+		BurstBytes:           4,
+		QuantumBytes:         4,
+	}); !errors.Is(err, ErrSchedulerUpdateStrandsWaiter) {
+		t.Fatalf("tightening update error = %v, want ErrSchedulerUpdateStrandsWaiter", err)
+	}
+	if scheduler.Snapshot().Policy.BurstBytes != 8 {
+		t.Fatalf("rejected update changed policy: %+v", scheduler.Snapshot().Policy)
+	}
+	clock.Advance(time.Second)
+	assertGrant(t, done)
+}
+
+func TestTransferSchedulerReleaseJobReclaimsUnusedIdentityBuckets(t *testing.T) {
+	scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(3_750, 0)), SchedulerPolicy{})
+	for _, jobID := range []domain.JobID{"job-release-a", "job-release-b"} {
+		if err := scheduler.Wait(context.Background(), BandwidthRequest{
+			JobID: jobID, EndpointID: "endpoint-shared", PeerEndpointID: "endpoint-peer", Class: ScheduleBulk, Bytes: 1,
+		}); err != nil {
+			t.Fatalf("grant %s: %v", jobID, err)
+		}
+	}
+	scheduler.ReleaseJob("job-release-a")
+	if _, ok := scheduler.jobs["job-release-a"]; ok {
+		t.Fatal("released job bucket remains")
+	}
+	if len(scheduler.endpoints) != 2 {
+		t.Fatalf("shared endpoint buckets after first release = %d, want 2", len(scheduler.endpoints))
+	}
+	scheduler.ReleaseJob("job-release-b")
+	if len(scheduler.jobs) != 0 || len(scheduler.jobRates) != 0 || len(scheduler.endpoints) != 0 {
+		t.Fatalf("identity buckets after release = jobs:%d rates:%d endpoints:%d", len(scheduler.jobs), len(scheduler.jobRates), len(scheduler.endpoints))
+	}
 }
 
 func TestTransferSchedulerCancellationRemovesWaiter(t *testing.T) {
@@ -388,6 +439,67 @@ func TestRelayWorkerAppliesSchedulerAtFixedSizeIndependentQuantum(t *testing.T) 
 	}
 }
 
+func TestWorkerHundredGiBContractLifecycleUsesSameCheckpointHashAndRateStateMachine(t *testing.T) {
+	data := bytes.Repeat([]byte("sparse-shaped\x00"), (2*TransferScheduleQuantum)/14)
+	data = append(data, make([]byte, 2*TransferScheduleQuantum-len(data))...)
+	fixture := newWorkerFixture(t, data, ConflictOverwrite)
+	fixture.plan.Bandwidth = BandwidthPolicy{Required: true, JobBytesPerSecond: TransferScheduleQuantum}
+	freezeRouteEvidence(&fixture.plan)
+
+	clock := foundation.NewManualClock(time.Unix(5_250, 0))
+	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
+		GlobalBytesPerSecond: TransferScheduleQuantum,
+		BurstBytes:           TransferScheduleQuantum,
+	})
+	journal := newMemoryJournal()
+	firstWorker := NewWorker(fixture.resolver, journal)
+	firstWorker.scheduler = scheduler
+	_, err := firstWorker.Execute(context.Background(), fixture.plan, ControlFunc(func(checkpoint Checkpoint) ControlAction {
+		if checkpoint.Offset >= TransferScheduleQuantum {
+			return ControlPause
+		}
+		return ControlContinue
+	}))
+	if !errors.Is(err, ErrPaused) {
+		t.Fatalf("pause error = %v, want ErrPaused", err)
+	}
+	paused := journal.latest()
+	if paused.Offset != TransferScheduleQuantum || len(paused.ChecksumState) == 0 || paused.Phase != PhaseStreaming {
+		t.Fatalf("paused checkpoint = %#v", paused)
+	}
+
+	type execution struct {
+		result Result
+		err    error
+	}
+	done := make(chan execution, 1)
+	restartedWorker := NewWorker(fixture.resolver, journal)
+	restartedWorker.scheduler = scheduler
+	go func() {
+		result, executeErr := restartedWorker.Execute(context.Background(), fixture.plan, nil)
+		done <- execution{result: result, err: executeErr}
+	}()
+	waitForSchedulerGrantAndWaiter(t, scheduler, TransferScheduleQuantum, 1)
+	clock.Advance(time.Second)
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("restart resume: %v", got.err)
+		}
+		wantSHA256 := fmt.Sprintf("%x", sha256.Sum256(data))
+		if got.result.Outcome != OutcomeCompleted || got.result.Bytes != uint64(len(data)) || got.result.SHA256 != wantSHA256 {
+			t.Fatalf("restart resume result = %#v, want bytes=%d sha256=%s", got.result, len(data), wantSHA256)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("restart resume did not finish; scheduler=%+v", scheduler.Snapshot())
+	}
+	if snapshot := scheduler.Snapshot(); snapshot.GrantedBytes != uint64(len(data)) || snapshot.Waiters != 0 {
+		t.Fatalf("final scheduler snapshot = %+v", snapshot)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, data)
+}
+
 func TestRelayWorkerHonorsTightenedSchedulerQuantum(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("123456789"), ConflictOverwrite)
 	scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(5_500, 0)), SchedulerPolicy{
@@ -401,6 +513,68 @@ func TestRelayWorkerHonorsTightenedSchedulerQuantum(t *testing.T) {
 	}
 	if result.Bytes != 9 || scheduler.Snapshot().GrantedBytes != 9 {
 		t.Fatalf("result/scheduled bytes = %d/%d, want 9/9", result.Bytes, scheduler.Snapshot().GrantedBytes)
+	}
+}
+
+func TestDirectoryWorkerAppliesSchedulerToFileChildren(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "payload"), []byte("12345"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointSSH)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointSSH)
+	resolver := MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination}
+	planner := NewPlanner(resolver)
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request.Intent.Name = "copied"
+	plan, _, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.BufferBytes = 5
+
+	clock := foundation.NewManualClock(time.Unix(5_750, 0))
+	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
+		GlobalBytesPerSecond: 4,
+		BurstBytes:           4,
+		QuantumBytes:         4,
+	})
+	worker := NewWorker(resolver, newMemoryJournal())
+	worker.scheduler = scheduler
+
+	type execution struct {
+		result Result
+		err    error
+	}
+	done := make(chan execution, 1)
+	go func() {
+		result, executeErr := worker.Execute(context.Background(), plan, nil)
+		done <- execution{result: result, err: executeErr}
+	}()
+	waitForSchedulerGrantAndWaiter(t, scheduler, 4, 1)
+	clock.Advance(time.Second)
+
+	select {
+	case got := <-done:
+		if got.err != nil {
+			t.Fatalf("execute directory: %v", got.err)
+		}
+		if got.result.Bytes != 5 {
+			t.Fatalf("result bytes = %d, want 5", got.result.Bytes)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("directory transfer did not finish; scheduler=%+v", scheduler.Snapshot())
+	}
+	if snapshot := scheduler.Snapshot(); snapshot.GrantedBytes != 5 || snapshot.Waiters != 0 {
+		t.Fatalf("final scheduler snapshot = %+v", snapshot)
 	}
 }
 
@@ -434,6 +608,48 @@ func TestManagerOwnsOneSharedHotUpdatableSchedulerWithinHardAdmissionCeilings(t 
 	})
 	if !errors.Is(err, ErrResourceLimitExpansion) {
 		t.Fatalf("expanded manager admission error = %v, want ErrResourceLimitExpansion", err)
+	}
+}
+
+func TestManagerQueueUsesSharedResourceLedgerAndReleasesOnDequeue(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("queued"), ConflictOverwrite)
+	store, database := openTransferStore(t, context.Background(), filepath.Join(t.TempDir(), "state.db"), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: fixture.resolver, Generator: &testkit.SequenceGenerator{},
+		MaxConcurrent: 1, MaxQueued: 2,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	jobID := domain.JobID("job-queued-resource")
+	if err := manager.enqueue(jobID); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.SchedulerSnapshot().Resources.Total.QueuedJobs; got != 1 {
+		t.Fatalf("queued resource usage = %d, want 1", got)
+	}
+	if dequeued := <-manager.queue; dequeued != jobID {
+		t.Fatalf("dequeued Job = %q, want %q", dequeued, jobID)
+	}
+	manager.releaseQueueLease(jobID)
+	if got := manager.SchedulerSnapshot().Resources.Total.QueuedJobs; got != 0 {
+		t.Fatalf("queued resource usage after dequeue = %d, want 0", got)
+	}
+}
+
+func TestExecutionResourceUsageAccountsSSHConnectionsAndDirectHelper(t *testing.T) {
+	plan := Plan{
+		Route:               RouteHelperSameHost,
+		SourceEndpoint:      domain.Endpoint{ID: "endpoint-a", Kind: domain.EndpointSSH},
+		DestinationEndpoint: domain.Endpoint{ID: "endpoint-b", Kind: domain.EndpointSSH},
+		BufferBytes:         4096,
+	}
+	usage := executionResourceUsage(plan)
+	if usage.ActiveJobs != 1 || usage.Connections != 2 || usage.SSHProcesses != 2 ||
+		usage.HelperProcesses != 1 || usage.FileDescriptors != 8 || usage.Goroutines != 1 || usage.MemoryBytes != 4096 {
+		t.Fatalf("execution resource usage = %+v", usage)
 	}
 }
 
@@ -508,6 +724,19 @@ func waitForSchedulerGrantAndWaiter(t *testing.T, scheduler *TransferScheduler, 
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatalf("scheduler snapshot = %+v, want %d granted bytes and %d waiters", scheduler.Snapshot(), bytes, waiters)
+}
+
+func waitForManualClockTimerAtOrBefore(t *testing.T, clock *foundation.ManualClock, want time.Time) {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if next, ok := clock.NextTimerDeadline(); ok && !next.After(want) {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	next, ok := clock.NextTimerDeadline()
+	t.Fatalf("manual clock next timer = %s (present=%t), want at or before %s", next, ok, want)
 }
 
 func assertNoGrant(t *testing.T, done <-chan error) {

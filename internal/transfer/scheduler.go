@@ -21,7 +21,10 @@ const (
 	DefaultBulkWeight        = 1
 )
 
-var ErrResourceLimitExpansion = errors.New("resource limit exceeds hard ceiling")
+var (
+	ErrResourceLimitExpansion       = errors.New("resource limit exceeds hard ceiling")
+	ErrSchedulerUpdateStrandsWaiter = errors.New("scheduler update would strand queued bandwidth request")
+)
 
 type ResourceLimits struct {
 	ActiveJobs             uint32
@@ -113,13 +116,14 @@ type SchedulerSnapshot struct {
 type TransferScheduler struct {
 	mu sync.Mutex
 
-	clock     foundation.Clock
-	policy    SchedulerPolicy
-	global    integerTokenBucket
-	endpoints map[domain.EndpointID]*integerTokenBucket
-	jobs      map[domain.JobID]*integerTokenBucket
-	jobRates  map[domain.JobID]uint64
-	resources *ResourceLedger
+	clock        foundation.Clock
+	policy       SchedulerPolicy
+	global       integerTokenBucket
+	endpoints    map[domain.EndpointID]*integerTokenBucket
+	jobs         map[domain.JobID]*integerTokenBucket
+	jobRates     map[domain.JobID]uint64
+	jobEndpoints map[domain.JobID][]domain.EndpointID
+	resources    *ResourceLedger
 
 	interactive  []*bandwidthWaiter
 	bulk         []*bandwidthWaiter
@@ -159,14 +163,15 @@ func NewTransferSchedulerWithLimits(clock foundation.Clock, policy SchedulerPoli
 	}
 	now := clock.Now()
 	scheduler := &TransferScheduler{
-		clock:     clock,
-		policy:    normalized,
-		global:    newIntegerTokenBucket(normalized.GlobalBytesPerSecond, normalized.BurstBytes, normalized.BurstBytes, now),
-		endpoints: make(map[domain.EndpointID]*integerTokenBucket),
-		jobs:      make(map[domain.JobID]*integerTokenBucket),
-		jobRates:  make(map[domain.JobID]uint64),
-		resources: resources,
-		wake:      make(chan struct{}),
+		clock:        clock,
+		policy:       normalized,
+		global:       newIntegerTokenBucket(normalized.GlobalBytesPerSecond, normalized.BurstBytes, normalized.BurstBytes, now),
+		endpoints:    make(map[domain.EndpointID]*integerTokenBucket),
+		jobs:         make(map[domain.JobID]*integerTokenBucket),
+		jobRates:     make(map[domain.JobID]uint64),
+		jobEndpoints: make(map[domain.JobID][]domain.EndpointID),
+		resources:    resources,
+		wake:         make(chan struct{}),
 	}
 	scheduler.rebuildCycle()
 	return scheduler, nil
@@ -242,6 +247,23 @@ func (scheduler *TransferScheduler) Update(policy SchedulerPolicy) error {
 
 	scheduler.mu.Lock()
 	defer scheduler.mu.Unlock()
+	for _, queue := range [][]*bandwidthWaiter{scheduler.interactive, scheduler.bulk} {
+		for _, waiter := range queue {
+			request := waiter.request
+			if uint64(request.Bytes) <= normalized.BurstBytes {
+				continue
+			}
+			jobRate := request.JobBytesPerSecond
+			if jobRate == 0 {
+				jobRate = normalized.JobBytesPerSecond
+			}
+			if normalized.GlobalBytesPerSecond != 0 ||
+				normalized.EndpointBytesPerSecond != 0 && len(uniqueEndpointIDs(request)) != 0 ||
+				jobRate != 0 {
+				return fmt.Errorf("%w: Job %q has %d queued bytes above new burst %d", ErrSchedulerUpdateStrandsWaiter, request.JobID, request.Bytes, normalized.BurstBytes)
+			}
+		}
+	}
 	now := scheduler.clock.Now()
 	scheduler.refillLocked(now)
 	scheduler.global.update(normalized.GlobalBytesPerSecond, normalized.BurstBytes, now)
@@ -257,6 +279,28 @@ func (scheduler *TransferScheduler) Update(policy SchedulerPolicy) error {
 	scheduler.rebuildCycle()
 	scheduler.broadcastLocked()
 	return nil
+}
+
+// ReleaseJob ends the bandwidth identity lifetime for a completed execution
+// attempt. Shared endpoint buckets remain until the last referencing Job exits.
+func (scheduler *TransferScheduler) ReleaseJob(jobID domain.JobID) {
+	if scheduler == nil || jobID == "" {
+		return
+	}
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	if scheduler.hasWaiterForJobLocked(jobID) {
+		return
+	}
+	endpoints := scheduler.jobEndpoints[jobID]
+	delete(scheduler.jobs, jobID)
+	delete(scheduler.jobRates, jobID)
+	delete(scheduler.jobEndpoints, jobID)
+	for _, endpointID := range endpoints {
+		if !scheduler.endpointReferencedLocked(endpointID) {
+			delete(scheduler.endpoints, endpointID)
+		}
+	}
 }
 
 func (scheduler *TransferScheduler) Snapshot() SchedulerSnapshot {
@@ -491,6 +535,7 @@ func (scheduler *TransferScheduler) endpointBucketLocked(endpointID domain.Endpo
 }
 
 func (scheduler *TransferScheduler) jobBucketLocked(request BandwidthRequest) *integerTokenBucket {
+	scheduler.rememberJobEndpointsLocked(request)
 	if bucket, ok := scheduler.jobs[request.JobID]; ok {
 		return bucket
 	}
@@ -504,6 +549,45 @@ func (scheduler *TransferScheduler) jobBucketLocked(request BandwidthRequest) *i
 	scheduler.jobs[request.JobID] = &bucket
 	scheduler.jobRates[request.JobID] = request.JobBytesPerSecond
 	return &bucket
+}
+
+func (scheduler *TransferScheduler) rememberJobEndpointsLocked(request BandwidthRequest) {
+	known := scheduler.jobEndpoints[request.JobID]
+	for _, endpointID := range uniqueEndpointIDs(request) {
+		found := false
+		for _, existing := range known {
+			if existing == endpointID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			known = append(known, endpointID)
+		}
+	}
+	scheduler.jobEndpoints[request.JobID] = known
+}
+
+func (scheduler *TransferScheduler) hasWaiterForJobLocked(jobID domain.JobID) bool {
+	for _, queue := range [][]*bandwidthWaiter{scheduler.interactive, scheduler.bulk} {
+		for _, waiter := range queue {
+			if waiter.request.JobID == jobID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func (scheduler *TransferScheduler) endpointReferencedLocked(endpointID domain.EndpointID) bool {
+	for _, endpoints := range scheduler.jobEndpoints {
+		for _, existing := range endpoints {
+			if existing == endpointID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func (scheduler *TransferScheduler) broadcastLocked() {

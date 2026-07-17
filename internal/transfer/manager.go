@@ -70,11 +70,13 @@ type Manager struct {
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
 
-	mu      sync.Mutex
-	started bool
-	waiters map[domain.JobID][]chan struct{}
-	leases  map[domain.JobID]func()
-	workers int
+	mu               sync.Mutex
+	started          bool
+	waiters          map[domain.JobID][]chan struct{}
+	leases           map[domain.JobID]func()
+	queueLeases      map[domain.JobID]*ResourceLease
+	transitionErrors map[domain.JobID]error
+	workers          int
 }
 
 func NewManager(config ManagerConfig) (*Manager, error) {
@@ -119,19 +121,21 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	}
 	rootContext, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		store:     config.Store,
-		resolver:  config.Resolver,
-		planner:   NewPlannerWithSameHost(config.Resolver, config.SameHostCopy),
-		sameHost:  config.SameHostCopy,
-		generator: config.Generator,
-		now:       now,
-		queue:     make(chan domain.JobID, config.MaxQueued),
-		scheduler: scheduler,
-		ctx:       rootContext,
-		cancel:    cancel,
-		waiters:   make(map[domain.JobID][]chan struct{}),
-		leases:    make(map[domain.JobID]func()),
-		workers:   config.MaxConcurrent,
+		store:            config.Store,
+		resolver:         config.Resolver,
+		planner:          NewPlannerWithSameHost(config.Resolver, config.SameHostCopy),
+		sameHost:         config.SameHostCopy,
+		generator:        config.Generator,
+		now:              now,
+		queue:            make(chan domain.JobID, config.MaxQueued),
+		scheduler:        scheduler,
+		ctx:              rootContext,
+		cancel:           cancel,
+		waiters:          make(map[domain.JobID][]chan struct{}),
+		leases:           make(map[domain.JobID]func()),
+		queueLeases:      make(map[domain.JobID]*ResourceLease),
+		transitionErrors: make(map[domain.JobID]error),
+		workers:          config.MaxConcurrent,
 	}, nil
 }
 
@@ -519,8 +523,12 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 		if err != nil {
 			return nil, err
 		}
+		plannedRoute := plan.Route
+		if plan.RouteEvidence != nil && plan.RouteEvidence.Selected.Route != "" {
+			plannedRoute = plan.RouteEvidence.Selected.Route
+		}
 		view := JobView{
-			Snapshot: snapshot, Kind: plan.Kind, Route: plan.Route, PlannedRoute: plan.Route, RouteEvidence: plan.RouteEvidence, Source: plan.Source.Location, Final: plan.Final,
+			Snapshot: snapshot, Kind: plan.Kind, Route: plannedRoute, PlannedRoute: plannedRoute, RouteEvidence: plan.RouteEvidence, Source: plan.Source.Location, Final: plan.Final,
 			BytesTotal: plan.Source.Fingerprint.Size, Items: 1,
 		}
 		if plan.Source.Kind == domain.EntryDirectory {
@@ -581,6 +589,9 @@ func (manager *Manager) waitUntil(ctx context.Context, jobID domain.JobID, done 
 		if done(snapshot.State) {
 			return snapshot, nil
 		}
+		if transitionErr := manager.transitionError(jobID); transitionErr != nil {
+			return snapshot, transitionErr
+		}
 		changed := make(chan struct{}, 1)
 		manager.mu.Lock()
 		manager.waiters[jobID] = append(manager.waiters[jobID], changed)
@@ -593,6 +604,10 @@ func (manager *Manager) waitUntil(ctx context.Context, jobID domain.JobID, done 
 		if done(latest.State) {
 			manager.removeWaiter(jobID, changed)
 			return latest, nil
+		}
+		if transitionErr := manager.transitionError(jobID); transitionErr != nil {
+			manager.removeWaiter(jobID, changed)
+			return latest, transitionErr
 		}
 		select {
 		case <-ctx.Done():
@@ -641,6 +656,7 @@ func (manager *Manager) workerLoop() {
 		case <-manager.ctx.Done():
 			return
 		case jobID := <-manager.queue:
+			manager.releaseQueueLease(jobID)
 			manager.execute(jobID)
 		}
 	}
@@ -663,6 +679,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	if err != nil {
 		return
 	}
+	defer manager.scheduler.ReleaseJob(plan.JobID)
 	if err := manager.applyConflictResolution(&plan); err != nil {
 		return
 	}
@@ -671,9 +688,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		EndpointIDs: []domain.EndpointID{
 			plan.SourceEndpoint.ID, plan.DestinationEndpoint.ID,
 		},
-		Usage: ResourceUsage{
-			ActiveJobs: 1, FileDescriptors: 2, Goroutines: 1, MemoryBytes: uint64(plan.BufferBytes),
-		},
+		Usage: executionResourceUsage(plan),
 	})
 	if err != nil {
 		return
@@ -717,9 +732,13 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	}
 	switch {
 	case errors.Is(executeErr, ErrPaused):
-		_, _ = manager.transition(current, job.StatePaused, "job_paused", map[string]any{"offset": result.Bytes})
+		if _, transitionErr := manager.transition(current, job.StatePaused, "job_paused", map[string]any{"offset": result.Bytes}); transitionErr != nil {
+			manager.fail(current, fmt.Errorf("persist paused state: %w", transitionErr))
+		}
 	case errors.Is(executeErr, ErrCanceled):
-		_, _ = manager.transitionTerminal(current, job.StateCanceled, "job_canceled", "canceled with resumable part retained", map[string]any{"offset": result.Bytes})
+		if _, transitionErr := manager.persistTerminal(current, job.StateCanceled, "job_canceled", "canceled with resumable part retained", map[string]any{"offset": result.Bytes}); transitionErr != nil {
+			manager.fail(current, fmt.Errorf("persist canceled state: %w", transitionErr))
+		}
 	case executeErr != nil:
 		manager.handleExecutionError(current, executeErr, result)
 	case result.Outcome == OutcomeWaitingConflict:
@@ -768,12 +787,16 @@ func (manager *Manager) execute(jobID domain.JobID) {
 					summary = "destination verified and source deletion proved"
 				}
 			}
-			_, _ = manager.transitionTerminal(verifying, terminalState, eventKind, summary, map[string]any{
+			if _, terminalErr := manager.persistTerminal(verifying, terminalState, eventKind, summary, map[string]any{
 				"bytes": result.Bytes, "items": result.Items, "succeeded": result.Succeeded, "skipped": result.Skipped,
 				"failed": result.Failed, "manifest": result.Manifest, "manifest_truncated": result.ManifestTruncated,
 				"final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome, "move_reason": moveReason,
 				"preserved_destination": result.PreservedDestination,
-			})
+			}); terminalErr != nil {
+				manager.fail(verifying, fmt.Errorf("persist completed state: %w", terminalErr))
+			}
+		} else {
+			manager.fail(current, fmt.Errorf("persist verifying state: %w", transitionErr))
 		}
 	}
 }
@@ -840,11 +863,13 @@ func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, execute
 	var partial *PartialItemsError
 	if errors.As(executeErr, &partial) {
 		retryAt := manager.now().Add(time.Minute)
-		_, _ = manager.transitionRetry(snapshot, retryAt, map[string]any{
+		if _, transitionErr := manager.transitionRetry(snapshot, retryAt, map[string]any{
 			"error": "directory items require retry", "failed": result.Failed, "succeeded": result.Succeeded,
 			"skipped": result.Skipped, "items": result.Items, "manifest": result.Manifest,
 			"manifest_truncated": result.ManifestTruncated,
-		})
+		}); transitionErr != nil {
+			manager.fail(snapshot, fmt.Errorf("persist directory retry: %w", transitionErr))
+		}
 		return
 	}
 	var operationError *domain.OpError
@@ -856,26 +881,52 @@ func (manager *Manager) handleExecutionError(snapshot jobstore.Snapshot, execute
 	if errors.As(executeErr, &operationError) {
 		switch operationError.Code {
 		case domain.CodeAuthRequired:
-			_, _ = manager.transition(snapshot, job.StateWaitingAuth, "job_waiting_auth", payload)
+			if _, transitionErr := manager.transition(snapshot, job.StateWaitingAuth, "job_waiting_auth", payload); transitionErr != nil {
+				manager.fail(snapshot, fmt.Errorf("persist waiting-auth state: %w", transitionErr))
+			}
 			return
 		case domain.CodeConflict, domain.CodeAlreadyExists:
-			_, _ = manager.transition(snapshot, job.StateWaitingConflict, "job_waiting_conflict", payload)
+			if _, transitionErr := manager.transition(snapshot, job.StateWaitingConflict, "job_waiting_conflict", payload); transitionErr != nil {
+				manager.fail(snapshot, fmt.Errorf("persist waiting-conflict state: %w", transitionErr))
+			}
 			return
 		case domain.CodeTransportInterrupted, domain.CodeTimeout, domain.CodeResourceExhausted:
 			retryAt := manager.now().Add(time.Minute)
-			_, _ = manager.transitionRetry(snapshot, retryAt, payload)
+			if _, transitionErr := manager.transitionRetry(snapshot, retryAt, payload); transitionErr != nil {
+				manager.fail(snapshot, fmt.Errorf("persist retry state: %w", transitionErr))
+			}
 			return
 		}
 	}
 	if result.PreservedDestination.Path != "" {
-		_, _ = manager.transitionTerminal(snapshot, job.StateFailed, "job_failed", safeErrorSummary(executeErr), payload)
+		manager.failWithPayload(snapshot, executeErr, payload)
 		return
 	}
 	manager.fail(snapshot, executeErr)
 }
 
 func (manager *Manager) fail(snapshot jobstore.Snapshot, failure error) {
-	_, _ = manager.transitionTerminal(snapshot, job.StateFailed, "job_failed", safeErrorSummary(failure), errorPayload(failure))
+	manager.failWithPayload(snapshot, failure, errorPayload(failure))
+
+}
+
+func (manager *Manager) failWithPayload(snapshot jobstore.Snapshot, failure error, payload any) {
+	if _, err := manager.persistTerminal(snapshot, job.StateFailed, "job_failed", safeErrorSummary(failure), payload); err != nil {
+		manager.recordTransitionError(snapshot.JobID, fmt.Errorf("persist terminal failure state: %w", err))
+	}
+}
+
+func (manager *Manager) recordTransitionError(jobID domain.JobID, failure error) {
+	manager.mu.Lock()
+	manager.transitionErrors[jobID] = failure
+	manager.mu.Unlock()
+	manager.notify(jobID)
+}
+
+func (manager *Manager) transitionError(jobID domain.JobID) error {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	return manager.transitionErrors[jobID]
 }
 
 func (manager *Manager) transition(snapshot jobstore.Snapshot, to job.State, kind string, payload any) (jobstore.Snapshot, error) {
@@ -888,6 +939,32 @@ func (manager *Manager) transitionRetry(snapshot jobstore.Snapshot, retryAt time
 
 func (manager *Manager) transitionTerminal(snapshot jobstore.Snapshot, to job.State, kind, summary string, payload any) (jobstore.Snapshot, error) {
 	return manager.transitionRequest(snapshot, to, kind, payload, nil, &summary)
+}
+
+func (manager *Manager) persistTerminal(snapshot jobstore.Snapshot, to job.State, kind, summary string, payload any) (jobstore.Snapshot, error) {
+	updated, err := manager.transitionTerminal(snapshot, to, kind, summary, payload)
+	if err == nil {
+		return updated, nil
+	}
+	latest, getErr := manager.store.Get(manager.ctx, snapshot.JobID)
+	if getErr != nil {
+		return jobstore.Snapshot{}, errors.Join(err, fmt.Errorf("reload terminal transition: %w", getErr))
+	}
+	if latest.State.Terminal() {
+		if latest.State == to {
+			return latest, nil
+		}
+		return jobstore.Snapshot{}, fmt.Errorf("terminal transition raced with state %q: %w", latest.State, err)
+	}
+	fallback := map[string]any{
+		"details_omitted": true,
+		"reason":          "terminal event payload or persistence retry",
+	}
+	updated, fallbackErr := manager.transitionTerminal(latest, to, kind, summary, fallback)
+	if fallbackErr != nil {
+		return jobstore.Snapshot{}, errors.Join(err, fmt.Errorf("persist bounded terminal fallback: %w", fallbackErr))
+	}
+	return updated, nil
 }
 
 func (manager *Manager) transitionRequest(snapshot jobstore.Snapshot, to job.State, kind string, payload any, retryAt *time.Time, summary *string) (jobstore.Snapshot, error) {
@@ -917,11 +994,37 @@ func (manager *Manager) transitionRequest(snapshot jobstore.Snapshot, to job.Sta
 }
 
 func (manager *Manager) enqueue(jobID domain.JobID) error {
+	lease, err := manager.scheduler.TryAcquireResources(ResourceRequest{
+		JobID: jobID,
+		Usage: ResourceUsage{QueuedJobs: 1},
+	})
+	if err != nil {
+		return fmt.Errorf("enqueue Job: acquire queue resource: %w", err)
+	}
+	manager.mu.Lock()
+	if manager.queueLeases[jobID] != nil {
+		manager.mu.Unlock()
+		lease.Release()
+		return fmt.Errorf("enqueue Job: Job %q is already queued", jobID)
+	}
+	manager.queueLeases[jobID] = lease
+	manager.mu.Unlock()
 	select {
 	case <-manager.ctx.Done():
+		manager.releaseQueueLease(jobID)
 		return errors.New("enqueue Job: transfer manager stopped")
 	case manager.queue <- jobID:
 		return nil
+	}
+}
+
+func (manager *Manager) releaseQueueLease(jobID domain.JobID) {
+	manager.mu.Lock()
+	lease := manager.queueLeases[jobID]
+	delete(manager.queueLeases, jobID)
+	manager.mu.Unlock()
+	if lease != nil {
+		lease.Release()
 	}
 }
 
@@ -963,9 +1066,37 @@ func (manager *Manager) releaseAllLeases() {
 	manager.mu.Lock()
 	leases := manager.leases
 	manager.leases = make(map[domain.JobID]func())
+	queueLeases := manager.queueLeases
+	manager.queueLeases = make(map[domain.JobID]*ResourceLease)
 	manager.mu.Unlock()
 	for _, release := range leases {
 		release()
+	}
+	for _, lease := range queueLeases {
+		lease.Release()
+	}
+}
+
+func executionResourceUsage(plan Plan) ResourceUsage {
+	sshEndpoints := make(map[domain.EndpointID]struct{}, 2)
+	for _, endpoint := range []domain.Endpoint{plan.SourceEndpoint, plan.DestinationEndpoint} {
+		if endpoint.ID != "" && endpoint.Kind == domain.EndpointSSH {
+			sshEndpoints[endpoint.ID] = struct{}{}
+		}
+	}
+	connections := uint32(len(sshEndpoints)) //nolint:gosec // the set has at most two entries.
+	helperProcesses := uint32(0)
+	if plan.Route == RouteHelperSameHost || plan.Route == RouteLevel2Direct {
+		helperProcesses = 1
+	}
+	return ResourceUsage{
+		ActiveJobs:      1,
+		Connections:     connections,
+		SSHProcesses:    connections,
+		HelperProcesses: helperProcesses,
+		FileDescriptors: 2 + 3*connections,
+		Goroutines:      1,
+		MemoryBytes:     uint64(plan.BufferBytes),
 	}
 }
 

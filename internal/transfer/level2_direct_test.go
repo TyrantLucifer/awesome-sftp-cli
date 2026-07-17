@@ -46,6 +46,8 @@ type blockingLevel2DataFixture struct {
 	started chan struct{}
 }
 
+type silentLevel2DataFixture struct{ *level2DataFixture }
+
 type failingBeforeWriteLevel2Fixture struct{ *level2DataFixture }
 
 type typedFailureBeforeWriteLevel2Fixture struct {
@@ -174,6 +176,12 @@ func (fixture *blockingLevel2DataFixture) Stage(ctx context.Context, request Lev
 		return Level2StageResult{}, err
 	}
 	close(fixture.started)
+	<-ctx.Done()
+	return Level2StageResult{}, ctx.Err()
+}
+
+func (fixture *silentLevel2DataFixture) Stage(ctx context.Context, _ Level2StageRequest, _ func(Level2Progress) error) (Level2StageResult, error) {
+	fixture.stageCalls++
 	<-ctx.Done()
 	return Level2StageResult{}, ctx.Err()
 }
@@ -605,6 +613,62 @@ func TestLevel2InFlightCancelPropagatesAndNeverCommitsOrDeletesSource(t *testing
 	checkpoint := journal.latest()
 	if checkpoint.Phase != PhaseStreaming || checkpoint.Offset != result.Bytes || checkpoint.ActualRoute != RouteLevel2Direct {
 		t.Fatalf("canceled direct checkpoint = %#v", checkpoint)
+	}
+}
+
+func TestLevel2SilentStageFailsClosedAtHeartbeatTimeout(t *testing.T) {
+	_, plan, source, destination, sourceRoot, destinationRoot := newLevel2DirectPlanFixture(t)
+	backend := &silentLevel2DataFixture{level2DataFixture: &level2DataFixture{sourceRoot: sourceRoot, destinationRoot: destinationRoot}}
+	worker := newLevel2FixtureWorker(
+		MapResolver{plan.SourceEndpoint.ID: source, plan.DestinationEndpoint.ID: destination},
+		newMemoryJournal(),
+		backend,
+	)
+	worker.level2HeartbeatTimeout = 20 * time.Millisecond
+	started := time.Now()
+	_, err := worker.Execute(context.Background(), plan, nil)
+	if !domain.IsCode(err, domain.CodeTimeout) {
+		t.Fatalf("silent direct stage error = %v, want timeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("heartbeat timeout took %s", elapsed)
+	}
+	if backend.stageCalls != 1 {
+		t.Fatalf("stage calls = %d, want 1", backend.stageCalls)
+	}
+	if _, statErr := os.Stat(backend.localPath(plan.Final)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("heartbeat timeout published final: %v", statErr)
+	}
+}
+
+func TestLevel2SilentStageFailsClosedAtFrozenRequestDeadline(t *testing.T) {
+	_, plan, source, destination, sourceRoot, destinationRoot := newLevel2DirectPlanFixture(t)
+	now := time.Now()
+	plan.FrozenAt = now
+	deadline := now.Add(2 * time.Second).Unix()
+	plan.Level2Preflight.Request.DeadlineUnix = deadline
+	plan.Level2Preflight.Result.CheckedAtUnix = now.Unix()
+	plan.Level2Preflight.Result.ExpiresAtUnix = deadline
+	backend := &silentLevel2DataFixture{level2DataFixture: &level2DataFixture{sourceRoot: sourceRoot, destinationRoot: destinationRoot}}
+	worker := newLevel2FixtureWorker(
+		MapResolver{plan.SourceEndpoint.ID: source, plan.DestinationEndpoint.ID: destination},
+		newMemoryJournal(),
+		backend,
+	)
+	worker.level2HeartbeatTimeout = 5 * time.Second
+	started := time.Now()
+	_, err := worker.Execute(context.Background(), plan, nil)
+	if !domain.IsCode(err, domain.CodeTimeout) {
+		t.Fatalf("silent direct stage error = %v, want request deadline timeout", err)
+	}
+	if elapsed := time.Since(started); elapsed > 3*time.Second {
+		t.Fatalf("request deadline took %s", elapsed)
+	}
+	if backend.stageCalls != 1 {
+		t.Fatalf("stage calls = %d, want 1", backend.stageCalls)
+	}
+	if _, statErr := os.Stat(backend.localPath(plan.Final)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("request deadline published final: %v", statErr)
 	}
 }
 

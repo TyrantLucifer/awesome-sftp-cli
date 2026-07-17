@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"path"
@@ -25,7 +26,10 @@ type DiscoveryBudget struct {
 
 var DefaultDiscoveryBudget = DiscoveryBudget{QueueItems: 64, PageItems: 256, MaxDepth: 128}
 
-const maximumManifestItems = 256
+const (
+	maximumManifestItems     = 256
+	maximumManifestJSONBytes = 16 * 1024
+)
 
 type DiscoveredItem struct {
 	Entry        domain.Entry `json:"entry"`
@@ -317,7 +321,7 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 					return Result{}, statErr
 				}
 			}
-			itemResult, executeErr := NewWorker(worker.resolver, &volatileJournal{}).Execute(ctx, itemPlan, control)
+			itemResult, executeErr := worker.withJournal(&volatileJournal{}).Execute(ctx, itemPlan, control)
 			if executeErr != nil {
 				if code, ok := continuableDirectoryItemError(executeErr); ok {
 					itemResultRecord.Status = ItemFailed
@@ -382,9 +386,16 @@ func continuableDirectoryItemError(err error) (domain.Code, bool) {
 }
 
 func appendItemResult(result *Result, item ItemResult) {
-	if len(result.Manifest) < maximumManifestItems {
-		result.Manifest = append(result.Manifest, item)
+	if result.ManifestTruncated != 0 {
+		result.ManifestTruncated++
 		return
+	}
+	if len(result.Manifest) < maximumManifestItems {
+		candidate := append(result.Manifest, item)
+		if encoded, err := json.Marshal(candidate); err == nil && len(encoded) <= maximumManifestJSONBytes {
+			result.Manifest = candidate
+			return
+		}
 	}
 	result.ManifestTruncated++
 }

@@ -132,11 +132,12 @@ type ItemResult struct {
 }
 
 type Worker struct {
-	resolver  Resolver
-	journal   Journal
-	sameHost  SameHostCopyBackend
-	level2    level2DataBackend
-	scheduler bandwidthScheduler
+	resolver               Resolver
+	journal                Journal
+	sameHost               SameHostCopyBackend
+	level2                 level2DataBackend
+	level2HeartbeatTimeout time.Duration
+	scheduler              bandwidthScheduler
 }
 
 type bandwidthScheduler interface {
@@ -150,6 +151,12 @@ func NewWorker(resolver Resolver, journal Journal) *Worker {
 
 func NewWorkerWithSameHost(resolver Resolver, journal Journal, backend SameHostCopyBackend) *Worker {
 	return &Worker{resolver: resolver, journal: journal, sameHost: backend}
+}
+
+func (worker *Worker) withJournal(journal Journal) *Worker {
+	child := *worker
+	child.journal = journal
+	return &child
 }
 
 func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (Result, error) {

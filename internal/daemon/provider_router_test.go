@@ -379,6 +379,36 @@ func TestProviderSessionsAcquireRehydratesFrozenEndpointDescriptor(t *testing.T)
 	}
 }
 
+func TestProviderSessionsAcquireRollsBackEarlierRehydrationWhenLaterEndpointFails(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sourceDescriptor := domain.Endpoint{ID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Kind: domain.EndpointSSH, DisplayName: "source", SSHHostAlias: "source"}
+	destinationDescriptor := domain.Endpoint{ID: "ep_cccccccccccccccccccccccccc", Kind: domain.EndpointSSH, DisplayName: "destination", SSHHostAlias: "destination"}
+	remote := &closingProvider{Provider: local, descriptor: sourceDescriptor, closed: make(chan struct{})}
+	factory.SetEndpointConnector(func(_ context.Context, endpoint domain.Endpoint) (providerapi.Provider, error) {
+		if endpoint.ID == sourceDescriptor.ID {
+			return remote, nil
+		}
+		return nil, fmt.Errorf("connect %s: unavailable", endpoint.ID)
+	})
+	if _, err := factory.Acquire(context.Background(), transfer.Plan{
+		SourceEndpoint: sourceDescriptor, DestinationEndpoint: destinationDescriptor,
+	}); err == nil {
+		t.Fatal("Acquire() error = nil, want second endpoint failure")
+	}
+	select {
+	case <-remote.closed:
+	case <-time.After(time.Second):
+		t.Fatal("earlier rehydrated endpoint was not closed after Acquire rollback")
+	}
+	if _, err := factory.Resolve(sourceDescriptor.ID); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("Resolve(rolled back source) error = %v, want not_found", err)
+	}
+}
+
 func TestProviderSessionsRouteAuthPromptToClaimingSession(t *testing.T) {
 	local := testLocalProvider(t)
 	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)
