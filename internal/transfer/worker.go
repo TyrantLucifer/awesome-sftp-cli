@@ -176,6 +176,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	if checkpoint != nil && checkpoint.JobID != plan.JobID {
 		return Result{}, errors.New("execute transfer: checkpoint belongs to another Job")
 	}
+	if checkpoint != nil && !checkpointMatchesPlan(*checkpoint, plan) {
+		return Result{}, errors.New("execute transfer: checkpoint does not match frozen route identity")
+	}
 	if checkpoint != nil && checkpoint.Phase == PhaseCommitted {
 		result := Result{Outcome: checkpoint.Outcome, Final: checkpoint.Final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex}
 		if plan.PreservedDestination.Path != "" {
@@ -201,6 +204,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	if plan.Route == RouteHelperSameHost && current.Phase == PhasePrepared {
 		return worker.executeSameHostCopy(ctx, plan, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
+	}
+	if plan.Route == RouteSFTPServerCopy && current.Phase == PhasePrepared {
+		return worker.executeServerCopy(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
 	}
 
 	if current.Phase == PhaseVerified || current.Phase == PhaseWaitingConflict || current.Phase == PhaseCommitting {
@@ -406,6 +412,17 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		return Result{}, err
 	}
 	return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
+}
+
+func checkpointMatchesPlan(checkpoint Checkpoint, plan Plan) bool {
+	if checkpoint.Part != plan.Part || !reflect.DeepEqual(checkpoint.SourceFingerprint, plan.Source.Fingerprint) {
+		return false
+	}
+	if checkpoint.Phase != PhaseCommitting && checkpoint.Phase != PhaseCommitted {
+		return checkpoint.Final == plan.Final
+	}
+	return checkpoint.Final.EndpointID == plan.DestinationDirectory.EndpointID &&
+		path.Dir(string(checkpoint.Final.Path)) == string(plan.DestinationDirectory.Path)
 }
 
 func (worker *Worker) closeAndRefreshCheckpoint(ctx context.Context, destination providerapi.Provider, handle providerapi.WriteHandle, checkpoint *Checkpoint) error {
@@ -665,7 +682,7 @@ func validateExecution(plan Plan) error {
 	if plan.Verification != VerifySHA256 {
 		return errors.New("execute transfer: unsupported verification")
 	}
-	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay && plan.Route != RouteHelperSameHost {
+	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay && plan.Route != RouteHelperSameHost && plan.Route != RouteSFTPServerCopy {
 		return errors.New("execute transfer: unsupported route")
 	}
 	if !validRouteEvidence(plan) {
@@ -680,6 +697,16 @@ func validateExecution(plan Plan) error {
 		}
 	} else if plan.SameHostCopy != nil {
 		return errors.New("execute transfer: unexpected Helper same-host binding")
+	}
+	if plan.Route == RouteSFTPServerCopy {
+		if plan.Version != 1 || plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile ||
+			plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID || plan.SourceEndpoint.Kind != domain.EndpointSSH ||
+			plan.DestinationEndpoint.Kind != domain.EndpointSSH || plan.ServerCopy == nil ||
+			!validServerCopyBinding(*plan.ServerCopy, plan) {
+			return errors.New("execute transfer: invalid server-copy route")
+		}
+	} else if plan.ServerCopy != nil {
+		return errors.New("execute transfer: unexpected server-copy binding")
 	}
 	if plan.Source.Kind == domain.EntryFile && plan.Discovery != nil {
 		return errors.New("execute transfer: file plan has a directory discovery budget")

@@ -22,6 +22,11 @@ import (
 
 const DefaultBufferBytes = 256 * 1024
 
+const (
+	ServerCopyCapabilityVersion uint16 = 1
+	MaxServerCopyBytes          uint64 = 1 << 40
+)
+
 var planIDPattern = regexp.MustCompile(`^plan_[a-z2-7]{26}$`)
 
 type ClipboardKind string
@@ -115,6 +120,12 @@ type CapabilityBinding struct {
 	Capability domain.Capability         `json:"capability"`
 }
 
+type ServerCopyBinding struct {
+	Revision   domain.CapabilityRevision `json:"revision"`
+	Capability domain.Capability         `json:"capability"`
+	MaxBytes   uint64                    `json:"max_bytes"`
+}
+
 type Plan struct {
 	Version                         uint16                   `json:"version"`
 	Origin                          Origin                   `json:"origin,omitempty"`
@@ -143,6 +154,7 @@ type Plan struct {
 	MoveStrategy                    MoveStrategy             `json:"move_strategy,omitempty"`
 	MoveCapability                  *CapabilityBinding       `json:"move_capability,omitempty"`
 	SourceDeleteCapability          *CapabilityBinding       `json:"source_delete_capability,omitempty"`
+	ServerCopy                      *ServerCopyBinding       `json:"server_copy,omitempty"`
 	SameHostCopy                    *SameHostCopyBinding     `json:"same_host_copy,omitempty"`
 	RouteEvidence                   *RouteEvidence           `json:"route_evidence,omitempty"`
 	DeleteRecursive                 bool                     `json:"delete_recursive,omitempty"`
@@ -374,7 +386,9 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 			}
 		}
 	}
-	planner.trySameHostCopy(ctx, &plan)
+	if !tryServerCopy(destinationProvider, sourceSnapshot, destinationSnapshot, &plan) {
+		planner.trySameHostCopy(ctx, &plan)
+	}
 	freezeRouteEvidence(&plan)
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {

@@ -3,8 +3,11 @@ package transfer
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
@@ -105,6 +108,255 @@ func TestValidateExecutionRejectsTamperedRouteEvidence(t *testing.T) {
 				t.Fatal("validateExecution accepted tampered route evidence")
 			}
 		})
+	}
+}
+
+func TestPlannerSelectsDeclaredServerCopyOnlyWithCapabilityAndFacet(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source"), []byte("declared server copy"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH)
+	implementation := &routeServerCopyProvider{endpointKindProvider: base, root: root, advertise: true}
+	planner := NewPlanner(MapResolver{implementation.Descriptor().ID: implementation})
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := routeEvidenceJSON(t, plan)
+	selected := jsonObject(t, evidence, "selected")
+	if route := jsonString(t, selected, "route"); route != "sftp_server_copy" {
+		t.Fatalf("selected route = %q, want sftp_server_copy", route)
+	}
+	if reason := jsonString(t, selected, "reason"); reason != "server_copy_capability_selected" {
+		t.Fatalf("selected reason = %q, want server_copy_capability_selected", reason)
+	}
+	assertRouteCandidateJSON(t, evidence, "sftp_relay", "bounded_relay_default")
+	if implementation.copyCalls != 0 {
+		t.Fatalf("Planner executed server copy %d time(s)", implementation.copyCalls)
+	}
+}
+
+func TestWorkerStagesServerCopyPartThenVerifiesAndCommits(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("server-side staged payload")
+	if err := os.WriteFile(filepath.Join(root, "source"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH)
+	implementation := &routeServerCopyProvider{endpointKindProvider: base, root: root, advertise: true}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	planner := NewPlanner(resolver)
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := NewWorker(resolver, &volatileJournal{}).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeCompleted || result.Final != plan.Final || result.Bytes != uint64(len(payload)) {
+		t.Fatalf("result = %+v", result)
+	}
+	if implementation.copyCalls != 1 {
+		t.Fatalf("server copy calls = %d, want 1", implementation.copyCalls)
+	}
+	actual, err := readRouteTestFile(context.Background(), implementation, plan.Final)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(actual, payload) {
+		t.Fatalf("final payload = %q, want %q", actual, payload)
+	}
+	if _, err := implementation.Stat(context.Background(), providerapi.StatRequest{Location: plan.Part}); !domain.IsCode(err, domain.CodeNotFound) {
+		t.Fatalf("part still exists after commit: %v", err)
+	}
+}
+
+func TestPlannerRequiresBothServerCopyCapabilityAndFacet(t *testing.T) {
+	tests := []struct {
+		name     string
+		provider func(*endpointKindProvider, string) providerapi.Provider
+	}{
+		{
+			name: "capability_without_facet",
+			provider: func(base *endpointKindProvider, _ string) providerapi.Provider {
+				return &routeServerCopyCapabilityOnlyProvider{endpointKindProvider: base}
+			},
+		},
+		{
+			name: "facet_without_capability",
+			provider: func(base *endpointKindProvider, root string) providerapi.Provider {
+				return &routeServerCopyProvider{endpointKindProvider: base, root: root}
+			},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "source"), []byte("strict gate"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			implementation := test.provider(newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH), root)
+			planner := NewPlanner(MapResolver{implementation.Descriptor().ID: implementation})
+			reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Route != RouteSFTPRelay || plan.ServerCopy != nil {
+				t.Fatalf("route = %q, binding = %+v", plan.Route, plan.ServerCopy)
+			}
+			if plan.RouteEvidence == nil || plan.RouteEvidence.Candidates[0].Reason != ReasonServerCopyUnavailable {
+				t.Fatalf("route evidence = %+v", plan.RouteEvidence)
+			}
+		})
+	}
+}
+
+func TestPlannerRejectsUnknownOrDriftedServerCopyDeclaration(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*routeServerCopyProvider)
+	}{
+		{name: "unknown_capability_version", configure: func(provider *routeServerCopyProvider) { provider.capabilityVersion = 2 }},
+		{name: "revision_drift_during_freeze", configure: func(provider *routeServerCopyProvider) { provider.driftDestination = true }},
+		{name: "same_revision_destination_omits_capability", configure: func(provider *routeServerCopyProvider) { provider.omitDestinationCapability = true }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(root, "source"), []byte("versioned gate"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH)
+			implementation := &routeServerCopyProvider{endpointKindProvider: base, root: root, advertise: true}
+			test.configure(implementation)
+			planner := NewPlanner(MapResolver{implementation.Descriptor().ID: implementation})
+			reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Route != RouteSFTPRelay || plan.ServerCopy != nil {
+				t.Fatalf("route = %q, binding = %+v", plan.Route, plan.ServerCopy)
+			}
+		})
+	}
+}
+
+func TestValidateExecutionRejectsTamperedServerCopyBinding(t *testing.T) {
+	plan, _ := newRouteServerCopyPlan(t, nil)
+	tests := []struct {
+		name   string
+		mutate func(*Plan)
+	}{
+		{name: "max_bytes", mutate: func(plan *Plan) { plan.ServerCopy.MaxBytes-- }},
+		{name: "capability_name", mutate: func(plan *Plan) { plan.ServerCopy.Capability.Name = "read" }},
+		{name: "capability_version", mutate: func(plan *Plan) { plan.ServerCopy.Capability.Version = 0 }},
+		{name: "missing_binding", mutate: func(plan *Plan) { plan.ServerCopy = nil }},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tampered := plan
+			binding := *plan.ServerCopy
+			tampered.ServerCopy = &binding
+			test.mutate(&tampered)
+			freezeRouteEvidence(&tampered)
+			if err := validateExecution(tampered); err == nil {
+				t.Fatal("tampered server-copy binding was accepted")
+			}
+		})
+	}
+}
+
+func TestWorkerServerCopyResponseLossAdoptsOnlyVerifiedPart(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, errors.New("copy response lost"))
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	result, err := NewWorker(resolver, &volatileJournal{}).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeCompleted || implementation.copyCalls != 1 {
+		t.Fatalf("result = %+v, calls = %d", result, implementation.copyCalls)
+	}
+}
+
+func TestWorkerServerCopyRejectsCorruptPartWithoutPublishingFinal(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, nil)
+	implementation.corrupt = true
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	_, err := NewWorker(resolver, &volatileJournal{}).Execute(context.Background(), plan, nil)
+	if !domain.IsCode(err, domain.CodeIntegrityFailed) {
+		t.Fatalf("error = %v, want integrity_failed", err)
+	}
+	if _, statErr := implementation.Stat(context.Background(), providerapi.StatRequest{Location: plan.Final}); !domain.IsCode(statErr, domain.CodeNotFound) {
+		t.Fatalf("final was published after corrupt stage: %v", statErr)
+	}
+	if _, statErr := implementation.Stat(context.Background(), providerapi.StatRequest{Location: plan.Part}); statErr != nil {
+		t.Fatalf("auditable part was not retained: %v", statErr)
+	}
+}
+
+func TestWorkerServerCopyCancelBeforeStageDoesNotWrite(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, nil)
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	_, err := NewWorker(resolver, &volatileJournal{}).Execute(context.Background(), plan, ControlFunc(func(Checkpoint) ControlAction {
+		return ControlCancel
+	}))
+	if !errors.Is(err, ErrCanceled) {
+		t.Fatalf("error = %v, want canceled", err)
+	}
+	if implementation.copyCalls != 0 {
+		t.Fatalf("server copy calls = %d, want 0", implementation.copyCalls)
+	}
+	if _, statErr := implementation.Stat(context.Background(), providerapi.StatRequest{Location: plan.Part}); !domain.IsCode(statErr, domain.CodeNotFound) {
+		t.Fatalf("part was written after pre-stage cancel: %v", statErr)
+	}
+}
+
+func TestWorkerRejectsCheckpointThatDoesNotMatchFrozenRouteIdentity(t *testing.T) {
+	plan, implementation := newRouteServerCopyPlan(t, nil)
+	tampered := Checkpoint{
+		JobID:             plan.JobID,
+		Phase:             PhasePrepared,
+		SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
+		Part:              childLocation(plan.DestinationDirectory, ".foreign.part"),
+		Final:             plan.Final,
+	}
+	journal := &volatileJournal{checkpoint: &tampered}
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	if _, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil); err == nil {
+		t.Fatal("checkpoint with a foreign part identity was accepted")
+	}
+	if implementation.copyCalls != 0 {
+		t.Fatalf("server copy calls = %d, want 0", implementation.copyCalls)
 	}
 }
 
@@ -237,4 +489,148 @@ func jsonUint16(t *testing.T, parent map[string]any, key string) uint16 {
 		t.Fatalf("%s = %#v, want uint16", key, parent[key])
 	}
 	return uint16(value)
+}
+
+type routeServerCopyProvider struct {
+	*endpointKindProvider
+	root                      string
+	advertise                 bool
+	responseErr               error
+	corrupt                   bool
+	copyCalls                 int
+	capabilityVersion         uint16
+	driftDestination          bool
+	omitDestinationCapability bool
+	snapshotCalls             int
+}
+
+func (provider *routeServerCopyProvider) Snapshot(ctx context.Context) (domain.EndpointSnapshot, error) {
+	provider.snapshotCalls++
+	snapshot, err := provider.endpointKindProvider.Snapshot(ctx)
+	if err != nil {
+		return domain.EndpointSnapshot{}, err
+	}
+	if !provider.advertise {
+		return snapshot, nil
+	}
+	if provider.omitDestinationCapability && provider.snapshotCalls == 3 {
+		return snapshot, nil
+	}
+	version := provider.capabilityVersion
+	if version == 0 {
+		version = 1
+	}
+	revision := snapshot.Capabilities.Revision
+	if provider.driftDestination && provider.snapshotCalls == 3 {
+		revision.Generation++
+	}
+	items := append(snapshot.Capabilities.Items, domain.Capability{Name: "server_copy", Version: version})
+	snapshot.Capabilities, err = domain.NewCapabilitySnapshot(revision, true, items)
+	return snapshot, err
+}
+
+func (provider *routeServerCopyProvider) ServerCopy(
+	ctx context.Context,
+	source domain.Location,
+	part domain.Location,
+	expected domain.Fingerprint,
+	maxBytes uint64,
+) (domain.Entry, error) {
+	provider.copyCalls++
+	entry, err := provider.Stat(ctx, providerapi.StatRequest{Location: source})
+	if err != nil {
+		return domain.Entry{}, err
+	}
+	if !reflect.DeepEqual(entry.Fingerprint, expected) || entry.Metadata.Size == nil || *entry.Metadata.Size > maxBytes {
+		return domain.Entry{}, &domain.OpError{Code: domain.CodeConflict, Message: "source changed", Operation: "server_copy", EndpointID: source.EndpointID}
+	}
+	payload, err := readRouteTestFile(ctx, provider, source)
+	if err != nil {
+		return domain.Entry{}, err
+	}
+	if provider.corrupt && len(payload) != 0 {
+		payload[0] ^= 0xff
+	}
+	writeHandle, err := provider.OpenWrite(ctx, providerapi.OpenWriteRequest{Location: part, Disposition: providerapi.WriteCreateNew})
+	if err != nil {
+		return domain.Entry{}, err
+	}
+	if err := writeAll(ctx, writeHandle, payload); err != nil {
+		_ = writeHandle.Close(context.Background())
+		return domain.Entry{}, err
+	}
+	if err := writeHandle.Sync(ctx); err != nil {
+		_ = writeHandle.Close(context.Background())
+		return domain.Entry{}, err
+	}
+	if err := writeHandle.Close(ctx); err != nil {
+		return domain.Entry{}, err
+	}
+	partEntry, err := provider.Stat(ctx, providerapi.StatRequest{Location: part})
+	if err != nil {
+		return domain.Entry{}, err
+	}
+	return partEntry, provider.responseErr
+}
+
+type routeServerCopyCapabilityOnlyProvider struct {
+	*endpointKindProvider
+}
+
+func (provider *routeServerCopyCapabilityOnlyProvider) Snapshot(ctx context.Context) (domain.EndpointSnapshot, error) {
+	snapshot, err := provider.endpointKindProvider.Snapshot(ctx)
+	if err != nil {
+		return domain.EndpointSnapshot{}, err
+	}
+	items := append(snapshot.Capabilities.Items, domain.Capability{Name: "server_copy", Version: 1})
+	snapshot.Capabilities, err = domain.NewCapabilitySnapshot(snapshot.Capabilities.Revision, true, items)
+	return snapshot, err
+}
+
+func newRouteServerCopyPlan(t *testing.T, responseErr error) (Plan, *routeServerCopyProvider) {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "destination"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "source"), []byte("frozen server copy payload"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	base := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH)
+	implementation := &routeServerCopyProvider{endpointKindProvider: base, root: root, advertise: true, responseErr: responseErr}
+	planner := NewPlanner(MapResolver{implementation.Descriptor().ID: implementation})
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan, implementation
+}
+
+func readRouteTestFile(ctx context.Context, provider providerapi.Provider, location domain.Location) ([]byte, error) {
+	handle, err := provider.OpenRead(ctx, providerapi.OpenReadRequest{Location: location})
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = handle.Close(context.Background()) }()
+	buffer := make([]byte, 32)
+	var payload []byte
+	for {
+		n, readErr := handle.Read(ctx, buffer)
+		if n > 0 {
+			payload = append(payload, buffer[:n]...)
+		}
+		if readErr != nil {
+			if errors.Is(readErr, io.EOF) {
+				return payload, nil
+			}
+			return nil, readErr
+		}
+		if n == 0 {
+			return nil, errors.New("test provider read made no progress")
+		}
+	}
 }

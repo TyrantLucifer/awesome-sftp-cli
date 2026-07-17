@@ -3,7 +3,7 @@
 - **Updated**: 2026-07-17
 - **Lifecycle**: Stage 5 In Progress
 - **Active stage**: Stage 5 — Direct Transfer & Scale
-- **Current milestone**: M5.1 — unified route evidence MVP green; server-copy and full gate next
+- **Current milestone**: M5.1 — declared server-copy green; fallback/equivalence and restart/UI gates next
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
@@ -13,7 +13,7 @@ Stage 5 is authorized and active on fixed branch `codex/stage5-direct-transfer-s
 
 CI-equivalent baseline `make docs-check` and `make check` pass with Go on `PATH`, `umask 0022`, external build/coverage directories, and the workflow's root-owned `/var/lib/amsftp-tests/<uid>` fixture root. Initial local failures were diagnosed as environment-only: the shell omitted the installed Go SDK, `/home/tianchao.thatcher` is a symlink rejected by security fixtures, and interactive `umask 077` changed deliberately unsafe negative fixtures from 0755/0644 to private modes. No production code was changed to manufacture a green baseline. The current M5.1 MVP also passes `make docs-check`, complete `make check`, `make lint`, and focused transfer/TUI tests in that CI-equivalent environment.
 
-M5.1 preserves `FreezeCopy` as the sole route-freeze boundary and the existing durable `Plan`/Job/Worker path as the sole mutation path. [ADR-0017](docs/architecture/adr/0017-stage5-unified-routing-direct-transfer-and-resource-budgets.md) freezes versioned route evidence, stable route/reason/integrity codes, production-closed Level 2, downgrade rules and resource/scheduler boundaries. The required first RED shared contract failed because `route_evidence` was absent, then turned green for atomic rename, same-Endpoint relay/server-copy candidate, `helper_same_host`, cross-Endpoint relay and production-closed Level 2. Frozen v1 evidence is validated against tampering, re-frozen for derived directory item Plans, exposed by durable JobView and rendered in the Jobs drawer. Existing Plan routes (`local`, `sftp_relay`, `helper_same_host`) remain compatible; new fast/direct routes may only stage the standard Job-owned part, after which the current Worker owns verification, conflict, publication, restart and source deletion. M5.2 remains blocked until M5.1 server-copy, complete route regressions and restart/UI evidence are green.
+M5.1 preserves `FreezeCopy` as the sole route-freeze boundary and the existing durable `Plan`/Job/Worker path as the sole mutation path. [ADR-0017](docs/architecture/adr/0017-stage5-unified-routing-direct-transfer-and-resource-budgets.md) freezes versioned route evidence, stable route/reason/integrity codes, production-closed Level 2, downgrade rules and resource/scheduler boundaries. The required first RED shared contract failed because `route_evidence` was absent, then turned green for atomic rename, same-Endpoint relay/server-copy candidate, `helper_same_host`, cross-Endpoint relay and production-closed Level 2. Frozen v1 evidence is validated against tampering, re-frozen for derived directory item Plans, exposed by durable JobView and rendered in the Jobs drawer. Declared SFTP server-copy is now selected only when explicit capability and facet gates both hold; the Plan freezes capability revision and a 1 TiB hard ceiling, the facet can write only the exact Job-owned part, and the existing Worker independently hashes source and part before its unchanged conflict/commit/source-delete path. Capability-only/facet-only, binding tamper, corrupt same-size part, response-loss adoption and pre-stage cancel tests pass. Ordinary SFTP continues to select bounded relay. M5.2 remains blocked until M5.1 fallback/equivalence, complete route regressions and restart/Log/UI evidence are green.
 
 Stage 4 started on fixed branch `codex/stage4-search-helper` from clean exact-main commit `09821bdbcfc9693b309a1a39ee5121113c033254`, tree `c18e4cf8faf8eb70cc9964e242513b30ab0e79cc`. Exact-main Hosted run [29517334761](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29517334761) completed successfully. M4.1 is complete: bounded Provider-only `f` and explicit slow `g/` are green across IPC/daemon/TUI, real temporary sshd, focused race, and the million-entry/resource fixture (one 128-entry List page, about 65 µs first result and about 6 MiB additional RSS on the development host).
 
@@ -59,7 +59,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Complete the M5.1 declared SFTP server-copy route through the existing Job-owned part and Worker verify/commit path, beginning with a RED provider/route contract for capability present, absent, lying, partial and response-lost behavior. Do not start M5.2 until all M5.1 route persistence/restart/UI gates are green.
+Complete the M5.1 explicit pre-commit fallback/equivalence matrix and durable restart/Log/UI evidence for server-copy, then run the full M5.1 gates. Do not start M5.2 until all M5.1 route persistence/restart/UI gates are green.
 
 ## Current risks
 

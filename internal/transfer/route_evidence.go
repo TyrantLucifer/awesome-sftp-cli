@@ -18,6 +18,7 @@ type RouteReason string
 
 const (
 	ReasonSameEndpointAtomicRename     RouteReason = "same_endpoint_atomic_rename"
+	ReasonServerCopySelected           RouteReason = "server_copy_capability_selected"
 	ReasonServerCopyUnavailable        RouteReason = "server_copy_unavailable"
 	ReasonHelperSameHostSelected       RouteReason = "helper_same_host_selected"
 	ReasonHelperSameHostUnavailable    RouteReason = "helper_same_host_unavailable"
@@ -88,9 +89,17 @@ func freezeRouteEvidence(plan *Plan) {
 	sameSSH := plan.SourceEndpoint.ID == plan.DestinationEndpoint.ID &&
 		plan.SourceEndpoint.Kind == domain.EndpointSSH && plan.DestinationEndpoint.Kind == domain.EndpointSSH
 	if sameSSH && plan.Kind == OperationCopy && plan.Source.Kind == domain.EntryFile {
-		evidence.Candidates = append(evidence.Candidates, RouteDecision{
-			Route: RouteSFTPServerCopy, Reason: ReasonServerCopyUnavailable, Eligible: false,
-		})
+		if plan.Route == RouteSFTPServerCopy && plan.ServerCopy != nil {
+			serverCopy := RouteDecision{Route: RouteSFTPServerCopy, Reason: ReasonServerCopySelected, Eligible: true}
+			evidence.Candidates = append(evidence.Candidates, serverCopy)
+			evidence.Selected = serverCopy
+			evidence.DowngradeBoundary = "frozen_route_no_silent_downgrade"
+			evidence.ProgressSemantics = "phase_only"
+		} else {
+			evidence.Candidates = append(evidence.Candidates, RouteDecision{
+				Route: RouteSFTPServerCopy, Reason: ReasonServerCopyUnavailable, Eligible: false,
+			})
+		}
 		if plan.Route == RouteHelperSameHost {
 			helper := RouteDecision{Route: RouteHelperSameHost, Reason: ReasonHelperSameHostSelected, Eligible: true}
 			evidence.Candidates = append(evidence.Candidates, helper)
@@ -113,8 +122,12 @@ func freezeRouteEvidence(plan *Plan) {
 	if evidence.Selected.Route == "" {
 		evidence.Selected = RouteDecision{Route: plan.Route, Reason: ReasonBoundedRelayDefault, Eligible: true}
 	}
+	fallbackRoute := plan.Route
+	if plan.Route == RouteSFTPServerCopy || plan.Route == RouteHelperSameHost || plan.Route == RouteLevel2Direct {
+		fallbackRoute = RouteSFTPRelay
+	}
 	evidence.Candidates = append(evidence.Candidates, RouteDecision{
-		Route: plan.Route, Reason: ReasonBoundedRelayDefault, Eligible: true,
+		Route: fallbackRoute, Reason: ReasonBoundedRelayDefault, Eligible: true,
 	})
 	plan.RouteEvidence = &evidence
 }

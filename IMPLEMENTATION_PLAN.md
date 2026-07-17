@@ -268,7 +268,7 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Milestone Status**: In Progress
 
-**Current checkpoint**: 首个 RED 共享 route contract 已按要求覆盖五类路线并转绿。Plan 现持久化 v1 selected/candidate/reason/integrity/downgrade/risk/progress evidence，执行前反篡改校验；目录子 Plan 重新冻结自己的 part/final evidence；durable JobView 与 Jobs drawer 显示相同选路事实。M5.1 的 server-copy 数据面、完整 route table/regression 和最终 restart/UI 证据仍待完成，M5.2 保持关闭。
+**Current checkpoint**: 首个 RED 共享 route contract 已按要求覆盖五类路线并转绿。Plan 现持久化 v1 selected/candidate/reason/integrity/downgrade/risk/progress evidence，执行前反篡改校验；目录子 Plan 重新冻结自己的 part/final evidence；durable JobView 与 Jobs drawer 显示相同选路事实。声明式 SFTP server-copy 仅在同一 SSH Endpoint、普通文件、显式 `server_copy` capability 与结构化 facet 同时存在时选中，冻结 capability revision/1 TiB hard ceiling，只写 Job-owned part，并由既有 Worker 独立计算 source/part SHA-256 后执行原有 conflict/commit；谎报、绑定篡改、损坏、响应丢失收养和写前取消测试绿色。完整 route fallback/equivalence、restart 和 Log/UI 回归仍待完成，M5.2 保持关闭。
 
 ### M5.2: Level 2 预检与跨主机直传
 

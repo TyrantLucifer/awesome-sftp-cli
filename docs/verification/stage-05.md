@@ -35,7 +35,7 @@ The development shell initially lacked the installed Go SDK on `PATH`; `/home/ti
 
 ### M5.1 — Route unification and same-Endpoint fast paths
 
-**Status: In Progress.** Baseline, code-boundary audit, durable plan, verification skeleton and accepted ADR are complete. The required first implementation action was a shared route contract which failed in all five cases because the frozen Plan had no `route_evidence`. The minimal implementation now freezes v1 evidence for atomic rename, same-Endpoint server/Helper candidates, bounded relay and production-closed Level 2; records selected/candidate stable reasons, strong integrity, part/final, downgrade, risk and progress semantics; rejects altered evidence before execution; re-freezes derived directory item Plans; round-trips through the durable Job store; and exposes the same evidence through JobView and the Jobs drawer. Existing Worker bytes/conflict/verify/commit/source-delete behavior is unchanged. Declared SFTP server-copy execution, the complete decision table and final restart/UI regressions remain pending.
+**Status: In Progress.** Baseline, code-boundary audit, durable plan, verification skeleton and accepted ADR are complete. The required first implementation action was a shared route contract which failed in all five cases because the frozen Plan had no `route_evidence`. The implementation freezes v1 evidence for atomic rename, same-Endpoint server/Helper candidates, bounded relay and production-closed Level 2; records selected/candidate stable reasons, strong integrity, part/final, downgrade, risk and progress semantics; rejects altered evidence before execution; re-freezes derived directory item Plans; round-trips through the durable Job store; and exposes the same evidence through JobView and the Jobs drawer. Declared SFTP server-copy now requires the same SSH Endpoint, a regular file, explicit versioned `server_copy` capability, an actual structural facet, a frozen 1 TiB hard ceiling and exact source size. Planning performs no write. Execution durably records the exact Job-owned part intent, never lets the facet publish final, independently hashes source and part, and reuses the existing Worker conflict/commit path. Capability-only/facet-only claims remain relay; altered bindings fail before execution; same-size corruption retains part and never publishes final; a lost successful response is adopted only after full verification; pre-stage cancel performs zero copy calls and zero part writes. Complete explicit fallback/equivalence, restart and Log/UI regressions remain pending.
 
 ### M5.2 — Level 2 preflight and direct transfer
 
@@ -57,7 +57,7 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 |---|---|---|
 | CONN-010 | PENDING | Controlled connection reuse and idle recovery not implemented. |
 | JOB-009 | PENDING | Job/global bandwidth policy and deterministic token bucket not implemented. |
-| DIRECT-002 | PENDING | Declared SFTP server-copy route and fault contract not implemented. |
+| DIRECT-002 | IMPLEMENTED | Explicit capability + structural facet gate, immutable binding, exact part staging, independent strong verification, response-loss adoption, corruption isolation and pre-write cancellation pass focused tests; full M5.1/Hosted gates pending before exact PASS. |
 | DIRECT-004 | PENDING | Explicit direct policy and route disclosure not implemented. |
 | DIRECT-005 | PENDING | Per-condition Level 2 preflight matrix not implemented. |
 | DIRECT-006 | PENDING | No-forwarding/delegation/copy integration evidence not implemented. |
@@ -92,6 +92,12 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | M5.1 focused packages | `go test ./internal/tui ./internal/transfer -count=1` | PASS |
 | M5.1 full current gate | `make docs-check && make check` | PASS with external build/coverage directories and CI-equivalent fixture environment |
 | M5.1 lint | `make lint` | PASS: golangci-lint reports 0 issues |
+| M5.1 server-copy selection RED | `go test ./internal/transfer -run '^TestPlannerSelectsDeclaredServerCopyOnlyWithCapabilityAndFacet$' -count=1 -v` | Initial FAIL: selected `sftp_relay`; PASS after explicit capability/facet binding, with zero planning copy calls. |
+| M5.1 server-copy execution RED | `go test ./internal/transfer -run '^TestWorkerStagesServerCopyPartThenVerifiesAndCommits$' -count=1 -v` | Initial FAIL: `unsupported route`; PASS after exact part staging, independent source/part SHA-256 and existing commit. |
+| M5.1 server-copy security/fault group | focused capability/facet, version/revision/declaration drift, binding-tamper, response-loss, corrupt-part and pre-stage-cancel tests in `route_contract_test.go` | PASS; ordinary/unknown/inconsistent SFTP remains relay, no corrupt final publication, no pre-cancel write. |
+| M5.1 recovery identity RED/GREEN | `go test ./internal/transfer -run '^TestWorkerRejectsCheckpointThatDoesNotMatchFrozenRouteIdentity$' -count=1 -v` | Initial FAIL: foreign checkpoint part was accepted and executed; PASS after shared pre-I/O source/part/final identity validation. |
+| M5.1 server-copy transfer regression | `go test ./internal/transfer -count=1` | PASS. |
+| M5.1 server-copy lint | `make lint` | PASS: golangci-lint reports 0 issues after replacing dynamic-path fixture I/O with Provider I/O. |
 
 ## Pending closeout gates
 
