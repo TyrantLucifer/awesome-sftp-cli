@@ -144,7 +144,7 @@ func localLinkAttributes(_ context.Context, path string) (openssh.SFTPAttributes
 	if !ok {
 		return openssh.SFTPAttributes{}, errors.New("missing local stat")
 	}
-	mode := uint32(stat.Mode)
+	mode := uint32(stat.Mode) //nolint:unconvert // syscall.Stat_t.Mode is uint16 on Darwin and uint32 on Linux.
 	uid := stat.Uid
 	return openssh.SFTPAttributes{Mode: &mode, UID: &uid}, nil
 }

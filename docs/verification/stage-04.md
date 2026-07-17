@@ -98,6 +98,8 @@ Planner selects `helper_same_host` only for a regular-file copy within one SSH E
 | final production pollution | production binary string scan plus tracked `dist/**`/`coverage/**` scan | PASS; no fixture key/artifact/child-mode marker or tracked generated output |
 | implementation candidate `145b50ae871aa91f8acc0505d2b6b9bd19bae742` | Hosted push run [29557260133](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557260133) and PR run [29557261524](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557261524) | FAIL: Linux correctly rejected security-sensitive test fixtures rooted below world-writable `/tmp`; production path validation remained fail-closed |
 | trusted-root fixture repair | affected Helper tests, focused race, and `make check` | PASS: executable and persistent-state fixtures now use the CI-provisioned `testkit.PersistentTempDir`; production code is unchanged |
+| repair candidate `5de255740f9cb1a600648e5ab0181615468c66d2` | Hosted push run [29557617101](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557617101) and PR run [29557619380](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557619380) quality jobs | FAIL: Linux-only lint identified an unchecked signed `statfs` block-size conversion and a cross-platform test conversion; the repaired Linux native Helper tests passed |
+| Linux lint repair | native Linux package analysis and focused disk-stats/SFTP adapter tests | PASS: non-positive block sizes fail closed before conversion, and the intentional platform-width test conversion is documented |
 
 ## Pending final gates
 

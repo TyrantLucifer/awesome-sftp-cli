@@ -468,7 +468,10 @@ func (o *LocalOperations) DiskStats(_ context.Context, body json.RawMessage, emi
 	if err := unix.Statfs(request.Path, &status); err != nil {
 		return Completion{Status: "partial_results", Reason: "statfs_failed"}, nil //nolint:nilerr // The protocol models this query failure as a partial completion.
 	}
-	blockSize := uint64(status.Bsize)
+	if status.Bsize <= 0 {
+		return Completion{Status: "partial_results", Reason: "statfs_failed"}, nil
+	}
+	blockSize := uint64(status.Bsize) //nolint:gosec // Positivity is checked above before the signed-to-unsigned conversion on Linux.
 	total, overflow := multiplyUint64(status.Blocks, blockSize)
 	if overflow {
 		return Completion{Status: "partial_results", Reason: "overflow"}, nil
