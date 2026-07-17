@@ -1,6 +1,6 @@
 # Stage 5 Verification Record
 
-- **Status**: In Progress — M5.1/M5.2 complete; M5.3 fault/equivalence active
+- **Status**: In Progress — M5.1–M5.3 complete; M5.4 scale/resource/scheduling active
 - **Updated**: 2026-07-17
 - **Repository root**: `/data00/home/tianchao.thatcher/projects/awsome-sftp-cli`
 - **Branch**: `codex/stage5-direct-transfer-scale`
@@ -29,7 +29,7 @@ The development shell initially lacked the installed Go SDK on `PATH`; `/home/ti
 - Existing `local`, `sftp_relay`, and `helper_same_host` Plans remain compatible. New candidates are `atomic_rename`, `sftp_server_copy`, and test-only `level2_direct`.
 - Integrity policies are `baseline`, `strong`, and `require_strong`; metadata preservation evidence remains separate.
 - `FreezeCopy`/mutation planning freezes the evidence before durable Job creation. The Worker cannot silently reroute and remains the sole verify/commit/source-delete owner.
-- M5.1's shared route contract, route regression, Plan persistence/restart, and Jobs/Log/TUI evidence gates pass. M5.2 is open, while executable Level 2 remains fixture-only and production distribution remains CLOSED.
+- M5.1's shared route contract, route regression, Plan persistence/restart, and Jobs/Log/TUI evidence gates pass. M5.2/M5.3 direct, fault and equivalence gates pass, while executable Level 2 remains fixture-only and production distribution remains CLOSED.
 
 ## Milestone evidence
 
@@ -47,11 +47,11 @@ Only same-package `_test.go` constructors can attach the unexported preflight/da
 
 ### M5.3 — Downgrade, fault and semantic equivalence
 
-**Status: In Progress.** Safe write-before fallback, cancel, exact acknowledged restart adoption and response-loss foundations pass; the remaining injected fault and golden equivalence matrix is active.
+**Status: Complete.** Expired revalidation fail/unknown/malformed evidence downgrades before direct write and restart honors the persisted relay route. Pre-write network/auth/permission/space failures downgrade only after exact part absence; mid-part disconnect retains the exact durable offset and resumes without retransmitting it. Corrupt/short stage results and corrupt part proof remove only an exact acknowledged Job-owned part before relay; drifted or unprovable parts remain isolated and fail. Commit response loss proves remote final, and delete response loss proves source absence before success. Shared route tests cover ask/overwrite/skip/auto-rename, immediate and in-flight cancellation, exact restart, source/target drift, move deletion/source retention, durable JobView/Log evidence and no early source deletion. Deterministic-random, sparse-shaped and multi-chunk large direct/relay goldens have identical bytes, SHA-256, final path, outcome and commit semantics while retaining route-specific audit evidence. Focused/full transfer, race and lint gates pass. Production configuration still has no Level 2 injection surface.
 
 ### M5.4 — Scale, resource budgets and fair scheduling
 
-**Status: Not Started.**
+**Status: In Progress.**
 
 ## Stage 5 feature evidence
 
@@ -66,8 +66,8 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | DIRECT-005 | IMPLEMENTED | All 14 ordered required conditions independently fail/unknown to relay; malformed/stale evidence and expired execution evidence fail closed before direct write. Real dual-sshd closeout remains pending. |
 | DIRECT-006 | IMPLEMENTED | Typed control evidence has no credential/command surface; the dual-sshd native gate proves strict known-host/BatchMode and explicit Agent/GSS/ControlMaster disablement with no credential material in the target data root. Exact-final Hosted evidence remains required. |
 | DIRECT-007 | IMPLEMENTED | Direct protocol/preflight/request/result/control limits, source identity/hash, part/final, target alias and expiry are durable and tamper-checked; expired evidence is revalidated. Exact-final evidence remains required. |
-| DIRECT-008 | IN PROGRESS | Proven absent-part write-before failure durably downgrades direct→relay; full mid-part/commit uncertainty matrix remains pending. |
-| DIRECT-009 | PENDING | Direct-relay golden equivalence not implemented. |
+| DIRECT-008 | IMPLEMENTED | Revalidation and pre-write failures durably downgrade only after safe absence/exact cleanup proof; drifted/unknown parts do not downgrade, mid-part disconnect resumes exact progress, and commit uncertainty proves postconditions. Exact-final Hosted evidence remains required. |
+| DIRECT-009 | IMPLEMENTED | Random, sparse-shaped and multi-chunk direct/relay goldens plus shared conflict/cancel/move/durable-event contracts pass. M5.4 retains the independent 100GB sparse resource gate; exact-final Hosted evidence remains required. |
 | DIRECT-010 | IMPLEMENTED | JobView, Jobs drawer and `job_created` Log show selected reason/integrity/downgrade/progress; runtime safe fallback durably shows planned→actual route and stable reason. Exact-final Hosted evidence remains required for PASS. |
 | SCALE-001 | PENDING | 50k directory production-scale gate not implemented. |
 | SCALE-002 | PENDING | Million-tree transfer/plan gate not implemented. |
@@ -113,6 +113,12 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | M5.2 fixture data plane | focused direct fixture, expiry, cancel, lost-response restart and absent-part downgrade tests | PASS: target-durable checkpoints, remote part/final hashes, zero daemon Provider content reads on direct, fresh expiry preflight, no commit/source delete on cancel, exact restart adoption and safe relay fallback. |
 | M5.2 focused packages/race/lint | `go test ./internal/directprotocol ./internal/helper ./internal/transfer -count=1`; `go test -race` on the same packages; `make lint` | PASS; lint reports 0 issues. |
 | M5.2 native dual remote | `AMSFTP_REAL_SSHD=1 go test -race ./internal/transfer -run '^TestLevel2NativeDualSSHD' -count=1` | PASS: two real sshd/SFTP control sessions, isolated data roots, strict host keys/BatchMode, Agent/GSS/ControlMaster off, direct bytes, remote hashes, zero daemon content reads and no target credential material. |
+| M5.2 exact hosted checkpoint | Commit `9b2cfb5668517440d34e77c0f502e8eccfea8c64`; PR run [29565437259](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29565437259) and push run [29565434495](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29565434495) | PASS: both complete hosted matrices are green, including current/oldstable/native/race/auth/build/reproducibility legs. |
+| M5.3 revalidation and exact cleanup RED/GREEN | focused expired fail/unknown, prepared-route restart, exact/drifted part, corrupt result and corrupt proof tests | Initial RED exposed unsafe error return, missing restart identity and no exact cleanup fallback; PASS after durable fallback identity and proof-bounded cleanup. |
+| M5.3 durable Job/move RED/GREEN | `TestLevel2DurableManagerJobPreservesRouteEvidenceAndMoveSemantics` | Initial compile RED because Manager had no fixture-only data facet; PASS for copy, move delete, delete-response-loss proof and changed-source retention, with selected/actual route Job events. |
+| M5.3 fault matrix | post-preflight auth/permission/space, before-write network, mid-progress disconnect/resume, hang/cancel, stage/part corruption, checkpoint drift, source/target drift and commit/delete response loss | PASS: no false final, early source delete, blind route replay or unproved cleanup; every allowed fallback has durable reason. |
+| M5.3 semantic goldens | `TestLevel2DirectAndRelayGoldenContentCommitAndIntegrityEquivalence`, shared conflict/cancel and durable move tests | PASS: deterministic-random, sparse-shaped and 8 MiB multi-chunk bytes/SHA/final/outcome match; route audit evidence remains explicit. |
+| M5.3 focused/full/race/lint | `go test ./internal/transfer -run '^TestLevel2' -count=1`; `go test ./internal/transfer -count=1`; `go test -race ./internal/directprotocol ./internal/helper ./internal/transfer -count=1`; `make lint` | PASS; lint reports 0 issues. |
 
 ## Hosted CI instability classification
 

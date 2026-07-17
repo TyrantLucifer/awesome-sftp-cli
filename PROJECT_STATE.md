@@ -3,7 +3,7 @@
 - **Updated**: 2026-07-17
 - **Lifecycle**: Stage 5 In Progress
 - **Active stage**: Stage 5 — Direct Transfer & Scale
-- **Current milestone**: M5.3 — direct fault injection and semantic equivalence
+- **Current milestone**: M5.4 — scale, resource budgets and fair scheduling
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
@@ -59,7 +59,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Execute the remaining M5.3 fault/equivalence matrix: post-preflight capability/network/auth/space/source/target changes, short/corrupt write, exact cleanup/reuse, commit uncertainty and direct-vs-relay conflict/move/restart/integrity goldens. M5.2 typed preflight, fixture data plane and real dual-sshd/native auth boundary are complete. Keep production Helper distribution and Level 2 CLOSED.
+Execute M5.4's repeatable 50,000-entry directory, 1,000,000-node tree and 100GB sparse transfer gates, then freeze unified FD/goroutine/process/connection/event/log budgets plus deterministic global/Endpoint/Job bandwidth fairness and idle recovery. M5.3 fault/equivalence is complete: exact cleanup/reuse, post-preflight fault matrix, commit/delete uncertainty, durable Job/move semantics and direct-relay random/sparse/multi-chunk goldens pass. Keep production Helper distribution and Level 2 CLOSED.
 
 ## Current risks
 

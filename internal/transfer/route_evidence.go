@@ -28,6 +28,8 @@ const (
 	ReasonLevel2PreflightFailed        RouteReason = "preflight_failed"
 	ReasonLevel2PreflightUnknown       RouteReason = "preflight_unknown"
 	ReasonLevel2FailedBeforeWrite      RouteReason = "direct_failed_before_write"
+	ReasonLevel2RevalidationFailed     RouteReason = "direct_revalidation_failed"
+	ReasonLevel2PartCleanedForRelay    RouteReason = "direct_part_cleaned_for_relay"
 	ReasonProductionDistributionClosed RouteReason = "production_distribution_closed"
 	ReasonBoundedRelayDefault          RouteReason = "bounded_relay_default"
 )

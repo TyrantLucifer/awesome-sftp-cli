@@ -56,6 +56,7 @@ type Manager struct {
 	resolver  Resolver
 	planner   *Planner
 	sameHost  SameHostCopyBackend
+	level2    level2DataBackend
 	generator domain.Generator
 	now       func() time.Time
 	queue     chan domain.JobID
@@ -645,7 +646,8 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		result, executeErr = manager.executeAtomicMove(plan)
 	} else {
 		journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
-		result, executeErr = NewWorkerWithSameHost(manager.resolver, journal, manager.sameHost).Execute(manager.ctx, plan, manager.control(jobID))
+		worker := &Worker{resolver: manager.resolver, journal: journal, sameHost: manager.sameHost, level2: manager.level2}
+		result, executeErr = worker.Execute(manager.ctx, plan, manager.control(jobID))
 	}
 	if manager.ctx.Err() != nil {
 		return
@@ -674,11 +676,13 @@ func (manager *Manager) execute(jobID domain.JobID) {
 			manager.handleExecutionError(current, checkpointErr, result)
 			return
 		}
-		if checkpoint != nil && checkpoint.DowngradedFrom != "" {
+		if checkpoint != nil && checkpoint.ActualRoute != "" {
 			verificationPayload["planned_route"] = plan.Route
 			verificationPayload["actual_route"] = checkpoint.ActualRoute
-			verificationPayload["downgraded_from"] = checkpoint.DowngradedFrom
 			verificationPayload["route_reason"] = checkpoint.RouteReason
+			if checkpoint.DowngradedFrom != "" {
+				verificationPayload["downgraded_from"] = checkpoint.DowngradedFrom
+			}
 		}
 		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", verificationPayload)
 		if transitionErr == nil {

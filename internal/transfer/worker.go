@@ -156,13 +156,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	if plan.Route == RouteLevel2Direct && worker.level2 == nil {
 		return Result{}, planError(domain.CodeUnsupported, "execute_direct", plan.Part, "Level 2 data-plane fixture is not attached", domain.RetryAfterReplan)
 	}
-	if plan.Route == RouteLevel2Direct {
-		refreshed, err := worker.refreshExpiredLevel2Preflight(ctx, plan, time.Now())
-		if err != nil {
-			return Result{}, err
-		}
-		plan = refreshed
-	}
+	directRevalidationFallback := false
 	if plan.Source.Kind == domain.EntryDirectory {
 		return worker.executeDirectory(ctx, plan, control)
 	}
@@ -202,6 +196,14 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		}
 		return result, nil
 	}
+	if plan.Route == RouteLevel2Direct && (checkpoint == nil || checkpoint.ActualRoute != RouteSFTPRelay) {
+		refreshed, fallback, refreshErr := worker.refreshExpiredLevel2Preflight(ctx, plan, time.Now())
+		if refreshErr != nil {
+			return Result{}, refreshErr
+		}
+		plan = refreshed
+		directRevalidationFallback = fallback
+	}
 
 	buffer := make([]byte, int(plan.BufferBytes))
 	if observer, ok := worker.journal.(bufferObserver); ok {
@@ -224,6 +226,40 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 			current.RouteReason = plannedRouteReason(plan)
 		}
 	}
+	if directRevalidationFallback {
+		reason := ReasonLevel2RevalidationFailed
+		if checkpoint != nil {
+			cleaned, cleanupErr := cleanupExactDirectPartForRelay(ctx, plan, destinationProvider, destination, current)
+			if cleanupErr != nil {
+				return Result{}, cleanupErr
+			}
+			if cleaned {
+				reason = ReasonLevel2PartCleanedForRelay
+			} else if current.Offset == 0 {
+				if _, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part}); !domain.IsCode(statErr, domain.CodeNotFound) {
+					if statErr != nil {
+						return Result{}, statErr
+					}
+					return Result{}, planError(domain.CodeConflict, "preflight_direct", plan.Part, "unacknowledged direct part exists after failed revalidation", domain.RetryAfterReplan)
+				}
+			} else {
+				return Result{}, planError(domain.CodeConflict, "preflight_direct", plan.Part, "expired direct evidence failed with an unprovable checkpoint", domain.RetryAfterReplan)
+			}
+		}
+		current.Phase = PhasePrepared
+		current.Offset = 0
+		current.PartFingerprint = domain.Fingerprint{}
+		current.ChecksumState = nil
+		current.ChecksumHex = ""
+		current.ActualRoute = RouteSFTPRelay
+		current.DowngradedFrom = RouteLevel2Direct
+		current.RouteReason = reason
+		current.DirectFormatVersion = Level2DirectFormatVersion
+		current.DirectNonce = plan.Level2Preflight.Request.Nonce
+		if err := worker.journal.Save(ctx, current); err != nil {
+			return Result{}, fmt.Errorf("execute transfer: persist expired direct route downgrade: %w", err)
+		}
+	}
 	if plan.Route == RouteLevel2Direct {
 		if checkpoint == nil {
 			current.DirectFormatVersion = Level2DirectFormatVersion
@@ -231,7 +267,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		}
 		if current.ActualRoute != RouteSFTPRelay && (current.Phase == PhasePrepared || current.Phase == PhaseStreaming) {
 			result, directErr := worker.executeLevel2Direct(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
-			if !errors.Is(directErr, errLevel2SafeRelayFallback) {
+			if !errors.Is(directErr, errLevel2SafeRelayFallback) && !errors.Is(directErr, errLevel2CleanedPartRelayFallback) {
 				return result, directErr
 			}
 			current.Phase = PhasePrepared
@@ -242,6 +278,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 			current.ActualRoute = RouteSFTPRelay
 			current.DowngradedFrom = RouteLevel2Direct
 			current.RouteReason = ReasonLevel2FailedBeforeWrite
+			if errors.Is(directErr, errLevel2CleanedPartRelayFallback) {
+				current.RouteReason = ReasonLevel2PartCleanedForRelay
+			}
 			if err := worker.journal.Save(ctx, current); err != nil {
 				return Result{}, fmt.Errorf("execute transfer: persist safe direct route downgrade: %w", err)
 			}
@@ -496,7 +535,7 @@ func validCheckpointRoute(checkpoint Checkpoint, plan Plan) bool {
 	}
 	return checkpoint.ActualRoute == RouteSFTPRelay && checkpoint.DowngradedFrom == plan.Route &&
 		(plan.Route == RouteSFTPServerCopy && checkpoint.RouteReason == ReasonServerCopyFailedBeforeWrite ||
-			plan.Route == RouteLevel2Direct && checkpoint.RouteReason == ReasonLevel2FailedBeforeWrite)
+			plan.Route == RouteLevel2Direct && (checkpoint.RouteReason == ReasonLevel2FailedBeforeWrite || checkpoint.RouteReason == ReasonLevel2RevalidationFailed || checkpoint.RouteReason == ReasonLevel2PartCleanedForRelay))
 }
 
 func plannedRouteReason(plan Plan) RouteReason {

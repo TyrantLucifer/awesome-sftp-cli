@@ -18,6 +18,7 @@ import (
 const Level2DirectFormatVersion uint16 = 1
 
 var errLevel2SafeRelayFallback = errors.New("direct transfer may safely fall back to relay")
+var errLevel2CleanedPartRelayFallback = errors.New("direct transfer cleaned its exact part and may safely fall back to relay")
 
 type Level2StageRequest struct {
 	FormatVersion   uint16          `json:"format_version"`
@@ -69,32 +70,38 @@ type level2DataBackend interface {
 	Verify(context.Context, Level2VerifyRequest) (Level2VerifyResult, error)
 }
 
-func (worker *Worker) refreshExpiredLevel2Preflight(ctx context.Context, plan Plan, now time.Time) (Plan, error) {
+func (worker *Worker) refreshExpiredLevel2Preflight(ctx context.Context, plan Plan, now time.Time) (Plan, bool, error) {
 	if plan.Level2Preflight == nil || plan.Level2Preflight.Result == nil || worker.level2 == nil {
-		return Plan{}, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "Level 2 fixture or evidence is unavailable", domain.RetryAfterReplan)
+		return Plan{}, false, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "Level 2 fixture or evidence is unavailable", domain.RetryAfterReplan)
 	}
 	if time.Unix(plan.Level2Preflight.Result.ExpiresAtUnix, 0).After(now) && time.Unix(plan.Level2Preflight.Request.DeadlineUnix, 0).After(now) {
-		return plan, nil
+		return plan, false, nil
 	}
 	request := plan.Level2Preflight.Request
 	requestID, err := domain.NewRequestID(&domain.RandomGenerator{})
 	if err != nil {
-		return Plan{}, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "fresh request correlation could not be created", domain.RetryBackoff)
+		return Plan{}, false, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "fresh request correlation could not be created", domain.RetryBackoff)
 	}
 	nonceBytes := make([]byte, 16)
 	if _, err := rand.Read(nonceBytes); err != nil {
-		return Plan{}, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "fresh request nonce could not be created", domain.RetryBackoff)
+		return Plan{}, false, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "fresh request nonce could not be created", domain.RetryBackoff)
 	}
 	request.RequestID = requestID
 	request.DeadlineUnix = now.Add(directprotocol.MaxRequestDuration / 2).Unix()
 	request.Nonce = hex.EncodeToString(nonceBytes)
 	result, err := worker.level2.Preflight(ctx, request)
 	if err != nil {
-		return Plan{}, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "fresh Level 2 preflight was unavailable", domain.RetryAfterReplan)
+		if ctx.Err() != nil {
+			return Plan{}, false, ctx.Err()
+		}
+		return plan, true, nil
 	}
 	passed, _, err := directprotocol.Evaluate(request, result, now)
-	if err != nil || !passed {
-		return Plan{}, planError(domain.CodeCapabilityLost, "preflight_direct", plan.Part, "fresh Level 2 preflight did not pass", domain.RetryAfterReplan)
+	if err != nil {
+		return plan, true, nil //nolint:nilerr // malformed fresh evidence safely selects the durable relay route.
+	}
+	if !passed {
+		return plan, true, nil
 	}
 	binding := *plan.Level2Preflight
 	binding.Request = request
@@ -104,7 +111,7 @@ func (worker *Worker) refreshExpiredLevel2Preflight(ctx context.Context, plan Pl
 	binding.Outcome = Level2PreflightPassed
 	binding.FirstCheck = directprotocol.Check{}
 	plan.Level2Preflight = &binding
-	return plan, nil
+	return plan, false, nil
 }
 
 func (worker *Worker) executeLevel2Direct(
@@ -198,6 +205,14 @@ func (worker *Worker) executeLevel2Direct(
 		return Result{Final: plan.Final, Bytes: progressCheckpoint.Offset, PartRetained: progressCheckpoint.Offset > 0}, stageErr
 	}
 	if result.Part != plan.Part || result.Size != expectedSize || result.SHA256 != expectedSHA || result.Committed {
+		cleaned, cleanupErr := cleanupExactDirectPartForRelay(ctx, plan, destinationProvider, destination, progressCheckpoint)
+		if cleanupErr != nil {
+			return Result{}, cleanupErr
+		}
+		if cleaned {
+			*checkpoint = progressCheckpoint
+			return Result{}, errLevel2CleanedPartRelayFallback
+		}
 		return Result{}, planError(domain.CodeIntegrityFailed, "stage_direct", plan.Part, "direct result violates the frozen Plan", domain.RetryNever)
 	}
 	if expectedSize > 0 && progressCheckpoint.Offset != expectedSize {
@@ -212,6 +227,16 @@ func (worker *Worker) executeLevel2Direct(
 	}
 	checksum, err := worker.verifyLevel2(ctx, plan, plan.Part, expectedSize, expectedSHA)
 	if err != nil {
+		if domain.IsCode(err, domain.CodeIntegrityFailed) {
+			cleaned, cleanupErr := cleanupExactDirectPartForRelay(ctx, plan, destinationProvider, destination, progressCheckpoint)
+			if cleanupErr != nil {
+				return Result{}, cleanupErr
+			}
+			if cleaned {
+				*checkpoint = progressCheckpoint
+				return Result{}, errLevel2CleanedPartRelayFallback
+			}
+		}
 		return Result{}, err
 	}
 	currentSource, err := source.Stat(ctx, providerapi.StatRequest{Location: plan.Source.Location})
@@ -219,7 +244,8 @@ func (worker *Worker) executeLevel2Direct(
 		return Result{}, err
 	}
 	if currentSource.Kind != plan.Source.Kind || !reflect.DeepEqual(currentSource.Fingerprint, plan.Source.Fingerprint) {
-		return Result{}, planError(domain.CodeConflict, "verify_direct_source", plan.Source.Location, "source changed during direct transfer", domain.RetryAfterConflict)
+		return Result{Final: plan.Final, Bytes: expectedSize, SHA256: checksum, PartRetained: true},
+			planError(domain.CodeConflict, "verify_direct_source", plan.Source.Location, "source changed during direct transfer", domain.RetryAfterConflict)
 	}
 	progressCheckpoint.Offset = expectedSize
 	progressCheckpoint.ChecksumHex = checksum
@@ -234,6 +260,42 @@ func (worker *Worker) executeLevel2Direct(
 	}
 	*checkpoint = progressCheckpoint
 	return worker.commit(ctx, plan, destinationProvider, destination, progressCheckpoint, buffer)
+}
+
+func cleanupExactDirectPartForRelay(
+	ctx context.Context,
+	plan Plan,
+	destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	checkpoint Checkpoint,
+) (bool, error) {
+	if checkpoint.Offset == 0 || checkpoint.PartFingerprint.Strength() == domain.FingerprintWeak {
+		return false, nil
+	}
+	if _, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Final}); err == nil {
+		return false, nil
+	} else if !domain.IsCode(err, domain.CodeNotFound) {
+		return false, err
+	}
+	part, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+	if err != nil {
+		return false, err
+	}
+	if part.Kind != domain.EntryFile || part.Metadata.Size == nil || *part.Metadata.Size != checkpoint.Offset ||
+		!reflect.DeepEqual(part.Fingerprint, checkpoint.PartFingerprint) {
+		return false, nil
+	}
+	expected := cloneFingerprint(part.Fingerprint)
+	if err := destination.Remove(ctx, providerapi.RemoveRequest{Location: plan.Part, Expected: &expected}); err != nil {
+		return false, err
+	}
+	if _, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part}); !domain.IsCode(err, domain.CodeNotFound) {
+		if err == nil {
+			return false, planError(domain.CodeConflict, "cleanup_direct_part", plan.Part, "exact direct part remained after removal", domain.RetryAfterConflict)
+		}
+		return false, err
+	}
+	return true, nil
 }
 
 func (worker *Worker) verifyLevel2(ctx context.Context, plan Plan, location domain.Location, expectedSize uint64, expectedSHA string) (string, error) {

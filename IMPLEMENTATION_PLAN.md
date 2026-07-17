@@ -290,7 +290,9 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 网络/认证/空间/能力/source/target 变化、short/corrupt write、Helper crash/hang、daemon restart、cancel、checkpoint mismatch、commit response loss 和 source-delete uncertainty 矩阵；random/sparse/large direct-relay golden equivalence；浏览/Search/Preview/Edit/Cache 与无关 Job 可用性回归。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Complete
+
+**Current checkpoint**: expired preflight fail/unknown/malformed evidence now durably selects relay before direct write and restart honors that actual route without re-probing. Acknowledged exact parts are reused or removed only after exact Job/path/size/fingerprint/hash proof; drifted or unprovable parts remain isolated and block fallback. The fault matrix covers post-preflight network/auth/permission/space failures, mid-part disconnect/resume, hang/cancel, corrupt/short results, part-proof corruption, checkpoint mismatch, source/target drift, stage/commit/delete response loss and source-delete uncertainty. Direct/relay share ask/overwrite/skip/auto-rename, cancellation, durable Job/event, move deletion/source-retention and strong-integrity semantics; deterministic-random, sparse-shaped and multi-chunk large goldens produce identical bytes, SHA-256, final and outcome. Focused/full transfer, race and lint gates pass. Production Level 2 remains CLOSED. M5.4 owns the 50k/1M/100GB and scheduler/resource evidence.
 
 ### M5.4: 规模、资源预算与公平调度
 
@@ -300,7 +302,7 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 50,000-entry 首屏/滚动/过滤/render/RSS fixture；1,000,000-node browse/search/plan/copy/cancel/restart 资源曲线；100GB sparse local/SFTP relay/test-only direct pause/resume/restart/cancel/hash/limit；多 Endpoint/多大小 Job 的 fairness/backpressure/idle recovery；race、soak、benchmark 环境与趋势记录。
 
-**Milestone Status**: Not Started
+**Milestone Status**: In Progress
 
 ## Stage 6: Hardening & 1.0 Release
 
