@@ -59,6 +59,56 @@ func TestCreateJobIsTransactionalAndRequestIdempotent(t *testing.T) {
 	}
 }
 
+func TestHelperRemovalLeaseRejectsPinnedArtifactAndExcludesNewJobAdmission(t *testing.T) {
+	ctx := context.Background()
+	store, database := newTestStore(t, ctx)
+	artifact := domain.HelperArtifactID{
+		ProtocolMajor: 1, Version: "4.0.0", OS: "linux", Arch: "amd64", SHA256: strings.Repeat("a", 64),
+	}
+	endpointID := domain.EndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	request := createRequest(t, 21)
+	request.Route = "helper_same_host"
+	request.DestinationJSON = stringPointer(`{"same_host_copy":{"endpoint_id":"ep_aaaaaaaaaaaaaaaaaaaaaaaaaa","artifact_id":{"protocol_major":1,"version":"4.0.0","os":"linux","arch":"amd64","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}}`)
+	if _, _, err := store.Create(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.AcquireHelperRemoval(ctx, endpointID, artifact); err == nil || !strings.Contains(err.Error(), "pinned") {
+		t.Fatalf("pinned removal lease error = %v", err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE jobs SET state='completed',terminal_summary='done' WHERE job_id=?", request.JobID); err != nil {
+		t.Fatal(err)
+	}
+	secondStore, err := New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, err := store.AcquireHelperRemoval(ctx, endpointID, artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedContext, cancel := context.WithTimeout(ctx, 25*time.Millisecond)
+	if _, err := secondStore.AcquireHelperJobAdmission(blockedContext); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("job admission through a second Store while removal lease held error = %v", err)
+	}
+	cancel()
+	release()
+	admissionRelease, err := secondStore.AcquireHelperJobAdmission(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedContext, cancel = context.WithTimeout(ctx, 25*time.Millisecond)
+	if _, err := store.AcquireHelperRemoval(blockedContext, endpointID, artifact); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("removal while a second Store holds planning admission error = %v", err)
+	}
+	cancel()
+	admissionRelease()
+	if release, err := store.AcquireHelperRemoval(ctx, endpointID, artifact); err != nil {
+		t.Fatalf("removal after planning admission release: %v", err)
+	} else {
+		release()
+	}
+}
+
 func TestCreateSyncBackAtomicallyBindsEditSessionAndSurvivesRestart(t *testing.T) {
 	t.Parallel()
 

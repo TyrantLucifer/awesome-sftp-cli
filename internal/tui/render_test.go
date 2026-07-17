@@ -206,6 +206,45 @@ func TestRendererShowsCapabilityRevisionAndMultilinePreviewState(t *testing.T) {
 	}
 }
 
+func TestRendererShowsHelperLevelVersionCapabilitiesAndDegradationReason(t *testing.T) {
+	model := testModel(t)
+	snapshot, err := domain.NewCapabilitySnapshot(
+		domain.CapabilityRevision{SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Generation: 4}, true,
+		[]domain.Capability{{Name: "read", Version: 1}, {Name: "helper_status", Version: 1, Constraints: []domain.CapabilityConstraint{
+			{Name: "level", Value: "1"}, {Name: "version", Value: "4.0.0"}, {Name: "capabilities", Value: "content_search,filename_search"}, {Name: "reason", Value: "none"},
+		}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := model.Panes[Left]
+	left.CapabilityGeneration = snapshot.Revision.Generation
+	left.Capabilities = snapshot
+	model.Panes[Left] = left
+	surface := newMemorySurface(140, 10)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"helper:L1", "v4.0.0", "content_search,filename_search"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Helper status missing %q:\n%s", want, got)
+		}
+	}
+
+	status, _ := snapshot.Lookup("helper_status")
+	status.Constraints = []domain.CapabilityConstraint{{Name: "level", Value: "0"}, {Name: "reason", Value: "session_failed"}, {Name: "recovery", Value: "retry explicitly or continue with Level 0"}}
+	snapshot, err = domain.NewCapabilitySnapshot(snapshot.Revision, true, []domain.Capability{{Name: "read", Version: 1}, status})
+	if err != nil {
+		t.Fatal(err)
+	}
+	left.Capabilities = snapshot
+	model.Panes[Left] = left
+	surface = newMemorySurface(140, 10)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	if got = surface.String(); !strings.Contains(got, "helper:L0 session_failed") {
+		t.Fatalf("Helper degradation missing:\n%s", got)
+	}
+}
+
 func TestRendererShowsMinimumSizeGuidanceInsteadOfBlankScreen(t *testing.T) {
 	model := testModel(t)
 	surface := newMemorySurface(2, 2)

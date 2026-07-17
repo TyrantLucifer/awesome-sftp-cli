@@ -30,12 +30,14 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
+	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
 	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/sshconfig"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/editstore"
@@ -53,10 +55,21 @@ const authenticationTimeout = 2 * time.Minute
 const durableLocalEndpointID domain.EndpointID = "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func DefaultHandlers() Handlers {
-	unsupported := func(context.Context, []string, io.Writer, io.Writer) error {
-		return errors.New("role is not available in this stage")
+	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: runHelper}
+}
+
+func runHelper(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+	return runHelperWithIdentity(ctx, args, os.Stdin, stdout, os.Geteuid())
+}
+
+func runHelperWithIdentity(ctx context.Context, args []string, stdin io.Reader, stdout io.Writer, euid int) error {
+	if len(args) != 1 || args[0] != "serve" {
+		return errors.New("helper accepts only the restricted serve command")
 	}
-	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: unsupported}
+	if euid == 0 {
+		return errors.New("helper refuses to run with effective uid 0")
+	}
+	return helperruntime.Serve(ctx, stdin, stdout, helperruntime.NewLocalServiceConfig(helperruntime.Version{Major: 4}))
 }
 
 func runtimePaths() (platform.Paths, platform.ValidationPurpose, error) {
@@ -612,6 +625,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	var paneRecoveries [2]paneRecovery
 	var previewGeneration uint64
 	var previewCancel context.CancelFunc
+	var searchGeneration uint64
+	var searchCancel context.CancelFunc
 	var commandMu sync.Mutex
 	var commandCancel context.CancelFunc
 	var commandGeneration uint64
@@ -890,6 +905,100 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				previewCancel = nil
 			}
 			return
+		case tui.IntentSearchFilename:
+			if searchCancel != nil {
+				searchCancel()
+			}
+			requestCtx, cancel := context.WithCancel(runCtx)
+			searchCancel = cancel
+			searchGeneration++
+			generation := searchGeneration
+			requestID, requestIDErr := domain.NewRequestID(previewRequestGenerator)
+			if requestIDErr != nil {
+				model.Notice = "filename search request failed: " + requestIDErr.Error()
+				return
+			}
+			activeClient := client
+			frozenIntent := intent
+			pendingIdentity := pendingFilenameSearchIdentity(requestID, generation, frozenIntent)
+			go func() {
+				defer cancel()
+				select {
+				case actions <- tui.BeginSearch{Identity: pendingIdentity}:
+				case <-requestCtx.Done():
+					return
+				}
+				identity, identityErr := filenameSearchIdentity(requestCtx, activeClient, pendingIdentity)
+				if identityErr != nil {
+					if requestCtx.Err() == nil {
+						actions <- tui.SearchFailed{Identity: pendingIdentity, Message: "filename search snapshot failed: " + clientErrorMessage(identityErr)}
+					}
+					return
+				}
+				select {
+				case actions <- tui.BeginSearch{Identity: identity}:
+				case <-requestCtx.Done():
+					return
+				}
+				streamFilenameSearch(requestCtx, activeClient, identity, actions)
+			}()
+			return
+		case tui.IntentSearchContent:
+			if searchCancel != nil {
+				searchCancel()
+			}
+			requestCtx, cancel := context.WithCancel(runCtx)
+			searchCancel = cancel
+			searchGeneration++
+			generation := searchGeneration
+			requestID, requestIDErr := domain.NewRequestID(previewRequestGenerator)
+			if requestIDErr != nil {
+				model.Notice = "content search request failed: " + requestIDErr.Error()
+				return
+			}
+			activeClient := client
+			pendingIdentity := pendingContentSearchIdentity(requestID, generation, intent)
+			go func() {
+				defer cancel()
+				select {
+				case actions <- tui.BeginContentSearch{Identity: pendingIdentity}:
+				case <-requestCtx.Done():
+					return
+				}
+				identity, identityErr := contentSearchIdentity(requestCtx, activeClient, pendingIdentity)
+				if identityErr != nil {
+					if requestCtx.Err() == nil {
+						actions <- tui.ContentSearchFailed{Identity: pendingIdentity, Message: "content search snapshot failed: " + clientErrorMessage(identityErr)}
+					}
+					return
+				}
+				select {
+				case actions <- tui.BeginContentSearch{Identity: identity}:
+				case <-requestCtx.Done():
+					return
+				}
+				streamContentSearch(requestCtx, activeClient, identity, actions)
+			}()
+			return
+		case tui.IntentSearchCancel:
+			if searchCancel != nil {
+				searchCancel()
+				searchCancel = nil
+			}
+			requestID := string(intent.SearchIdentity.RequestID)
+			if requestID == "" {
+				requestID = string(intent.ContentSearchIdentity.RequestID)
+			}
+			if requestID != "" {
+				activeClient := client
+				go func() {
+					cancelCtx, cancel := context.WithTimeout(runCtx, 2*time.Second)
+					defer cancel()
+					var response ipc.SearchCancelResponse
+					_ = activeClient.Call(cancelCtx, daemon.SearchCancel, ipc.SearchCancelRequest{RequestID: requestID}, &response)
+				}()
+			}
+			return
 		case tui.IntentRunCommand:
 			frozenIntent := intent
 			environment := append([]string(nil), os.Environ()...)
@@ -1027,6 +1136,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		if previewCancel != nil {
 			previewCancel()
 		}
+		if searchCancel != nil {
+			searchCancel()
+			searchCancel = nil
+		}
 		go func() {
 			result := daemonRecoveryResult{}
 			result.client, result.err = connectDaemonAfterLoss(runCtx, defaultReconnectPolicy(), func(ctx context.Context) (*daemon.Client, error) {
@@ -1063,6 +1176,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	startIntent(tui.Intent{Kind: tui.IntentEditRecoverable})
 	jobRefreshTicker := time.NewTicker(500 * time.Millisecond)
 	defer jobRefreshTicker.Stop()
+	helperStatusTicker := time.NewTicker(time.Second)
+	defer helperStatusTicker.Stop()
+	helperStatusRefresh := make(chan struct{}, 1)
 	leaseHeartbeatTicker := time.NewTicker(cache.DefaultLeaseHeartbeat)
 	defer leaseHeartbeatTicker.Stop()
 	var pendingTerminalImage *tui.PreviewTerminalImage
@@ -1084,6 +1200,24 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				startIntent(tui.Intent{Kind: tui.IntentJobList})
 			case tui.DrawerLog:
 				startIntent(tui.Intent{Kind: tui.IntentDiagnosticList, Limit: 256})
+			}
+		case <-helperStatusTicker.C:
+			targets := make([]helperStatusRefreshTarget, 0, 2)
+			for pane := tui.Left; pane <= tui.Right; pane++ {
+				state := model.Panes[pane]
+				if state.Endpoint.Kind == domain.EndpointSSH && state.Connection == domain.StateReady && state.Capabilities.Revision.SessionID != "" {
+					targets = append(targets, helperStatusRefreshTarget{pane: pane, endpointID: state.Endpoint.ID})
+				}
+			}
+			if len(targets) != 0 {
+				select {
+				case helperStatusRefresh <- struct{}{}:
+					go func(activeClient *daemon.Client, targets []helperStatusRefreshTarget) {
+						defer func() { <-helperStatusRefresh }()
+						refreshHelperStatus(runCtx, activeClient, targets, actions)
+					}(client, targets)
+				default:
+				}
 			}
 		case <-leaseHeartbeatTicker.C:
 			if err := editFlow.Heartbeat(runCtx); err != nil {
@@ -1247,6 +1381,32 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			for _, intent := range intents {
 				startIntent(intent)
 			}
+		}
+	}
+}
+
+type helperStatusRefreshTarget struct {
+	pane       tui.PaneID
+	endpointID domain.EndpointID
+}
+
+func refreshHelperStatus(ctx context.Context, client *daemon.Client, targets []helperStatusRefreshTarget, actions chan<- tui.Action) {
+	for _, target := range targets {
+		refreshCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		var response ipc.ProviderSnapshotResponse
+		err := client.Call(refreshCtx, daemon.ProviderSnapshot, ipc.ProviderSnapshotRequest{EndpointID: string(target.endpointID)}, &response)
+		cancel()
+		if err != nil {
+			continue
+		}
+		capabilities, err := capabilitySnapshotFromWire(response)
+		if err != nil {
+			continue
+		}
+		select {
+		case actions <- tui.PaneCapabilitiesRefreshed{Pane: target.pane, EndpointID: target.endpointID, Capabilities: capabilities}:
+		case <-ctx.Done():
+			return
 		}
 	}
 }
@@ -1578,6 +1738,177 @@ func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, g
 			return
 		}
 		cursor = response.NextCursor
+	}
+}
+
+func pendingFilenameSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent) search.Identity {
+	return search.Identity{
+		RequestID:    requestID,
+		EndpointID:   intent.Location.EndpointID,
+		UIGeneration: generation,
+		Scope:        intent.Location,
+		Options: search.Options{
+			Pattern: intent.SearchPattern, Target: search.MatchRelativePath, CaseSensitive: false,
+			IncludeHidden: false, Symlinks: search.SymlinkNever, Ignore: search.IgnoreNone,
+			Types: search.TypeFilter{Files: true, Directories: true, Symlinks: true},
+		},
+		Budget: search.Budget{
+			PageItems: 256, EventBuffer: 64, ConcurrentLists: 1, MaxDepth: 128,
+			MaxEntries: 1_000_000, MaxResults: tui.SearchResultLimit,
+			MaxOutputBytes: 8 << 20, MaxDuration: 5 * time.Minute,
+		},
+	}
+}
+
+func filenameSearchIdentity(ctx context.Context, client *daemon.Client, pending search.Identity) (search.Identity, error) {
+	var response ipc.ProviderSnapshotResponse
+	if err := client.Call(ctx, daemon.ProviderSnapshot, ipc.ProviderSnapshotRequest{EndpointID: string(pending.EndpointID)}, &response); err != nil {
+		return search.Identity{}, err
+	}
+	endpointID, err := domain.ParseEndpointID(response.EndpointID)
+	if err != nil {
+		return search.Identity{}, err
+	}
+	if endpointID != pending.EndpointID {
+		return search.Identity{}, errors.New("filename search snapshot endpoint changed")
+	}
+	sessionID, err := domain.ParseSessionID(response.SessionID)
+	if err != nil {
+		return search.Identity{}, err
+	}
+	if response.Generation == 0 {
+		return search.Identity{}, errors.New("filename search snapshot generation is missing")
+	}
+	pending.SessionID = sessionID
+	pending.EndpointGeneration = response.Generation
+	return pending, nil
+}
+
+func streamFilenameSearch(ctx context.Context, client *daemon.Client, identity search.Identity, actions chan<- tui.Action) {
+	var started ipc.SearchFilenameStartResponse
+	if err := client.Call(ctx, daemon.SearchFilenameStart, ipc.SearchFilenameStartRequest{Identity: ipc.EncodeSearchIdentity(identity)}, &started); err != nil {
+		if ctx.Err() == nil {
+			actions <- tui.SearchFailed{Identity: identity, Message: "filename search failed: " + clientErrorMessage(err)}
+		}
+		return
+	}
+	done := started.Done
+	defer func() {
+		if done {
+			return
+		}
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var response ipc.SearchCancelResponse
+		_ = client.Call(cancelCtx, daemon.SearchCancel, ipc.SearchCancelRequest{RequestID: started.RequestID}, &response)
+	}()
+	for !done {
+		var page ipc.SearchFilenameNextResponse
+		if err := client.Call(ctx, daemon.SearchFilenameNext, ipc.SearchFilenameNextRequest{RequestID: started.RequestID, Limit: 128}, &page); err != nil {
+			if ctx.Err() == nil {
+				actions <- tui.SearchFailed{Identity: identity, Message: "filename search stream failed: " + clientErrorMessage(err)}
+			}
+			return
+		}
+		events := make([]search.Event, 0, len(page.Events))
+		for _, wire := range page.Events {
+			event, err := ipc.DecodeSearchEvent(wire)
+			if err != nil {
+				actions <- tui.SearchFailed{Identity: identity, Message: "filename search event failed validation: " + err.Error()}
+				return
+			}
+			events = append(events, event)
+		}
+		if len(events) != 0 {
+			select {
+			case actions <- tui.SearchEvents{Events: events}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		done = page.Done
+	}
+}
+
+func pendingContentSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent) search.ContentIdentity {
+	return search.ContentIdentity{
+		RequestID: requestID, EndpointID: intent.Location.EndpointID, UIGeneration: generation, Scope: intent.Location,
+		Options: search.ContentOptions{Pattern: intent.SearchPattern, PatternType: search.PatternLiteral, CaseSensitive: false, Binary: search.BinarySkip},
+		Budget: search.ContentBudget{
+			PageItems: 128, EventBuffer: 32, MaxDepth: 32, MaxEntries: 10_000, MaxFiles: 1_000,
+			MaxResults: 5_000, MaxMatchesPerFile: 100, MaxFileBytes: 1 << 20,
+			MaxReadBytes: 32 << 20, MaxSnippetBytes: 512, MaxOutputBytes: 8 << 20, MaxDuration: 2 * time.Minute,
+		},
+	}
+}
+
+func contentSearchIdentity(ctx context.Context, client *daemon.Client, pending search.ContentIdentity) (search.ContentIdentity, error) {
+	var response ipc.ProviderSnapshotResponse
+	if err := client.Call(ctx, daemon.ProviderSnapshot, ipc.ProviderSnapshotRequest{EndpointID: string(pending.EndpointID)}, &response); err != nil {
+		return search.ContentIdentity{}, err
+	}
+	endpointID, err := domain.ParseEndpointID(response.EndpointID)
+	if err != nil {
+		return search.ContentIdentity{}, err
+	}
+	if endpointID != pending.EndpointID {
+		return search.ContentIdentity{}, errors.New("content search snapshot endpoint changed")
+	}
+	sessionID, err := domain.ParseSessionID(response.SessionID)
+	if err != nil {
+		return search.ContentIdentity{}, err
+	}
+	if response.Generation == 0 {
+		return search.ContentIdentity{}, errors.New("content search snapshot generation is missing")
+	}
+	pending.SessionID = sessionID
+	pending.EndpointGeneration = response.Generation
+	return pending, nil
+}
+
+func streamContentSearch(ctx context.Context, client *daemon.Client, identity search.ContentIdentity, actions chan<- tui.Action) {
+	var started ipc.SearchContentStartResponse
+	if err := client.Call(ctx, daemon.SearchContentStart, ipc.SearchContentStartRequest{Identity: ipc.EncodeContentSearchIdentity(identity)}, &started); err != nil {
+		if ctx.Err() == nil {
+			actions <- tui.ContentSearchFailed{Identity: identity, Message: "content search failed: " + clientErrorMessage(err)}
+		}
+		return
+	}
+	done := started.Done
+	defer func() {
+		if done {
+			return
+		}
+		cancelCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		var response ipc.SearchCancelResponse
+		_ = client.Call(cancelCtx, daemon.SearchCancel, ipc.SearchCancelRequest{RequestID: started.RequestID}, &response)
+	}()
+	for !done {
+		var page ipc.SearchContentNextResponse
+		if err := client.Call(ctx, daemon.SearchContentNext, ipc.SearchContentNextRequest{RequestID: started.RequestID, Limit: 128}, &page); err != nil {
+			if ctx.Err() == nil {
+				actions <- tui.ContentSearchFailed{Identity: identity, Message: "content search stream failed: " + clientErrorMessage(err)}
+			}
+			return
+		}
+		events := make([]search.ContentEvent, 0, len(page.Events))
+		for _, wire := range page.Events {
+			event, err := ipc.DecodeContentSearchEvent(wire)
+			if err != nil {
+				actions <- tui.ContentSearchFailed{Identity: identity, Message: "content search event failed validation: " + err.Error()}
+				return
+			}
+			events = append(events, event)
+		}
+		if len(events) != 0 {
+			select {
+			case actions <- tui.ContentSearchEvents{Events: events}:
+			case <-ctx.Done():
+				return
+			}
+		}
+		done = page.Done
 	}
 }
 

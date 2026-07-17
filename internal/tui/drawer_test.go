@@ -102,14 +102,14 @@ func TestDrawerRendererUsesBoundedBottomRegionAtNormalAndNarrowSizes(t *testing.
 	model.Jobs = []transfer.JobView{{
 		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth},
 		Source:   domain.Location{Path: "/source"}, Final: domain.Location{Path: "/final"},
-		Phase: transfer.PhaseStreaming, Bytes: 42, Items: 1, WaitingReason: "waiting_auth",
+		Phase: transfer.PhaseStreaming, Route: transfer.RouteHelperSameHost, Bytes: 42, Items: 1, WaitingReason: "waiting_auth",
 	}}
 
 	for _, size := range []struct{ width, height int }{{100, 16}, {32, 7}} {
 		surface := newMemorySurface(size.width, size.height)
 		stats := Render(surface, model, RenderOptions{Overscan: 1})
 		got := surface.String()
-		for _, want := range []string{"Preview", "[Jobs]", "Log", "waiting_auth"} {
+		for _, want := range []string{"Preview", "[Jobs]", "Log", "waiting_auth", "helper_same_host"} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("%dx%d drawer missing %q:\n%s", size.width, size.height, want, got)
 			}

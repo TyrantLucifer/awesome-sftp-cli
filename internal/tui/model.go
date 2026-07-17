@@ -12,6 +12,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
@@ -26,24 +27,27 @@ const (
 type Mode string
 
 const (
-	ModeNormal            Mode = "normal"
-	ModeFilter            Mode = "filter"
-	ModeVisual            Mode = "visual"
-	ModeVisualLine        Mode = "visual_line"
-	ModeAuth              Mode = "auth"
-	ModeWorkspace         Mode = "workspace_save"
-	ModePath              Mode = "path"
-	ModeEndpoint          Mode = "endpoint"
-	ModeRename            Mode = "rename"
-	ModeMoveConfirm       Mode = "move_confirm"
-	ModeDeleteConfirm     Mode = "delete_confirm"
-	ModeCommand           Mode = "command"
-	ModeCommandConfirm    Mode = "command_confirm"
-	ModeEditDecision      Mode = "edit_decision"
-	ModeEditSaveAs        Mode = "edit_save_as"
-	ModeEditLaunchConfirm Mode = "edit_launch_confirm"
-	ModeEditRecovery      Mode = "edit_recovery"
-	ModeCacheClearConfirm Mode = "cache_clear_confirm"
+	ModeNormal               Mode = "normal"
+	ModeFilter               Mode = "filter"
+	ModeFilenameSearch       Mode = "filename_search"
+	ModeContentSearch        Mode = "content_search"
+	ModeContentSearchConfirm Mode = "content_search_confirm"
+	ModeVisual               Mode = "visual"
+	ModeVisualLine           Mode = "visual_line"
+	ModeAuth                 Mode = "auth"
+	ModeWorkspace            Mode = "workspace_save"
+	ModePath                 Mode = "path"
+	ModeEndpoint             Mode = "endpoint"
+	ModeRename               Mode = "rename"
+	ModeMoveConfirm          Mode = "move_confirm"
+	ModeDeleteConfirm        Mode = "delete_confirm"
+	ModeCommand              Mode = "command"
+	ModeCommandConfirm       Mode = "command_confirm"
+	ModeEditDecision         Mode = "edit_decision"
+	ModeEditSaveAs           Mode = "edit_save_as"
+	ModeEditLaunchConfirm    Mode = "edit_launch_confirm"
+	ModeEditRecovery         Mode = "edit_recovery"
+	ModeCacheClearConfirm    Mode = "cache_clear_confirm"
 )
 
 type SortKey string
@@ -358,13 +362,39 @@ type PreviewRequestIdentity struct {
 	UIGeneration       uint64
 }
 
+const SearchResultLimit = 10_000
+
+type SearchState struct {
+	Identity search.Identity
+	Query    string
+	Results  []search.Result
+	Problems []search.Problem
+	Cursor   int
+	Loading  bool
+	Terminal search.Terminal
+	Message  string
+}
+
+type ContentSearchState struct {
+	Identity search.ContentIdentity
+	Query    string
+	Results  []search.ContentResult
+	Problems []search.ContentProblem
+	Cursor   int
+	Loading  bool
+	Terminal search.ContentTerminal
+	Message  string
+}
+
 type DrawerMode string
 
 const (
-	DrawerClosed  DrawerMode = "closed"
-	DrawerPreview DrawerMode = "preview"
-	DrawerJobs    DrawerMode = "jobs"
-	DrawerLog     DrawerMode = "log"
+	DrawerClosed        DrawerMode = "closed"
+	DrawerPreview       DrawerMode = "preview"
+	DrawerSearch        DrawerMode = "search"
+	DrawerContentSearch DrawerMode = "content_search"
+	DrawerJobs          DrawerMode = "jobs"
+	DrawerLog           DrawerMode = "log"
 )
 
 type FocusTarget string
@@ -459,6 +489,8 @@ type Model struct {
 	Mode               Mode
 	Count              int
 	Preview            PreviewState
+	Search             SearchState
+	ContentSearch      ContentSearchState
 	Auth               AuthState
 	EditDecision       EditDecisionState
 	EditLaunch         EditLaunchState
@@ -481,6 +513,7 @@ type Model struct {
 	renameInput   []rune
 	commandInput  []rune
 	editSaveAs    []rune
+	searchInput   []rune
 	pendingRename transfer.FileRef
 	pendingDelete []transfer.FileRef
 	pendingMove   []Intent
@@ -524,6 +557,9 @@ const (
 	IntentList               IntentKind = "list"
 	IntentPreview            IntentKind = "preview"
 	IntentPreviewCancel      IntentKind = "preview_cancel"
+	IntentSearchFilename     IntentKind = "search_filename"
+	IntentSearchCancel       IntentKind = "search_cancel"
+	IntentSearchContent      IntentKind = "search_content"
 	IntentAuthResolve        IntentKind = "auth_resolve"
 	IntentWorkspaceSave      IntentKind = "workspace_save"
 	IntentConnectEndpoint    IntentKind = "connect_endpoint"
@@ -595,6 +631,9 @@ type Intent struct {
 	RefreshAfterEdit      bool
 	CacheClearScope       CacheClearScope
 	CachePolicy           cache.Policy
+	SearchPattern         string
+	SearchIdentity        search.Identity
+	ContentSearchIdentity search.ContentIdentity
 }
 
 type Key string
@@ -609,6 +648,7 @@ const (
 	KeyVisualLine            Key = "visual_line"
 	KeyMark                  Key = "mark"
 	KeyFilter                Key = "filter"
+	KeyFilenameSearch        Key = "filename_search"
 	KeyBackspace             Key = "backspace"
 	KeyEscape                Key = "escape"
 	KeySubmit                Key = "submit"
@@ -701,6 +741,26 @@ type PreviewTerminalImage struct {
 	Protocol   builtinpreview.ImageProtocol
 	Data       []byte
 }
+type BeginSearch struct {
+	Identity search.Identity
+}
+type SearchEvents struct {
+	Events []search.Event
+}
+type SearchFailed struct {
+	Identity search.Identity
+	Message  string
+}
+type BeginContentSearch struct {
+	Identity search.ContentIdentity
+}
+type ContentSearchEvents struct {
+	Events []search.ContentEvent
+}
+type ContentSearchFailed struct {
+	Identity search.ContentIdentity
+	Message  string
+}
 type AuthChallengeReceived struct {
 	ChallengeID string
 	Endpoint    string
@@ -720,6 +780,11 @@ type PaneConnectionChanged struct {
 	Pane    PaneID
 	State   domain.ConnectionState
 	Message string
+}
+type PaneCapabilitiesRefreshed struct {
+	Pane         PaneID
+	EndpointID   domain.EndpointID
+	Capabilities domain.CapabilitySnapshot
 }
 type WorkspaceSaveResult struct {
 	Name    string
@@ -811,35 +876,42 @@ type CacheCleared struct {
 	Message        string
 }
 
-func (KeyPress) isAction()              {}
-func (CountDigit) isAction()            {}
-func (TextInput) isAction()             {}
-func (Resize) isAction()                {}
-func (BeginListing) isAction()          {}
-func (ListingPage) isAction()           {}
-func (ListingFailed) isAction()         {}
-func (SetFilter) isAction()             {}
-func (BeginPreview) isAction()          {}
-func (PreviewChunk) isAction()          {}
-func (PreviewTerminalImage) isAction()  {}
-func (AuthChallengeReceived) isAction() {}
-func (PaneConnected) isAction()         {}
-func (PaneConnectionChanged) isAction() {}
-func (WorkspaceSaveResult) isAction()   {}
-func (ClipboardCaptured) isAction()     {}
-func (DeletePrepared) isAction()        {}
-func (RenamePrepared) isAction()        {}
-func (JobCreated) isAction()            {}
-func (JobsLoaded) isAction()            {}
-func (JobUpdated) isAction()            {}
-func (DiagnosticsLoaded) isAction()     {}
-func (CommandCompleted) isAction()      {}
-func (EditSessionObserved) isAction()   {}
-func (EditLaunchReady) isAction()       {}
-func (EditSessionFinished) isAction()   {}
-func (EditSessionFailed) isAction()     {}
-func (EditRecoveryLoaded) isAction()    {}
-func (CacheCleared) isAction()          {}
+func (KeyPress) isAction()                  {}
+func (CountDigit) isAction()                {}
+func (TextInput) isAction()                 {}
+func (Resize) isAction()                    {}
+func (BeginListing) isAction()              {}
+func (ListingPage) isAction()               {}
+func (ListingFailed) isAction()             {}
+func (SetFilter) isAction()                 {}
+func (BeginPreview) isAction()              {}
+func (PreviewChunk) isAction()              {}
+func (PreviewTerminalImage) isAction()      {}
+func (BeginSearch) isAction()               {}
+func (SearchEvents) isAction()              {}
+func (SearchFailed) isAction()              {}
+func (BeginContentSearch) isAction()        {}
+func (ContentSearchEvents) isAction()       {}
+func (ContentSearchFailed) isAction()       {}
+func (AuthChallengeReceived) isAction()     {}
+func (PaneConnected) isAction()             {}
+func (PaneConnectionChanged) isAction()     {}
+func (PaneCapabilitiesRefreshed) isAction() {}
+func (WorkspaceSaveResult) isAction()       {}
+func (ClipboardCaptured) isAction()         {}
+func (DeletePrepared) isAction()            {}
+func (RenamePrepared) isAction()            {}
+func (JobCreated) isAction()                {}
+func (JobsLoaded) isAction()                {}
+func (JobUpdated) isAction()                {}
+func (DiagnosticsLoaded) isAction()         {}
+func (CommandCompleted) isAction()          {}
+func (EditSessionObserved) isAction()       {}
+func (EditLaunchReady) isAction()           {}
+func (EditSessionFinished) isAction()       {}
+func (EditSessionFailed) isAction()         {}
+func (EditRecoveryLoaded) isAction()        {}
+func (CacheCleared) isAction()              {}
 
 func parentLocation(location domain.Location) (domain.Location, bool) {
 	parent := path.Dir(string(location.Path))

@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 3 从 merge commit `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5` 交付 Preview/Edit/Cache、外部进程和 command/shell slice；Stage 4–6 保持 Not Started。
+Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 4 在固定分支 `codex/stage4-search-helper` 从 exact-main 基线 `09821bdbcfc9693b309a1a39ee5121113c033254` 完成；Stage 5–6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -198,7 +198,55 @@ Stage 0–3 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: Helper lifecycle/protocol；current-policy manifest/Ed25519/revoke/compat/floor/high-water；preliminary取消=0 probe、final取消=0 app-tree create/content、drift重probe/确认；Stage4 testdata fixture-only、production trust拒fixture且installable binary/curated dist无fixture assets（自动source archive除外）；shared/unknown/双节点mapping、fresh ssh GSS-delegation+CM off、root-owned utilities/PATH、uid0/cwd/RealPath/uname；safe-home/path/temp/ancestor、128MiB/expected+1/O_EXCL/首write前Chmod0600、client回读、no-replace；shell-c/唯一command/banner/chroot/byte0/stderr边界。失败Level0且不外推node/object/ACL/same-euid/root/server；百万节点/取消/预算与远端矩阵。
 
-**Status**: Not Started
+**Status**: Complete
+
+### M4.1: SFTP 搜索基线
+
+**Goal**: 冻结搜索 request/result/event/cancel/generation/budget 契约，并在标准 Provider 上交付无 Helper、无 probe、无 install 的 `f` 有界递归文件名搜索与 `g/` 受限慢速内容搜索。
+
+**Success Criteria**: 搜索绑定 Endpoint/session/generation/request/scope/options/budget；结果分页流式返回并可跳转、预览、选择和生成现有 Operation Intent；取消、权限、symlink、超时以及深度/队列/结果/字节上限都返回诚实的 partial/stop reason；迟到 generation 被丢弃；百万节点 fixture 不全量进入内存。
+
+**Tests**: 先写 RED 契约测试；Provider/Fake/LocalFS/SFTP contract、TUI reducer/render、temporary-sshd `f`/`g/`、权限/symlink/binary/encoding/long-line、generation/cancel/partial、百万节点首结果/取消/peak RSS/goroutine/process/FD/read-list 计数。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: Provider-only filename/content contracts, daemon cursors, TUI `f`/`g/`, explicit slow-content confirmation, cancellation/generation isolation, real temporary-sshd coverage, and a one-million-entry streaming fixture are green. The measured synthetic fixture returns the first result in about 65 µs, uses one 128-entry list page, adds about 6 MiB RSS, and records bounded goroutine/FD counts without retaining the full tree.
+
+### M4.2: Helper 安装与握手
+
+**Goal**: 在 production distribution 保持 CLOSED 的前提下，以显式 test-only non-release fixture 实现 Manifest v1、current-policy、双 consent、安全 probe/install/publish、每次执行 freshness 与受限握手。
+
+**Success Criteria**: production verifier 拒绝 fixture key；preliminary 取消为 0 probe、final 取消为 0 app-tree create/content；safe-home/path/attrs、expected+1、exclusive temp、首 byte 前 chmod/stat、client readback、standard no-replace、current-policy/floor/high-water/revoke 与每次 exec 重验均 fail closed；任何失败保留 Level 0。
+
+**Tests**: manifest/signature golden/fuzz/compat；两阶段 consent/drift；OpenSSH 8.9 shell `-c`、fresh argv、poisoned PATH、uid/cwd/uname、safe-home 255/256 与 path 1000/1001、stderr 65536/65537、tamper/replay/upgrade/disable/remove、fixture isolation 与 production artifact pollution scans。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: Canonical raw manifest/signature and enabled/high-water state persist atomically in owner-private bounded files; installation has two consent boundaries, current policy, fresh absolute-utility binding, SFTP attrs/readback/exclusive upload, hardlink target-exists-fails publication, exact enable-time revalidation, disable/remove, and protocol/version/capability handshake. Fresh OpenSSH processes use isolated process groups, GSS delegation/ControlMaster off, byte-zero preface, bounded stderr and automatic termination on heartbeat/hard-deadline failure. Exact removal is serialized against Helper-capable planning and rejects non-terminal exact artifact references. The complete hostile OpenSSH/native/pollution/Hosted matrix passed at `199e1012530b4d0112d0bbb1eef175c761db1567`. Production runtime exposes no fixture install source, production trust is empty, and raw-MKDIR packet implementation/distribution remain **CLOSED**.
+
+### M4.3: Helper 搜索
+
+**Goal**: 实现版本化、有界、可取消的 framed stdio helper protocol，将 fast walk 与安全 content search 接入 M4.1 的统一搜索契约/UI。
+
+**Success Criteria**: handshake/capability/request/result/progress/partial/error/cancel/heartbeat 全部有硬上限；用户 path/pattern 只走 framed stdin；helper 按需运行且无 listener/daemon/提权；崩溃/超时/畸形协议保留已返回结果并允许新 request 降级 Level 0。
+
+**Tests**: protocol golden/fuzz/compat/capability violation、cancel/timeout/invalid frame；million-node streaming/取消/资源证据；long line/binary/encoding/large-file/permission/mid-search change；process/port/service/secret scans 与 Helper failure 后 Stage 1–3 regression。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: The strict framed protocol, independent capability negotiation, concurrent request correlation, cancellation, hard resource limits, structured completion/errors, heartbeat, built-in filename/content scanner, and daemon Level 1 routing are verified. Rejected request IDs cannot be reused; terminal/error payloads fit inside the shared client/server budget. Negotiated Helper results retain the exact M4.1 identity and a closed Helper routes a new request through Level 0 while Provider snapshot remains available. The million-node Helper fixture and real SSH crash/hang/native resource gates passed in the accepted local and Hosted matrices.
+
+### M4.4: 增强能力与退化闭环
+
+**Goal**: 交付独立协商的 strong hash、disk stats、tail/watch、same-host copy，以及逐能力降级、会话熔断和可观察性。
+
+**Success Criteria**: hash 中途变化失效；disk quota unknown 不推断无限；tail/watch 明示 truncate/rotate/lost/coalesced 并以 stat/list 为真相；same-host copy 仍经 Planner/Job/conflict/verify/commit/restart；反复崩溃不形成启动/安装循环。
+
+**Tests**: capability removal table；hash mutation、quota unknown、tail truncate/rotate、watch lost/coalesced、same-host copy conflict/verify/restart；kill/crash/hang/version mismatch 后 browsing/search/transfer/Preview/Edit/Job 继续绿色；完整平台、资源、安全和 cold-start 门禁。
+
+**Milestone Status**: Complete
+
+**Current checkpoint**: Strong-hash mutation, statfs quota-unknown, tail truncate/rotation, watch loss/coalescing, independent capability removal, dynamic Helper status and same-host copy are verified. The durable `helper_same_host` Plan freezes Endpoint, artifact, source identity and capabilities; Job Store admission/removal coordination prevents exact-artifact races; the existing Worker owns checksum, conflict, commit, restart adoption, cancellation and Job state. Full-platform/fault/resource/security/cold-start gates and exact-SHA push [29557909197](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557909197) and PR [29557911211](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557911211) runs passed 24/24 jobs each at commit `199e1012530b4d0112d0bbb1eef175c761db1567`, tree `48e5ebddf136d2c59a144fc5f82dd14dd60e24dc`.
 
 ## Stage 5: Direct Transfer & Scale
 

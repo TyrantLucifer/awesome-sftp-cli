@@ -51,8 +51,9 @@ const (
 type Route string
 
 const (
-	RouteLocal     Route = "local"
-	RouteSFTPRelay Route = "sftp_relay"
+	RouteLocal          Route = "local"
+	RouteSFTPRelay      Route = "sftp_relay"
+	RouteHelperSameHost Route = "helper_same_host"
 )
 
 type MoveStrategy string
@@ -142,6 +143,7 @@ type Plan struct {
 	MoveStrategy                    MoveStrategy             `json:"move_strategy,omitempty"`
 	MoveCapability                  *CapabilityBinding       `json:"move_capability,omitempty"`
 	SourceDeleteCapability          *CapabilityBinding       `json:"source_delete_capability,omitempty"`
+	SameHostCopy                    *SameHostCopyBinding     `json:"same_host_copy,omitempty"`
 	DeleteRecursive                 bool                     `json:"delete_recursive,omitempty"`
 	DeleteIrreversible              bool                     `json:"delete_irreversible,omitempty"`
 	DeleteTrash                     bool                     `json:"delete_trash,omitempty"`
@@ -203,9 +205,16 @@ func (resolver MapResolver) Resolve(endpointID domain.EndpointID) (providerapi.P
 	return implementation, nil
 }
 
-type Planner struct{ resolver Resolver }
+type Planner struct {
+	resolver Resolver
+	sameHost SameHostCopyBackend
+}
 
 func NewPlanner(resolver Resolver) *Planner { return &Planner{resolver: resolver} }
+
+func NewPlannerWithSameHost(resolver Resolver, backend SameHostCopyBackend) *Planner {
+	return &Planner{resolver: resolver, sameHost: backend}
+}
 
 func (planner *Planner) Capture(ctx context.Context, location domain.Location) (FileRef, error) {
 	return planner.capture(ctx, location, false)
@@ -364,6 +373,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 			}
 		}
 	}
+	planner.trySameHostCopy(ctx, &plan)
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {
 		initialState = job.StateAwaitingConfirmation

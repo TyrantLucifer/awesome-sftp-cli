@@ -1,13 +1,17 @@
 # Project State
 
-- **Updated**: 2026-07-16
-- **Lifecycle**: Stage 4 Not Started
-- **Active stage**: Stage 4 — Search & Optional Helper (Not Started)
-- **Current milestone**: Stage 4 intake; Level 0 search contract not yet implemented
+- **Updated**: 2026-07-17
+- **Lifecycle**: Stage 5 Not Started
+- **Active stage**: Stage 5 — Direct Transfer & Scale
+- **Current milestone**: Not Started; awaiting authorization
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
+
+Stage 4 started on fixed branch `codex/stage4-search-helper` from clean exact-main commit `09821bdbcfc9693b309a1a39ee5121113c033254`, tree `c18e4cf8faf8eb70cc9964e242513b30ab0e79cc`. Exact-main Hosted run [29517334761](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29517334761) completed successfully. M4.1 is complete: bounded Provider-only `f` and explicit slow `g/` are green across IPC/daemon/TUI, real temporary sshd, focused race, and the million-entry/resource fixture (one 128-entry List page, about 65 µs first result and about 6 MiB additional RSS on the development host).
+
+M4.2–M4.4 and Stage 4 are complete. The internal Helper package includes strict fixture-only manifest/signature/current-policy, owner-private bounded raw metadata and persistent enabled/high-water state, two consents, fresh absolute-utility binding, a fail-closed SFTP install adapter boundary, exclusive verified OpenSSH-hardlink no-replace publication, exact every-enable remote revalidation, strict framed protocol, nonce heartbeat and process-group cleanup. Daemon search preserves the M4.1 identity and degrades to Level 0 without affecting Provider state. Independent Level 1 operations implement bounded search, strong hash, quota-honest disk stats, tail/watch hints and durable same-host part staging through the existing Job/Worker semantics. Independent security/correctness and cold-start reviews report no remaining blocker. Accepted implementation commit `199e1012530b4d0112d0bbb1eef175c761db1567`, tree `48e5ebddf136d2c59a144fc5f82dd14dd60e24dc`, passed complete exact-SHA [push run 29557909197](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557909197) and [PR run 29557911211](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29557911211), 24/24 jobs each. All 26 Stage 4 feature rows are Verified. Production Helper distribution remains **CLOSED**: production trust is empty and the runtime ships no fixture install/backend source, production artifact or raw-MKDIR packet implementation.
 
 Stage 1 is complete at merge commit `b99fca2f729a8445b20935c69eda52cfa6dbbd28`, tree `1cf952ea743992c685f6bf05a75de43ebe7499a8`; exact-main [Hosted run 29468930350](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29468930350) is green. Stage 2 is complete and merged at `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5`, tree `ee1ebdf11b61f1ac05fa0b2a4f23800ab9ba934a`; exact-main [Hosted run 29490490339](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29490490339) is green. Stage 3 began on `codex/stage3-preview-edit-cache` from that verified baseline; baseline `make docs-check` and `make check` pass. M2.1's Version 1 state foundation covers the exact schema/contract, APFS/ext4/XFS gates, atomic bootstrap, migration/backup/retention/WAL budgets, transactional Job/events, deterministic restart recovery, process-death boundaries, and fail-closed Stage 1 browsing. Exact SHA `3a8ec31d6a7f7afdaf7f6aa1a44e546cfc2145f6` passed [Hosted run 29475833368](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29475833368); both Linux native jobs for `f83aa45de9b83f42d6f64944401ddde0e1e92d01` passed ext4/XFS plus real XFS `ENOSPC` rollback in [run 29476167115](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29476167115).
 
@@ -21,7 +25,7 @@ Stage 3 is complete on `codex/stage3-preview-edit-cache`. [ADR-0014](docs/archit
 
 The delivered slice includes K/J/L drawers, bounded text/code/JSON/metadata/binary/range Preview, capability-gated terminal images with real Kitty evidence, external preview fallback, owner-private live-quota cache, safe clear/restart recovery, durable editor/opener conflict recovery, Vim/Neovim/open/xdg-open, local/remote `!` and `gs`, terminal re-probe and bounded post-spawn cleanup. Sync-back still uses the Stage 2 Plan/Job/part/verify/commit path. Existing remote content is first moved no-replace to a deterministic job-owned preservation sibling, bounded-verified, and the edited part is then published no-replace; racing bytes remain reachable and the Job reports the preservation state/path. Exact unchanged cache publication is idempotent, offline selection is serialized with online publication, and catalog snapshots are hard-bounded. Unknown/corrupt filesystem inventory is preserved with a needs-attention diagnostic; manifests lack enough policy/dirty/reference/lease state for a safe filesystem-to-catalog rebuild, so no rebuild is claimed.
 
-Checkpoint `0833f3fab39848da44c7d69e02f47535f3f60130`, tree `be29e207405d2b7e071229a9d871ffd6e52f80fa`, passed complete [push run 29510260905](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29510260905) and [PR run 29510265214](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29510265214). The final evidence closeout adds the independently reviewed concurrency, preservation, boundedness and restore fixes documented in [Stage 3 verification](docs/verification/stage-03.md); PR [#3](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/3) carries the exact final-SHA Hosted evidence and is intentionally not merged. All 40 Stage 3 feature rows are Verified. Production Helper distribution remains **CLOSED** because real production private-key custody/recovery/dual-key rotation has not occurred.
+Checkpoint `0833f3fab39848da44c7d69e02f47535f3f60130`, tree `be29e207405d2b7e071229a9d871ffd6e52f80fa`, passed complete [push run 29510260905](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29510260905) and [PR run 29510265214](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29510265214). The final evidence closeout adds the independently reviewed concurrency, preservation, boundedness and restore fixes documented in [Stage 3 verification](docs/verification/stage-03.md); PR [#3](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/3) was merged and produced the verified Stage 4 baseline above. All 40 Stage 3 feature rows are Verified. Production Helper distribution remains **CLOSED** because real production private-key custody/recovery/dual-key rotation has not occurred.
 
 Stage 0 establishes and verifies foundation contracts and engineering gates only. It does not provide a usable TUI, daemon service, SSH/SFTP connection, SQLite persistence, transfer engine, or remote helper, and it is not production-ready. Production/release readiness is assessed only by the Stage 6 hardening and 1.0 release gates.
 
@@ -49,11 +53,13 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Write the RED Stage 4 Level 0 recursive filename-search contract over the existing standard SFTP Provider: streaming bounded pages, cancellation, generation isolation and explicit partial results without invoking or distributing a Helper. Production Helper installation/distribution remains CLOSED until the separate real custody ceremony is completed.
+Do not begin Stage 5 without explicit authorization. When authorized, start its fixed branch from the then-current verified `main` and retain the Stage 4 Level 0 degradation and production-Helper CLOSED boundaries.
 
 ## Current risks
 
 - Stage 4 must preserve the zero-deployment SFTP baseline; Helper absence, incompatibility or closed distribution cannot break Level 0 search.
+- Safe Helper publication requires `hardlink@openssh.com`; servers without its target-exists-fails semantics remain Level 0. SFTP v3 rename is deliberately not used because compatibility testing demonstrated replacement behavior.
+- Stage 4 evidence is complete; future changes must preserve its exact Level 0 degradation, Helper process/resource bounds and durable same-host-copy semantics.
 - Production Helper trust is public-fixture/tabletop only. No production private key, named offline custodians or completed rotation ceremony exists, so any install/distribution path must remain disabled.
 - Preserved sync-back originals are deliberately not auto-deleted; users must review the Job-reported hidden sibling before manual cleanup.
 - Stage 5 scale/direct-transfer and Stage 6 packaging/release gates remain unimplemented; Stage 3 completion is not a 1.0 production-readiness claim.
@@ -64,11 +70,15 @@ Write the RED Stage 4 Level 0 recursive filename-search contract over the existi
 2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 4
 3. [Feature matrix](docs/product/feature-matrix.md), Stage 4 search/helper rows
 4. [Stage 4 specification](docs/stages/04-search-helper.md)
-5. [Stage 3 verification](docs/verification/stage-03.md), as the completed preview/edit/cache handoff
+5. [Stage 4 verification](docs/verification/stage-04.md), as the completed search/optional-Helper handoff
 6. [Approved design](docs/superpowers/specs/2026-07-14-vim-first-sftp-commander-design.md)
 7. ADRs referenced by Stage 3, beginning with the Stage 2 mutation and postcondition handoff
 
 ## Validation record
+
+Stage 4 baseline checks on 2026-07-17: after `git fetch --prune origin`, clean local `main`, `origin/main` and remote `refs/heads/main` all resolved to `09821bdbcfc9693b309a1a39ee5121113c033254`, tree `c18e4cf8faf8eb70cc9964e242513b30ab0e79cc`; fixed branch `codex/stage4-search-helper` did not exist locally or remotely and was created once from that baseline. Exact-main Hosted run `29517334761` reports `success` for the exact merge SHA, including final `compare`. Baseline `make docs-check && make check` passed. Active evidence is maintained in [Stage 4 verification](docs/verification/stage-04.md).
+
+Stage 4 closeout on 2026-07-17: accepted implementation commit `199e1012530b4d0112d0bbb1eef175c761db1567`, tree `48e5ebddf136d2c59a144fc5f82dd14dd60e24dc`, passed complete exact-SHA push run `29557909197` and PR run `29557911211`, with all 24 jobs successful in each. Local current/oldstable, real temporary-sshd, hostile process, focused race, reproducibility, production-pollution, independent security/correctness and cold-start/documentation gates are green. All 26 Stage 4 rows are Verified; production Helper distribution remains CLOSED.
 
 Stage 3 baseline checks on 2026-07-16: clean `main` exactly matched `origin/main` at `8a118d7069e4bf86e4f7e73d6fc41977cf1202f5` / tree `ee1ebdf11b61f1ac05fa0b2a4f23800ab9ba934a`; `git fetch --prune origin` succeeded; the fixed Stage 3 branch did not exist locally or remotely and was created once from that baseline; exact-main Hosted run `29490490339` reports `success`; baseline `make docs-check` and `make check` pass. Active evidence is maintained in [Stage 3 verification](docs/verification/stage-03.md); completed mutation evidence remains in [Stage 2 verification](docs/verification/stage-02.md).
 
@@ -89,6 +99,7 @@ The accepted final pre-Hosted local closeout checkpoint is tree `5d598eea00fac2b
 - Seven user-owned JetBrains files are present under ignored `.idea/`: `.gitignore`, `awesome-mac-sftp.iml`, `go.imports.xml`, `misc.xml`, `modules.xml`, `vcs.xml` and `workspace.xml`. They are preserved local IDE metadata and are not product-candidate content. Ignored `.superpowers/`, `coverage/` and `dist/` are respectively disposable coordination output and reproducible validation artifacts; none are tracked.
 - Final platform-security fixtures cover real Darwin deny/direct/inherited ACLs, Linux access/default ACL xattrs, cross-process locking and a root-gated hostile-other-UID socket peer. Local race, exact Go 1.25.12, docs and actionlint checks pass, and all four native Hosted jobs passed in run 29417470068; DAEM-002/SEC-001 are Verified.
 - Stage 1 remains the fail-closed Explorer baseline. Stage 2 adds copy, move, upload, rename, delete, durable Jobs and SQLite persistence; Stage 3 adds external editing, Preview, cache and shell/command handoff. Recursive search/optional Helper remains Stage 4, direct transfer/scale hardening Stage 5, and release readiness Stage 6, so Stage 3 completion is not a 1.0 production-readiness claim.
+- Stage 4 implements recursive Level 0 search and explicit fixture-only Level 1 Helper contracts, but ships no production Helper artifact, manifest, signature, key, install command, or download. Direct cross-host/Level 2 transfer remains Stage 5 and release readiness remains Stage 6.
 
 ## Working-tree policy
 

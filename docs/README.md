@@ -11,7 +11,7 @@ This repository treats documentation as part of the product contract. A feature 
 5. [Implementation plan](../IMPLEMENTATION_PLAN.md) tracks stage-level execution.
 6. [Stage specifications](stages/) define scope, tests, exit criteria, and handoff requirements for each stage.
 7. [Testing strategy](testing/strategy.md) defines the validation ladder and required fixtures.
-8. [Stage verification](verification/stage-03.md) records the active/latest stage's exact evidence, candidate identity, and handoff gates; the Stage 1/2 ledgers remain immutable historical evidence.
+8. [Stage verification](verification/stage-04.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 1–3 ledgers remain immutable historical evidence.
 9. [Project state](../PROJECT_STATE.md) is the short, current handoff for the next work session.
 
 ## Engineering gates
@@ -21,6 +21,7 @@ This repository treats documentation as part of the product contract. A feature 
 - [Read-only Explorer guide](user/read-only-explorer.md) documents the current Stage 1 launch, OpenSSH reuse, keys, workspaces, recovery, and diagnostics behavior.
 - [Durable Transfers guide](user/durable-transfers.md) documents Stage 2 clipboard, move, rename, delete, conflict, Jobs, part, and recovery behavior.
 - [Preview, Edit, Cache, and Shell guide](user/preview-edit-cache.md) documents Stage 3 `K/J/L`, bounded preview/image behavior, cache policies and safe cleanup, `e`/`o` conflict and recovery, structured external commands, `!`/`gs`, privacy, and current limitations.
+- [Search and Optional Helper guide](user/search-helper.md) documents Stage 4 `f`/`g/`, budgets/partial results, Level 0/1 status, fixture-only consent/lifecycle, degradation, same-host copy, and the production distribution CLOSED boundary.
 
 ## Required reading order for a new session
 
@@ -30,7 +31,7 @@ Read only as far as needed, in this order:
 2. the active stage in `IMPLEMENTATION_PLAN.md`
 3. `docs/product/feature-matrix.md`
 4. the active `docs/stages/NN-*.md`
-5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 3)
+5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 4)
 6. ADRs and interfaces linked by that stage
 7. the complete worktree status/manifest plus the last green validation commands recorded in the verification record and `PROJECT_STATE.md`
 
