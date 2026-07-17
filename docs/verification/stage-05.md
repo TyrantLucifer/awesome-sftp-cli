@@ -51,7 +51,11 @@ Only same-package `_test.go` constructors can attach the unexported preflight/da
 
 ### M5.4 — Scale, resource budgets and fair scheduling
 
-**Status: In Progress.**
+**Status: Local implementation complete; exact-final closeout pending.** The daemon now owns one deterministic scheduler with layered integer token buckets for global, both Endpoint and Job rates, a fixed/tightenable 256 KiB quantum, 4:1 interactive/bulk weighted round-robin, cancellation-safe waiters and future-token-only hot updates. Plans freeze an optional per-Job bandwidth policy; server-copy, Helper and Level 2 candidates declare `uncontrolled` and are rejected with `bandwidth_control_required` whenever exact control is required, while relay declares `controlled`. The Worker slices reads to the live scheduler quantum, so tightening below the 256 KiB transfer buffer remains enforceable.
+
+The same scheduler owns a global/Endpoint/Job resource ledger with idempotent leases and cancellation-safe admission. Exact hard ceilings are: active Jobs **16**, active Jobs per Endpoint **8**, queued Jobs **512**, active Endpoints **64**, connections **32**, connections per Endpoint **4**, SSH processes **32**, Helper processes **4**, file descriptors **512**, goroutines **256**, memory **64 MiB**, event payload **32 KiB**, and log record budget **32 KiB**. Transfer/recovery buffers remain **256/512 KiB**; directory frontier/page/depth are **64/256/128**. Configuration may only tighten these values. Manager execution accounts active Job, Endpoint, FD, goroutine and buffer memory usage; ProviderSessions reuse one exact Endpoint lease, cap dynamic connections at 32, reject excess with typed `resource_exhausted`, and close the connection immediately when the last session/Job lease ends (deterministic zero idle retention).
+
+Directory discovery is iterative bounded BFS rather than Go recursion. The canonical `make test-scale` gate covers 50,000-row window rendering, million-node search/Helper/discovery, actual and synthetic 100 GiB sparse-file bounded checkpoints, external-preview refusal before materialization, resource/fairness/cancel, connection reuse, low-disk safety, bounded events/logs, production-closed Level 2 and authentication non-expansion. Job events reject payloads above 32 KiB and a 2,501-event history replays only as 1,000/1,000/501 pages. `make bench-scale` fixes `GOMAXPROCS=1`, 100 iterations and three samples. The first Linux/amd64 record on dual-socket Xeon Platinum 8336C/ext4 measured 50k render at **33.7–41.3 µs/op, 26,465–26,466 B/op, 329 allocs/op**, and navigation at **602.7–718.9 ns/op, 0 B/op, 0 allocs/op**. The 100 GiB evidence proves 64-bit, size-independent buffering/checkpointing and no early final publication; it does not claim that the local gate physically transfers 100 GiB. Byte/commit equivalence remains independently proven by the direct/relay strong-hash goldens.
 
 ## Stage 5 feature evidence
 
@@ -59,8 +63,8 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 
 | Feature ID | Result | Evidence |
 |---|---|---|
-| CONN-010 | PENDING | Controlled connection reuse and idle recovery not implemented. |
-| JOB-009 | PENDING | Job/global bandwidth policy and deterministic token bucket not implemented. |
+| CONN-010 | IMPLEMENTED | Exact Endpoint leases reuse one connection across sessions/Jobs, enforce 32 global admissions, reject excess with typed `resource_exhausted`, and close immediately after the last lease; exact-final Hosted evidence remains required. |
+| JOB-009 | IMPLEMENTED | Frozen per-Job policy plus global/Endpoint/Job integer token buckets, 4:1 deterministic fairness, fixed quantum, cancellation and hot-update tests pass; uncontrolled fast paths are disabled when exact rate control is required. |
 | DIRECT-002 | IMPLEMENTED | Explicit capability + structural facet gate, immutable binding, exact part staging, independent strong verification, response-loss adoption, corruption isolation, safe absent-part fallback, restart, pre/in-flight cancellation and relay conflict/cancel equivalence pass the complete M5.1 local gate; exact-final Hosted evidence remains required for PASS. |
 | DIRECT-004 | IMPLEMENTED | Frozen user/workspace/data/integrity policy gates selection; explicit disablement and production closure select relay with stable reasons. Exact-final Hosted evidence remains required. |
 | DIRECT-005 | IMPLEMENTED | All 14 ordered required conditions independently fail/unknown to relay; malformed/stale evidence and expired execution evidence fail closed before direct write. Real dual-sshd closeout remains pending. |
@@ -69,18 +73,18 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | DIRECT-008 | IMPLEMENTED | Revalidation and pre-write failures durably downgrade only after safe absence/exact cleanup proof; drifted/unknown parts do not downgrade, mid-part disconnect resumes exact progress, and commit uncertainty proves postconditions. Exact-final Hosted evidence remains required. |
 | DIRECT-009 | IMPLEMENTED | Random, sparse-shaped and multi-chunk direct/relay goldens plus shared conflict/cancel/move/durable-event contracts pass. M5.4 retains the independent 100GB sparse resource gate; exact-final Hosted evidence remains required. |
 | DIRECT-010 | IMPLEMENTED | JobView, Jobs drawer and `job_created` Log show selected reason/integrity/downgrade/progress; runtime safe fallback durably shows planned→actual route and stable reason. Exact-final Hosted evidence remains required for PASS. |
-| SCALE-001 | PENDING | 50k directory production-scale gate not implemented. |
-| SCALE-002 | PENDING | Million-tree transfer/plan gate not implemented. |
-| SCALE-003 | PENDING | 100GB sparse local/relay/direct gate not implemented. |
-| SCALE-005 | PENDING | Unified FD/goroutine/process budget gate not implemented. |
-| SCALE-006 | PENDING | Slow-I/O UI/cancel latency gate not implemented. |
-| SCALE-007 | PENDING | Connection/bandwidth fairness gate not implemented. |
-| SCALE-008 | PENDING | Deep-path non-recursive traversal gate not implemented. |
-| SCALE-009 | PENDING | Fixed benchmark environment and first trend record not implemented. |
-| SCALE-010 | PENDING | Low-disk relay/cache/part recovery gate not implemented. |
-| SCALE-011 | PENDING | Bounded large event/log pagination and truncation gate not implemented. |
-| SCALE-012 | PENDING | Low-capability scale-degradation evidence not implemented. |
-| SEC-011 | PENDING | Direct authentication non-expansion topology gate not implemented. |
+| SCALE-001 | IMPLEMENTED | 50k visible-window/overscan tests visit only the bounded window; fixed benchmark records render and navigation time/allocations. |
+| SCALE-002 | IMPLEMENTED | Million-node Provider search, Helper search and transfer discovery stream through bounded pages/frontiers without materializing the tree. |
+| SCALE-003 | IMPLEMENTED | Actual/synthetic 100 GiB sparse files use 64-bit size, one bounded checkpoint and no final publication; preview refuses before read/materialization. Direct/relay byte equivalence is covered separately. |
+| SCALE-005 | IMPLEMENTED | Exact hard ceilings plus a global/Endpoint/Job lease ledger cover Job/queue/connection/process/FD/goroutine/memory/event/log dimensions and reclaim idempotently. |
+| SCALE-006 | IMPLEMENTED | Fixed-window navigation, bounded Helper cancellation, search cancellation and transfer/direct cancellation gates retain bounded service opportunities. |
+| SCALE-007 | IMPLEMENTED | Connection admission/reuse and deterministic 4:1 weighted token-bucket tests prove no bulk starvation and both-Endpoint rate accounting. |
+| SCALE-008 | IMPLEMENTED | Directory traversal uses an explicit bounded BFS frontier; depth overflow is typed and no Go recursion is used. |
+| SCALE-009 | IMPLEMENTED | Canonical `test-scale`/`bench-scale` targets, fixed benchmark controls, environment metadata and first three-sample trend record are committed. |
+| SCALE-010 | IMPLEMENTED | Relay ENOSPC/permission classification, part retention, cache quota admission and preview refusal preserve safe state without false success. |
+| SCALE-011 | IMPLEMENTED | 32 KiB Job-event payload cap, 1,000-record event pages, bounded diagnostic ring/query and rotating JSON log tests pass. |
+| SCALE-012 | IMPLEMENTED | Level 0 bounded search, production-closed Level 2 and capability-removal/relay gates preserve scaled baseline behavior. |
+| SEC-011 | IMPLEMENTED | Frozen control evidence exposes no credential/command surface; dual-sshd native topology disables Agent/GSS/ControlMaster, uses strict host keys/BatchMode and scans the target root for credential material. |
 
 ## Command ledger
 
@@ -113,17 +117,24 @@ The 22 Stage 5 rows remain `Planned` until their implementations and focused tes
 | M5.2 fixture data plane | focused direct fixture, expiry, cancel, lost-response restart and absent-part downgrade tests | PASS: target-durable checkpoints, remote part/final hashes, zero daemon Provider content reads on direct, fresh expiry preflight, no commit/source delete on cancel, exact restart adoption and safe relay fallback. |
 | M5.2 focused packages/race/lint | `go test ./internal/directprotocol ./internal/helper ./internal/transfer -count=1`; `go test -race` on the same packages; `make lint` | PASS; lint reports 0 issues. |
 | M5.2 native dual remote | `AMSFTP_REAL_SSHD=1 go test -race ./internal/transfer -run '^TestLevel2NativeDualSSHD' -count=1` | PASS: two real sshd/SFTP control sessions, isolated data roots, strict host keys/BatchMode, Agent/GSS/ControlMaster off, direct bytes, remote hashes, zero daemon content reads and no target credential material. |
-| M5.2 exact hosted checkpoint | Commit `9b2cfb5668517440d34e77c0f502e8eccfea8c64`; PR run [29565437259](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29565437259) and push run [29565434495](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29565434495) | PASS: both complete hosted matrices are green, including current/oldstable/native/race/auth/build/reproducibility legs. |
+| M5.2 exact hosted checkpoint | Commit `9b2cfb5668517440d34e77c0f502e8eccfea8c64`; PR run [29565437259](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29565437259) and push run [29565434495](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29565434495) | PR PASS. Push failed only the existing macOS Stage 2 PTY timing fixture after delete was sent before the async listing supplied a target; all Stage 5 packages and the same SHA's PR matrix were green. This is classified, not accepted as final evidence. |
 | M5.3 revalidation and exact cleanup RED/GREEN | focused expired fail/unknown, prepared-route restart, exact/drifted part, corrupt result and corrupt proof tests | Initial RED exposed unsafe error return, missing restart identity and no exact cleanup fallback; PASS after durable fallback identity and proof-bounded cleanup. |
 | M5.3 durable Job/move RED/GREEN | `TestLevel2DurableManagerJobPreservesRouteEvidenceAndMoveSemantics` | Initial compile RED because Manager had no fixture-only data facet; PASS for copy, move delete, delete-response-loss proof and changed-source retention, with selected/actual route Job events. |
 | M5.3 fault matrix | post-preflight auth/permission/space, before-write network, mid-progress disconnect/resume, hang/cancel, stage/part corruption, checkpoint drift, source/target drift and commit/delete response loss | PASS: no false final, early source delete, blind route replay or unproved cleanup; every allowed fallback has durable reason. |
 | M5.3 semantic goldens | `TestLevel2DirectAndRelayGoldenContentCommitAndIntegrityEquivalence`, shared conflict/cancel and durable move tests | PASS: deterministic-random, sparse-shaped and 8 MiB multi-chunk bytes/SHA/final/outcome match; route audit evidence remains explicit. |
 | M5.3 focused/full/race/lint | `go test ./internal/transfer -run '^TestLevel2' -count=1`; `go test ./internal/transfer -count=1`; `go test -race ./internal/directprotocol ./internal/helper ./internal/transfer -count=1`; `make lint` | PASS; lint reports 0 issues. |
+| M5.4 scheduler/resource RED/GREEN | focused `TestTransferScheduler*`, `TestResourceLedger*`, Manager and ProviderSessions admission tests | Initial RED covered absent policy/ledger/connection admission and exposed a manual-clock timer-registration race; PASS after layered token buckets, resource leases, fixed quantum, exact connection cap and atomic timer registration. |
+| M5.4 large-result RED/GREEN | `TestJobEventPayloadsHaveFrozenHardByteCeiling` and `TestLargeJobEventHistoryIsReadOnlyThroughBoundedPages` | Initial RED accepted a payload above 32 KiB; PASS after all Create/Transition/Control event entries share the hard cap. 2,501 events replay as 1,000/1,000/501 only. |
+| M5.4 canonical scale gate | `make test-scale` | PASS across TUI/search/Helper/transfer/daemon/jobstore/diagnostic/external previewer. |
+| M5.4 first trend record | `make bench-scale` | PASS: three fixed 100x samples; render 33.7–41.3 µs and 26.5 KiB/329 alloc, move 602.7–718.9 ns and 0 alloc. |
+| M5.4 local quality gate | CI-equivalent `make check`; `make lint`; focused race on transfer/daemon/jobstore | PASS; transfer coverage 73.5%, lint 0 issues, race green. |
 
 ## Hosted CI instability classification
 
 Commit `4aacfc8d8cb275b3b0abf70962418c9dd29d9510` predates the complete fallback slice but supplies an exact cross-run instability comparison. [Push run 29562430669](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29562430669) failed only `native (macos-15-intel)` when the existing `TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically` observed the control socket absent after its startup wait; the same SHA's PR macOS Intel native job passed. [PR run 29562433196](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29562433196) failed only `oldstable (ubuntu-22.04)` when the existing Helper stderr-overflow process fixture unexpectedly completed below its observed drain boundary; the same SHA's push Ubuntu 22 oldstable job passed. All Stage 5 code tests, quality/auth/build/reproducibility and the opposite companion jobs were green. The failures are mutually non-reproducing existing timing fixtures, not Stage 5 route failures; no unrelated assertion or timeout was changed. The complete M5.1 candidate will receive fresh push/PR Hosted runs and neither old run is accepted as final evidence.
 
+At M5.3 commit `3a018198ce2167cfb0e631adbc3494fe75289f55`, [push run 29567471724](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29567471724) passed. [PR run 29567473988](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29567473988) failed only two pre-existing macOS timing fixtures: arm64 race sent Stage 2 PTY delete before the listing target appeared, and Intel tail rotation observed truncate/new bytes before the rotate notice. Their opposite same-SHA jobs and all Stage 5 route/direct/fault tests passed. These failures are classified but are not final acceptance; the exact final SHA still requires green push and PR matrices.
+
 ## Pending closeout gates
 
-M5.2–M5.4, all 22 independent feature PASS cells, final current/oldstable/native/platform/filesystem/auth/route/direct/fault/scale/resource/soak/reproducibility/pollution gates, two independent final reviews, exact final push and PR Hosted CI remain pending. The PR remains Draft and may become Ready only after every final gate is green; it must not be merged automatically.
+M5.1–M5.4 are locally implemented. Remaining closeout is the final full current/oldstable/native/platform/filesystem/auth/route/direct/fault/scale/resource/soak/reproducibility/pollution matrix, two independent final reviews, exact final push and PR Hosted CI, then promotion of all 22 cells from IMPLEMENTED to PASS/Verified. The PR remains Draft and may become Ready only after every final gate is green; it must not be merged automatically.

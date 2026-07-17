@@ -29,6 +29,7 @@ func tryServerCopy(
 	plan *Plan,
 ) bool {
 	if plan == nil || plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile ||
+		plan.Bandwidth.requiresControl() ||
 		plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID ||
 		plan.SourceEndpoint.Kind != domain.EndpointSSH || plan.DestinationEndpoint.Kind != domain.EndpointSSH {
 		return false

@@ -52,6 +52,7 @@ type level2PreflightBackend interface {
 
 func (planner *Planner) tryLevel2Preflight(ctx context.Context, request FreezeRequest, plan *Plan) {
 	if planner == nil || plan == nil || !plan.DirectPolicy.enabled() || planner.level2 == nil ||
+		plan.Bandwidth.requiresControl() ||
 		plan.Version != 1 || plan.Source.Kind != domain.EntryFile ||
 		plan.SourceEndpoint.ID == plan.DestinationEndpoint.ID ||
 		plan.SourceEndpoint.Kind != domain.EndpointSSH || plan.DestinationEndpoint.Kind != domain.EndpointSSH ||

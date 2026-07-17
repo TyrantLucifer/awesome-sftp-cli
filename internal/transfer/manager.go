@@ -10,6 +10,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
 )
@@ -22,13 +23,16 @@ type SyncBackIntent struct {
 }
 
 type ManagerConfig struct {
-	Store         *jobstore.Store
-	Resolver      Resolver
-	Generator     domain.Generator
-	Now           func() time.Time
-	MaxConcurrent int
-	MaxQueued     int
-	SameHostCopy  SameHostCopyBackend
+	Store           *jobstore.Store
+	Resolver        Resolver
+	Generator       domain.Generator
+	Now             func() time.Time
+	MaxConcurrent   int
+	MaxQueued       int
+	SameHostCopy    SameHostCopyBackend
+	SchedulerClock  foundation.Clock
+	SchedulerPolicy SchedulerPolicy
+	ResourceLimits  ResourceLimits
 }
 
 type JobView struct {
@@ -60,6 +64,7 @@ type Manager struct {
 	generator domain.Generator
 	now       func() time.Time
 	queue     chan domain.JobID
+	scheduler *TransferScheduler
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -76,18 +81,41 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 	if config.Store == nil || config.Resolver == nil || config.Generator == nil {
 		return nil, errors.New("new transfer manager: store, resolver, and generator are required")
 	}
-	if config.MaxConcurrent < 1 || config.MaxConcurrent > 32 {
-		return nil, errors.New("new transfer manager: concurrency is outside 1..32")
+	hard := HardResourceCeilings()
+	limits := config.ResourceLimits
+	if limits == (ResourceLimits{}) {
+		limits = hard
+	}
+	limits, err := TightenResourceLimits(limits)
+	if err != nil {
+		return nil, fmt.Errorf("new transfer manager: resource limits: %w", err)
+	}
+	if config.MaxConcurrent < 1 {
+		return nil, errors.New("new transfer manager: concurrency must be positive")
+	}
+	if uint32(config.MaxConcurrent) > limits.ActiveJobs { //nolint:gosec // positivity and hard ceiling are checked immediately above.
+		return nil, fmt.Errorf("new transfer manager: concurrency %d exceeds configured ceiling %d: %w", config.MaxConcurrent, limits.ActiveJobs, ErrResourceLimitExpansion)
 	}
 	if config.MaxQueued == 0 {
 		config.MaxQueued = defaultQueuedJobs
 	}
-	if config.MaxQueued < config.MaxConcurrent || config.MaxQueued > 4096 {
-		return nil, errors.New("new transfer manager: queue budget is outside concurrency..4096")
+	if config.MaxQueued < config.MaxConcurrent {
+		return nil, errors.New("new transfer manager: queue budget is below concurrency")
+	}
+	if uint32(config.MaxQueued) > limits.QueuedJobs { //nolint:gosec // positivity and hard ceiling are checked immediately above.
+		return nil, fmt.Errorf("new transfer manager: queue budget %d exceeds configured ceiling %d: %w", config.MaxQueued, limits.QueuedJobs, ErrResourceLimitExpansion)
 	}
 	now := config.Now
 	if now == nil {
 		now = time.Now
+	}
+	schedulerClock := config.SchedulerClock
+	if schedulerClock == nil {
+		schedulerClock = foundation.RealClock{}
+	}
+	scheduler, err := NewTransferSchedulerWithLimits(schedulerClock, config.SchedulerPolicy, limits)
+	if err != nil {
+		return nil, fmt.Errorf("new transfer manager: scheduler: %w", err)
 	}
 	rootContext, cancel := context.WithCancel(context.Background())
 	return &Manager{
@@ -98,12 +126,27 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		generator: config.Generator,
 		now:       now,
 		queue:     make(chan domain.JobID, config.MaxQueued),
+		scheduler: scheduler,
 		ctx:       rootContext,
 		cancel:    cancel,
 		waiters:   make(map[domain.JobID][]chan struct{}),
 		leases:    make(map[domain.JobID]func()),
 		workers:   config.MaxConcurrent,
 	}, nil
+}
+
+func (manager *Manager) UpdateBandwidthPolicy(policy SchedulerPolicy) error {
+	if manager == nil || manager.scheduler == nil {
+		return errors.New("update bandwidth policy: manager scheduler is unavailable")
+	}
+	return manager.scheduler.Update(policy)
+}
+
+func (manager *Manager) SchedulerSnapshot() SchedulerSnapshot {
+	if manager == nil || manager.scheduler == nil {
+		return SchedulerSnapshot{}
+	}
+	return manager.scheduler.Snapshot()
 }
 
 func (manager *Manager) Start(ctx context.Context) error {
@@ -623,6 +666,19 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	if err := manager.applyConflictResolution(&plan); err != nil {
 		return
 	}
+	resourceLease, err := manager.scheduler.AcquireResources(manager.ctx, ResourceRequest{
+		JobID: plan.JobID,
+		EndpointIDs: []domain.EndpointID{
+			plan.SourceEndpoint.ID, plan.DestinationEndpoint.ID,
+		},
+		Usage: ResourceUsage{
+			ActiveJobs: 1, FileDescriptors: 2, Goroutines: 1, MemoryBytes: uint64(plan.BufferBytes),
+		},
+	})
+	if err != nil {
+		return
+	}
+	defer resourceLease.Release()
 	snapshot, err = manager.transition(snapshot, job.StateRunning, "job_started", map[string]any{})
 	if err != nil {
 		return
@@ -646,7 +702,10 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		result, executeErr = manager.executeAtomicMove(plan)
 	} else {
 		journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
-		worker := &Worker{resolver: manager.resolver, journal: journal, sameHost: manager.sameHost, level2: manager.level2}
+		worker := &Worker{
+			resolver: manager.resolver, journal: journal, sameHost: manager.sameHost,
+			level2: manager.level2, scheduler: manager.scheduler,
+		}
 		result, executeErr = worker.Execute(manager.ctx, plan, manager.control(jobID))
 	}
 	if manager.ctx.Err() != nil {

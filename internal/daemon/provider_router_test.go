@@ -285,6 +285,67 @@ func TestProviderSessionJobLeaseOutlivesClientAndClosesAfterRelease(t *testing.T
 	}
 }
 
+func TestProviderSessionsBoundDynamicConnectionsAndReuseAdmissionAfterIdleRelease(t *testing.T) {
+	local := testLocalProvider(t)
+	factory, err := NewProviderSessionsWithLimits([]providerapi.Provider{local}, 4, ProviderSessionLimits{
+		MaxDynamicEndpoints: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created := make(map[string]*closingProvider)
+	factory.SetSSHConnector(func(_ context.Context, hostAlias string) (providerapi.Provider, error) {
+		id := domain.EndpointID("ep_bbbbbbbbbbbbbbbbbbbbbbbbbb")
+		if hostAlias == "second" {
+			id = "ep_cccccccccccccccccccccccccc"
+		}
+		remote := &closingProvider{
+			Provider:   local,
+			descriptor: domain.Endpoint{ID: id, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias},
+			closed:     make(chan struct{}),
+		}
+		created[hostAlias] = remote
+		return remote, nil
+	})
+	session := factory.NewSession()
+	defer session.Close()
+
+	connect := func(alias string) error {
+		payload, marshalErr := json.Marshal(ipc.ProviderConnectSSHRequest{HostAlias: alias})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		_, handleErr := session.Handle(context.Background(), ProviderConnectSSH, payload)
+		return handleErr
+	}
+	if err := connect("first"); err != nil {
+		t.Fatalf("first connect: %v", err)
+	}
+	if err := connect("second"); !domain.IsCode(err, domain.CodeResourceExhausted) {
+		t.Fatalf("second connect error = %v, want resource_exhausted", err)
+	}
+	select {
+	case <-created["second"].closed:
+	case <-time.After(time.Second):
+		t.Fatal("provider rejected by admission was not closed")
+	}
+
+	firstRelease, err := json.Marshal(ipc.ProviderReleaseRequest{EndpointID: string(created["first"].descriptor.ID)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := session.Handle(context.Background(), ProviderRelease, firstRelease); err != nil {
+		t.Fatalf("release first: %v", err)
+	}
+	if err := connect("second"); err != nil {
+		t.Fatalf("connect after idle release: %v", err)
+	}
+	snapshot := factory.ResourceSnapshot()
+	if snapshot.DynamicEndpoints != 1 || snapshot.MaxDynamicEndpoints != 1 {
+		t.Fatalf("resource snapshot = %+v", snapshot)
+	}
+}
+
 func TestProviderSessionsAcquireRehydratesFrozenEndpointDescriptor(t *testing.T) {
 	local := testLocalProvider(t)
 	factory, err := NewProviderSessions([]providerapi.Provider{local}, 4)

@@ -694,6 +694,60 @@ func TestWorkerHundredGiBSyntheticSourceStopsAtBoundedCheckpoint(t *testing.T) {
 	}
 }
 
+func TestWorkerHundredGiBSparseFileUsesSizeIndependentBoundedCheckpoint(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("placeholder"), ConflictAsk)
+	const size = int64(100 * 1024 * 1024 * 1024)
+	sourcePath := filepath.Join(fixture.sourceRoot, "source")
+	if err := os.Truncate(sourcePath, size); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(sourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.Size() != size {
+		t.Fatalf("sparse source size = %d, want %d", info.Size(), size)
+	}
+
+	planner := NewPlanner(fixture.resolver)
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, fixture.source, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, fixture.destination, "/"))
+	plan, _, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.Source.Fingerprint.Size == nil || *plan.Source.Fingerprint.Size != uint64(size) {
+		t.Fatalf("frozen source size = %#v, want %d", plan.Source.Fingerprint.Size, size)
+	}
+	if plan.BufferBytes > HardTransferBufferBytes {
+		t.Fatalf("buffer bytes = %d, exceeds hard ceiling %d", plan.BufferBytes, HardTransferBufferBytes)
+	}
+
+	journal := newMemoryJournal()
+	control := ControlFunc(func(checkpoint Checkpoint) ControlAction {
+		if checkpoint.Offset >= uint64(plan.BufferBytes) {
+			return ControlCancel
+		}
+		return ControlContinue
+	})
+	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), plan, control)
+	if !errors.Is(err, ErrCanceled) {
+		t.Fatalf("100GiB sparse Execute() error = %v, want canceled", err)
+	}
+	if result.Bytes != uint64(plan.BufferBytes) || !result.PartRetained {
+		t.Fatalf("100GiB sparse result = %#v", result)
+	}
+	if journal.maxBufferBytes > HardTransferBufferBytes {
+		t.Fatalf("100GiB sparse max buffer = %d, exceeds %d", journal.maxBufferBytes, HardTransferBufferBytes)
+	}
+	if _, err := os.Stat(filepath.Join(fixture.destinationRoot, "final")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("final file stat error = %v, want not exist before commit", err)
+	}
+}
+
 func TestWorkerResumesAfterTransportInterruptAtDurableOffset(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("disconnect-and-resume"), ConflictAsk)
 	fixture.plan.BufferBytes = 4

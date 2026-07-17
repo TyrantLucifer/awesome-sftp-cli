@@ -64,6 +64,80 @@ func TestCreateJobIsTransactionalAndRequestIdempotent(t *testing.T) {
 	}
 }
 
+func TestJobEventPayloadsHaveFrozenHardByteCeiling(t *testing.T) {
+	oversized := `"` + strings.Repeat("x", 32*1024) + `"`
+	request := createRequest(t, 2)
+	request.EventPayloadJSON = oversized
+	if err := validateCreate(request); err == nil {
+		t.Fatal("validateCreate() error = nil, want oversized event rejection")
+	}
+
+	transition := TransitionRequest{
+		JobID: request.JobID, ExpectedVersion: 1, To: job.StateRunning,
+		EventID: request.EventID, EventKind: "job_started", PayloadJSON: oversized,
+		Now: time.Unix(200, 0),
+	}
+	if err := validateTransitionRequest(transition); err == nil {
+		t.Fatal("validateTransitionRequest() error = nil, want oversized event rejection")
+	}
+
+	pause := true
+	control := ControlRequest{
+		JobID: request.JobID, ExpectedVersion: 1, PauseRequested: &pause,
+		EventID: request.EventID, EventKind: "pause_requested", PayloadJSON: oversized,
+		Now: time.Unix(200, 0),
+	}
+	if err := validateControlRequest(control); err == nil {
+		t.Fatal("validateControlRequest() error = nil, want oversized event rejection")
+	}
+}
+
+func TestLargeJobEventHistoryIsReadOnlyThroughBoundedPages(t *testing.T) {
+	ctx := context.Background()
+	store, database := newTestStore(t, ctx)
+	request := createRequest(t, 3)
+	if _, _, err := store.Create(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+
+	transaction, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	generator := &testkit.SequenceGenerator{}
+	for sequence := int64(2); sequence <= 2501; sequence++ {
+		eventID, err := domain.NewEventID(generator)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := transaction.ExecContext(ctx,
+			"INSERT INTO job_events(job_id,sequence,event_id,kind,payload_json,created_at_unix) VALUES(?,?,?,?,?,?)",
+			request.JobID, sequence, eventID, "scale_event", `{}`, sequence,
+		); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := transaction.Commit(); err != nil {
+		t.Fatal(err)
+	}
+
+	after := int64(0)
+	wantPageSizes := []int{1000, 1000, 501}
+	for _, want := range wantPageSizes {
+		events, err := store.ListEvents(ctx, request.JobID, after, 1000)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(events) != want {
+			t.Fatalf("event page after %d has %d records, want %d", after, len(events), want)
+		}
+		after = events[len(events)-1].Sequence
+	}
+	if _, err := store.ListEvents(ctx, request.JobID, 0, 1001); err == nil {
+		t.Fatal("ListEvents(limit=1001) error = nil, want hard page bound")
+	}
+}
+
 func TestHelperRemovalLeaseRejectsPinnedArtifactAndExcludesNewJobAdmission(t *testing.T) {
 	ctx := context.Background()
 	store, database := newTestStore(t, ctx)

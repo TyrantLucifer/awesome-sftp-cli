@@ -302,7 +302,9 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 50,000-entry 首屏/滚动/过滤/render/RSS fixture；1,000,000-node browse/search/plan/copy/cancel/restart 资源曲线；100GB sparse local/SFTP relay/test-only direct pause/resume/restart/cancel/hash/limit；多 Endpoint/多大小 Job 的 fairness/backpressure/idle recovery；race、soak、benchmark 环境与趋势记录。
 
-**Milestone Status**: In Progress
+**Milestone Status**: Local implementation complete; final closeout in progress
+
+**Current checkpoint**: Canonical `make test-scale` covers 50k windowed rendering, million-node Provider/Helper/discovery streams, actual/synthetic 100 GiB sparse-file bounded checkpoints, preview refusal, cancellation, connection admission/reuse, low-disk safety, bounded event/log behavior and low-capability degradation. One shared scheduler enforces global/both-Endpoint/Job integer token buckets, 4:1 weighted fairness, fixed/tightenable 256 KiB quantum, cancellation and future-token-only hot updates; rate-required Plans disable `uncontrolled` fast paths. A global/Endpoint/Job resource ledger accounts Job/queue/connection/SSH/Helper/FD/goroutine/memory/event/log dimensions with exact hard ceilings and idempotent release. ProviderSessions cap dynamic connections and close at the last lease. Directory discovery is iterative bounded BFS. Job events are capped at 32 KiB and page at 1,000. `make bench-scale` fixes `GOMAXPROCS=1`, 100x and three samples; the first record is in Stage 5 verification. CI-equivalent `make check`, lint and focused race pass locally. Exact-final matrices, two independent reviews and green push/PR Hosted runs remain before M5.4/Stage 5 completion.
 
 ## Stage 6: Hardening & 1.0 Release
 

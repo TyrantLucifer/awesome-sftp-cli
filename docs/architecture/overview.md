@@ -8,7 +8,7 @@
 
 ### 当前实现边界
 
-本文主体描述 1.0 目标架构，不代表所有运行时组件已经存在。Stage 0 foundation、Stage 1 Read-only Explorer、Stage 2 durable transfers、Stage 3 Preview/Edit/Cache，以及 Stage 4 Search/fixture-only Optional Helper 已在当前 Stage 4 候选分支实现。除既有浏览、Job、Preview/Edit/Cache 与 shell surface 外，当前切片还包含 Level 0 `f`/`g/`、严格 framed Helper protocol、持久 current-policy/high-water、Level 1 search/hash/disk/tail/watch 和不绕过 Planner/Job 的 same-host part staging。精确候选身份和平台证据以 [Stage 4 verification](../verification/stage-04.md) 为准。production Helper distribution 仍 **CLOSED**；cross-host direct transfer、大规模加固与发行就绪属于 Stage 5–6，整个产品的 production/release readiness 只由 Stage 6 门禁判定。
+本文主体描述 1.0 目标架构，不代表所有运行时组件已经存在。Stage 0–4 已完成；当前 Stage 5 候选实现统一 route evidence、声明式 server copy、test-only Level 2 direct、故障降级/等价，以及 50k/百万树/100 GiB 的规模与统一资源调度门禁。精确候选身份和证据以 [Stage 5 verification](../verification/stage-05.md) 为准。production Helper distribution 与 production Level 2 仍 **CLOSED**；发行就绪只由 Stage 6 门禁判定。
 
 ### 已冻结兼容与发行基线
 
@@ -108,6 +108,8 @@ daemon 启动后在平台 LogFile 打开 owner-only JSON 日志。业务 server 
 - 在客户端断开、网络抖动或自身重启后恢复可恢复任务。
 
 守护进程只以当前 OS 用户身份运行。它不需要 root 权限，不开放 TCP 监听，不接受其他用户通过宽松权限套接字访问。
+
+Stage 5 scheduler 使用 global/Endpoint/Job 分层整数 token bucket 与 4:1 interactive/bulk weighted round-robin。大传输每 256 KiB 让出；热更新只影响后续 token。统一 lease ledger 对 active Job/queue/Endpoint/connection/SSH/Helper/FD/goroutine/memory/event/log 计数，配置只能收紧 ADR-0017 的 hard ceilings。Provider connection 按 exact Endpoint lease 复用，最后一个 session/Job lease 释放即关闭。
 
 ### 3.3 系统 OpenSSH 子进程
 
@@ -381,11 +383,12 @@ cache filesystem manifest 不包含完整的 policy/dirty/reference/lease 元数
 
 跨端点路由优先级为：
 
-1. Stage 2 已实现：同 Endpoint 且 frozen capability 明确时的原子 rename。
-2. Stage 2 基线：守护进程有界内存中继，不落完整本地文件。
-3. Stage 5 才会实现：经完整预检的跨主机 direct 或 helper/server-side copy；当前版本不选择这些路线。
+1. 同 Endpoint 且 frozen capability 明确时的原子 rename。
+2. 显式 capability 与结构化 facet 同时存在时的 server/Helper same-host copy。
+3. 14 项 Level 2 preflight 全通过时的跨主机 direct；普通 production 构造稳定记录 `production_distribution_closed`，因此当前发行边界不选择它。
+4. 始终可用的守护进程有界内存中继，不落完整本地文件。
 
-direct 在提交前失败且计划允许降级时可回到本机中继；降级原因必须记录和展示。
+不能精确限速的快路径标记 `uncontrolled`；冻结策略要求速率控制时必须选择 `controlled` relay。direct 在提交前失败且 exact part absence/identity/postcondition 可证明、计划也允许降级时才可回到本机中继；降级原因必须持久记录并展示。
 
 ### 10.3 编辑与回传
 

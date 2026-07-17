@@ -24,9 +24,13 @@ Files stream into a unique same-directory `.<final>.part-<job-id>`. The worker p
 
 Directory discovery is streaming and bounded. The default Plan freezes 64 queued entries, 256 entries per Provider page, depth 128, and a 256 KiB transfer buffer. Symlinks are visible but directory copy does not follow or copy them.
 
+The daemon applies one shared bandwidth/resource scheduler. A Plan may freeze a per-Job byte rate; global, both Endpoint, and Job token buckets are enforced at a fixed maximum 256 KiB quantum with bounded interactive service. Fast paths that cannot be rate-controlled are skipped when the policy requires exact control. Runtime configuration may tighten, but never expand, the documented hard ceilings (16 active Jobs, 8 per Endpoint, 512 queued Jobs, 32 connections, 4 per Endpoint, 32 SSH processes, 4 Helper processes, 512 FDs, 256 goroutines, and 64 MiB accounted memory).
+
 A move uses an atomic rename only when the same endpoint explicitly advertises that exact capability and its postconditions can be proved. Otherwise it performs copy → verify → commit → revalidate the frozen source → delete source → prove absence. Source capability loss, source replacement, incomplete directory verification, or an unproved delete leaves the verified destination intact and completes as `completed_with_source_retained` with the reason in Jobs.
 
 Remote A→remote B uses two independent OpenSSH/SFTP sessions and a daemon memory buffer. It does not stage the complete file in a local content cache.
+
+Stage 5 records why each fast/direct candidate was selected or rejected. Production Level 2 distribution remains closed, so ordinary builds show `production_distribution_closed` and use bounded relay; only non-release fixtures exercise the direct data plane. No route enables Agent forwarding, GSS credential delegation, secret copying, or relaxed host-key checking.
 
 ## Conflicts and controls
 

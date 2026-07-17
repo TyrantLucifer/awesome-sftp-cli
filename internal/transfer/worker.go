@@ -132,10 +132,16 @@ type ItemResult struct {
 }
 
 type Worker struct {
-	resolver Resolver
-	journal  Journal
-	sameHost SameHostCopyBackend
-	level2   level2DataBackend
+	resolver  Resolver
+	journal   Journal
+	sameHost  SameHostCopyBackend
+	level2    level2DataBackend
+	scheduler bandwidthScheduler
+}
+
+type bandwidthScheduler interface {
+	Wait(context.Context, BandwidthRequest) error
+	QuantumBytes() uint32
 }
 
 func NewWorker(resolver Resolver, journal Journal) *Worker {
@@ -430,11 +436,27 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrCanceled
 			}
 		}
-		n, readErr := readHandle.Read(ctx, buffer)
-		if n < 0 || n > len(buffer) {
+		readBuffer := buffer
+		if worker.scheduler != nil {
+			quantum := worker.scheduler.QuantumBytes()
+			if quantum > 0 && int(quantum) < len(readBuffer) {
+				readBuffer = readBuffer[:quantum]
+			}
+		}
+		n, readErr := readHandle.Read(ctx, readBuffer)
+		if n < 0 || n > len(readBuffer) {
 			return Result{}, errors.New("execute transfer: provider returned invalid read count")
 		}
 		if n > 0 {
+			if worker.scheduler != nil {
+				if err := worker.scheduler.Wait(ctx, BandwidthRequest{
+					JobID: plan.JobID, EndpointID: plan.SourceEndpoint.ID, PeerEndpointID: plan.DestinationEndpoint.ID,
+					JobBytesPerSecond: plan.Bandwidth.JobBytesPerSecond, Class: ScheduleBulk,
+					Bytes: uint32(n), //nolint:gosec // n is bounded by the scheduler quantum, whose hard ceiling fits uint32.
+				}); err != nil {
+					return Result{}, err
+				}
+			}
 			if err := writeAll(ctx, writeHandle, buffer[:n]); err != nil {
 				return Result{}, err
 			}

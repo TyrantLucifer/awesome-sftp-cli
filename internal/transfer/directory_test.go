@@ -61,6 +61,23 @@ func TestDiscoverDirectoryDoesNotFollowSymlinksAndRejectsDepthOverflow(t *testin
 	}
 }
 
+func TestDiscoverDirectoryConfigurationCanOnlyTightenFrozenHardCeilings(t *testing.T) {
+	t.Parallel()
+	implementation := newSyntheticDirectoryProvider(0)
+	for name, budget := range map[string]DiscoveryBudget{
+		"frontier": {QueueItems: 65, PageItems: 256, MaxDepth: 128},
+		"page":     {QueueItems: 64, PageItems: 257, MaxDepth: 128},
+		"depth":    {QueueItems: 64, PageItems: 256, MaxDepth: 129},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			if _, _, err := DiscoverDirectory(context.Background(), implementation, implementation.root, budget); err == nil {
+				t.Fatalf("DiscoverDirectory(%+v) succeeded above hard ceiling", budget)
+			}
+		})
+	}
+}
+
 func TestDirectoryResultManifestHasHardPersistenceBound(t *testing.T) {
 	var result Result
 	for index := 0; index < maximumManifestItems+44; index++ {

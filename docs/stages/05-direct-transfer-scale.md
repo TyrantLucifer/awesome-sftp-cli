@@ -11,6 +11,8 @@
 
 同时把浏览、搜索和传输验证到既定规模：单目录数万条目、整树百万节点、单文件数百 GB；验收夹具至少包含 5 万项目录、百万节点树和 100GB 稀疏文件。核心要求是流式、可取消、有界内存和可观察，而不是某台机器上的单一吞吐数字。
 
+当前 M5.1–M5.4 已在本地门禁实现；22 个 Stage 5 feature row 暂标 `Implemented`。只有最终矩阵、两次独立 review 与 exact-SHA push/PR Hosted CI 全绿后，本阶段才改为 Complete、feature 才改为 Verified。活动证据见 [Stage 5 verification](../verification/stage-05.md)。
+
 ## 2. 范围
 
 ### 2.1 包含

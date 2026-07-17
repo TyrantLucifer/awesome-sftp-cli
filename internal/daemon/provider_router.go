@@ -54,20 +54,30 @@ type SSHConnector func(context.Context, string) (providerapi.Provider, error)
 type EndpointConnector func(context.Context, domain.Endpoint) (providerapi.Provider, error)
 
 type ProviderSessions struct {
-	mu              sync.Mutex
-	providers       map[domain.EndpointID]providerapi.Provider
-	endpoints       map[domain.EndpointID]*endpointLease
-	maxReadBytes    uint32
-	connectSSH      SSHConnector
-	connectEndpoint EndpointConnector
-	authBroker      *auth.Broker
-	workspace       *workspace.Store
-	transfer        TransferService
-	diagnostics     DiagnosticSource
-	cache           *cachemanager.Manager
-	editSessions    EditSessionStore
-	helpers         map[domain.EndpointID]*helperruntime.Client
-	nextOwner       atomic.Uint64
+	mu                  sync.Mutex
+	providers           map[domain.EndpointID]providerapi.Provider
+	endpoints           map[domain.EndpointID]*endpointLease
+	maxReadBytes        uint32
+	connectSSH          SSHConnector
+	connectEndpoint     EndpointConnector
+	authBroker          *auth.Broker
+	workspace           *workspace.Store
+	transfer            TransferService
+	diagnostics         DiagnosticSource
+	cache               *cachemanager.Manager
+	editSessions        EditSessionStore
+	helpers             map[domain.EndpointID]*helperruntime.Client
+	nextOwner           atomic.Uint64
+	maxDynamicEndpoints uint32
+}
+
+type ProviderSessionLimits struct {
+	MaxDynamicEndpoints uint32
+}
+
+type ProviderResourceSnapshot struct {
+	DynamicEndpoints    uint32
+	MaxDynamicEndpoints uint32
 }
 
 type endpointLease struct {
@@ -89,11 +99,25 @@ func (s *ProviderSessions) SetCacheManager(manager *cachemanager.Manager) { s.ca
 func (s *ProviderSessions) SetEditSessionStore(store EditSessionStore)    { s.editSessions = store }
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
+	return NewProviderSessionsWithLimits(providers, maxReadBytes, ProviderSessionLimits{
+		MaxDynamicEndpoints: transfer.HardResourceCeilings().Connections,
+	})
+}
+
+func NewProviderSessionsWithLimits(
+	providers []providerapi.Provider,
+	maxReadBytes uint32,
+	limits ProviderSessionLimits,
+) (*ProviderSessions, error) {
 	if len(providers) == 0 {
 		return nil, errors.New("create provider sessions: no providers")
 	}
 	if maxReadBytes == 0 {
 		return nil, errors.New("create provider sessions: maximum read bytes is zero")
+	}
+	hardConnections := transfer.HardResourceCeilings().Connections
+	if limits.MaxDynamicEndpoints == 0 || limits.MaxDynamicEndpoints > hardConnections {
+		return nil, fmt.Errorf("create provider sessions: dynamic endpoint limit %d is outside 1..%d", limits.MaxDynamicEndpoints, hardConnections)
 	}
 	indexed := make(map[domain.EndpointID]providerapi.Provider, len(providers))
 	for _, implementation := range providers {
@@ -113,7 +137,21 @@ func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) 
 	for id, implementation := range indexed {
 		endpoints[id] = &endpointLease{implementation: implementation, permanent: true}
 	}
-	return &ProviderSessions{providers: indexed, endpoints: endpoints, maxReadBytes: maxReadBytes, helpers: make(map[domain.EndpointID]*helperruntime.Client)}, nil
+	return &ProviderSessions{
+		providers: indexed, endpoints: endpoints, maxReadBytes: maxReadBytes,
+		helpers: make(map[domain.EndpointID]*helperruntime.Client), maxDynamicEndpoints: limits.MaxDynamicEndpoints,
+	}, nil
+}
+
+func (s *ProviderSessions) ResourceSnapshot() ProviderResourceSnapshot {
+	if s == nil {
+		return ProviderResourceSnapshot{}
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return ProviderResourceSnapshot{
+		DynamicEndpoints: s.dynamicEndpointCountLocked(), MaxDynamicEndpoints: s.maxDynamicEndpoints,
+	}
 }
 
 func (s *ProviderSessions) NewSession() Session {
@@ -606,6 +644,7 @@ func (s *ProviderSessions) ensureEndpoint(ctx context.Context, descriptor domain
 	s.mu.Lock()
 	entry := s.endpoints[descriptor.ID]
 	connector := s.connectEndpoint
+	atCapacity := entry == nil && s.dynamicEndpointCountLocked() >= s.maxDynamicEndpoints
 	s.mu.Unlock()
 	if entry != nil {
 		if entry.implementation.Descriptor() != descriptor {
@@ -615,6 +654,9 @@ func (s *ProviderSessions) ensureEndpoint(ctx context.Context, descriptor domain
 	}
 	if connector == nil {
 		return &domain.OpError{Code: domain.CodeNotFound, Message: "frozen endpoint is not attached", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone}
+	}
+	if atCapacity {
+		return dynamicEndpointLimitError(descriptor.ID, s.maxDynamicEndpoints)
 	}
 	implementation, err := connector(ctx, descriptor)
 	if err != nil {
@@ -637,6 +679,13 @@ func (s *ProviderSessions) ensureEndpoint(ctx context.Context, descriptor domain
 		}
 		return nil
 	}
+	if s.dynamicEndpointCountLocked() >= s.maxDynamicEndpoints {
+		s.mu.Unlock()
+		if closer, ok := implementation.(interface{ Close() error }); ok {
+			_ = closer.Close()
+		}
+		return dynamicEndpointLimitError(descriptor.ID, s.maxDynamicEndpoints)
+	}
 	s.endpoints[descriptor.ID] = &endpointLease{implementation: implementation}
 	s.mu.Unlock()
 	return nil
@@ -649,8 +698,28 @@ func (s *ProviderSessions) attachSession(implementation providerapi.Provider) er
 	if _, exists := s.endpoints[descriptor.ID]; exists {
 		return invalidArgument("duplicate SSH endpoint", nil)
 	}
+	if s.dynamicEndpointCountLocked() >= s.maxDynamicEndpoints {
+		return dynamicEndpointLimitError(descriptor.ID, s.maxDynamicEndpoints)
+	}
 	s.endpoints[descriptor.ID] = &endpointLease{implementation: implementation, sessions: 1}
 	return nil
+}
+
+func (s *ProviderSessions) dynamicEndpointCountLocked() uint32 {
+	var count uint32
+	for _, entry := range s.endpoints {
+		if entry != nil && !entry.permanent {
+			count++
+		}
+	}
+	return count
+}
+
+func dynamicEndpointLimitError(endpointID domain.EndpointID, limit uint32) error {
+	return &domain.OpError{
+		Code: domain.CodeResourceExhausted, Message: fmt.Sprintf("dynamic endpoint limit %d reached", limit),
+		EndpointID: endpointID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterReconnect}, Effect: domain.EffectNone,
+	}
 }
 
 func (s *ProviderSessions) releaseSession(endpointID domain.EndpointID) error {

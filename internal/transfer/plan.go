@@ -107,6 +107,16 @@ type Intent struct {
 	ConflictPolicy       ConflictPolicy  `json:"conflict_policy"`
 	ConflictConfirmed    bool            `json:"conflict_confirmed"`
 	DirectPolicy         DirectPolicy    `json:"direct_policy"`
+	Bandwidth            BandwidthPolicy `json:"bandwidth,omitempty"`
+}
+
+type BandwidthPolicy struct {
+	Required          bool   `json:"required,omitempty"`
+	JobBytesPerSecond uint64 `json:"job_bytes_per_second,omitempty"`
+}
+
+func (policy BandwidthPolicy) requiresControl() bool {
+	return policy.Required || policy.JobBytesPerSecond > 0
 }
 
 type DeleteIntent struct {
@@ -149,6 +159,7 @@ type Plan struct {
 	DestinationCapability           CapabilityBinding        `json:"destination_capability"`
 	Route                           Route                    `json:"route"`
 	DirectPolicy                    DirectPolicy             `json:"direct_policy"`
+	Bandwidth                       BandwidthPolicy          `json:"bandwidth,omitempty"`
 	Verification                    Verification             `json:"verification"`
 	ConflictPolicy                  ConflictPolicy           `json:"conflict_policy"`
 	BufferBytes                     uint32                   `json:"buffer_bytes"`
@@ -372,6 +383,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		},
 		Route:                  chooseRoute(sourceProvider.Descriptor(), destinationProvider.Descriptor()),
 		DirectPolicy:           request.Intent.DirectPolicy,
+		Bandwidth:              request.Intent.Bandwidth,
 		Verification:           VerifySHA256,
 		ConflictPolicy:         request.Intent.ConflictPolicy,
 		BufferBytes:            DefaultBufferBytes,
@@ -668,6 +680,9 @@ func validateFreezeRequest(request FreezeRequest) error {
 	}
 	if request.Intent.DestinationDirectory.EndpointID == "" || request.Intent.DestinationDirectory.Path == "" {
 		return errors.New("freeze copy: invalid destination")
+	}
+	if request.Intent.Bandwidth.JobBytesPerSecond > MaxBandwidthBytesPerSecond {
+		return errors.New("freeze copy: bandwidth exceeds hard ceiling")
 	}
 	if request.Intent.Name == "" || request.Intent.Name == "." || request.Intent.Name == ".." || path.Base(request.Intent.Name) != request.Intent.Name || strings.IndexByte(request.Intent.Name, 0) >= 0 {
 		return errors.New("freeze copy: destination name is not one path component")

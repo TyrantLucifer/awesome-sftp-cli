@@ -99,6 +99,7 @@ func validSameHostCopyBinding(binding SameHostCopyBinding, endpointID domain.End
 
 func (planner *Planner) trySameHostCopy(ctx context.Context, plan *Plan) {
 	if planner.sameHost == nil || plan == nil || plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile ||
+		plan.Bandwidth.requiresControl() ||
 		plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID || plan.SourceEndpoint.Kind != domain.EndpointSSH ||
 		plan.DestinationEndpoint.Kind != domain.EndpointSSH {
 		return

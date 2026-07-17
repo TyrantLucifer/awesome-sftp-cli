@@ -31,7 +31,16 @@ const (
 	ReasonLevel2RevalidationFailed     RouteReason = "direct_revalidation_failed"
 	ReasonLevel2PartCleanedForRelay    RouteReason = "direct_part_cleaned_for_relay"
 	ReasonProductionDistributionClosed RouteReason = "production_distribution_closed"
+	ReasonBandwidthControlRequired     RouteReason = "bandwidth_control_required"
 	ReasonBoundedRelayDefault          RouteReason = "bounded_relay_default"
+)
+
+type BandwidthControl string
+
+const (
+	BandwidthControlled    BandwidthControl = "controlled"
+	BandwidthUncontrolled  BandwidthControl = "uncontrolled"
+	BandwidthNotApplicable BandwidthControl = "not_applicable"
 )
 
 type IntegrityPolicy string
@@ -62,6 +71,7 @@ type RouteEvidence struct {
 	DowngradeBoundary string                 `json:"downgrade_boundary"`
 	Risk              string                 `json:"risk"`
 	ProgressSemantics string                 `json:"progress_semantics"`
+	BandwidthControl  BandwidthControl       `json:"bandwidth_control"`
 	Part              domain.Location        `json:"part"`
 	Final             domain.Location        `json:"final"`
 }
@@ -80,6 +90,7 @@ func freezeRouteEvidence(plan *Plan) {
 		DowngradeBoundary: "before_target_write",
 		Risk:              "low",
 		ProgressSemantics: "durable_bytes",
+		BandwidthControl:  BandwidthControlled,
 		Part:              plan.Part,
 		Final:             plan.Final,
 	}
@@ -89,6 +100,7 @@ func freezeRouteEvidence(plan *Plan) {
 		evidence.Candidates = append(evidence.Candidates, evidence.Selected)
 		evidence.DowngradeBoundary = "postcondition_check_only"
 		evidence.ProgressSemantics = "phase_only"
+		evidence.BandwidthControl = BandwidthNotApplicable
 		plan.RouteEvidence = &evidence
 
 		return
@@ -97,23 +109,33 @@ func freezeRouteEvidence(plan *Plan) {
 	sameSSH := plan.SourceEndpoint.ID == plan.DestinationEndpoint.ID &&
 		plan.SourceEndpoint.Kind == domain.EndpointSSH && plan.DestinationEndpoint.Kind == domain.EndpointSSH
 	if sameSSH && plan.Kind == OperationCopy && plan.Source.Kind == domain.EntryFile {
-		if plan.Route == RouteSFTPServerCopy && plan.ServerCopy != nil {
+		if plan.Bandwidth.requiresControl() {
+			evidence.Candidates = append(evidence.Candidates, RouteDecision{
+				Route: RouteSFTPServerCopy, Reason: ReasonBandwidthControlRequired, Eligible: false,
+			})
+		} else if plan.Route == RouteSFTPServerCopy && plan.ServerCopy != nil {
 			serverCopy := RouteDecision{Route: RouteSFTPServerCopy, Reason: ReasonServerCopySelected, Eligible: true}
 			evidence.Candidates = append(evidence.Candidates, serverCopy)
 			evidence.Selected = serverCopy
 			evidence.DowngradeBoundary = "before_target_write_part_absent"
 			evidence.ProgressSemantics = "phase_only"
+			evidence.BandwidthControl = BandwidthUncontrolled
 		} else {
 			evidence.Candidates = append(evidence.Candidates, RouteDecision{
 				Route: RouteSFTPServerCopy, Reason: ReasonServerCopyUnavailable, Eligible: false,
 			})
 		}
-		if plan.Route == RouteHelperSameHost {
+		if plan.Bandwidth.requiresControl() {
+			evidence.Candidates = append(evidence.Candidates, RouteDecision{
+				Route: RouteHelperSameHost, Reason: ReasonBandwidthControlRequired, Eligible: false,
+			})
+		} else if plan.Route == RouteHelperSameHost {
 			helper := RouteDecision{Route: RouteHelperSameHost, Reason: ReasonHelperSameHostSelected, Eligible: true}
 			evidence.Candidates = append(evidence.Candidates, helper)
 			evidence.Selected = helper
 			evidence.DowngradeBoundary = "frozen_route_no_silent_downgrade"
 			evidence.ProgressSemantics = "phase_only"
+			evidence.BandwidthControl = BandwidthUncontrolled
 		} else {
 			evidence.Candidates = append(evidence.Candidates, RouteDecision{
 				Route: RouteHelperSameHost, Reason: ReasonHelperSameHostUnavailable, Eligible: false,
@@ -125,6 +147,8 @@ func freezeRouteEvidence(plan *Plan) {
 		plan.SourceEndpoint.Kind == domain.EndpointSSH && plan.DestinationEndpoint.Kind == domain.EndpointSSH {
 		direct := RouteDecision{Route: RouteLevel2Direct, Reason: ReasonProductionDistributionClosed, Eligible: false}
 		switch {
+		case plan.Bandwidth.requiresControl():
+			direct.Reason = ReasonBandwidthControlRequired
 		case plan.DirectPolicy.zero():
 		case !plan.DirectPolicy.enabled():
 			direct.Reason = ReasonLevel2PolicyDisabled
@@ -133,6 +157,7 @@ func freezeRouteEvidence(plan *Plan) {
 			direct = RouteDecision{Route: RouteLevel2Direct, Reason: ReasonLevel2PreflightPassed, Eligible: true}
 			evidence.Selected = direct
 			evidence.DowngradeBoundary = "before_target_write"
+			evidence.BandwidthControl = BandwidthUncontrolled
 		case plan.Level2Preflight.Outcome == Level2PreflightUnknown:
 			direct.Reason = ReasonLevel2PreflightUnknown
 		default:

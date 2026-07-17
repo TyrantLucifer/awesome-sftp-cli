@@ -13,10 +13,10 @@ import (
 	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
 )
 
-// DiscoveryBudget freezes the memory and recursion limits for one directory
+// DiscoveryBudget freezes the memory and traversal limits for one directory
 // plan. PageItems bounds Provider-owned listing pages; QueueItems bounds the
-// handoff to execution; MaxDepth prevents an adversarial tree from growing the
-// traversal stack without limit.
+// handoff and explicit directory frontier; MaxDepth terminates adversarial
+// deep trees without using the Go call stack.
 type DiscoveryBudget struct {
 	QueueItems uint32 `json:"queue_items"`
 	PageItems  uint32 `json:"page_items"`
@@ -45,9 +45,9 @@ func DiscoverDirectory(
 	if implementation == nil {
 		return nil, nil, errors.New("discover directory: provider is required")
 	}
-	if budget.QueueItems < 1 || budget.QueueItems > 4096 ||
-		budget.PageItems < 1 || budget.PageItems > 4096 ||
-		budget.MaxDepth < 1 || budget.MaxDepth > 256 {
+	if budget.QueueItems < 1 || budget.QueueItems > DefaultDiscoveryBudget.QueueItems ||
+		budget.PageItems < 1 || budget.PageItems > DefaultDiscoveryBudget.PageItems ||
+		budget.MaxDepth < 1 || budget.MaxDepth > DefaultDiscoveryBudget.MaxDepth {
 		return nil, nil, errors.New("discover directory: budget is outside queue/page/depth limits")
 	}
 	if root.EndpointID == "" || root.EndpointID != implementation.Descriptor().ID || root.Path == "" {
@@ -81,45 +81,58 @@ func walkDirectory(
 	budget DiscoveryBudget,
 	items chan<- DiscoveredItem,
 ) error {
-	var cursor providerapi.PageCursor
-	for {
-		page, err := implementation.List(ctx, providerapi.ListRequest{
-			Location: directory,
-			Cursor:   cursor,
-			Limit:    budget.PageItems,
-		})
-		if err != nil {
-			return err
-		}
-		if len(page.Entries) > int(budget.PageItems) || page.Done != (page.NextCursor == "") {
-			return planError(domain.CodeIntegrityFailed, "discover_directory", directory, "provider returned an invalid listing page", domain.RetryNever)
-		}
-		for _, entry := range page.Entries {
-			relative, err := validateDiscoveredEntry(root, directory, entry)
+	type pendingDirectory struct {
+		location domain.Location
+		depth    uint32
+	}
+	frontier := make([]pendingDirectory, 1, int(budget.QueueItems))
+	frontier[0] = pendingDirectory{location: directory, depth: depth}
+	for len(frontier) > 0 {
+		current := frontier[0]
+		copy(frontier, frontier[1:])
+		frontier = frontier[:len(frontier)-1]
+		var cursor providerapi.PageCursor
+		for {
+			page, err := implementation.List(ctx, providerapi.ListRequest{
+				Location: current.location,
+				Cursor:   cursor,
+				Limit:    budget.PageItems,
+			})
 			if err != nil {
 				return err
 			}
-			itemDepth := depth + 1
-			select {
-			case items <- DiscoveredItem{Entry: entry, RelativePath: relative, Depth: itemDepth}:
-			case <-ctx.Done():
-				return ctx.Err()
+			if len(page.Entries) > int(budget.PageItems) || page.Done != (page.NextCursor == "") {
+				return planError(domain.CodeIntegrityFailed, "discover_directory", current.location, "provider returned an invalid listing page", domain.RetryNever)
 			}
-			if entry.Kind != domain.EntryDirectory {
-				continue
+			for _, entry := range page.Entries {
+				relative, err := validateDiscoveredEntry(root, current.location, entry)
+				if err != nil {
+					return err
+				}
+				itemDepth := current.depth + 1
+				select {
+				case items <- DiscoveredItem{Entry: entry, RelativePath: relative, Depth: itemDepth}:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+				if entry.Kind != domain.EntryDirectory {
+					continue
+				}
+				if itemDepth >= budget.MaxDepth {
+					return planError(domain.CodeResourceExhausted, "discover_directory", entry.Location, "directory depth budget exhausted", domain.RetryAfterReplan)
+				}
+				if len(frontier) >= int(budget.QueueItems) {
+					return planError(domain.CodeResourceExhausted, "discover_directory", entry.Location, "directory frontier budget exhausted", domain.RetryAfterReplan)
+				}
+				frontier = append(frontier, pendingDirectory{location: entry.Location, depth: itemDepth})
 			}
-			if itemDepth >= budget.MaxDepth {
-				return planError(domain.CodeResourceExhausted, "discover_directory", entry.Location, "directory depth budget exhausted", domain.RetryAfterReplan)
+			if page.Done {
+				break
 			}
-			if err := walkDirectory(ctx, implementation, root, entry.Location, itemDepth, budget, items); err != nil {
-				return err
-			}
+			cursor = page.NextCursor
 		}
-		if page.Done {
-			return nil
-		}
-		cursor = page.NextCursor
 	}
+	return nil
 }
 
 func validateDiscoveredEntry(root, directory domain.Location, entry domain.Entry) (string, error) {
