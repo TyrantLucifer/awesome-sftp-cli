@@ -531,7 +531,20 @@ func renderJobsDrawer(surface Surface, jobs []transfer.JobView, cursor, y, width
 		if view.WaitingReason != "" {
 			state += " (" + view.WaitingReason + ")"
 		}
-		line := fmt.Sprintf("%s  %s  %s  %d item(s)  %s  %s → %s", view.Route, state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal), view.Source.Path, view.Final.Path)
+		route := string(view.Route)
+		if evidence := view.RouteEvidence; evidence != nil {
+			if evidence.Selected.Route != "" {
+				route = string(evidence.Selected.Route)
+			}
+			details := []string{string(evidence.Selected.Reason), string(evidence.Integrity.Policy)}
+			for _, detail := range []string{evidence.Risk, evidence.DowngradeBoundary, evidence.ProgressSemantics} {
+				if detail != "" {
+					details = append(details, detail)
+				}
+			}
+			route += "[" + strings.Join(details, "/") + "]"
+		}
+		line := fmt.Sprintf("%s  %s  %s  %d item(s)  %s  %s → %s", route, state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal), view.Source.Path, view.Final.Path)
 		rowStyle := StylePreview
 		if start+row == cursor {
 			rowStyle = StyleCursor

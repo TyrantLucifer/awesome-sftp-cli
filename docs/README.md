@@ -11,7 +11,7 @@ This repository treats documentation as part of the product contract. A feature 
 5. [Implementation plan](../IMPLEMENTATION_PLAN.md) tracks stage-level execution.
 6. [Stage specifications](stages/) define scope, tests, exit criteria, and handoff requirements for each stage.
 7. [Testing strategy](testing/strategy.md) defines the validation ladder and required fixtures.
-8. [Stage verification](verification/stage-04.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 1–3 ledgers remain immutable historical evidence.
+8. [Stage verification](verification/stage-05.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 0–4 ledgers remain immutable historical evidence.
 9. [Project state](../PROJECT_STATE.md) is the short, current handoff for the next work session.
 
 ## Engineering gates
@@ -31,7 +31,7 @@ Read only as far as needed, in this order:
 2. the active stage in `IMPLEMENTATION_PLAN.md`
 3. `docs/product/feature-matrix.md`
 4. the active `docs/stages/NN-*.md`
-5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 4)
+5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 5)
 6. ADRs and interfaces linked by that stage
 7. the complete worktree status/manifest plus the last green validation commands recorded in the verification record and `PROJECT_STATE.md`
 

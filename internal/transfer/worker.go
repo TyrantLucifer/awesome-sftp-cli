@@ -668,6 +668,9 @@ func validateExecution(plan Plan) error {
 	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay && plan.Route != RouteHelperSameHost {
 		return errors.New("execute transfer: unsupported route")
 	}
+	if !validRouteEvidence(plan) {
+		return errors.New("execute transfer: invalid frozen route evidence")
+	}
 	if plan.Route == RouteHelperSameHost {
 		if plan.Version != 1 || plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile ||
 			plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID || plan.SourceEndpoint.Kind != domain.EndpointSSH ||

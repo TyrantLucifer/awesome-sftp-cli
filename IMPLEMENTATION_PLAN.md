@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 4 在固定分支 `codex/stage4-search-helper` 从 exact-main 基线 `09821bdbcfc9693b309a1a39ee5121113c033254` 完成；Stage 5–6 保持 Not Started。
+Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已在固定分支 `codex/stage5-direct-transfer-scale` 从 verified exact-main `06415e1e9fe5ffa93999f112b64aee0bd35e5c75` 开始；Stage 6 保持 Not Started。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -256,7 +256,49 @@ Stage 0–4 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Tests**: 路由决策表与能力组合测试；直传/中继等价性测试；认证、磁盘、网络和中途失败矩阵；50k 目录、百万树、100GB 稀疏文件基准；并发/限速测试；长时间运行、race 与资源泄漏测试。
 
-**Status**: Not Started
+**Status**: In Progress
+
+### M5.1: 路由统一与同 Endpoint 快路径
+
+**Goal**: 把 atomic rename、标准 bounded relay、声明式 SFTP server copy、Stage 4 `helper_same_host` 和 Level 2 direct 候选纳入同一个可解释、可持久、可恢复的 Planner/Plan 证据模型。
+
+**Success Criteria**: Job 创建前冻结 route/evidence version、选中路线、备选拒绝原因、能力版本、完整性策略、风险、part/final、预检和降级边界；执行器不静默改路；所有快路径仍只写 Job-owned part，并复用现有 conflict、verify、commit、restart 和 source-delete 后置条件；关闭快路径时与 Stage 2–4 byte/state 等价。
+
+**Tests**: 首个 RED 共享 route contract 覆盖同 Endpoint atomic rename、同 Endpoint relay/server-copy 候选、`helper_same_host`、跨 Endpoint bounded relay 和 production-closed Level 2 拒绝；route decision table、Plan JSON round-trip/restart、Worker route regression、共享 conflict/cancel/verify/commit/source-retention 套件，以及 Jobs/Log/TUI evidence snapshot。
+
+**Milestone Status**: In Progress
+
+**Current checkpoint**: 首个 RED 共享 route contract 已按要求覆盖五类路线并转绿。Plan 现持久化 v1 selected/candidate/reason/integrity/downgrade/risk/progress evidence，执行前反篡改校验；目录子 Plan 重新冻结自己的 part/final evidence；durable JobView 与 Jobs drawer 显示相同选路事实。M5.1 的 server-copy 数据面、完整 route table/regression 和最终 restart/UI 证据仍待完成，M5.2 保持关闭。
+
+### M5.2: Level 2 预检与跨主机直传
+
+**Goal**: 通过显式 non-release `testdata` fixture 交付版本化、有界、daemon-owned 的 Level 2 控制面和隔离双远端数据面，同时让普通 runtime 保持 production distribution CLOSED。
+
+**Success Criteria**: protocol/capability/network/address/write/temp/space/quota/auth/host-key/user/workspace/data/hash 每项都必须通过；目标先写唯一 part，目标 durable acknowledgement 才计进度；strong hash/fingerprint 证明来源未变；无 Agent forwarding、GSS delegation、secret/key/ticket/known_hosts 复制或宽松 host-key；普通 runtime 稳定记录 `production_distribution_closed` 并走 relay。
+
+**Tests**: bounded protocol/frame/deadline/heartbeat/cancel contract；逐项 unknown/fail 预检矩阵及零 direct mutation 断言；固定 OpenSSH argv/config 与 secret/pollution 扫描；真实隔离 test-only 双远端 direct，证明数据面直达、daemon 控制面可审计且本地不承载完整内容。
+
+**Milestone Status**: Not Started
+
+### M5.3: 降级、故障与语义等价
+
+**Goal**: 在 direct 与所有快路径的每个安全边界注入故障，证明降级、结果恢复和精确清理不改变冻结保证。
+
+**Success Criteria**: 写入前可安全 relay；已有 part 仅在 exact Job/source/target/checkpoint/hash/format 兼容时复用；commit response loss 先检查 final/part/strong fingerprint；未知结果不盲重放；move 不早删源；清理只作用于 exact verified Job-owned path；direct 与 relay 的 bytes、冲突、取消、事件、restart、integrity 和 source retention 等价。
+
+**Tests**: 网络/认证/空间/能力/source/target 变化、short/corrupt write、Helper crash/hang、daemon restart、cancel、checkpoint mismatch、commit response loss 和 source-delete uncertainty 矩阵；random/sparse/large direct-relay golden equivalence；浏览/Search/Preview/Edit/Cache 与无关 Job 可用性回归。
+
+**Milestone Status**: Not Started
+
+### M5.4: 规模、资源预算与公平调度
+
+**Goal**: 将 50k 目录、百万树和 100GB 稀疏文件纳入可重复门禁，并统一连接、进程、FD、goroutine、内存、队列、事件、日志、带宽和公平调度预算。
+
+**Success Criteria**: UI/IPC/数据库不全量物化大目录或树；遍历、transfer、hash 和 restart 的内存不随总节点/字节线性增长；全局/Endpoint/Job 配额、idle recovery、deterministic token bucket 和交互优先公平性可解释且有硬上限；大结果/事件/日志分页或截断并保留摘要；长稳无单调资源增长。
+
+**Tests**: 50,000-entry 首屏/滚动/过滤/render/RSS fixture；1,000,000-node browse/search/plan/copy/cancel/restart 资源曲线；100GB sparse local/SFTP relay/test-only direct pause/resume/restart/cancel/hash/limit；多 Endpoint/多大小 Job 的 fairness/backpressure/idle recovery；race、soak、benchmark 环境与趋势记录。
+
+**Milestone Status**: Not Started
 
 ## Stage 6: Hardening & 1.0 Release
 

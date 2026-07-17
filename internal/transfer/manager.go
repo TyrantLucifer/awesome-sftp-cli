@@ -35,6 +35,7 @@ type JobView struct {
 	Snapshot       jobstore.Snapshot `json:"snapshot"`
 	Kind           OperationKind     `json:"kind"`
 	Route          Route             `json:"route"`
+	RouteEvidence  *RouteEvidence    `json:"route_evidence,omitempty"`
 	Source         domain.Location   `json:"source"`
 	Final          domain.Location   `json:"final"`
 	Phase          Phase             `json:"phase,omitempty"`
@@ -472,7 +473,7 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			return nil, err
 		}
 		view := JobView{
-			Snapshot: snapshot, Kind: plan.Kind, Route: plan.Route, Source: plan.Source.Location, Final: plan.Final,
+			Snapshot: snapshot, Kind: plan.Kind, Route: plan.Route, RouteEvidence: plan.RouteEvidence, Source: plan.Source.Location, Final: plan.Final,
 			BytesTotal: plan.Source.Fingerprint.Size, Items: 1,
 		}
 		if plan.Source.Kind == domain.EntryDirectory {

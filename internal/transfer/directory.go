@@ -293,6 +293,7 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 			itemPlan.Final = destinationLocation
 			itemPlan.Part = childLocation(itemPlan.DestinationDirectory, "."+itemPlan.RequestedName+".part-"+string(plan.JobID)+fmt.Sprintf("-%d", ordinal))
 			itemPlan.Discovery = nil
+			freezeRouteEvidence(&itemPlan)
 			if resuming {
 				partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: itemPlan.Part})
 				if statErr == nil {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -249,6 +250,22 @@ func TestManagerPersistsAndExecutesSameHostRouteThroughDurableJob(t *testing.T) 
 	views, err := manager.JobViews(context.Background(), 10)
 	if err != nil || len(views) != 1 || views[0].Route != RouteHelperSameHost {
 		t.Fatalf("observable durable route = %#v, %v", views, err)
+	}
+	encodedView, err := json.Marshal(views[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	var viewDocument map[string]any
+	if err := json.Unmarshal(encodedView, &viewDocument); err != nil {
+		t.Fatal(err)
+	}
+	viewEvidence, ok := viewDocument["route_evidence"].(map[string]any)
+	if !ok {
+		t.Fatalf("durable Job view has no route evidence: %s", encodedView)
+	}
+	selected := jsonObject(t, viewEvidence, "selected")
+	if reason := jsonString(t, selected, "reason"); reason != "helper_same_host_selected" {
+		t.Fatalf("observable route reason = %q", reason)
 	}
 }
 

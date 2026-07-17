@@ -144,6 +144,7 @@ type Plan struct {
 	MoveCapability                  *CapabilityBinding       `json:"move_capability,omitempty"`
 	SourceDeleteCapability          *CapabilityBinding       `json:"source_delete_capability,omitempty"`
 	SameHostCopy                    *SameHostCopyBinding     `json:"same_host_copy,omitempty"`
+	RouteEvidence                   *RouteEvidence           `json:"route_evidence,omitempty"`
 	DeleteRecursive                 bool                     `json:"delete_recursive,omitempty"`
 	DeleteIrreversible              bool                     `json:"delete_irreversible,omitempty"`
 	DeleteTrash                     bool                     `json:"delete_trash,omitempty"`
@@ -374,6 +375,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		}
 	}
 	planner.trySameHostCopy(ctx, &plan)
+	freezeRouteEvidence(&plan)
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {
 		initialState = job.StateAwaitingConfirmation

@@ -1,13 +1,19 @@
 # Project State
 
 - **Updated**: 2026-07-17
-- **Lifecycle**: Stage 5 Not Started
+- **Lifecycle**: Stage 5 In Progress
 - **Active stage**: Stage 5 — Direct Transfer & Scale
-- **Current milestone**: Not Started; awaiting authorization
+- **Current milestone**: M5.1 — unified route evidence MVP green; server-copy and full gate next
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
+
+Stage 5 is authorized and active on fixed branch `codex/stage5-direct-transfer-scale`. The sole baseline is current verified `main` commit `06415e1e9fe5ffa93999f112b64aee0bd35e5c75`, tree `5fd662757dfc96e8cb8980c4d721151b0fb510c6`; local `main`, `origin/main`, and remote `refs/heads/main` matched before branch creation. Exact-main Hosted run [29559563378](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29559563378) is successful. Earlier run `29559132294` was superseded and canceled by the later main push after its completed jobs were green; it is CI scheduling history, not a reproduced Stage 5 code failure.
+
+CI-equivalent baseline `make docs-check` and `make check` pass with Go on `PATH`, `umask 0022`, external build/coverage directories, and the workflow's root-owned `/var/lib/amsftp-tests/<uid>` fixture root. Initial local failures were diagnosed as environment-only: the shell omitted the installed Go SDK, `/home/tianchao.thatcher` is a symlink rejected by security fixtures, and interactive `umask 077` changed deliberately unsafe negative fixtures from 0755/0644 to private modes. No production code was changed to manufacture a green baseline. The current M5.1 MVP also passes `make docs-check`, complete `make check`, `make lint`, and focused transfer/TUI tests in that CI-equivalent environment.
+
+M5.1 preserves `FreezeCopy` as the sole route-freeze boundary and the existing durable `Plan`/Job/Worker path as the sole mutation path. [ADR-0017](docs/architecture/adr/0017-stage5-unified-routing-direct-transfer-and-resource-budgets.md) freezes versioned route evidence, stable route/reason/integrity codes, production-closed Level 2, downgrade rules and resource/scheduler boundaries. The required first RED shared contract failed because `route_evidence` was absent, then turned green for atomic rename, same-Endpoint relay/server-copy candidate, `helper_same_host`, cross-Endpoint relay and production-closed Level 2. Frozen v1 evidence is validated against tampering, re-frozen for derived directory item Plans, exposed by durable JobView and rendered in the Jobs drawer. Existing Plan routes (`local`, `sftp_relay`, `helper_same_host`) remain compatible; new fast/direct routes may only stage the standard Job-owned part, after which the current Worker owns verification, conflict, publication, restart and source deletion. M5.2 remains blocked until M5.1 server-copy, complete route regressions and restart/UI evidence are green.
 
 Stage 4 started on fixed branch `codex/stage4-search-helper` from clean exact-main commit `09821bdbcfc9693b309a1a39ee5121113c033254`, tree `c18e4cf8faf8eb70cc9964e242513b30ab0e79cc`. Exact-main Hosted run [29517334761](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29517334761) completed successfully. M4.1 is complete: bounded Provider-only `f` and explicit slow `g/` are green across IPC/daemon/TUI, real temporary sshd, focused race, and the million-entry/resource fixture (one 128-entry List page, about 65 µs first result and about 6 MiB additional RSS on the development host).
 
@@ -53,7 +59,7 @@ Changing any item above requires an explicit ADR and corresponding updates to th
 
 ## Next action
 
-Do not begin Stage 5 without explicit authorization. When authorized, start its fixed branch from the then-current verified `main` and retain the Stage 4 Level 0 degradation and production-Helper CLOSED boundaries.
+Complete the M5.1 declared SFTP server-copy route through the existing Job-owned part and Worker verify/commit path, beginning with a RED provider/route contract for capability present, absent, lying, partial and response-lost behavior. Do not start M5.2 until all M5.1 route persistence/restart/UI gates are green.
 
 ## Current risks
 
@@ -61,20 +67,24 @@ Do not begin Stage 5 without explicit authorization. When authorized, start its 
 - Safe Helper publication requires `hardlink@openssh.com`; servers without its target-exists-fails semantics remain Level 0. SFTP v3 rename is deliberately not used because compatibility testing demonstrated replacement behavior.
 - Stage 4 evidence is complete; future changes must preserve its exact Level 0 degradation, Helper process/resource bounds and durable same-host-copy semantics.
 - Production Helper trust is public-fixture/tabletop only. No production private key, named offline custodians or completed rotation ceremony exists, so any install/distribution path must remain disabled.
+- Stage 5 test-only Level 2 work must not make fixture trust/backend reachable from ordinary runtime or configuration. Production Helper distribution and production Level 2 remain **CLOSED** until Stage 6 custody/signing/notarization/release evidence exists.
+- Route evidence is security-sensitive durable state: execution must not silently replace a frozen route, integrity level, credential/network policy or downgrade boundary after Job creation.
 - Preserved sync-back originals are deliberately not auto-deleted; users must review the Job-reported hidden sibling before manual cleanup.
 - Stage 5 scale/direct-transfer and Stage 6 packaging/release gates remain unimplemented; Stage 3 completion is not a 1.0 production-readiness claim.
 
 ## Required reading for the next session
 
 1. [Documentation map](docs/README.md)
-2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 4
-3. [Feature matrix](docs/product/feature-matrix.md), Stage 4 search/helper rows
-4. [Stage 4 specification](docs/stages/04-search-helper.md)
-5. [Stage 4 verification](docs/verification/stage-04.md), as the completed search/optional-Helper handoff
+2. [Implementation plan](IMPLEMENTATION_PLAN.md), Stage 5 and current M5.x
+3. [Feature matrix](docs/product/feature-matrix.md), all 22 Stage 5 rows plus shared In Progress rows
+4. [Stage 5 specification](docs/stages/05-direct-transfer-scale.md)
+5. [Stage 5 verification](docs/verification/stage-05.md), with [Stage 4 verification](docs/verification/stage-04.md) as the completed Helper handoff
 6. [Approved design](docs/superpowers/specs/2026-07-14-vim-first-sftp-commander-design.md)
 7. ADRs referenced by Stage 3, beginning with the Stage 2 mutation and postcondition handoff
 
 ## Validation record
+
+Stage 5 baseline checks on 2026-07-17: after `git fetch --prune origin`, clean local `main`, `origin/main`, and remote `refs/heads/main` all resolved to `06415e1e9fe5ffa93999f112b64aee0bd35e5c75`, tree `5fd662757dfc96e8cb8980c4d721151b0fb510c6`; the fixed branch and Stage 5 PR were absent and the branch was created once from that baseline. Exact-main Hosted run `29559563378` is successful. With CI-equivalent PATH, `umask 0022`, trusted fixture root, and external output directories, baseline `make docs-check` and `make check` pass. Active evidence is maintained in [Stage 5 verification](docs/verification/stage-05.md).
 
 Stage 4 baseline checks on 2026-07-17: after `git fetch --prune origin`, clean local `main`, `origin/main` and remote `refs/heads/main` all resolved to `09821bdbcfc9693b309a1a39ee5121113c033254`, tree `c18e4cf8faf8eb70cc9964e242513b30ab0e79cc`; fixed branch `codex/stage4-search-helper` did not exist locally or remotely and was created once from that baseline. Exact-main Hosted run `29517334761` reports `success` for the exact merge SHA, including final `compare`. Baseline `make docs-check && make check` passed. Active evidence is maintained in [Stage 4 verification](docs/verification/stage-04.md).
 

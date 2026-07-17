@@ -1,6 +1,6 @@
 # Stage 5 — Direct Transfer & Scale
 
-- **状态**：Not Started
+- **状态**：In Progress
 - **阶段类型**：安全快路径与规模工程
 - **前置条件**：[Stage 4 — Search & Optional Helper](04-search-helper.md) 已通过退出门禁
 - **完成后进入**：[Stage 6 — Hardening & 1.0 Release](06-hardening-release.md)

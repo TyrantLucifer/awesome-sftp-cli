@@ -62,13 +62,22 @@ func TestRendererShowsMinimalDurableJobsView(t *testing.T) {
 	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
 	model.Jobs = []transfer.JobView{{
 		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth},
-		Source:   domain.Location{Path: "/source"}, Final: domain.Location{Path: "/final"},
+		Route:    transfer.RouteSFTPRelay,
+		RouteEvidence: &transfer.RouteEvidence{
+			Version: 1,
+			Selected: transfer.RouteDecision{
+				Route: transfer.RouteSFTPRelay, Reason: transfer.ReasonBoundedRelayDefault, Eligible: true,
+			},
+			Integrity:         transfer.RouteIntegrityEvidence{Policy: transfer.IntegrityStrong, Verification: transfer.VerifySHA256, Algorithm: "sha256"},
+			DowngradeBoundary: "before_target_write",
+		},
+		Source: domain.Location{Path: "/source"}, Final: domain.Location{Path: "/final"},
 		Phase: transfer.PhaseStreaming, Bytes: 42, Items: 1, WaitingReason: "waiting_auth",
 	}}
-	surface := newMemorySurface(100, 12)
+	surface := newMemorySurface(180, 12)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"[Jobs]", "waiting_auth", "streaming", "42 B", "/source", "/final"} {
+	for _, want := range []string{"[Jobs]", "waiting_auth", "streaming", "42 B", "/source", "/final", "sftp_relay", "bounded_relay_default", "strong", "before_target_write"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Jobs view missing %q:\n%s", want, got)
 		}
