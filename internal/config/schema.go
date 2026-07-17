@@ -13,6 +13,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/retrypolicy"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
 )
 
 const (
@@ -38,16 +39,18 @@ const (
 )
 
 type Config struct {
-	SchemaVersion int            `json:"schema_version"`
-	IPC           IPCConfig      `json:"ipc"`
-	Listing       ListingConfig  `json:"listing"`
-	Cache         CacheConfig    `json:"cache"`
-	Transfer      TransferConfig `json:"transfer"`
-	Preview       PreviewConfig  `json:"preview"`
-	Search        SearchConfig   `json:"search"`
-	Retry         RetryConfig    `json:"retry"`
-	External      ExternalConfig `json:"external,omitempty"`
-	Keymap        KeymapConfig   `json:"keymap,omitempty"`
+	SchemaVersion  int                  `json:"schema_version"`
+	IPC            IPCConfig            `json:"ipc"`
+	Listing        ListingConfig        `json:"listing"`
+	Cache          CacheConfig          `json:"cache"`
+	Transfer       TransferConfig       `json:"transfer"`
+	Preview        PreviewConfig        `json:"preview"`
+	Search         SearchConfig         `json:"search"`
+	Retry          RetryConfig          `json:"retry"`
+	Integrity      IntegrityConfig      `json:"integrity"`
+	DirectTransfer DirectTransferConfig `json:"direct_transfer"`
+	External       ExternalConfig       `json:"external,omitempty"`
+	Keymap         KeymapConfig         `json:"keymap,omitempty"`
 }
 
 type IPCConfig struct {
@@ -122,6 +125,14 @@ type ContentSearchConfig struct {
 type RetryConfig struct {
 	ReconnectDelaysMS []int64 `json:"reconnect_delays_ms"`
 	JobRetryDelayMS   int64   `json:"job_retry_delay_ms"`
+}
+
+type IntegrityConfig struct {
+	TransferPolicy string `json:"transfer_policy"`
+}
+
+type DirectTransferConfig struct {
+	Enabled bool `json:"enabled"`
 }
 
 type CommandConfig struct {
@@ -203,6 +214,8 @@ func Default() Config {
 			ReconnectDelaysMS: reconnectDelaysMS,
 			JobRetryDelayMS:   retrypolicy.DefaultJobDelay.Milliseconds(),
 		},
+		Integrity:      IntegrityConfig{TransferPolicy: string(transfer.DefaultIntegrityPolicy())},
+		DirectTransfer: DirectTransferConfig{Enabled: transfer.ProductionDirectTransferOpen},
 	}
 }
 
@@ -285,6 +298,13 @@ func (c Config) Validate() error {
 	}
 	if err := c.Retry.validate(); err != nil {
 		return err
+	}
+	if c.Integrity.TransferPolicy != string(transfer.IntegrityStrong) &&
+		c.Integrity.TransferPolicy != string(transfer.IntegrityRequireStrong) {
+		return errors.New("integrity.transfer_policy must be strong or require_strong")
+	}
+	if c.DirectTransfer.Enabled != transfer.ProductionDirectTransferOpen {
+		return errors.New("production direct transfer distribution is closed; direct_transfer.enabled must be false")
 	}
 	if err := c.External.validate(); err != nil {
 		return fmt.Errorf("external: %w", err)

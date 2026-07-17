@@ -47,7 +47,9 @@ func TestDefaultConfigIsValid(t *testing.T) {
 				MaxOutputBytes: 8 << 20, MaxDurationMS: 120_000,
 			},
 		},
-		Retry: RetryConfig{ReconnectDelaysMS: []int64{100, 250, 500}, JobRetryDelayMS: 60_000},
+		Retry:          RetryConfig{ReconnectDelaysMS: []int64{100, 250, 500}, JobRetryDelayMS: 60_000},
+		Integrity:      IntegrityConfig{TransferPolicy: "strong"},
+		DirectTransfer: DirectTransferConfig{Enabled: false},
 	}
 
 	got := Default()

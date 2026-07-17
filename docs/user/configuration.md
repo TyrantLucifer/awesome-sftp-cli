@@ -132,6 +132,12 @@ Omitted fields inherit these current defaults:
     "reconnect_delays_ms": [100, 250, 500],
     "job_retry_delay_ms": 60000
   },
+  "integrity": {
+    "transfer_policy": "strong"
+  },
+  "direct_transfer": {
+    "enabled": false
+  },
   "external": {
     "previewers": []
   }
@@ -150,8 +156,12 @@ Omitted fields inherit these current defaults:
 
 `retry.reconnect_delays_ms` controls only transport errors explicitly classified as reconnectable. The array may be empty to disable automatic reconnects or contain at most three nondecreasing delays. A configured delay cannot be shorter than the corresponding default (`100`, `250`, then `500` ms) and no delay may exceed 30 seconds, so configuration cannot add attempts or make them more aggressive. `retry.job_retry_delay_ms` is bounded to 60 seconds through 10 minutes. The client and daemon freeze these values at startup; a Job entering `retry_wait` persists its computed retry time, so later file changes cannot rewrite that decision. Authentication, host-key, configuration, conflict, and uncertain destructive outcomes are not converted into automatic retry by these settings.
 
+`integrity.transfer_policy` accepts only `strong` (the default) or `require_strong`. Both preserve SHA-256 transfer verification; `require_strong` also refuses any route that cannot satisfy the strong-integrity contract. The client freezes the validated policy into every copy Intent and the Planner carries it into the immutable Plan and route evidence. `baseline`, weaker algorithms, and unknown values are rejected rather than silently reducing the existing verification level.
+
+`direct_transfer.enabled` is a read-only representation of the production distribution boundary and must remain `false`. Setting it to `true` is a configuration error. The ordinary client therefore cannot enable the fixture-only Level 2 backend or its workspace/data policy gates; cross-Endpoint transfers continue to use the bounded relay route with `production_distribution_closed` evidence. Opening this boundary requires the separate Stage 6 custody, signing, notarization, final-byte manifest, and release gates—not a local configuration change.
+
 `external.editor` and `external.opener` are structured commands with `executable` and an `argv` array. They are executed directly, never concatenated into a shell command. A previewer adds a unique name, bounded media-type or extension match, structured command, timeout, input limit, and completeness requirement. Command strings reject control characters and all counts and byte sizes have hard ceilings.
 
-The schema is not yet complete for every Stage 6 setting. Integrity, Helper, direct-transfer, retention, diagnostic, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
+The schema is not yet complete for every Stage 6 setting. Helper, retention, diagnostic, and security-policy sections remain under M6.1 implementation and must not be inferred from internal constants. This page and `config print-effective` will be extended with the implementation; no undocumented field is accepted.
 
 The `keymap.bindings` section is now implemented for the `normal` and `visual` contexts. Each entry contains `context`, a single-rune `input`, and a documented remappable `action`. Exact defaults, reserved dangerous/sequence actions, count behavior, and the deliberate macro/named-register exclusion are in the [keymap reference](keymap.md). The other sections listed above remain open.

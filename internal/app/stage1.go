@@ -500,6 +500,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	previewRenderLimits, previewImageLimits := runtimePreviewLimits(applicationConfig.Preview)
 	filenameSearchBudget, contentSearchBudget := runtimeSearchBudgets(applicationConfig.Search)
 	clientReconnectPolicy, _ := runtimeRetrySettings(applicationConfig.Retry)
+	directPolicy := runtimeDirectPolicy(applicationConfig.Integrity, applicationConfig.DirectTransfer)
 	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
 	reprobeTerminalImages := func() {
 		terminalImageCapability.Reprobe(append([]string(nil), os.Environ()...))
@@ -806,10 +807,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			activeClient := client
 			go func() {
 				var response daemon.JobSnapshotResponse
-				createErr := activeClient.Call(runCtx, daemon.JobCreateCopy, daemon.JobCreateCopyRequest{Intent: transfer.Intent{
-					Clipboard: intent.Clipboard, Source: intent.Source, DestinationDirectory: intent.Location,
-					Name: intent.Name, ConflictPolicy: transfer.ConflictAsk,
-				}}, &response)
+				createErr := activeClient.Call(runCtx, daemon.JobCreateCopy, daemon.JobCreateCopyRequest{
+					Intent: configuredCopyIntent(intent, directPolicy),
+				}, &response)
 				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
 				if createErr != nil {
 					result.Message = "create Job failed: " + clientErrorMessage(createErr)
@@ -1396,6 +1396,13 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				startIntent(intent)
 			}
 		}
+	}
+}
+
+func configuredCopyIntent(intent tui.Intent, directPolicy transfer.DirectPolicy) transfer.Intent {
+	return transfer.Intent{
+		Clipboard: intent.Clipboard, Source: intent.Source, DestinationDirectory: intent.Location,
+		Name: intent.Name, ConflictPolicy: transfer.ConflictAsk, DirectPolicy: directPolicy,
 	}
 }
 

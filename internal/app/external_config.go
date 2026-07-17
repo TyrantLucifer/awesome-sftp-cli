@@ -72,6 +72,13 @@ func runtimeRetrySettings(input config.RetryConfig) (reconnectPolicy, time.Durat
 	return newReconnectPolicy(delays), time.Duration(input.JobRetryDelayMS) * time.Millisecond
 }
 
+func runtimeDirectPolicy(integrity config.IntegrityConfig, direct config.DirectTransferConfig) transfer.DirectPolicy {
+	return transfer.DirectPolicy{
+		UserEnabled: direct.Enabled,
+		Integrity:   transfer.IntegrityPolicy(integrity.TransferPolicy),
+	}
+}
+
 type externalRuntimeConfig struct {
 	editor    externalprocess.ResolvedCommand
 	editorErr error
