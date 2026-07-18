@@ -39,6 +39,8 @@ const ProductionDistributionOpen = false
 // is CLOSED: there are no trusted keys, supported floors, or installable assets.
 func NewProductionPolicy() Policy { return Policy{} }
 
+func (p Policy) configured() bool { return len(p.floors) != 0 }
+
 func (p Policy) Check(manifest Manifest) error {
 	if _, revoked := p.revokedKeys[manifest.KeyID]; revoked {
 		return errors.New("helper current policy: signing key is revoked")

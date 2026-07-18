@@ -30,6 +30,7 @@ type Config struct {
 	Binary, HostAlias string
 	Environment       []string
 	Redact            []string
+	Fresh             bool
 }
 
 func Arguments(hostAlias string) ([]string, error) {
@@ -38,6 +39,26 @@ func Arguments(hostAlias string) ([]string, error) {
 	}
 	arguments := append([]string(nil), fixedSFTPArguments...)
 	return append(arguments, hostAlias, "sftp"), nil
+}
+
+func freshArguments(hostAlias string) ([]string, error) {
+	arguments, err := Arguments(hostAlias)
+	if err != nil {
+		return nil, err
+	}
+	insert := len(arguments) - 2
+	fresh := []string{"-oControlMaster=no", "-oControlPath=none", "-oControlPersist=no"}
+	arguments = append(arguments, make([]string, len(fresh))...)
+	copy(arguments[insert+len(fresh):], arguments[insert:])
+	copy(arguments[insert:], fresh)
+	return arguments, nil
+}
+
+func argumentsForConfig(config Config) ([]string, error) {
+	if config.Fresh {
+		return freshArguments(config.HostAlias)
+	}
+	return Arguments(config.HostAlias)
 }
 
 func ValidateHostAlias(value string) error {
@@ -113,7 +134,7 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("validate OpenSSH executable: %w", err)
 	}
-	arguments, err := Arguments(config.HostAlias)
+	arguments, err := argumentsForConfig(config)
 	if err != nil {
 		return nil, err
 	}

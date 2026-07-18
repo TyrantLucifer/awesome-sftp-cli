@@ -39,9 +39,11 @@ type RemovalClaim struct {
 }
 
 type StateStore struct {
-	root              string
-	mu                sync.Mutex
-	beforeIndexRename func() error
+	root                         string
+	mu                           sync.Mutex
+	endpointGenerator            domain.Generator
+	beforeIndexRename            func() error
+	beforeEndpointRegistryRename func() error
 }
 
 type stateIndex struct {
@@ -78,7 +80,14 @@ func NewStateStore(root string) (*StateStore, error) {
 	if err := platform.PreparePrivateDirectory(root, platform.ValidatePersistent); err != nil {
 		return nil, fmt.Errorf("create helper state store: %w", err)
 	}
-	store := &StateStore{root: root}
+	store := &StateStore{root: root, endpointGenerator: &domain.RandomGenerator{}}
+	if _, err := os.Lstat(store.endpointRegistryPath()); err == nil {
+		if _, err := store.loadEndpointRegistry(); err != nil {
+			return nil, fmt.Errorf("create helper state store: %w", err)
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("create helper state store: inspect endpoint registry: %w", err)
+	}
 	if _, err := os.Lstat(store.indexPath()); err == nil {
 		index, err := store.loadIndex()
 		if err != nil {
@@ -729,7 +738,8 @@ func validateStateRecord(record stateIndexRecord) error {
 	return nil
 }
 
-func (s *StateStore) indexPath() string { return filepath.Join(s.root, "state.json") }
+func (s *StateStore) indexPath() string            { return filepath.Join(s.root, "state.json") }
+func (s *StateStore) endpointRegistryPath() string { return filepath.Join(s.root, "endpoints.json") }
 func (s *StateStore) metadataPath(metadataID string) string {
 	return filepath.Join(s.root, "metadata-"+metadataID+".json")
 }

@@ -273,6 +273,11 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return err
 	}
 	sessions.SetAuthBroker(authBroker)
+	if jobStore != nil {
+		if err := configureDaemonHelperLifecycle(ctx, paths, sessions, jobStore, authBroker); err != nil {
+			logger.Error("Helper lifecycle unavailable; Level 0 remains enabled", diagnostic.Component("helper"), diagnostic.Event("helper_lifecycle_unavailable"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
+		}
+	}
 	connectEndpoint := func(connectCtx context.Context, endpoint domain.Endpoint) (provider.Provider, error) {
 		if endpoint.Kind != domain.EndpointSSH || endpoint.ID == "" || endpoint.SSHHostAlias == "" {
 			return nil, sshConnectStageError("invalid frozen SSH endpoint", domain.CodeInvalidArgument, domain.RetryNever, nil)

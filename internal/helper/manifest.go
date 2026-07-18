@@ -196,6 +196,8 @@ type Verifier struct{ keys map[string]ed25519.PublicKey }
 // is CLOSED. Test fixture trust is injected only by same-package test code.
 func NewProductionVerifier() Verifier { return Verifier{} }
 
+func (v Verifier) configured() bool { return len(v.keys) != 0 }
+
 func (v Verifier) Verify(rawManifest, rawSignature []byte) error {
 	manifest, err := ParseManifestV1(rawManifest)
 	if err != nil {

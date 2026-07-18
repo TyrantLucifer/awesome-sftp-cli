@@ -27,7 +27,7 @@ func ProbeLinkAttributes(ctx context.Context, config Config, canonicalAbsoluteRa
 	if err != nil {
 		return SFTPAttributes{}, fmt.Errorf("validate OpenSSH executable for link attribute probe: %w", err)
 	}
-	arguments, err := Arguments(config.HostAlias)
+	arguments, err := argumentsForConfig(config)
 	if err != nil {
 		return SFTPAttributes{}, err
 	}
