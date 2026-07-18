@@ -49,6 +49,31 @@ func TestHostedStage1RecoveryNormalizesSplitTerminalWrites(t *testing.T) {
 	}
 }
 
+func TestHostedStage1RecoveryExercisesNoArgumentPicker(t *testing.T) {
+	script, err := os.ReadFile("hosted-stage1-recovery.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`fresh_picker = PtyApp([])`,
+		`fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "Type an SSH alias;`,
+		`fresh_picker.send("\x1b[B\x1b[B")`,
+		`fresh_picker.wait_for_screen("> host       recovery-picker")`,
+		`fresh_picker.send("\r")`,
+		`fresh_picker.wait_for_screen(os.path.basename(PICKER_MARKER))`,
+		`workspace_picker = PtyApp([])`,
+		`workspace_picker.send("recovery-stage1")`,
+		`workspace_picker.wait_for_screen("Host: recovery-stage1")`,
+		`workspace_picker.send("\x1b[B")`,
+		`workspace_picker.wait_for_screen("> workspace  recovery-stage1")`,
+		`workspace_picker.wait_for_screen("a-parent-marker.txt", "b-stage1-marker.txt")`,
+	} {
+		if !strings.Contains(string(script), required) {
+			t.Fatalf("Stage 1 recovery harness does not require %q", required)
+		}
+	}
+}
+
 func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
 	script, err := os.ReadFile("hosted-kerberos.sh")
 	if err != nil {
