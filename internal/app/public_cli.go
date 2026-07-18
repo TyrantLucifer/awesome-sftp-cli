@@ -12,6 +12,7 @@ type cliCommandFact struct {
 	syntax         string
 	description    string
 	children       []string
+	arguments      []string
 	childArguments map[string][]string
 	internal       bool
 }
@@ -23,6 +24,7 @@ var publicCLIContract = []cliCommandFact{
 	{name: "job", syntax: "amsftp job <list|events|pause|resume|cancel> [arguments]", description: "Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.", children: []string{"list", "events", "pause", "resume", "cancel"}, childArguments: map[string][]string{"list": {"--limit", "--format"}, "events": {"--after", "--limit", "--format"}, "pause": {"--format"}, "resume": {"--format"}, "cancel": {"--format", "--confirm"}}},
 	{name: "helper", syntax: "amsftp helper <status|disable> <SSH-host> [--format human|json] | amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]", description: "Inspect or disable Helper state, or request release-admitted install/upgrade/exact removal; lifecycle remains fail-closed until protected composition exists.", children: []string{"status", "install", "upgrade", "disable", "remove"}, childArguments: map[string][]string{"status": {"--format"}, "install": {"--accept-shared-session-stable-home", "--format"}, "upgrade": {"--accept-shared-session-stable-home", "--format"}, "disable": {"--format"}, "remove": {"--accept-shared-session-stable-home", "--format"}}},
 	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
+	{name: "doctor", syntax: "amsftp doctor [--endpoint <SSH-host>] [--format human|json]", description: "Run bounded read-only local checks and optionally test one SSH endpoint without prompting for credentials.", arguments: []string{"--endpoint", "--format"}},
 	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a static shell completion script.", children: []string{"bash", "zsh", "fish"}},
 	{syntax: "amsftp [client|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
 	{name: "--help", syntax: "amsftp --help", description: "Print command help."},
@@ -82,6 +84,7 @@ func RenderCompletion(shell string) (string, error) {
 	helperUpgrade := strings.Join(childArgumentsFor("helper", "upgrade"), " ")
 	helperDisable := strings.Join(childArgumentsFor("helper", "disable"), " ")
 	helperRemove := strings.Join(childArgumentsFor("helper", "remove"), " ")
+	doctor := strings.Join(argumentsFor("doctor"), " ")
 	completion := strings.Join(childrenFor("completion"), " ")
 	switch shell {
 	case "bash":
@@ -94,6 +97,7 @@ func RenderCompletion(shell string) (string, error) {
     daemon) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     job) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     helper) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+	doctor) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     completion) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     reset-keymap) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     start) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
@@ -112,21 +116,22 @@ func RenderCompletion(shell string) (string, error) {
   esac
 }
 complete -F _amsftp amsftp
-`, config, daemon, job, helper, completion, configReset, daemonStart, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
+`, config, daemon, job, helper, doctor, completion, configReset, daemonStart, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
 	case "zsh":
 		return fmt.Sprintf(`#compdef amsftp
 _amsftp() {
-  local -a commands config_commands daemon_commands job_commands helper_commands completion_commands
+  local -a commands config_commands daemon_commands job_commands helper_commands doctor_arguments completion_commands
   commands=(%s)
   config_commands=(%s)
   daemon_commands=(%s)
   job_commands=(%s)
   helper_commands=(%s)
+	doctor_arguments=(%s)
   completion_commands=(%s)
-  _arguments '1:command:($commands)' '2:subcommand:($config_commands $daemon_commands $job_commands $helper_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
+  _arguments '1:command:($commands)' '2:subcommand or argument:($config_commands $daemon_commands $job_commands $helper_commands $doctor_arguments $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
 }
 _amsftp
-`, top, config, daemon, job, helper, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove), nil
+`, top, config, daemon, job, helper, doctor, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove), nil
 	case "fish":
 		var builder strings.Builder
 		for _, word := range strings.Fields(top) {
@@ -157,6 +162,9 @@ _amsftp
 		for _, word := range childrenFor("helper") {
 			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from helper' -a %q\n", word)
 		}
+		for _, word := range argumentsFor("doctor") {
+			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from doctor' -a %q\n", word)
+		}
 		for _, child := range childrenFor("helper") {
 			for _, word := range childArgumentsFor("helper", child) {
 				fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from %s' -a %q\n", child, word)
@@ -169,6 +177,15 @@ _amsftp
 	default:
 		return "", fmt.Errorf("unsupported completion shell %q; want bash, zsh, or fish", shell)
 	}
+}
+
+func argumentsFor(name string) []string {
+	for _, fact := range publicCLIContract {
+		if fact.name == name {
+			return append([]string(nil), fact.arguments...)
+		}
+	}
+	return nil
 }
 
 func childArgumentsFor(name, child string) []string {

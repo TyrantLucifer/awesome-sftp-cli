@@ -21,6 +21,9 @@ Inspect or disable Helper state, or request release-admitted install/upgrade/exa
 \fBamsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]\fR
 Validate configuration, print versioned effective output, or explicitly reset keymap overrides.
 .TP
+\fBamsftp doctor [--endpoint <SSH-host>] [--format human|json]\fR
+Run bounded read-only local checks and optionally test one SSH endpoint without prompting for credentials.
+.TP
 \fBamsftp completion <bash|zsh|fish>\fR
 Print a static shell completion script.
 .TP

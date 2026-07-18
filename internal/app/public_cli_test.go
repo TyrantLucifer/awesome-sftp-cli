@@ -10,7 +10,7 @@ import (
 func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 	help := Usage()
 	man := RenderManPage()
-	for _, command := range []string{"--workspace", "daemon", "job", "helper", "config", "completion", "--help", "--version"} {
+	for _, command := range []string{"--workspace", "daemon", "job", "helper", "config", "doctor", "completion", "--help", "--version"} {
 		if !strings.Contains(help, command) {
 			t.Fatalf("help does not contain %q:\n%s", command, help)
 		}
@@ -24,7 +24,7 @@ func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RenderCompletion(%q): %v", shell, err)
 		}
-		for _, command := range []string{"daemon", "start", "status", "stop", "job", "list", "events", "pause", "resume", "cancel", "--limit", "--after", "--format", "--confirm", "helper", "install", "upgrade", "disable", "remove", "--accept-shared-session-stable-home", "config", "completion", "validate", "print-effective", "print-effective-keymap", "reset-keymap", "--yes"} {
+		for _, command := range []string{"daemon", "start", "status", "stop", "job", "list", "events", "pause", "resume", "cancel", "--limit", "--after", "--format", "--confirm", "helper", "install", "upgrade", "disable", "remove", "--accept-shared-session-stable-home", "config", "doctor", "--endpoint", "completion", "validate", "print-effective", "print-effective-keymap", "reset-keymap", "--yes"} {
 			if !strings.Contains(completion, command) {
 				t.Fatalf("%s completion does not contain %q:\n%s", shell, command, completion)
 			}
@@ -41,6 +41,11 @@ func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 					if !strings.Contains(completion, argument) {
 						t.Fatalf("%s completion drifted from %s %s argument %q", shell, fact.name, child, argument)
 					}
+				}
+			}
+			for _, argument := range fact.arguments {
+				if !strings.Contains(completion, argument) {
+					t.Fatalf("%s completion drifted from %s argument %q", shell, fact.name, argument)
 				}
 			}
 		}

@@ -17,6 +17,7 @@ type Handlers struct {
 	Helper     Handler
 	Job        Handler
 	Config     Handler
+	Doctor     Handler
 	Completion Handler
 }
 
@@ -76,6 +77,8 @@ func (h Handlers) handler(role Role) Handler {
 		return h.Job
 	case RoleConfig:
 		return h.Config
+	case RoleDoctor:
+		return h.Doctor
 	case RoleCompletion:
 		return h.Completion
 	default:

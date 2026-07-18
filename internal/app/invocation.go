@@ -11,6 +11,7 @@ const (
 	RoleHelper     Role = "helper"
 	RoleJob        Role = "job"
 	RoleConfig     Role = "config"
+	RoleDoctor     Role = "doctor"
 	RoleCompletion Role = "completion"
 )
 
@@ -45,6 +46,8 @@ func ParseInvocation(args []string) (Invocation, error) {
 		return Invocation{Role: RoleJob}, nil
 	case string(RoleConfig):
 		return Invocation{Role: RoleConfig}, nil
+	case string(RoleDoctor):
+		return Invocation{Role: RoleDoctor}, nil
 	case string(RoleCompletion):
 		return Invocation{Role: RoleCompletion}, nil
 	case "--help":
