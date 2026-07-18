@@ -1072,6 +1072,39 @@ clean_home="${RUNNER_TEMP}/public-package-home"`,
 	}
 }
 
+func TestCIQualityLifecycleRequiresCommittedReviewedNotice(t *testing.T) {
+	name := &policyYAMLScalar{value: "Exercise deterministic public packaging and clean-home lifecycle"}
+	tests := []struct {
+		name   string
+		script string
+		want   bool
+	}{
+		{
+			name: "committed notice",
+			script: `cp docs/release/NOTICE "${input}/NOTICE"
+go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json`,
+			want: true,
+		},
+		{
+			name:   "ci placeholder",
+			script: `printf '%s\n' 'CI-only dependency notice' >"${input}/NOTICE"`,
+		},
+		{
+			name:   "notice without regeneration gate",
+			script: `cp docs/release/NOTICE "${input}/NOTICE"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run := &policyYAMLScalar{value: test.script}
+			job := workflowJob{steps: []workflowStep{{name: name, run: run}}}
+			if got := qualityLifecycleUsesReviewedNotice(job); got != test.want {
+				t.Fatalf("qualityLifecycleUsesReviewedNotice() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCIQualityLifecycleRequiresPinnedCacheUpgradeRecoveryProof(t *testing.T) {
 	name := &policyYAMLScalar{value: "Exercise deterministic public packaging and clean-home lifecycle"}
 	complete := `old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"

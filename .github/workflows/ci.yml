@@ -70,7 +70,10 @@ jobs:
               go build -trimpath -ldflags="${ldflags}" -o "${input}/bin/${goos}-${goarch}" ./cmd/amsftp
           done
           printf '%s\n' 'CI-only public packaging contract material; this is not the project license.' >"${input}/LICENSE"
-          printf '%s\n' 'CI-only dependency notice; final reviewed notices remain a release gate.' >"${input}/NOTICE"
+          notice_check="${RUNNER_TEMP}/reviewed-third-party-NOTICE"
+          go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json >"${notice_check}"
+          cmp docs/release/NOTICE "${notice_check}"
+          cp docs/release/NOTICE "${input}/NOTICE"
           cp docs/release/INSTALL.md "${input}/INSTALL.md"
           cp docs/release/UNINSTALL.md "${input}/UNINSTALL.md"
           cp docs/man/amsftp.1 "${input}/amsftp.1"

@@ -95,6 +95,9 @@ func checkCIQuality(job workflowJob, add func(int, string, string)) {
 	if !qualityLifecycleProvesPinnedCacheUpgradeRecovery(job) {
 		add(job.line, "workflow.ci_quality_pinned_cache", "quality installed lifecycle must preserve one frozen Stage 5 pinned cache identity across failed-upgrade recovery and rollback")
 	}
+	if !qualityLifecycleUsesReviewedNotice(job) {
+		add(job.line, "workflow.ci_quality_notice", "quality packaging must regenerate and package the committed reviewed third-party NOTICE")
+	}
 }
 
 func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
@@ -109,6 +112,22 @@ func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
 		return strings.Contains(script, `trusted_root="/var/lib/amsftp-tests/$(id -u)"`) &&
 			strings.Contains(script, `clean_home="${trusted_root}/public-package-home"`) &&
 			!strings.Contains(script, `clean_home="${RUNNER_TEMP}`)
+	}
+	return true
+}
+
+func qualityLifecycleUsesReviewedNotice(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil || step.name.value != "Exercise deterministic public packaging and clean-home lifecycle" {
+			continue
+		}
+		if step.run == nil {
+			return false
+		}
+		script := step.run.value
+		return strings.Contains(script, `go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json`) &&
+			strings.Contains(script, `cp docs/release/NOTICE "${input}/NOTICE"`) &&
+			!strings.Contains(script, "CI-only dependency notice")
 	}
 	return true
 }
