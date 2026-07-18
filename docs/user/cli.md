@@ -9,8 +9,8 @@ amsftp [<location> [<location>]]
 amsftp --workspace <name>
 amsftp daemon <start|status> [--format human|json]
 amsftp daemon stop --confirm stop [--format human|json]
-amsftp helper status <SSH-host> [--format human|json]
-amsftp helper <install|upgrade> <SSH-host> --accept-shared-session-stable-home [--format human|json]
+amsftp helper <status|disable> <SSH-host> [--format human|json]
+amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]
 amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]
 amsftp completion <bash|zsh|fish>
 ```
@@ -29,7 +29,7 @@ Daemon JSON success has a stable v1 shape:
 {"output_version":1,"daemon":{"running":true,"state":"running","daemon_version":"1.0.0","protocol":"1.0"}}
 ```
 
-## Helper status and release-gated install/upgrade
+## Helper status and release-gated lifecycle
 
 `amsftp helper status <SSH-host>` validates the host alias and output format before resolving runtime paths or connecting to the daemon. It opens one ordinary SSH Provider session through the daemon, reads the negotiated capability snapshot, and releases that temporary Endpoint whether the snapshot succeeds or fails. It does not install, enable, upgrade, disable, or remove Helper bytes.
 
@@ -40,6 +40,8 @@ The command reports Level 0 with a safe fallback reason/recovery or Level 1 with
 ```
 
 `amsftp helper install` and `amsftp helper upgrade` require the literal `--accept-shared-session-stable-home` assertion. The parser rejects duplicate consent, arbitrary manifest/artifact/path options, option-shaped host aliases, unknown output formats, and all other arguments before resolving runtime paths or opening an RPC/SSH connection. While protected signing, notarization, release-admitted artifact, offline manifest-signing custody, and final-byte gates are incomplete, both commands return configuration exit `3` with `production Helper distribution is closed`; JSON requests receive the same versioned machine-error shape. This closed public surface cannot probe a host, stage local metadata, create a remote directory, or write content.
+
+`amsftp helper disable` is a host-scoped local-selection operation and therefore rejects the shared-session/stable-home assertion. `amsftp helper remove` is the exact remote-artifact lifecycle and requires that literal assertion before any runtime activity. Until daemon lifecycle composition is wired to the existing durable Helper state/removal-lease owners, both commands return configuration exit `3` with `production Helper lifecycle is closed` before runtime-path resolution, RPC, SSH, probing, state mutation, or remote deletion. Exposing their syntax does not claim that disable/removal has executed; production Helper and Level 2 remain closed.
 
 The restricted remote process role `amsftp helper serve` remains separate from public lifecycle commands and is never offered by shell completion. No public command accepts a remote command string, local artifact/manifest path, fixture trust, or custom remote install path. Standard SFTP remains Level 0 regardless of this release gate.
 

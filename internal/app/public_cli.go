@@ -21,7 +21,7 @@ var publicCLIContract = []cliCommandFact{
 	{name: "--workspace", syntax: "amsftp --workspace <name>", description: "Open a saved workspace."},
 	{name: "daemon", syntax: "amsftp daemon <start|status> [--format human|json] | amsftp daemon stop --confirm stop [--format human|json]", description: "Start, inspect, or explicitly stop the local daemon.", children: []string{"start", "status", "stop"}, childArguments: map[string][]string{"start": {"--format"}, "status": {"--format"}, "stop": {"--format", "--confirm"}}},
 	{name: "job", syntax: "amsftp job <list|events|pause|resume|cancel> [arguments]", description: "Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.", children: []string{"list", "events", "pause", "resume", "cancel"}, childArguments: map[string][]string{"list": {"--limit", "--format"}, "events": {"--after", "--limit", "--format"}, "pause": {"--format"}, "resume": {"--format"}, "cancel": {"--format", "--confirm"}}},
-	{name: "helper", syntax: "amsftp helper status <SSH-host> [--format human|json] | amsftp helper <install|upgrade> <SSH-host> --accept-shared-session-stable-home [--format human|json]", description: "Inspect Helper state, or request a release-admitted install/upgrade; distribution remains fail-closed until protected release trust exists.", children: []string{"status", "install", "upgrade"}, childArguments: map[string][]string{"status": {"--format"}, "install": {"--accept-shared-session-stable-home", "--format"}, "upgrade": {"--accept-shared-session-stable-home", "--format"}}},
+	{name: "helper", syntax: "amsftp helper <status|disable> <SSH-host> [--format human|json] | amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]", description: "Inspect or disable Helper state, or request release-admitted install/upgrade/exact removal; lifecycle remains fail-closed until protected composition exists.", children: []string{"status", "install", "upgrade", "disable", "remove"}, childArguments: map[string][]string{"status": {"--format"}, "install": {"--accept-shared-session-stable-home", "--format"}, "upgrade": {"--accept-shared-session-stable-home", "--format"}, "disable": {"--format"}, "remove": {"--accept-shared-session-stable-home", "--format"}}},
 	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
 	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a static shell completion script.", children: []string{"bash", "zsh", "fish"}},
 	{syntax: "amsftp [client|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
@@ -80,6 +80,8 @@ func RenderCompletion(shell string) (string, error) {
 	helperStatus := strings.Join(childArgumentsFor("helper", "status"), " ")
 	helperInstall := strings.Join(childArgumentsFor("helper", "install"), " ")
 	helperUpgrade := strings.Join(childArgumentsFor("helper", "upgrade"), " ")
+	helperDisable := strings.Join(childArgumentsFor("helper", "disable"), " ")
+	helperRemove := strings.Join(childArgumentsFor("helper", "remove"), " ")
 	completion := strings.Join(childrenFor("completion"), " ")
 	switch shell {
 	case "bash":
@@ -98,6 +100,8 @@ func RenderCompletion(shell string) (string, error) {
     status) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
 	install) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
 	upgrade) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+	disable) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+	remove) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     stop) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     list) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     events) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
@@ -108,7 +112,7 @@ func RenderCompletion(shell string) (string, error) {
   esac
 }
 complete -F _amsftp amsftp
-`, config, daemon, job, helper, completion, configReset, daemonStart, helperStatus, helperInstall, helperUpgrade, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
+`, config, daemon, job, helper, completion, configReset, daemonStart, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
 	case "zsh":
 		return fmt.Sprintf(`#compdef amsftp
 _amsftp() {
@@ -119,10 +123,10 @@ _amsftp() {
   job_commands=(%s)
   helper_commands=(%s)
   completion_commands=(%s)
-  _arguments '1:command:($commands)' '2:subcommand:($config_commands $daemon_commands $job_commands $helper_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
+  _arguments '1:command:($commands)' '2:subcommand:($config_commands $daemon_commands $job_commands $helper_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
 }
 _amsftp
-`, top, config, daemon, job, helper, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, helperStatus, helperInstall, helperUpgrade), nil
+`, top, config, daemon, job, helper, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove), nil
 	case "fish":
 		var builder strings.Builder
 		for _, word := range strings.Fields(top) {

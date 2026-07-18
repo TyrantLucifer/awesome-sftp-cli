@@ -24,7 +24,7 @@ func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RenderCompletion(%q): %v", shell, err)
 		}
-		for _, command := range []string{"daemon", "start", "status", "stop", "job", "list", "events", "pause", "resume", "cancel", "--limit", "--after", "--format", "--confirm", "helper", "install", "upgrade", "--accept-shared-session-stable-home", "config", "completion", "validate", "print-effective", "print-effective-keymap", "reset-keymap", "--yes"} {
+		for _, command := range []string{"daemon", "start", "status", "stop", "job", "list", "events", "pause", "resume", "cancel", "--limit", "--after", "--format", "--confirm", "helper", "install", "upgrade", "disable", "remove", "--accept-shared-session-stable-home", "config", "completion", "validate", "print-effective", "print-effective-keymap", "reset-keymap", "--yes"} {
 			if !strings.Contains(completion, command) {
 				t.Fatalf("%s completion does not contain %q:\n%s", shell, command, completion)
 			}

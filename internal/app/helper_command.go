@@ -301,9 +301,9 @@ func validHelperConnectionState(state domain.ConnectionState) bool {
 func parseHelperCommand(args []string) (helperCommandOptions, error) {
 	options := helperCommandOptions{format: "human"}
 	if len(args) == 0 {
-		return options, errors.New("helper requires status, install, or upgrade")
+		return options, errors.New("helper requires status, install, upgrade, disable, or remove")
 	}
-	if args[0] != "status" && args[0] != "install" && args[0] != "upgrade" {
+	if args[0] != "status" && args[0] != "install" && args[0] != "upgrade" && args[0] != "disable" && args[0] != "remove" {
 		return options, fmt.Errorf("unknown public helper command %q", args[0])
 	}
 	options.command = args[0]
@@ -331,8 +331,8 @@ func parseHelperCommand(args []string) (helperCommandOptions, error) {
 			}
 			options.format = args[index]
 		case "--accept-shared-session-stable-home":
-			if options.command == "status" {
-				return options, fmt.Errorf("unknown helper status option %q", args[index])
+			if options.command == "status" || options.command == "disable" {
+				return options, fmt.Errorf("unknown helper %s option %q", options.command, args[index])
 			}
 			if options.acceptSharedSessionStableHome {
 				return options, fmt.Errorf("helper %s --accept-shared-session-stable-home may be provided only once", options.command)
@@ -342,7 +342,7 @@ func parseHelperCommand(args []string) (helperCommandOptions, error) {
 			return options, fmt.Errorf("unknown helper %s option %q", options.command, args[index])
 		}
 	}
-	if options.command != "status" && !options.acceptSharedSessionStableHome {
+	if options.command != "status" && options.command != "disable" && !options.acceptSharedSessionStableHome {
 		return options, fmt.Errorf("helper %s requires --accept-shared-session-stable-home", options.command)
 	}
 	return options, nil
@@ -351,6 +351,9 @@ func parseHelperCommand(args []string) (helperCommandOptions, error) {
 func rejectClosedHelperDistribution(options helperCommandOptions) error {
 	if options.command == "status" {
 		return nil
+	}
+	if options.command == "disable" || options.command == "remove" {
+		return NewExitError(ExitConfig, errors.New("production Helper lifecycle is closed; release-admitted disable and remove composition is not configured"))
 	}
 	return NewExitError(ExitConfig, errors.New("production Helper distribution is closed; release-admitted install and upgrade artifacts are not configured"))
 }

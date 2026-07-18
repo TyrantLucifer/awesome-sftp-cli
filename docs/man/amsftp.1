@@ -15,8 +15,8 @@ Start, inspect, or explicitly stop the local daemon.
 \fBamsftp job <list|events|pause|resume|cancel> [arguments]\fR
 Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.
 .TP
-\fBamsftp helper status <SSH-host> [--format human|json] | amsftp helper <install|upgrade> <SSH-host> --accept-shared-session-stable-home [--format human|json]\fR
-Inspect Helper state, or request a release-admitted install/upgrade; distribution remains fail-closed until protected release trust exists.
+\fBamsftp helper <status|disable> <SSH-host> [--format human|json] | amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]\fR
+Inspect or disable Helper state, or request release-admitted install/upgrade/exact removal; lifecycle remains fail-closed until protected composition exists.
 .TP
 \fBamsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]\fR
 Validate configuration, print versioned effective output, or explicitly reset keymap overrides.

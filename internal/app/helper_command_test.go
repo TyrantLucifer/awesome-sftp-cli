@@ -180,6 +180,67 @@ func TestHelperInstallAndUpgradeRejectUntrustedInputsOrMissingConsentBeforeRunti
 	}
 }
 
+func TestHelperDisableAndRemoveFailClosedBeforeRPCOrRuntime(t *testing.T) {
+	commands := map[string][]string{
+		"disable": {"disable", "work"},
+		"remove":  {"remove", "work", "--accept-shared-session-stable-home"},
+	}
+	for command, baseArgs := range commands {
+		for _, format := range []string{"human", "json"} {
+			t.Run(command+"/"+format, func(t *testing.T) {
+				connections := 0
+				args := append(append([]string(nil), baseArgs...), "--format", format)
+				var stdout bytes.Buffer
+				err := runHelperWithConnector(t.Context(), args, &stdout, func(context.Context) (helperRPC, io.Closer, error) {
+					connections++
+					return &fakeHelperRPC{t: t}, nopCloser{}, nil
+				})
+				if err == nil || exitCode(err) != ExitConfig || !strings.Contains(err.Error(), "production Helper lifecycle is closed") {
+					t.Fatalf("error = %v, exit = %d", err, exitCode(err))
+				}
+				if connections != 0 || stdout.Len() != 0 {
+					t.Fatalf("connections = %d, stdout = %q", connections, stdout.String())
+				}
+				if format == "json" {
+					var rendered bytes.Buffer
+					renderer, ok := err.(interface{ RenderCLIError(io.Writer) error })
+					if !ok {
+						t.Fatalf("error %T has no machine renderer", err)
+					}
+					if renderErr := renderer.RenderCLIError(&rendered); renderErr != nil {
+						t.Fatal(renderErr)
+					}
+					if !strings.Contains(rendered.String(), `"output_version":1`) || !strings.Contains(rendered.String(), `"class":"configuration"`) || !strings.Contains(rendered.String(), "production Helper lifecycle is closed") {
+						t.Fatalf("machine error = %q", rendered.String())
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestHelperDisableAndRemoveRejectUntrustedInputsOrWrongConsentBeforeRuntime(t *testing.T) {
+	for _, args := range [][]string{
+		{"disable", "work", "--accept-shared-session-stable-home"},
+		{"disable", "work", "--artifact", "sha256:bad"},
+		{"remove", "work"},
+		{"remove", "work", "--accept-shared-session-stable-home", "--accept-shared-session-stable-home"},
+		{"remove", "work", "--accept-shared-session-stable-home", "--path", "/tmp/helper"},
+	} {
+		connections := 0
+		err := runHelperWithConnector(t.Context(), args, &bytes.Buffer{}, func(context.Context) (helperRPC, io.Closer, error) {
+			connections++
+			return &fakeHelperRPC{t: t}, nopCloser{}, nil
+		})
+		if err == nil || exitCode(err) != ExitUsage {
+			t.Fatalf("args %q error = %v, exit = %d", args, err, exitCode(err))
+		}
+		if connections != 0 {
+			t.Fatalf("args %q made %d connections", args, connections)
+		}
+	}
+}
+
 func TestHelperStatusValidatesBeforeConnecting(t *testing.T) {
 	for _, args := range [][]string{
 		nil,
