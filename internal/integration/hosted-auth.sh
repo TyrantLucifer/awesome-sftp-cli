@@ -431,6 +431,14 @@ Match originalhost auth-include-match
   IdentityFile ${client_home}/.ssh/client_key
   IdentitiesOnly yes
   PreferredAuthentications publickey"
+doctor_output="${root}/doctor.json"
+runuser -u "${client_user}" -- env -i \
+  HOME="${client_home}" \
+  XDG_STATE_HOME="${state_home}" \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  "${installed}" doctor --format json --endpoint auth-include-match >"${doctor_output}"
+python3 -c 'import json,sys; report=json.load(open(sys.argv[1], encoding="utf-8")); assert any(result["code"] == "openssh" and result["status"] == "pass" for result in report["results"]); assert any(result["code"] == "endpoint" and result["status"] == "pass" for result in report["results"])' "${doctor_output}"
+printf 'authentication doctor OpenSSH and endpoint checks passed\n'
 preflight_sftp_transport auth-include-match
 run_case include-match none auth-include-match "${target_home}" endpoint-auth.txt
 

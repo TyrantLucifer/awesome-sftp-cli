@@ -560,6 +560,25 @@ jobs:
           test ! -e "${installed}"
           test -f "${database}"
           trap - EXIT
+      - name: Run OpenSSH 8.9p1 compatibility floor
+        if: matrix.os == 'ubuntu-22.04'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y expect netcat-openbsd openssh-server
+          floor_version="$(/usr/bin/ssh -V 2>&1)"
+          case "${floor_version}" in
+            OpenSSH_8.9p1\ *) ;;
+            *)
+              printf 'Ubuntu 22.04 OpenSSH floor drifted from 8.9p1\n' >&2
+              exit 1
+              ;;
+          esac
+          printf '%s\n' "${floor_version}" | tee "${RUNNER_TEMP}/native/openssh-floor-version"
+          sudo env \
+            AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/native/bin/amsftp" \
+            AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-floor-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            bash ./internal/integration/hosted-auth.sh
       - name: Exercise loopback Homebrew tap lifecycle
         if: runner.os == 'macOS'
         run: |
