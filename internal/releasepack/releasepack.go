@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	gobuildinfo "debug/buildinfo"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -57,6 +58,18 @@ type PlatformBinary struct {
 	Bytes  []byte
 	State  BinaryState
 	Darwin *DarwinEvidence
+	Build  *GoBuildEvidence
+}
+
+type GoBuildEvidence struct {
+	MainPath    string `json:"main_path"`
+	GoVersion   string `json:"go_version"`
+	GOOS        string `json:"goos"`
+	GOARCH      string `json:"goarch"`
+	CGOEnabled  bool   `json:"cgo_enabled"`
+	Trimpath    bool   `json:"trimpath"`
+	VCSRevision string `json:"vcs_revision"`
+	VCSModified bool   `json:"vcs_modified"`
 }
 
 type Materials struct {
@@ -104,6 +117,10 @@ type VersionMetadata struct {
 	Target                 Target `json:"target"`
 	ReleaseCandidate       bool   `json:"release_candidate"`
 	ProductionHelperClosed bool   `json:"production_helper_closed"`
+	ApplicationID          string `json:"application_id"`
+	LaunchdLabel           string `json:"launchd_label"`
+	SystemdUserUnit        string `json:"systemd_user_unit"`
+	HomebrewFormula        string `json:"homebrew_formula"`
 }
 
 type SPDXChecksum struct {
@@ -194,6 +211,37 @@ func BuildPublicBundle(request BundleRequest) (Bundle, error) {
 		return Bundle{}, err
 	}
 	return Bundle{Archives: archives, Checksums: checksums, SBOM: sbom, Provenance: provenance}, nil
+}
+
+func InspectGoBinary(raw []byte) (GoBuildEvidence, error) {
+	if len(raw) == 0 || len(raw) > maxReleaseInputBytes {
+		return GoBuildEvidence{}, errors.New("inspect release binary: binary size is invalid")
+	}
+	info, err := gobuildinfo.Read(bytes.NewReader(raw))
+	if err != nil {
+		return GoBuildEvidence{}, fmt.Errorf("inspect release binary: %w", err)
+	}
+	evidence := GoBuildEvidence{MainPath: info.Path, GoVersion: info.GoVersion}
+	for _, setting := range info.Settings {
+		switch setting.Key {
+		case "GOOS":
+			evidence.GOOS = setting.Value
+		case "GOARCH":
+			evidence.GOARCH = setting.Value
+		case "CGO_ENABLED":
+			evidence.CGOEnabled = setting.Value == "1"
+		case "-trimpath":
+			evidence.Trimpath = setting.Value == "true"
+		case "vcs.revision":
+			evidence.VCSRevision = setting.Value
+		case "vcs.modified":
+			evidence.VCSModified = setting.Value == "true"
+		}
+	}
+	if evidence.MainPath == "" || evidence.GoVersion == "" || evidence.GOOS == "" || evidence.GOARCH == "" {
+		return GoBuildEvidence{}, errors.New("inspect release binary: required Go build identity is absent")
+	}
+	return evidence, nil
 }
 
 func WriteBundle(outputDir string, bundle Bundle) (err error) {
@@ -304,7 +352,7 @@ func validateBundleRequest(request BundleRequest) error {
 	}
 	seen := make(map[Target]struct{}, len(Targets))
 	for _, platform := range request.Platforms {
-		if !validTarget(platform.Target) || platform.State != BinaryPublicPreview || platform.Darwin != nil || len(platform.Bytes) == 0 || len(platform.Bytes) > maxReleaseInputBytes || containsFixtureTrust(platform.Bytes) {
+		if !validTarget(platform.Target) || platform.State != BinaryPublicPreview || platform.Darwin != nil || len(platform.Bytes) == 0 || len(platform.Bytes) > maxReleaseInputBytes || containsFixtureTrust(platform.Bytes) || !validPublicBuildEvidence(platform, request.Commit) {
 			return errors.New("build public release bundle: public platform input is invalid")
 		}
 		if _, duplicate := seen[platform.Target]; duplicate {
@@ -331,6 +379,17 @@ func validateBundleRequest(request BundleRequest) error {
 	return nil
 }
 
+func validPublicBuildEvidence(platform PlatformBinary, commit string) bool {
+	return platform.Build != nil &&
+		platform.Build.MainPath == "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp" &&
+		platform.Build.GOOS == platform.Target.OS &&
+		platform.Build.GOARCH == platform.Target.Arch &&
+		!platform.Build.CGOEnabled &&
+		platform.Build.Trimpath &&
+		platform.Build.VCSRevision == commit &&
+		!platform.Build.VCSModified
+}
+
 func validateMaterials(materials Materials) error {
 	for _, material := range []struct {
 		name string
@@ -354,6 +413,8 @@ func buildArchive(request BundleRequest, platform PlatformBinary) (Archive, erro
 	metadata := VersionMetadata{
 		Schema: "amsftp-release-version-v1", Version: request.Version, Commit: request.Commit, Tree: request.Tree, Target: platform.Target,
 		ReleaseCandidate: false, ProductionHelperClosed: true,
+		ApplicationID: "io.github.tyrantlucifer.amsftp", LaunchdLabel: "io.github.tyrantlucifer.amsftp.daemon",
+		SystemdUserUnit: "amsftp-daemon.service", HomebrewFormula: "amsftp",
 	}
 	metadataBytes, err := marshalCanonicalJSON(metadata)
 	if err != nil {

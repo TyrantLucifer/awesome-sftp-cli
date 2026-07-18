@@ -9,6 +9,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/releasepack"
 )
 
 func TestRunBuildsExactPublicReleaseFromConfinedManifestInputs(t *testing.T) {
@@ -35,7 +37,12 @@ func TestRunBuildsExactPublicReleaseFromConfinedManifestInputs(t *testing.T) {
 	})
 	output := filepath.Join(root, "release")
 	var stdout bytes.Buffer
-	if err := run([]string{manifestPath, output}, &stdout); err != nil {
+	inspect := func(raw []byte) (releasepack.GoBuildEvidence, error) {
+		parts := strings.Fields(string(raw))
+		target := strings.Split(parts[0], "/")
+		return releasepack.GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target[0], GOARCH: target[1], Trimpath: true, VCSRevision: strings.Repeat("1", 40)}, nil
+	}
+	if err := runWithInspector([]string{manifestPath, output}, &stdout, inspect); err != nil {
 		t.Fatal(err)
 	}
 	if stdout.String() != output+"\n" {

@@ -13,6 +13,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -66,6 +67,9 @@ func TestPublicBundleHasExactFourArchiveNamesAndRequiredDeterministicContents(t 
 		}
 		if metadata.Version != request.Version || metadata.Commit != request.Commit || metadata.Tree != request.Tree || metadata.Target != archive.Target || metadata.ReleaseCandidate || !metadata.ProductionHelperClosed {
 			t.Fatalf("version metadata = %#v", metadata)
+		}
+		if metadata.ApplicationID != "io.github.tyrantlucifer.amsftp" || metadata.LaunchdLabel != "io.github.tyrantlucifer.amsftp.daemon" || metadata.SystemdUserUnit != "amsftp-daemon.service" || metadata.HomebrewFormula != "amsftp" {
+			t.Fatalf("ADR-0009 identifiers = %#v", metadata)
 		}
 	}
 }
@@ -187,6 +191,45 @@ func TestArchiveNameAndReleaseIdentityRejectNonCanonicalInputs(t *testing.T) {
 	}
 }
 
+func TestPublicBundleRejectsUnboundDirtyOrWrongTargetGoBuildEvidence(t *testing.T) {
+	for name, mutate := range map[string]func(*GoBuildEvidence){
+		"wrong package":  func(evidence *GoBuildEvidence) { evidence.MainPath = "example.invalid/not-amsftp" },
+		"wrong target":   func(evidence *GoBuildEvidence) { evidence.GOARCH = "386" },
+		"cgo enabled":    func(evidence *GoBuildEvidence) { evidence.CGOEnabled = true },
+		"no trimpath":    func(evidence *GoBuildEvidence) { evidence.Trimpath = false },
+		"dirty vcs":      func(evidence *GoBuildEvidence) { evidence.VCSModified = true },
+		"wrong revision": func(evidence *GoBuildEvidence) { evidence.VCSRevision = strings.Repeat("3", 40) },
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := releaseFixture(t)
+			evidence := *request.Platforms[0].Build
+			request.Platforms[0].Build = &evidence
+			mutate(&evidence)
+			if _, err := BuildPublicBundle(request); err == nil {
+				t.Fatal("accepted invalid Go build evidence")
+			}
+		})
+	}
+	if _, err := InspectGoBinary([]byte("not a Go executable")); err == nil {
+		t.Fatal("inspector accepted non-Go bytes")
+	}
+	executable, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(executable) //nolint:gosec // os.Executable returns this exact test process.
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence, err := InspectGoBinary(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if evidence.GOOS != runtime.GOOS || evidence.GOARCH != runtime.GOARCH || evidence.MainPath == "" || evidence.GoVersion == "" {
+		t.Fatalf("test executable evidence = %#v", evidence)
+	}
+}
+
 func TestWriteBundleCreatesExactReleaseDirectoryOnceWithoutOverwrite(t *testing.T) {
 	bundle, err := BuildPublicBundle(releaseFixture(t))
 	if err != nil {
@@ -239,7 +282,10 @@ func releaseFixture(t *testing.T) BundleRequest {
 	t.Helper()
 	platforms := make([]PlatformBinary, 0, len(Targets))
 	for _, target := range Targets {
-		platforms = append(platforms, PlatformBinary{Target: target, Bytes: []byte(fmt.Sprintf("fixture binary %s/%s\n", target.OS, target.Arch)), State: BinaryPublicPreview})
+		platforms = append(platforms, PlatformBinary{
+			Target: target, Bytes: []byte(fmt.Sprintf("fixture binary %s/%s\n", target.OS, target.Arch)), State: BinaryPublicPreview,
+			Build: &GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target.OS, GOARCH: target.Arch, CGOEnabled: false, Trimpath: true, VCSRevision: strings.Repeat("1", 40)},
+		})
 	}
 	return BundleRequest{
 		Version: "1.0.0", Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), SourceDateEpoch: 1_700_000_000,

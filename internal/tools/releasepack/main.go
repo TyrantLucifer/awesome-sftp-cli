@@ -57,6 +57,12 @@ func main() {
 }
 
 func run(args []string, stdout io.Writer) error {
+	return runWithInspector(args, stdout, releasepack.InspectGoBinary)
+}
+
+type binaryInspector func([]byte) (releasepack.GoBuildEvidence, error)
+
+func runWithInspector(args []string, stdout io.Writer, inspect binaryInspector) error {
 	if len(args) != 2 {
 		return errors.New("usage: releasepack MANIFEST.json OUTPUT_DIRECTORY")
 	}
@@ -64,7 +70,7 @@ func run(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	request, err := loadBundleRequest(root, manifest)
+	request, err := loadBundleRequest(root, manifest, inspect)
 	if err != nil {
 		return err
 	}
@@ -120,7 +126,7 @@ func readManifest(path string) (inputManifest, string, error) {
 	return manifest, root, nil
 }
 
-func loadBundleRequest(root string, manifest inputManifest) (releasepack.BundleRequest, error) {
+func loadBundleRequest(root string, manifest inputManifest, inspect binaryInspector) (releasepack.BundleRequest, error) {
 	license, err := readConfinedMaterial(root, manifest.Materials.License)
 	if err != nil {
 		return releasepack.BundleRequest{}, fmt.Errorf("load LICENSE: %w", err)
@@ -148,9 +154,13 @@ func loadBundleRequest(root string, manifest inputManifest) (releasepack.BundleR
 		if _, duplicate := seenPaths[resolved]; duplicate {
 			return releasepack.BundleRequest{}, errors.New("load release binaries: each target requires a distinct input file")
 		}
+		build, err := inspect(binary)
+		if err != nil {
+			return releasepack.BundleRequest{}, fmt.Errorf("inspect %s/%s binary: %w", platform.OS, platform.Arch, err)
+		}
 		seenPaths[resolved] = struct{}{}
 		platforms = append(platforms, releasepack.PlatformBinary{
-			Target: releasepack.Target{OS: platform.OS, Arch: platform.Arch}, Bytes: binary, State: releasepack.BinaryPublicPreview,
+			Target: releasepack.Target{OS: platform.OS, Arch: platform.Arch}, Bytes: binary, State: releasepack.BinaryPublicPreview, Build: &build,
 		})
 	}
 	modules := make([]releasepack.Module, 0, len(manifest.Modules))

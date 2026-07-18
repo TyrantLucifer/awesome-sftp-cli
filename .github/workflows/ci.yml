@@ -40,6 +40,78 @@ jobs:
       - run: make lint
       - run: make fuzz-smoke
       - run: make supply-chain
+      - name: Exercise deterministic public packaging and clean-home lifecycle
+        run: |
+          set -euo pipefail
+          input="${RUNNER_TEMP}/public-package-input"
+          first="${RUNNER_TEMP}/public-package-first"
+          second="${RUNNER_TEMP}/public-package-second"
+          install_root="${RUNNER_TEMP}/public-package-install"
+          clean_home="${RUNNER_TEMP}/public-package-home"
+          head="$(git rev-parse HEAD)"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          ldflags="-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=1.0.0 -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=${head}"
+          mkdir -p "${input}/bin"
+          for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            goos="${target%/*}"
+            goarch="${target#*/}"
+            CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+              go build -trimpath -ldflags="${ldflags}" -o "${input}/bin/${goos}-${goarch}" ./cmd/amsftp
+          done
+          printf '%s\n' 'CI-only public packaging contract material; this is not the project license.' >"${input}/LICENSE"
+          printf '%s\n' 'CI-only dependency notice; final reviewed notices remain a release gate.' >"${input}/NOTICE"
+          cp docs/release/INSTALL.md "${input}/INSTALL.md"
+          cp docs/release/UNINSTALL.md "${input}/UNINSTALL.md"
+          cat >"${input}/manifest.json" <<EOF
+          {
+            "schema": "amsftp-public-release-manifest-v1",
+            "version": "1.0.0",
+            "commit": "${head}",
+            "tree": "${tree}",
+            "source_date_epoch": ${source_epoch},
+            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","uninstall":"UNINSTALL.md"},
+            "platforms": [
+              {"os":"darwin","arch":"amd64","path":"bin/darwin-amd64"},
+              {"os":"darwin","arch":"arm64","path":"bin/darwin-arm64"},
+              {"os":"linux","arch":"amd64","path":"bin/linux-amd64"},
+              {"os":"linux","arch":"arm64","path":"bin/linux-arm64"}
+            ],
+            "modules": [
+              {"path":"github.com/gdamore/tcell/v3","version":"v3.4.0","sum":"h1:VUym1HQZiYodA5PGQrqLxF7QwqQndcAUwQD7G7XUy5E=","license":"Apache-2.0"}
+            ]
+          }
+          EOF
+          go run ./internal/tools/releasepack "${input}/manifest.json" "${first}"
+          go run ./internal/tools/releasepack "${input}/manifest.json" "${second}"
+          diff -qr "${first}" "${second}"
+          test "$(find "${first}" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d ' ')" = 7
+          (cd "${first}" && sha256sum -c checksums.txt)
+          mkdir -p "${install_root}" "${clean_home}/config" "${clean_home}/state" "${clean_home}/cache" "${clean_home}/runtime"
+          chmod 0700 "${clean_home}" "${clean_home}/config" "${clean_home}/state" "${clean_home}/cache" "${clean_home}/runtime"
+          tar -xzf "${first}/amsftp_1.0.0_linux_amd64.tar.gz" -C "${install_root}"
+          installed="${install_root}/amsftp_1.0.0_linux_amd64/amsftp"
+          version_output="$("${installed}" --version)"
+          printf '%s\n' "${version_output}" | grep -F "1.0.0 commit=${head} dirty=false"
+          tar -xOf "${first}/amsftp_1.0.0_linux_amd64.tar.gz" amsftp_1.0.0_linux_amd64/VERSION.json | grep -F '"application_id":"io.github.tyrantlucifer.amsftp"'
+          clean_env=(
+            "HOME=${clean_home}"
+            "XDG_CONFIG_HOME=${clean_home}/config"
+            "XDG_STATE_HOME=${clean_home}/state"
+            "XDG_CACHE_HOME=${clean_home}/cache"
+            "XDG_RUNTIME_DIR=${clean_home}/runtime"
+          )
+          cleanup_daemon() {
+            env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json >/dev/null 2>&1 || true
+          }
+          trap cleanup_daemon EXIT
+          env "${clean_env[@]}" "${installed}" daemon start --format json | grep -F '"running":true'
+          env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":true'
+          env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json | grep -F '"running":false'
+          env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":false'
+          trap - EXIT
+          rm -rf "${install_root}"
+          test ! -e "${installed}"
       - name: Run real OpenSSH, editor, opener, command, and PTY integration
         env:
           AMSFTP_REAL_SSHD: "1"
