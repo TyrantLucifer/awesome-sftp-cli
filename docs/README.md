@@ -26,6 +26,9 @@ This repository treats documentation as part of the product contract. A feature 
 - [Command-line interface](user/cli.md) documents launch/configuration commands, bounded durable Job query/control, exact cancellation confirmation, and versioned human/JSON success and error contracts.
 - [Vim-first keymap reference](user/keymap.md) documents the exact default action map, Normal/Visual remapping, reserved dangerous and sequence actions, count/repeat boundaries, and the 1.0 macro/named-register exclusion.
 - [Compatibility boundaries](product/compatibility-boundaries.md) freezes the current/read/write/unsupported behavior for config, workspace, SQLite, cache, IPC, Helper, CLI, and machine-output versions before migration work begins.
+- [Environment compatibility matrix](product/environment-compatibility.md) separates native, build-only, fixture, best-effort, unsupported, and untested claims across platforms, OpenSSH, authentication, SFTP, terminals, filesystems, Helper, and direct transfer.
+- [Troubleshooting code map](user/troubleshooting.md) covers every stable doctor and domain error code with a bounded, non-destructive action.
+- [Threat model](security/threat-model.md) records assets, trust boundaries, controls, residual scope, and verification ownership; the [finding ledger](security/finding-ledger.md) records concrete dispositions without implying unexecuted review coverage.
 - [amsftp(1)](man/amsftp.1) is the committed man page checked against the same ordered command facts that render `--help` and bash/zsh/fish completions.
 
 ## Required reading order for a new session
