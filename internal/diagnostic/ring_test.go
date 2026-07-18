@@ -17,7 +17,7 @@ func TestRingRetainsOnlyBoundedSanitizedRecords(t *testing.T) {
 	logger := slog.New(NewRingHandler(ring, nil))
 	for index := 0; index < 5; index++ {
 		logger.InfoContext(context.Background(), "secret message "+fmt.Sprint(index),
-			Component("cache"), Event("entry_read"),
+			Component("cache"), Event("cache_initialized"),
 			slog.String("path", "/private/secret"),
 		)
 	}
@@ -27,7 +27,7 @@ func TestRingRetainsOnlyBoundedSanitizedRecords(t *testing.T) {
 		t.Fatalf("records = %#v, want sequences 3..5", page.Records)
 	}
 	for _, record := range page.Records {
-		if record.Message != persistentMessage || record.Component != "cache" || record.Event != "entry_read" {
+		if record.Message != persistentMessage || record.Component != "cache" || record.Event != "cache_initialized" {
 			t.Fatalf("unsafe or incomplete record = %#v", record)
 		}
 	}
@@ -41,10 +41,10 @@ func TestOpenDaemonFansOutToBoundedRing(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = log.Close() })
 	for index := 0; index < 3; index++ {
-		log.Logger.Error("secret", Component("daemon"), Event("failed"), slog.Int("index", index), slog.String("path", "/secret"))
+		log.Logger.Error("secret", Component("daemon"), Event("connection_failed"), slog.Int("index", index), slog.String("path", "/secret"))
 	}
 	page := log.Records.Query(Query{})
-	if len(page.Records) != 2 || page.Records[0].Sequence != 2 || page.Records[0].Message != persistentMessage || page.Records[0].Event != "failed" {
+	if len(page.Records) != 2 || page.Records[0].Sequence != 2 || page.Records[0].Message != persistentMessage || page.Records[0].Event != "connection_failed" {
 		t.Fatalf("records = %#v", page.Records)
 	}
 }
@@ -84,10 +84,10 @@ func TestRingHandlerHonorsLevelAndRecordTime(t *testing.T) {
 	level := &slog.LevelVar{}
 	level.Set(slog.LevelWarn)
 	logger := slog.New(NewRingHandler(ring, level))
-	logger.Info("hidden", Component("daemon"), Event("hidden"))
+	logger.Info("hidden", Component("daemon"), Event("rpc_request_started"))
 	wantTime := time.Unix(123, 456).UTC()
 	record := slog.NewRecord(wantTime, slog.LevelError, "unsafe", 0)
-	record.AddAttrs(Component("daemon"), Event("failed"), ErrorCode(domain.CodeInternal))
+	record.AddAttrs(Component("daemon"), Event("rpc_request_failed"), ErrorCode(domain.CodeInternal))
 	if err := logger.Handler().Handle(context.Background(), record); err != nil {
 		t.Fatal(err)
 	}

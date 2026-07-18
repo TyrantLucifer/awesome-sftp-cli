@@ -13,7 +13,6 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/redaction"
 )
 
 const (
@@ -163,8 +162,10 @@ func allowPersistentAttr(groups []string, attr slog.Attr) bool {
 	}
 	value := attr.Value.String()
 	switch attr.Key {
-	case "component", "event":
-		return validToken(value)
+	case "component":
+		return IsReviewedComponent(value)
+	case "event":
+		return IsReviewedEvent(value)
 	case "endpoint_id":
 		_, err := domain.ParseEndpointID(value)
 		return err == nil
@@ -175,17 +176,39 @@ func allowPersistentAttr(groups []string, attr slog.Attr) bool {
 		_, err := domain.ParseRequestID(value)
 		return err == nil
 	case "error_code":
-		return validErrorCode(domain.Code(value))
+		return IsReviewedErrorCode(domain.Code(value))
 	default:
 		return false
 	}
 }
 
-func validToken(value string) bool {
-	return redaction.SafeToken(value)
+var reviewedComponents = map[string]struct{}{
+	"cache": {}, "daemon": {}, "helper": {}, "state": {}, "transfer": {},
 }
 
-func validErrorCode(code domain.Code) bool {
+var reviewedEvents = map[string]struct{}{
+	"cache_initialized":            {},
+	"cache_unavailable":            {},
+	"connection_failed":            {},
+	"helper_lifecycle_unavailable": {},
+	"progress":                     {},
+	"read_only_degraded":           {},
+	"rpc_request_failed":           {},
+	"rpc_request_started":          {},
+	"rpc_request_succeeded":        {},
+}
+
+func IsReviewedComponent(value string) bool {
+	_, ok := reviewedComponents[value]
+	return ok
+}
+
+func IsReviewedEvent(value string) bool {
+	_, ok := reviewedEvents[value]
+	return ok
+}
+
+func IsReviewedErrorCode(code domain.Code) bool {
 	switch code {
 	case domain.CodeInvalidArgument,
 		domain.CodeNotFound,

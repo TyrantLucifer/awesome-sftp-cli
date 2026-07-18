@@ -19,7 +19,9 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/doctor"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/redaction"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/supportbundle"
@@ -30,9 +32,23 @@ const supportBundleOutputVersion = 1
 
 var supportBundleConsentPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
+var (
+	supportBundleVersionPattern   = regexp.MustCompile(`^(?:dev|[0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.-]+)?)$`)
+	supportBundleCommitPattern    = regexp.MustCompile(`^(?:unknown|[0-9a-f]{7,64})$`)
+	supportBundleGoVersionPattern = regexp.MustCompile(`^go[0-9]+\.[0-9]+(?:\.[0-9]+)?(?:[0-9A-Za-z.+-]*)$`)
+)
+
 type supportBundleRuntime struct {
 	compose func(context.Context) ([]supportbundle.Source, error)
 	publish func(context.Context, string, []byte) error
+}
+
+type supportBundleGatherRuntime struct {
+	paths        platform.Paths
+	configExists func() (bool, error)
+	loadConfig   func(string) (config.Config, error)
+	runDoctor    func(context.Context) doctor.Report
+	probeDaemon  func(context.Context) (daemonControlClient, bool, error)
 }
 
 type supportBundleSnapshot struct {
@@ -181,16 +197,40 @@ func platformResolveSupportBundlePaths() (platform.Paths, []platform.Diagnostic,
 }
 
 func gatherSupportBundleSources(ctx context.Context, paths platform.Paths) ([]supportbundle.Source, error) {
-	loadedConfig, configErr := loadApplicationConfig(paths.ConfigFile)
+	runtime := systemDoctorRuntime(paths)
+	return gatherSupportBundleSourcesWithRuntime(ctx, supportBundleGatherRuntime{
+		paths: paths,
+		configExists: func() (bool, error) {
+			_, err := os.Lstat(paths.ConfigFile)
+			if errors.Is(err, os.ErrNotExist) {
+				return false, nil
+			}
+			return err == nil, err
+		},
+		loadConfig: loadApplicationConfig,
+		runDoctor: func(ctx context.Context) doctor.Report {
+			return doctor.Run(ctx, doctorProbes(runtime, ""), false)
+		},
+		probeDaemon: func(ctx context.Context) (daemonControlClient, bool, error) {
+			return probeDaemon(ctx, paths, platform.RuntimeValidationPurpose(paths))
+		},
+	})
+}
+
+func gatherSupportBundleSourcesWithRuntime(ctx context.Context, runtime supportBundleGatherRuntime) ([]supportbundle.Source, error) {
+	if runtime.configExists == nil || runtime.loadConfig == nil || runtime.runDoctor == nil || runtime.probeDaemon == nil {
+		return nil, errors.New("gather support bundle: incomplete runtime")
+	}
+	exists, existsErr := runtime.configExists()
+	loadedConfig, configErr := runtime.loadConfig(runtime.paths.ConfigFile)
 	configStatus := "valid"
-	if configErr != nil {
+	if configErr != nil || existsErr != nil {
 		loadedConfig = config.Default()
 		configStatus = "invalid"
-	} else if _, err := os.Lstat(paths.ConfigFile); errors.Is(err, os.ErrNotExist) {
+	} else if !exists {
 		configStatus = "defaults"
 	}
-	runtime := systemDoctorRuntime(paths)
-	report := doctor.Run(ctx, doctorProbes(runtime, ""), false)
+	report := runtime.runDoctor(ctx)
 	snapshot := supportBundleSnapshot{
 		Build: buildinfo.Current(), Config: loadedConfig, ConfigStatus: configStatus, Doctor: report,
 		DaemonStatus: "unavailable", DatabaseStatus: "unavailable", DatabaseDetail: "database_unavailable",
@@ -204,8 +244,8 @@ func gatherSupportBundleSources(ctx context.Context, paths platform.Paths) ([]su
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	client, exists, err := probeDaemon(probeCtx, paths, platform.RuntimeValidationPurpose(paths))
-	if err == nil && exists && client != nil {
+	client, daemonExists, err := runtime.probeDaemon(probeCtx)
+	if err == nil && daemonExists && client != nil {
 		snapshot.DaemonStatus = "reachable"
 		snapshot.DaemonInfo = client.Info()
 		var diagnostics daemon.DiagnosticListResponse
@@ -217,7 +257,7 @@ func gatherSupportBundleSources(ctx context.Context, paths platform.Paths) ([]su
 			snapshot.Jobs = jobs.Jobs
 		}
 		_ = client.Close()
-	} else if exists {
+	} else if daemonExists {
 		snapshot.DaemonStatus = "unhealthy"
 	}
 	return composeSupportBundleSources(snapshot)
@@ -279,10 +319,20 @@ type reviewedCapability struct {
 }
 
 func composeSupportBundleSources(snapshot supportBundleSnapshot) ([]supportbundle.Source, error) {
-	version := supportBundleVersion{supportBundleOutputVersion, reviewedSystem(snapshot.Build.Version), reviewedSystem(snapshot.Build.Commit), snapshot.Build.Dirty, reviewedSystem(snapshot.Build.GoVersion)}
-	platformSnapshot := supportBundlePlatform{supportBundleOutputVersion, reviewedSystem(snapshot.Build.GOOS), reviewedSystem(snapshot.Build.GOARCH)}
+	version := supportBundleVersion{
+		supportBundleOutputVersion,
+		reviewedPattern(snapshot.Build.Version, supportBundleVersionPattern),
+		reviewedPattern(snapshot.Build.Commit, supportBundleCommitPattern),
+		snapshot.Build.Dirty,
+		reviewedPattern(snapshot.Build.GoVersion, supportBundleGoVersionPattern),
+	}
+	platformSnapshot := supportBundlePlatform{
+		supportBundleOutputVersion,
+		reviewedAllowed(snapshot.Build.GOOS, "darwin", "linux"),
+		reviewedAllowed(snapshot.Build.GOARCH, "amd64", "arm64"),
+	}
 	shape := supportBundleConfigShape{
-		OutputVersion: supportBundleOutputVersion, Status: reviewedSystem(snapshot.ConfigStatus), SchemaVersion: snapshot.Config.SchemaVersion,
+		OutputVersion: supportBundleOutputVersion, Status: reviewedAllowed(snapshot.ConfigStatus, "defaults", "invalid", "valid"), SchemaVersion: snapshot.Config.SchemaVersion,
 		HelperEnabled: snapshot.Config.Helper.Enabled, DirectTransferEnabled: snapshot.Config.DirectTransfer.Enabled,
 		EditorConfigured: snapshot.Config.External.Editor != nil, OpenerConfigured: snapshot.Config.External.Opener != nil,
 		PreviewerCount: len(snapshot.Config.External.Previewers), KeymapOverrideCount: len(snapshot.Config.Keymap.Bindings),
@@ -292,27 +342,28 @@ func composeSupportBundleSources(snapshot supportBundleSnapshot) ([]supportbundl
 	for _, record := range snapshot.Diagnostics {
 		reviewedDiagnostics = append(reviewedDiagnostics, reviewedDiagnostic{
 			Sequence: record.Sequence, Time: reviewedOptionalSystem(record.Time.UTC().Format(time.RFC3339Nano)),
-			Level: reviewedOptionalSystem(record.Level), Component: reviewedOptionalSystem(record.Component),
-			Event: reviewedOptionalSystem(record.Event), ErrorCode: reviewedOptionalSystem(string(record.ErrorCode)),
+			Level:     reviewedOptionalAllowed(record.Level, "DEBUG", "INFO", "WARN", "ERROR"),
+			Component: reviewedDiagnosticComponent(record.Component), Event: reviewedDiagnosticEvent(record.Event),
+			ErrorCode: reviewedDiagnosticErrorCode(record.ErrorCode),
 		})
 	}
 	reviewedJobs := make([]reviewedJob, 0, len(snapshot.Jobs))
 	for _, view := range snapshot.Jobs {
 		reviewedJobs = append(reviewedJobs, reviewedJob{
-			State: reviewedOptionalSystem(string(view.Snapshot.State)), Kind: reviewedOptionalSystem(string(view.Kind)),
-			Route: reviewedOptionalSystem(string(view.Route)), PlannedRoute: reviewedOptionalSystem(string(view.PlannedRoute)),
-			DowngradedFrom: reviewedOptionalSystem(string(view.DowngradedFrom)), RouteReason: reviewedOptionalSystem(string(view.RouteReason)),
-			Phase: reviewedOptionalSystem(string(view.Phase)), Bytes: view.Bytes, BytesTotal: view.BytesTotal, Items: view.Items,
+			State: reviewedJobState(view.Snapshot.State), Kind: reviewedOperationKind(view.Kind),
+			Route: reviewedRoute(view.Route), PlannedRoute: reviewedRoute(view.PlannedRoute),
+			DowngradedFrom: reviewedRoute(view.DowngradedFrom), RouteReason: reviewedRouteReason(view.RouteReason),
+			Phase: reviewedPhase(view.Phase), Bytes: view.Bytes, BytesTotal: view.BytesTotal, Items: view.Items,
 			PauseRequested: view.Snapshot.PauseRequested, CancelRequested: view.Snapshot.CancelRequested,
 		})
 	}
 	features := make([]reviewedCapability, 0, len(snapshot.DaemonInfo.Features))
 	for _, feature := range snapshot.DaemonInfo.Features {
-		features = append(features, reviewedCapability{Name: reviewedSystem(feature.Name), Version: feature.Version})
+		features = append(features, reviewedCapability{Name: reviewedAllowed(feature.Name), Version: feature.Version})
 	}
 	events := make([]string, 0, len(snapshot.DaemonInfo.EventTypes))
 	for _, event := range snapshot.DaemonInfo.EventTypes {
-		events = append(events, reviewedSystem(event))
+		events = append(events, reviewedAllowed(event))
 	}
 
 	type diagnosticsDocument struct {
@@ -349,8 +400,8 @@ func composeSupportBundleSources(snapshot supportBundleSnapshot) ([]supportbundl
 		{"doctor.json", redaction.SystemMetadata, doctorReport},
 		{"diagnostics.json", redaction.Pseudonymous, diagnosticsDocument{supportBundleOutputVersion, reviewedDiagnostics}},
 		{"jobs.json", redaction.Pseudonymous, jobsDocument{supportBundleOutputVersion, reviewedJobs}},
-		{"database-health.json", redaction.SystemMetadata, databaseDocument{supportBundleOutputVersion, reviewedSystem(snapshot.DatabaseStatus), reviewedSystem(snapshot.DatabaseDetail)}},
-		{"capabilities.json", redaction.SystemMetadata, capabilitiesDocument{supportBundleOutputVersion, reviewedSystem(snapshot.DaemonStatus), reviewedSystem(snapshot.DaemonInfo.DaemonVersion), snapshot.DaemonInfo.Protocol, features, events, "closed", "closed"}},
+		{"database-health.json", redaction.SystemMetadata, databaseDocument{supportBundleOutputVersion, reviewedDatabaseStatus(snapshot.DatabaseStatus), reviewedDoctorDetail(snapshot.DatabaseDetail)}},
+		{"capabilities.json", redaction.SystemMetadata, capabilitiesDocument{supportBundleOutputVersion, reviewedAllowed(snapshot.DaemonStatus, "reachable", "unavailable", "unhealthy"), reviewedPattern(snapshot.DaemonInfo.DaemonVersion, supportBundleVersionPattern), snapshot.DaemonInfo.Protocol, features, events, "closed", "closed"}},
 	}
 	sources := make([]supportbundle.Source, 0, len(documents))
 	for _, document := range documents {
@@ -366,10 +417,10 @@ func composeSupportBundleSources(snapshot supportBundleSnapshot) ([]supportbundl
 func reviewedDoctorReport(report doctor.Report) doctor.Report {
 	reviewed := doctor.Report{OutputVersion: report.OutputVersion, Results: make([]doctor.Result, 0, len(report.Results))}
 	for _, result := range report.Results {
+		code := reviewedDoctorCode(result.Code)
 		reviewed.Results = append(reviewed.Results, doctor.Result{
-			Code: doctor.Code(reviewedSystem(string(result.Code))), Status: doctor.Status(reviewedSystem(string(result.Status))),
-			Severity: doctor.Severity(reviewedSystem(string(result.Severity))), DetailCode: reviewedSystem(result.DetailCode),
-			Remediation: reviewedSystem(result.Remediation),
+			Code: code, Status: reviewedDoctorStatus(result.Status), Severity: reviewedDoctorSeverity(result.Severity),
+			DetailCode: reviewedDoctorDetail(result.DetailCode), Remediation: reviewedDoctorRemediation(code, result.Remediation),
 		})
 	}
 	return reviewed
@@ -390,4 +441,156 @@ func reviewedOptionalSystem(value string) string {
 		return ""
 	}
 	return reviewedSystem(value)
+}
+
+func reviewedPattern(value string, pattern *regexp.Regexp) string {
+	if pattern != nil && pattern.MatchString(value) {
+		return value
+	}
+	return redaction.Placeholder
+}
+
+func reviewedAllowed(value string, allowed ...string) string {
+	for _, candidate := range allowed {
+		if value == candidate {
+			return value
+		}
+	}
+	return redaction.Placeholder
+}
+
+func reviewedOptionalAllowed(value string, allowed ...string) string {
+	if value == "" {
+		return ""
+	}
+	return reviewedAllowed(value, allowed...)
+}
+
+func reviewedDiagnosticComponent(value string) string {
+	if value == "" {
+		return ""
+	}
+	if diagnostic.IsReviewedComponent(value) {
+		return value
+	}
+	return redaction.Placeholder
+}
+
+func reviewedDiagnosticEvent(value string) string {
+	if value == "" {
+		return ""
+	}
+	if diagnostic.IsReviewedEvent(value) {
+		return value
+	}
+	return redaction.Placeholder
+}
+
+func reviewedDiagnosticErrorCode(value domain.Code) string {
+	if value == "" {
+		return ""
+	}
+	if diagnostic.IsReviewedErrorCode(value) {
+		return string(value)
+	}
+	return redaction.Placeholder
+}
+
+func reviewedDoctorCode(value doctor.Code) doctor.Code {
+	for _, code := range append(doctor.RequiredCodes(), doctor.CheckEndpoint) {
+		if value == code {
+			return value
+		}
+	}
+	return doctor.Code(redaction.Placeholder)
+}
+
+func reviewedDoctorStatus(value doctor.Status) doctor.Status {
+	switch value {
+	case doctor.Pass, doctor.Warn, doctor.Fail, doctor.Skipped:
+		return value
+	default:
+		return doctor.Status(redaction.Placeholder)
+	}
+}
+
+func reviewedDoctorSeverity(value doctor.Severity) doctor.Severity {
+	switch value {
+	case doctor.Info, doctor.Warning, doctor.Error:
+		return value
+	default:
+		return doctor.Severity(redaction.Placeholder)
+	}
+}
+
+var reviewedDoctorDetails = map[string]struct{}{
+	"cache_not_created": {}, "cache_private": {}, "config_defaults": {}, "config_valid": {},
+	"daemon_not_running": {}, "daemon_reachable": {}, "database_active": {}, "database_healthy": {},
+	"database_not_created": {}, "database_unavailable": {}, "disk_space_available": {}, "disk_space_low": {},
+	"endpoint_not_requested": {}, "endpoint_proxy_not_probed": {}, "endpoint_reachable": {},
+	"helper_disabled": {}, "helper_distribution_closed": {}, "helper_endpoint_required": {},
+	"known_hosts_disabled": {}, "known_hosts_policy_valid": {}, "known_hosts_unconfigured": {},
+	"openssh_validated": {}, "probe_failed": {}, "probe_unavailable": {}, "runtime_not_created": {},
+	"runtime_private": {}, "socket_not_created": {}, "socket_private": {},
+}
+
+func reviewedDoctorDetail(value string) string {
+	if _, ok := reviewedDoctorDetails[value]; ok {
+		return value
+	}
+	return redaction.Placeholder
+}
+
+func reviewedDoctorRemediation(code doctor.Code, value string) string {
+	want := "troubleshooting/" + string(code)
+	if code != doctor.Code(redaction.Placeholder) && value == want {
+		return value
+	}
+	return redaction.Placeholder
+}
+
+func reviewedDatabaseStatus(value string) string {
+	return reviewedAllowed(value, string(doctor.Pass), string(doctor.Warn), string(doctor.Fail), string(doctor.Skipped), "unavailable")
+}
+
+func reviewedJobState(value job.State) string {
+	return reviewedOptionalAllowed(string(value),
+		string(job.StateDraft), string(job.StateAwaitingConfirmation), string(job.StateQueued), string(job.StateRunning),
+		string(job.StateVerifying), string(job.StatePaused), string(job.StateWaitingAuth), string(job.StateWaitingConflict),
+		string(job.StateRetryWait), string(job.StateCompleted), string(job.StateCompletedWithSourceRetained),
+		string(job.StateFailed), string(job.StateCanceled),
+	)
+}
+
+func reviewedOperationKind(value transfer.OperationKind) string {
+	return reviewedOptionalAllowed(string(value), string(transfer.OperationCopy), string(transfer.OperationMove), string(transfer.OperationDelete))
+}
+
+func reviewedRoute(value transfer.Route) string {
+	return reviewedOptionalAllowed(string(value),
+		string(transfer.RouteLocal), string(transfer.RouteSFTPRelay), string(transfer.RouteHelperSameHost),
+		string(transfer.RouteAtomicRename), string(transfer.RouteSFTPServerCopy), string(transfer.RouteLevel2Direct),
+	)
+}
+
+func reviewedRouteReason(value transfer.RouteReason) string {
+	return reviewedOptionalAllowed(string(value),
+		string(transfer.ReasonSameEndpointAtomicRename), string(transfer.ReasonAtomicRenameUnavailable),
+		string(transfer.ReasonServerCopySelected), string(transfer.ReasonServerCopyFailedBeforeWrite),
+		string(transfer.ReasonServerCopyUnavailable), string(transfer.ReasonHelperSameHostSelected),
+		string(transfer.ReasonHelperSameHostUnavailable), string(transfer.ReasonLevel2PreflightPassed),
+		string(transfer.ReasonLevel2PolicyDisabled), string(transfer.ReasonLevel2PreflightFailed),
+		string(transfer.ReasonLevel2PreflightUnknown), string(transfer.ReasonLevel2FailedBeforeWrite),
+		string(transfer.ReasonLevel2RevalidationFailed), string(transfer.ReasonLevel2PartCleanedForRelay),
+		string(transfer.ReasonProductionDistributionClosed), string(transfer.ReasonBandwidthControlRequired),
+		string(transfer.ReasonBoundedRelayDefault),
+	)
+}
+
+func reviewedPhase(value transfer.Phase) string {
+	return reviewedOptionalAllowed(string(value),
+		string(transfer.PhasePrepared), string(transfer.PhaseStreaming), string(transfer.PhaseTransferred),
+		string(transfer.PhaseVerified), string(transfer.PhaseWaitingConflict), string(transfer.PhaseCommitting),
+		string(transfer.PhaseCommitted),
+	)
 }
