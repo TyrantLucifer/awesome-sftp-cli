@@ -95,13 +95,13 @@ For each RED/GREEN cycle, append to [Stage 6 verification](../verification/stage
 3. Implement read-only `doctor` and local support-bundle commands. Neither command performs destructive repair, remote mutation, credential prompting floods, or automatic network upload.
 4. Publish the threat model, finding ledger, compatibility matrix, privacy/support-bundle contract, and troubleshooting code map.
 
-**Current checkpoint**: foundation, doctor, support-bundle, semantic hardening, compatibility/troubleshooting, threat model, and initial finding ledger are delivered. Real-auth correction SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` has dual-workflow support-bundle scan evidence after complete OpenSSH/Askpass and externally renewed Kerberos/GSSAPI matrices. OpenSSH-floor/current SHAs `e7733ec23ec1903dbdc41a926db20fe6defcccc7` and `a7f3ddd8a99df973518140de7eae45e295ae6ea2` pass exact current/oldstable local gates. Dual-workflow jobs record exact `OpenSSH_8.9p1 Ubuntu-3ubuntu0.16` and `OpenSSH_9.6p1 Ubuntu-3ubuntu13.18`, bind the captured version through the real harness, recheck before mutation, then pass public doctor OpenSSH/endpoint checks, complete authentication, and support-bundle scans; production runtime has no version-string rejection. Current PR `29652956741` passed 24/24; push `29652955122` had one existing config-expansion fixture failure with an exact same-SHA PR platform success and no rerun. PLAT-009 is `Verified`. Production-Helper artifact scans and final independent review remain open.
+**Current checkpoint**: foundation, doctor, support-bundle, semantic hardening, compatibility/troubleshooting, threat model, and initial finding ledger are delivered. Real-auth correction SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` has dual-workflow support-bundle scan evidence after complete OpenSSH/Askpass and externally renewed Kerberos/GSSAPI matrices. OpenSSH-floor/current SHAs `e7733ec23ec1903dbdc41a926db20fe6defcccc7`/`a7f3ddd8a99df973518140de7eae45e295ae6ea2` and Kerberos-binding SHA `14e5ec4e63c70fb93ed93d15adbe7fdf7cce5d5e` pass exact current/oldstable local gates. Dual-workflow jobs record exact `OpenSSH_8.9p1 Ubuntu-3ubuntu0.16`, `OpenSSH_9.6p1 Ubuntu-3ubuntu13.18`, and `Kerberos 5 version 1.20.1`; each captured value is bound into the real harness and rechecked before mutation. PLAT-009 is `Verified`; REL-006 is `In Progress` with macOS Kerberos, vendor SFTP, Linux arm64 native, and production Helper explicitly untested. Production-Helper artifact scans and final independent review remain open.
 
 ### M6.3 gate
 
 - No unresolved high-risk finding; all other findings have disposition and evidence.
 - Doctor/support-bundle secret scans pass, bundle contents are previewable and bounded, and major failure classes are diagnosable without content or credentials.
-- Compatibility claims distinguish native-tested, build-only, best-effort, unsupported, and untested states; PLAT-009 records 8.9p1 as a tested floor rather than a string-based startup rejection.
+- Compatibility claims distinguish native-tested, build-only, best-effort, unsupported, and untested states; PLAT-009 records 8.9p1 as a tested floor rather than a string-based startup rejection, and REL-006 records exact MIT Kerberos 5 1.20.1 evidence without broadening untested combinations.
 
 ## M6.4 — Release candidate and 1.0
 
@@ -148,7 +148,7 @@ For each RED/GREEN cycle, append to [Stage 6 verification](../verification/stage
 | REL-003 | M6.2 | pending-attempt/WAL/backup/restore crash matrix | final upgrade and rollback rehearsal |
 | REL-004 | M6.2–M6.4 | deterministic archive/public packaging negatives | signed/notarized/quarantined final release evidence |
 | REL-005 | M6.2–M6.4 | clean first run and supported-version upgrade | channel install/upgrade/uninstall smoke |
-| REL-006 | M6.3–M6.4 | versioned native compatibility matrix | exact-RC links and published limits |
+| REL-006 | M6.3–M6.4 | exact OpenSSH/Kerberos version-bound native matrix | remaining macOS Kerberos/vendor SFTP/Linux arm64/production Helper runs, exact-RC links and published limits |
 | REL-007 | M6.3–M6.4 | threat/finding ledger and negative tests | two final reviews, zero unresolved high risk |
 | REL-008 | M6.4 | exact-RC complete local/native matrices | exact push/PR/main Hosted success |
 | REL-009 | M6.1–M6.4 | executable docs examples and links | independent new-user path |

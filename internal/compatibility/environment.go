@@ -36,7 +36,7 @@ func EnvironmentMatrix() []EnvironmentCase {
 		{Area: "openssh", Case: "system current", Status: NativeTested, Behavior: "supported", Evidence: "Ubuntu 24.04 and macOS 15 real sshd/SFTP gates"},
 		{Area: "openssh", Case: "Host Include Match ProxyCommand ProxyJump agent ControlMaster", Status: NativeTested, Behavior: "system configuration preserved within fixed safety overrides", Evidence: "real Hosted authentication matrix"},
 		{Area: "openssh", Case: "hardware security key", Status: Untested, Behavior: "no product-specific block; no 1.0 compatibility claim yet", Evidence: "release matrix remains open"},
-		{Area: "authentication", Case: "MIT Kerberos GSSAPI on Linux", Status: NativeTested, Behavior: "supported without credential delegation", Evidence: "real KDC, GSSAPI-only sshd, expiry and recovery matrix"},
+		{Area: "authentication", Case: "MIT Kerberos 5 1.20.1 GSSAPI on Ubuntu 24.04 amd64", Status: NativeTested, Behavior: "supported without credential delegation", Evidence: "dual-workflow exact klist version binding, real KDC, GSSAPI-only sshd, expiry and recovery matrix"},
 		{Area: "authentication", Case: "Kerberos GSSAPI on macOS", Status: Untested, Behavior: "system OpenSSH path only; no native evidence yet", Evidence: "release matrix remains open"},
 		{Area: "sftp", Case: "OpenSSH internal-sftp", Status: NativeTested, Behavior: "supported baseline", Evidence: "real sshd browse, search, transfer and recovery gates"},
 		{Area: "sftp", Case: "other standards-compatible servers", Status: BestEffort, Behavior: "standard SFTP baseline; extensions are capability-gated", Evidence: "vendor matrix remains open"},

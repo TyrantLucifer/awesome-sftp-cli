@@ -14,7 +14,7 @@ This matrix separates observed evidence from product behavior. `native-tested` m
 | openssh | system current | native-tested | supported | Ubuntu 24.04 and macOS 15 real sshd/SFTP gates |
 | openssh | Host Include Match ProxyCommand ProxyJump agent ControlMaster | native-tested | system configuration preserved within fixed safety overrides | real Hosted authentication matrix |
 | openssh | hardware security key | untested | no product-specific block; no 1.0 compatibility claim yet | release matrix remains open |
-| authentication | MIT Kerberos GSSAPI on Linux | native-tested | supported without credential delegation | real KDC, GSSAPI-only sshd, expiry and recovery matrix |
+| authentication | MIT Kerberos 5 1.20.1 GSSAPI on Ubuntu 24.04 amd64 | native-tested | supported without credential delegation | dual-workflow exact klist version binding, real KDC, GSSAPI-only sshd, expiry and recovery matrix |
 | authentication | Kerberos GSSAPI on macOS | untested | system OpenSSH path only; no native evidence yet | release matrix remains open |
 | sftp | OpenSSH internal-sftp | native-tested | supported baseline | real sshd browse, search, transfer and recovery gates |
 | sftp | other standards-compatible servers | best-effort | standard SFTP baseline; extensions are capability-gated | vendor matrix remains open |
