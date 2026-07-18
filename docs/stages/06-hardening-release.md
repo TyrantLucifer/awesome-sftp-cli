@@ -206,7 +206,7 @@
 3. 生成最终发行物、校验和、变更说明与验证记录。
 4. 发布后执行安装/更新冒烟并准备可逆撤回方案。
 
-当前增量：REL-009 SHA `19e8ab73d5f90a51815634b9b36112f86711f372`、tree `ceb8e749ac11c873b703d3bee3f3168cb9f5fce2` 的四条文档契约已从缺失入口、首次使用、运维恢复和升级回滚路径的预期 RED 转绿；新增文档覆盖安装、SSH/Kerberos 前提、默认键位、工作区、传输安全、Helper、直传降级、恢复、doctor 与故障排查，并保持 production Helper/Level 2 CLOSED。exact current Go 1.26.5 `make ci`、exact oldstable Go 1.25.12 `make check`、focused docscheck 与 help/man/completion parity 通过。Hosted push/PR `29656202301`/`29656203801` 的 quality/auth 均通过；残余失败均为有同 SHA 伴随覆盖的既有 OpenSSH expansion 或 Helper process visibility 时序问题，未重跑或放宽门禁。尚未冻结 RC，独立新用户演练仍开放，因此 REL-009 仅为 `In Progress`。
+当前增量：REL-009 SHA `19e8ab73d5f90a51815634b9b36112f86711f372` 的文档路径已有完整本地与双工作流分类证据，独立 exact-RC 新用户演练仍开放。REL-008 新增五条 executable contracts 与 `amsftp-release-gate-record-v1`：17 项门禁必须绑定同一 candidate SHA/tree 且 completed/success；physical 100 GiB、process/network-isolated Level 2、soak、两份独立终审、candidate push/PR 和 post-merge main 均有不可互换的精确边界。validator 只验真，不冻结 RC、不查询或生成证据。当前没有 RC record，production Helper/Level 2 与所有受保护发布门禁保持 CLOSED。
 
 门禁：所有发布原则、退出标准和功能矩阵证据一致，才标记 1.0。
 
