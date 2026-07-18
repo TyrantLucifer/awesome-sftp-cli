@@ -56,7 +56,7 @@ def read_until(fd, observer, output, wanted, timeout=15):
 
 def read_ready_selection(fd, observer, output, filename):
     read_until(fd, observer, output, filename.encode("utf-8"))
-    read_until(fd, observer, output, b"cache:lru | normal")
+    read_until(fd, observer, output, b"READ-ONLY | sort:name")
 
 
 def wait_child(pid, fd, timeout=10):
@@ -109,7 +109,7 @@ def run_copy(binary, observer, source, destination, environment, filename, expec
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
     try:
-        read_until(fd, observer, output, filename.encode("utf-8"))
+        read_ready_selection(fd, observer, output, filename)
         os.write(fd, b"y")
         read_until(fd, observer, output, b"source captured")
         os.write(fd, b"\t")
@@ -137,7 +137,7 @@ def run_move(binary, observer, source, destination, environment, filename):
     source_path = os.path.join(source, filename)
     destination_path = os.path.join(destination, filename)
     try:
-        read_until(fd, observer, output, filename.encode("utf-8"))
+        read_ready_selection(fd, observer, output, filename)
         os.write(fd, b"d")
         read_until(fd, observer, output, b"cut source captured")
         os.write(fd, b"\t")
@@ -184,7 +184,7 @@ def run_rename(binary, observer, source, destination, environment, old_name, new
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
     try:
-        read_until(fd, observer, output, old_name.encode("utf-8"))
+        read_ready_selection(fd, observer, output, old_name)
         os.write(fd, b"r")
         read_until(fd, observer, output, b"Rename through durable Job")
         os.write(fd, new_name.encode("utf-8") + b"\r")

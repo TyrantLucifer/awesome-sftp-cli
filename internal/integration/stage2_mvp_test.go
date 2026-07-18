@@ -10,28 +10,39 @@ import (
 	"testing"
 )
 
-func TestStage2PTYDeleteWaitsForReadySelection(t *testing.T) {
+func TestStage2PTYActionsWaitForReadySelection(t *testing.T) {
 	script, err := os.ReadFile("hosted-stage2-mvp.py")
 	if err != nil {
 		t.Fatal(err)
 	}
 	text := string(script)
-	start := strings.Index(text, "def run_delete(")
-	if start < 0 {
-		t.Fatal("run_delete function is missing")
+	for _, check := range []struct {
+		function string
+		filename string
+		action   string
+	}{
+		{function: "run_copy", filename: "filename", action: "y"},
+		{function: "run_move", filename: "filename", action: "d"},
+		{function: "run_rename", filename: "old_name", action: "r"},
+		{function: "run_delete", filename: "filename", action: "D"},
+	} {
+		start := strings.Index(text, "def "+check.function+"(")
+		if start < 0 {
+			t.Fatalf("%s function is missing", check.function)
+		}
+		end := strings.Index(text[start:], "\ndef ")
+		if end < 0 {
+			t.Fatalf("%s function is malformed", check.function)
+		}
+		body := text[start : start+end]
+		ready := strings.Index(body, "read_ready_selection(fd, observer, output, "+check.filename+")")
+		action := strings.Index(body, "os.write(fd, b\""+check.action+"\")")
+		if ready < 0 || action < 0 || ready > action {
+			t.Fatalf("%s must observe a ready selected target before sending %s", check.function, check.action)
+		}
 	}
-	end := strings.Index(text[start:], "\ndef ")
-	if end < 0 {
-		t.Fatal("run_delete function is malformed")
-	}
-	deleteBody := text[start : start+end]
-	ready := strings.Index(deleteBody, "read_ready_selection(fd, observer, output, filename)")
-	action := strings.Index(deleteBody, "os.write(fd, b\"D\")")
-	if ready < 0 || action < 0 || ready > action {
-		t.Fatal("run_delete must observe a ready selected target before sending D")
-	}
-	if !strings.Contains(text, "read_until(fd, observer, output, b\"cache:lru | normal\")") {
-		t.Fatal("ready-selection barrier must observe the normal TUI state")
+	if !strings.Contains(text, "read_until(fd, observer, output, b\"READ-ONLY | sort:name\")") {
+		t.Fatal("ready-selection barrier must observe the loaded TUI state")
 	}
 }
 
