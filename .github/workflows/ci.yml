@@ -661,7 +661,7 @@ jobs:
           test ! -d "$(brew --cellar)/amsftp"
           brew untap amsftp-ci/preview
           kill "${server_pid}"
-          wait "${server_pid}"
+          wait "${server_pid}" || test "$?" -eq 143
           trap - EXIT
       - name: Run native ext4 and XFS state durability fixtures
         if: runner.os == 'Linux'

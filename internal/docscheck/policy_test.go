@@ -1407,6 +1407,17 @@ func TestCINativeHomebrewPreviewRequiresForceRemovalOfAllVersions(t *testing.T) 
 	})
 }
 
+func TestCINativeHomebrewPreviewRejectsUncheckedServerTermination(t *testing.T) {
+	root := prepareFixture(t, "valid")
+	replacePolicyFile(t, root, ".github/workflows/ci.yml",
+		`wait "${server_pid}" || test "$?" -eq 143`,
+		`wait "${server_pid}"`)
+	assertPolicyFinding(t, root, policyFinding{
+		Path: ".github/workflows/ci.yml", Line: 26, Rule: "workflow.ci_native_homebrew_preview",
+		Message: "native macOS jobs must exercise the loopback-only Homebrew tap clean install, upgrade, version, and uninstall lifecycle",
+	})
+}
+
 func TestCIOldstableContract(t *testing.T) {
 	const (
 		exactMatrix = "        os: [ubuntu-22.04, ubuntu-24.04, macos-15, macos-15-intel]"

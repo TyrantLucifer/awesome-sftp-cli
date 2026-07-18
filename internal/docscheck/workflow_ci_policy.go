@@ -316,6 +316,8 @@ func nativeHomebrewPreviewLifecycleIsExact(job workflowJob) bool {
 			`brew uninstall --force amsftp-ci/preview/amsftp`,
 			`test ! -d "$(brew --cellar)/amsftp"`,
 			`brew untap amsftp-ci/preview`,
+			`kill "${server_pid}"`,
+			`wait "${server_pid}" || test "$?" -eq 143`,
 		}
 		if embedded {
 			ordered = append([]string{`if test "${RUNNER_OS}" = macOS`}, ordered...)
