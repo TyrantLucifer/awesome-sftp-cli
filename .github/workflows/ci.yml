@@ -560,6 +560,117 @@ jobs:
           test ! -e "${installed}"
           test -f "${database}"
           trap - EXIT
+      - name: Exercise loopback Homebrew tap lifecycle
+        if: runner.os == 'macOS'
+        run: |
+          set -euo pipefail
+          preview_root="${RUNNER_TEMP}/homebrew-preview"
+          old_input="${preview_root}/input-0.9.0"
+          new_input="${preview_root}/input-1.0.0"
+          old_bundle="${preview_root}/bundle-0.9.0"
+          new_bundle="${preview_root}/bundle-1.0.0"
+          asset_root="${preview_root}/assets"
+          tap_remote="${preview_root}/homebrew-preview-tap"
+          port_file="${preview_root}/asset-port"
+          server_log="${preview_root}/asset-server.log"
+          preview_license="BSD-3-Clause"
+          printf '%s\n' 'CI-only Homebrew preview license; this is not the project license.'
+          head="$(git rev-parse HEAD)"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          modules_json="$(tr -d '\n' <docs/release/runtime-dependencies.json)"
+          mkdir -p "${preview_root}" "${asset_root}"
+          build_preview_bundle() {
+            version="$1"
+            input="$2"
+            output="$3"
+            ldflags="-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=${version} -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=${head}"
+            mkdir -p "${input}/bin"
+            for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+              goos="${target%/*}"
+              goarch="${target#*/}"
+              CGO_ENABLED=0 GOOS="${goos}" GOARCH="${goarch}" \
+                go build -trimpath -ldflags="${ldflags}" -o "${input}/bin/${goos}-${goarch}" ./cmd/amsftp
+            done
+            printf '%s\n' 'CI-only public packaging contract material; this is not the project license.' >"${input}/LICENSE"
+            cp docs/release/NOTICE "${input}/NOTICE"
+            cp docs/release/INSTALL.md "${input}/INSTALL.md"
+            cp docs/release/UNINSTALL.md "${input}/UNINSTALL.md"
+            cp docs/man/amsftp.1 "${input}/amsftp.1"
+            cat >"${input}/manifest.json" <<EOF
+          {
+            "schema": "amsftp-public-release-manifest-v1",
+            "version": "${version}",
+            "commit": "${head}",
+            "tree": "${tree}",
+            "source_date_epoch": ${source_epoch},
+            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","uninstall":"UNINSTALL.md","man":"amsftp.1"},
+            "platforms": [
+              {"os":"darwin","arch":"amd64","path":"bin/darwin-amd64"},
+              {"os":"darwin","arch":"arm64","path":"bin/darwin-arm64"},
+              {"os":"linux","arch":"amd64","path":"bin/linux-amd64"},
+              {"os":"linux","arch":"arm64","path":"bin/linux-arm64"}
+            ],
+            "modules": ${modules_json}
+          }
+          EOF
+            go run ./internal/tools/releasepack "${input}/manifest.json" "${output}"
+            cp "${output}"/*.tar.gz "${asset_root}/"
+          }
+          build_preview_bundle 0.9.0 "${old_input}" "${old_bundle}"
+          build_preview_bundle 1.0.0 "${new_input}" "${new_bundle}"
+          python3 - "${asset_root}" "${port_file}" >"${server_log}" 2>&1 <<'PY' &
+          import functools
+          import http.server
+          import pathlib
+          import sys
+
+          root = pathlib.Path(sys.argv[1])
+          port_file = pathlib.Path(sys.argv[2])
+          handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=root)
+          server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+          port_file.write_text(str(server.server_port), encoding="ascii")
+          server.serve_forever()
+          PY
+          server_pid=$!
+          cleanup_homebrew_preview() {
+            brew uninstall amsftp-ci/preview/amsftp >/dev/null 2>&1 || true
+            brew untap amsftp-ci/preview >/dev/null 2>&1 || true
+            kill "${server_pid}" >/dev/null 2>&1 || true
+            wait "${server_pid}" >/dev/null 2>&1 || true
+          }
+          trap cleanup_homebrew_preview EXIT
+          for ((attempt = 0; attempt < 100; attempt++)); do
+            test -s "${port_file}" && break
+            sleep 0.05
+          done
+          test -s "${port_file}"
+          asset_port="$(cat "${port_file}")"
+          asset_origin="http://127.0.0.1:${asset_port}"
+          mkdir -p "${tap_remote}/Formula"
+          go run ./internal/tools/homebrewpreview 0.9.0 "${preview_license}" "${old_bundle}" "${asset_origin}" >"${tap_remote}/Formula/amsftp.rb"
+          git -C "${tap_remote}" init -b main
+          git -C "${tap_remote}" config user.name 'AMSFTP CI'
+          git -C "${tap_remote}" config user.email 'ci@invalid.example'
+          git -C "${tap_remote}" add Formula/amsftp.rb
+          git -C "${tap_remote}" commit -m 'amsftp 0.9.0 preview'
+          brew tap amsftp-ci/preview "file://${tap_remote}"
+          brew trust amsftp-ci/preview
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install --build-from-source amsftp-ci/preview/amsftp
+          "$(brew --prefix)/bin/amsftp" --version | grep -F "0.9.0 commit=${head} dirty=false"
+          go run ./internal/tools/homebrewpreview 1.0.0 "${preview_license}" "${new_bundle}" "${asset_origin}" >"${tap_remote}/Formula/amsftp.rb"
+          git -C "${tap_remote}" add Formula/amsftp.rb
+          git -C "${tap_remote}" commit -m 'amsftp 1.0.0 preview'
+          brew update
+          HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade amsftp-ci/preview/amsftp
+          "$(brew --prefix)/bin/amsftp" --version | grep -F "1.0.0 commit=${head} dirty=false"
+          brew test amsftp-ci/preview/amsftp
+          brew uninstall amsftp-ci/preview/amsftp
+          test ! -e "$(brew --prefix)/bin/amsftp"
+          brew untap amsftp-ci/preview
+          kill "${server_pid}"
+          wait "${server_pid}"
+          trap - EXIT
       - name: Run native ext4 and XFS state durability fixtures
         if: runner.os == 'Linux'
         run: |

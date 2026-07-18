@@ -1385,6 +1385,17 @@ func TestCINativeRequiresCleanInstallDaemonAndExactUninstallLifecycle(t *testing
 	}
 }
 
+func TestCINativeRequiresLoopbackHomebrewPreviewLifecycle(t *testing.T) {
+	root := prepareFixture(t, "valid")
+	replacePolicyFile(t, root, ".github/workflows/ci.yml",
+		"CI-only Homebrew preview license; this is not the project license.",
+		"CI-only untrusted preview")
+	assertPolicyFinding(t, root, policyFinding{
+		Path: ".github/workflows/ci.yml", Line: 26, Rule: "workflow.ci_native_homebrew_preview",
+		Message: "native macOS jobs must exercise the loopback-only Homebrew tap clean install, upgrade, version, and uninstall lifecycle",
+	})
+}
+
 func TestCIOldstableContract(t *testing.T) {
 	const (
 		exactMatrix = "        os: [ubuntu-22.04, ubuntu-24.04, macos-15, macos-15-intel]"

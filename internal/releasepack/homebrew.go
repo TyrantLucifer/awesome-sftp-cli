@@ -3,6 +3,9 @@ package releasepack
 import (
 	"errors"
 	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 )
 
@@ -15,10 +18,33 @@ type HomebrewFormulaRequest struct {
 	Archives []Archive
 }
 
+// HomebrewPreviewFormulaRequest renders the same formula contract against a
+// loopback-only asset server for the pre-publication tap lifecycle. It is not a
+// public channel and cannot admit a production release origin.
+type HomebrewPreviewFormulaRequest struct {
+	HomebrewFormulaRequest
+	AssetBaseURL string
+}
+
 // BuildHomebrewFormula renders the deterministic AMSFTP formula for an
 // immutable GitHub Release. It does not publish the formula or admit any
 // archive as a production Helper trust root.
 func BuildHomebrewFormula(request HomebrewFormulaRequest) ([]byte, error) {
+	baseURL := fmt.Sprintf("https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v%s", request.Version)
+	return buildHomebrewFormula(request, baseURL)
+}
+
+// BuildHomebrewPreviewFormula renders a formula for a local pre-publication
+// channel exercise. Only an exact IPv4 loopback HTTP origin with an explicit
+// non-zero port is accepted.
+func BuildHomebrewPreviewFormula(request HomebrewPreviewFormulaRequest) ([]byte, error) {
+	if !validHomebrewPreviewBaseURL(request.AssetBaseURL) {
+		return nil, errors.New("build Homebrew preview formula: asset base URL must be exact loopback HTTP with an explicit port")
+	}
+	return buildHomebrewFormula(request.HomebrewFormulaRequest, request.AssetBaseURL)
+}
+
+func buildHomebrewFormula(request HomebrewFormulaRequest, baseURL string) ([]byte, error) {
 	archives, err := validateHomebrewFormulaRequest(request)
 	if err != nil {
 		return nil, err
@@ -31,9 +57,9 @@ func BuildHomebrewFormula(request HomebrewFormulaRequest) ([]byte, error) {
 	fmt.Fprintf(&output, "  version %q\n", request.Version)
 	fmt.Fprintf(&output, "  license %q\n", request.License)
 	output.WriteByte('\n')
-	writeHomebrewPlatform(&output, "macos", archives[Target{OS: "darwin", Arch: "arm64"}], archives[Target{OS: "darwin", Arch: "amd64"}], request.Version)
+	writeHomebrewPlatform(&output, "macos", archives[Target{OS: "darwin", Arch: "arm64"}], archives[Target{OS: "darwin", Arch: "amd64"}], baseURL)
 	output.WriteByte('\n')
-	writeHomebrewPlatform(&output, "linux", archives[Target{OS: "linux", Arch: "arm64"}], archives[Target{OS: "linux", Arch: "amd64"}], request.Version)
+	writeHomebrewPlatform(&output, "linux", archives[Target{OS: "linux", Arch: "arm64"}], archives[Target{OS: "linux", Arch: "amd64"}], baseURL)
 	output.WriteString(`
   def install
     bin.install "amsftp"
@@ -46,6 +72,19 @@ func BuildHomebrewFormula(request HomebrewFormulaRequest) ([]byte, error) {
 	fmt.Fprintf(&output, "    assert_match %q, shell_output(\"#{bin}/amsftp --version\")\n", request.Version)
 	output.WriteString("  end\nend\n")
 	return []byte(output.String()), nil
+}
+
+func validHomebrewPreviewBaseURL(value string) bool {
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "http" || parsed.Hostname() != "127.0.0.1" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return false
+	}
+	host, portText, err := net.SplitHostPort(parsed.Host)
+	if err != nil || host != "127.0.0.1" {
+		return false
+	}
+	port, err := strconv.Atoi(portText)
+	return err == nil && port > 0 && port <= 65535
 }
 
 func validateHomebrewFormulaRequest(request HomebrewFormulaRequest) (map[Target]Archive, error) {
@@ -80,16 +119,16 @@ func validHomebrewLicense(value string) bool {
 	return validSPDXExpression(value) && !strings.ContainsAny(value, " ()")
 }
 
-func writeHomebrewPlatform(output *strings.Builder, platform string, arm, intel Archive, version string) {
+func writeHomebrewPlatform(output *strings.Builder, platform string, arm, intel Archive, baseURL string) {
 	fmt.Fprintf(output, "  on_%s do\n", platform)
-	writeHomebrewArchitecture(output, "arm", arm, version)
-	writeHomebrewArchitecture(output, "intel", intel, version)
+	writeHomebrewArchitecture(output, "arm", arm, baseURL)
+	writeHomebrewArchitecture(output, "intel", intel, baseURL)
 	output.WriteString("  end\n")
 }
 
-func writeHomebrewArchitecture(output *strings.Builder, architecture string, archive Archive, version string) {
+func writeHomebrewArchitecture(output *strings.Builder, architecture string, archive Archive, baseURL string) {
 	fmt.Fprintf(output, "    on_%s do\n", architecture)
-	fmt.Fprintf(output, "      url \"https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v%s/%s\"\n", version, archive.Name)
+	fmt.Fprintf(output, "      url %q\n", baseURL+"/"+archive.Name)
 	fmt.Fprintf(output, "      sha256 %q\n", digestBytes(archive.Bytes))
 	output.WriteString("    end\n")
 }

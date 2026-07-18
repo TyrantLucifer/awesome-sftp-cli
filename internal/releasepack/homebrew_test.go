@@ -117,6 +117,47 @@ func TestHomebrewFormulaIsDeterministicAndRejectsUnboundInputs(t *testing.T) {
 	}
 }
 
+func TestHomebrewPreviewFormulaUsesOnlyExactLoopbackArchiveOrigin(t *testing.T) {
+	request := HomebrewPreviewFormulaRequest{
+		HomebrewFormulaRequest: homebrewFormulaFixture(),
+		AssetBaseURL:           "http://127.0.0.1:41731",
+	}
+	formula, err := BuildHomebrewPreviewFormula(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rendered := string(formula)
+	for _, archive := range request.Archives {
+		url := request.AssetBaseURL + "/" + archive.Name
+		if strings.Count(rendered, url) != 1 {
+			t.Fatalf("preview formula URL %q count != 1:\n%s", url, rendered)
+		}
+	}
+	if strings.Contains(rendered, "github.com/TyrantLucifer/awsome-sftp-cli/releases/download") {
+		t.Fatalf("preview formula leaked the production release origin:\n%s", rendered)
+	}
+
+	for name, baseURL := range map[string]string{
+		"production origin": "https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0",
+		"localhost name":    "http://localhost:41731",
+		"non-loopback":      "http://192.0.2.10:41731",
+		"userinfo":          "http://preview@127.0.0.1:41731",
+		"path":              "http://127.0.0.1:41731/assets",
+		"query":             "http://127.0.0.1:41731?preview=1",
+		"fragment":          "http://127.0.0.1:41731#preview",
+		"missing port":      "http://127.0.0.1",
+		"invalid port":      "http://127.0.0.1:0",
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := request
+			candidate.AssetBaseURL = baseURL
+			if _, err := BuildHomebrewPreviewFormula(candidate); err == nil {
+				t.Fatal("non-loopback preview asset origin was accepted")
+			}
+		})
+	}
+}
+
 func homebrewFormulaFixture() HomebrewFormulaRequest {
 	archives := make([]Archive, 0, len(Targets))
 	for _, target := range Targets {

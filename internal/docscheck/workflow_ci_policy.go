@@ -200,6 +200,9 @@ func checkCINative(job workflowJob, add func(int, string, string)) {
 	if !nativeLifecycleIsExact(job) {
 		add(job.line, "workflow.ci_native_lifecycle", "native job must exercise the exact owner-private clean install, daemon, state-preserving uninstall lifecycle")
 	}
+	if !nativeHomebrewPreviewLifecycleIsExact(job) {
+		add(job.line, "workflow.ci_native_homebrew_preview", "native macOS jobs must exercise the loopback-only Homebrew tap clean install, upgrade, version, and uninstall lifecycle")
+	}
 }
 
 func nativeLifecycleIsExact(job workflowJob) bool {
@@ -279,6 +282,58 @@ func nativeLifecycleIsExact(job workflowJob) bool {
 	return strings.Count(script, `test -f "${database}"`) == 2 &&
 		!strings.Contains(script, `clean_home="${RUNNER_TEMP}`) &&
 		!strings.Contains(script, "rm -rf") && !strings.Contains(script, "rm --recursive")
+}
+
+func nativeHomebrewPreviewLifecycleIsExact(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil {
+			continue
+		}
+		dedicated := step.name.value == "Exercise loopback Homebrew tap lifecycle"
+		embedded := step.name.value == "Exercise native clean install and uninstall lifecycle"
+		if !dedicated && !embedded {
+			continue
+		}
+		validShape := dedicated && step.ifExpr != nil && step.ifExpr.value == "runner.os == 'macOS'" && stepHasOnlyKeys(step, "name", "if", "run")
+		validShape = validShape || embedded && step.ifExpr == nil && stepHasOnlyKeys(step, "name", "run")
+		if step.run == nil || !validShape || !stepRunUsesBlockScalar(step) || !stepHasSafeRunContext(job, step) {
+			continue
+		}
+		script := step.run.value
+		ordered := []string{
+			`preview_license="BSD-3-Clause"`,
+			`CI-only Homebrew preview license; this is not the project license.`,
+			`asset_origin="http://127.0.0.1:${asset_port}"`,
+			`go run ./internal/tools/homebrewpreview 0.9.0 "${preview_license}"`,
+			`brew tap amsftp-ci/preview`,
+			`brew install --build-from-source amsftp-ci/preview/amsftp`,
+			`0.9.0 commit=`,
+			`go run ./internal/tools/homebrewpreview 1.0.0 "${preview_license}"`,
+			`brew update`,
+			`brew upgrade amsftp-ci/preview/amsftp`,
+			`1.0.0 commit=`,
+			`brew uninstall amsftp-ci/preview/amsftp`,
+			`brew untap amsftp-ci/preview`,
+		}
+		if embedded {
+			ordered = append([]string{`if test "${RUNNER_OS}" = macOS`}, ordered...)
+			ordered = append(ordered, `fi`)
+		}
+		cursor := 0
+		complete := true
+		for _, fragment := range ordered {
+			relative := strings.Index(script[cursor:], fragment)
+			if relative < 0 {
+				complete = false
+				break
+			}
+			cursor += relative + len(fragment)
+		}
+		if complete && !strings.Contains(script, `cp LICENSE`) && !strings.Contains(script, `license="MIT"`) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkCIOldstable(job workflowJob, add func(int, string, string)) {
