@@ -44,6 +44,7 @@ type physicalReleaseEnvironment struct {
 	LabRoot         string
 	ControlRoot     string
 	EvidencePath    string
+	SSHBinary       string
 	CandidateCommit string
 	CandidateTree   string
 	Bytes           int64
@@ -63,6 +64,7 @@ type physicalReleaseReport struct {
 	StartedAt          time.Time          `json:"started_at"`
 	CompletedAt        time.Time          `json:"completed_at"`
 	Filesystem         string             `json:"filesystem"`
+	SSHClient          string             `json:"ssh_client"`
 	BytesPerDirection  uint64             `json:"bytes_per_direction"`
 	TotalBytes         uint64             `json:"total_bytes"`
 	ResumeOffset       uint64             `json:"resume_offset"`
@@ -79,6 +81,7 @@ func validatePhysicalReleaseEnvironment(environment physicalReleaseEnvironment) 
 		"lab root":        environment.LabRoot,
 		"control root":    environment.ControlRoot,
 		"evidence path":   environment.EvidencePath,
+		"SSH binary":      environment.SSHBinary,
 	} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return fmt.Errorf("%s must be absolute and canonical", label)
@@ -104,6 +107,9 @@ func validatePhysicalReleaseEnvironment(environment physicalReleaseEnvironment) 
 	}
 	if pathWithin(environment.RepoRoot, environment.EvidencePath) {
 		return errors.New("evidence path must be outside repository")
+	}
+	if pathWithin(environment.RepoRoot, environment.SSHBinary) || pathWithin(environment.LabRoot, environment.SSHBinary) || pathWithin(environment.ControlRoot, environment.SSHBinary) {
+		return errors.New("SSH binary must be outside repository, lab, and ephemeral control roots")
 	}
 	if environment.Bytes != physicalReleaseBytes {
 		return errors.New("physical release size must be exactly 100 GiB")
@@ -159,6 +165,9 @@ func validatePhysicalReleaseReport(report physicalReleaseReport) error {
 	}
 	if report.Filesystem == "" {
 		return errors.New("physical report filesystem is empty")
+	}
+	if report.SSHClient == "" {
+		return errors.New("physical report SSH client identity is empty")
 	}
 	wantBytes := uint64(physicalReleaseBytes)
 	if report.BytesPerDirection != wantBytes {
@@ -249,7 +258,7 @@ func runPhysicalReleaseRoundTrip(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Hour)
 	defer cancel()
-	transport, err := openssh.Dial(ctx, openssh.Config{HostAlias: alias, ConfigFile: sshConfig, Fresh: true})
+	transport, err := openssh.Dial(ctx, openssh.Config{Binary: environment.SSHBinary, HostAlias: alias, ConfigFile: sshConfig, Fresh: true})
 	if err != nil {
 		t.Fatalf("dial physical release SFTP: %v", err)
 	}
@@ -359,6 +368,7 @@ func runPhysicalReleaseRoundTrip(t *testing.T) {
 		StartedAt:          startedAt,
 		CompletedAt:        time.Now().UTC(),
 		Filesystem:         filesystemName(environment.LabRoot),
+		SSHClient:          sshClientIdentity(t, environment.SSHBinary),
 		BytesPerDirection:  physicalUint64(environment.Bytes),
 		TotalBytes:         physicalUint64(environment.Bytes) * 2,
 		ResumeOffset:       first.Bytes,
@@ -385,11 +395,22 @@ func physicalReleaseEnvironmentFromProcess(t *testing.T) physicalReleaseEnvironm
 		LabRoot:         os.Getenv("AMSFTP_RELEASE_LAB_ROOT"),
 		ControlRoot:     os.Getenv("AMSFTP_RELEASE_CONTROL_ROOT"),
 		EvidencePath:    os.Getenv("AMSFTP_RELEASE_EVIDENCE_PATH"),
+		SSHBinary:       os.Getenv("AMSFTP_RELEASE_SSH_BINARY"),
 		CandidateCommit: os.Getenv("AMSFTP_RELEASE_CANDIDATE_COMMIT"),
 		CandidateTree:   os.Getenv("AMSFTP_RELEASE_CANDIDATE_TREE"),
 		Bytes:           physicalReleaseBytes,
 		CancelAfter:     1 << 30,
 	}
+}
+
+func sshClientIdentity(t *testing.T, path string) string {
+	t.Helper()
+	command := exec.Command(path, "-V") // #nosec G204 -- the validated absolute SSH binary is the exact evidence subject.
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("identify SSH client: %v: %s", err, output)
+	}
+	return strings.TrimSpace(string(output)) + " " + path
 }
 
 func verifyPhysicalCandidate(t *testing.T, environment physicalReleaseEnvironment) {

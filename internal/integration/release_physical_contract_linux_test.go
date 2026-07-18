@@ -20,6 +20,7 @@ func TestPhysicalReleaseEnvironmentRequiresExplicitSafeExternalPaths(t *testing.
 		LabRoot:         filepath.Join(externalRoot, "lab"),
 		ControlRoot:     filepath.Join(externalRoot, "control"),
 		EvidencePath:    filepath.Join(externalRoot, "evidence", "physical-100gib.json"),
+		SSHBinary:       "/usr/bin/ssh",
 		CandidateCommit: strings.Repeat("a", 40),
 		CandidateTree:   strings.Repeat("b", 40),
 		Bytes:           physicalReleaseBytes,
@@ -42,6 +43,7 @@ func TestPhysicalReleaseEnvironmentRequiresExplicitSafeExternalPaths(t *testing.
 		{name: "evidence inside control", mutate: func(env *physicalReleaseEnvironment) {
 			env.EvidencePath = filepath.Join(env.ControlRoot, "evidence.json")
 		}, want: "outside control root"},
+		{name: "relative SSH binary", mutate: func(env *physicalReleaseEnvironment) { env.SSHBinary = "ssh" }, want: "SSH binary must be absolute"},
 		{name: "wrong size", mutate: func(env *physicalReleaseEnvironment) { env.Bytes-- }, want: "exactly 100 GiB"},
 		{name: "bad checkpoint", mutate: func(env *physicalReleaseEnvironment) { env.CancelAfter = env.Bytes }, want: "cancel checkpoint"},
 		{name: "bad commit", mutate: func(env *physicalReleaseEnvironment) { env.CandidateCommit = "HEAD" }, want: "40 lowercase hexadecimal"},
@@ -99,6 +101,7 @@ func TestPhysicalReleaseReportBindsCandidateAndRoundTripMetrics(t *testing.T) {
 		StartedAt:          time.Unix(1_700_000_000, 0).UTC(),
 		CompletedAt:        time.Unix(1_700_000_010, 0).UTC(),
 		Filesystem:         "ext4",
+		SSHClient:          "OpenSSH_10.4p1 /trusted/bin/ssh",
 		BytesPerDirection:  uint64(physicalReleaseBytes),
 		TotalBytes:         uint64(physicalReleaseBytes * 2),
 		ResumeOffset:       1 << 30,
