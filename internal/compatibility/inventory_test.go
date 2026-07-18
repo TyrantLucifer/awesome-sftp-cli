@@ -62,8 +62,10 @@ config document v1 | 312bcccbcbd54246bbe5ff9babf4f14560449176 | captured | inter
 workspace document v1 | e07413d46f516f8b0f92c61d006927c1aa319f0f | captured | internal/compatibility/testdata/historical/workspace-v1-stage1.json | 9b8b085174b455805cd38a899702cad1363e6b1cf19a4bc98b5b715ebf9c8220 | internal/workspace
 workspace document v2 | 8bbb0f144583bbff10746ebdb22f82f86b4655e6 | captured | internal/compatibility/testdata/historical/workspace-v2-stage3.json | 1f137d8470e2d005d1672df39fb3c8bf6c7107b766ce9b62d3581c92680cdd40 | internal/workspace
 sqlite state v1 | 486a63f90be51c0d79a454bef52e9e3302df5250 | captured | internal/compatibility/testdata/historical/sqlite-v1-stage2.sqlite | 51f218895205098523be59d6ce58ac87d93d5f61746caae3c9c4e01ed18ce080 | internal/state/migration
-sqlite state v2 | 4eb1961b7b3b5495620fb1f6fcb3b88c52a4fba9 | captured | internal/compatibility/testdata/historical/sqlite-v2-stage3.sqlite | 58187eddac511f9d68715a6bde7d17d50c02efc2b95fc9f15f94227330e17b0c | internal/state/migration
-sqlite state v3 | 939ba9c5d978b8ea5bf1ae060ff62a0769d0d6c0 | captured | internal/compatibility/testdata/historical/sqlite-v3-stage3.sqlite | a4ee36f8ba6eddb797ebe438225399e9a22f93e7d1b373f53403f2d4f0760d09 | internal/state/migration
+sqlite state v2 | 4eb1961b7b3b5495620fb1f6fcb3b88c52a4fba9 | captured | internal/compatibility/testdata/historical/sqlite-v2-stage3.sqlite | d3f5fb72368d0d6b0aa82c9dca19f883c6acfda36050e028ac98822cffd489de | internal/state/migration
+sqlite state v3 | 939ba9c5d978b8ea5bf1ae060ff62a0769d0d6c0 | captured | internal/compatibility/testdata/historical/sqlite-v3-stage3.sqlite | deabc90d2f3699eb10c520f71fbc691e10eac65153bd1a3c2ae3f78fe41213cf | internal/state/migration
+sqlite verified backup v1 | 4eb1961b7b3b5495620fb1f6fcb3b88c52a4fba9 | captured | internal/compatibility/testdata/historical/sqlite-backup-v1-stage3.sqlite | 0cc96fdafb32ab94d7d3dcef8fb4225ba67df5d504482c5e10b0a79a1cd2c3bb | internal/statefs
+sqlite verified backup v2 | 939ba9c5d978b8ea5bf1ae060ff62a0769d0d6c0 | captured | internal/compatibility/testdata/historical/sqlite-backup-v2-stage3.sqlite | 4baec16549566416c959fe5b75f85b7e0c94cfff069a93c59fdca422eba079c2 | internal/statefs
 cache entry manifest v1 | 8a4ada06836b9ed71c72b40949d6b87d8e1f849a | captured | internal/compatibility/testdata/historical/cache-entry-manifest-v1-stage3.json | 9979ce7f860182d4553c482a91c05e2d30bc81a540cc0188351ee068781ff1e0 | internal/cachefs
 cache materialization manifest v1 | 8a4ada06836b9ed71c72b40949d6b87d8e1f849a | captured | internal/compatibility/testdata/historical/cache-materialization-manifest-v1-stage3.json | b2992fbc5fe52198d1738ac42d3dd165289632e2103e1f760d2652f058a5272c | internal/cachefs
 helper release manifest v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | captured | internal/compatibility/testdata/historical/helper-release-manifest-v1-stage4.txt | fdaa89f1dc9fa60458b8cec81f19dfd3c028fee21f056b1c0f4650fcf4556c6f | internal/helper
@@ -117,7 +119,7 @@ func TestCapturedHistoricalSourcesAreImmutableAndReadableByCurrentOwners(t *test
 			if _, err := workspace.Decode(strings.NewReader(string(raw))); err != nil {
 				t.Fatalf("current workspace reader rejected %s: %v", source.Fixture, err)
 			}
-		case "sqlite state":
+		case "sqlite state", "sqlite verified backup":
 			validateHistoricalSQLiteFixture(t, source)
 		case "cache entry manifest":
 			var manifest cachefs.EntryManifest
