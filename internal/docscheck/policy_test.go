@@ -1038,6 +1038,40 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
 	assertNoWorkflowRule(t, ".github/workflows/ci.yml", updated, "workflow.ci_quality")
 }
 
+func TestCIQualityLifecycleRequiresPreparedOwnerPrivatePersistentRoot(t *testing.T) {
+	name := &policyYAMLScalar{value: "Exercise deterministic public packaging and clean-home lifecycle"}
+	tests := []struct {
+		name   string
+		script string
+		want   bool
+	}{
+		{
+			name: "trusted root",
+			script: `trusted_root="/var/lib/amsftp-tests/$(id -u)"
+clean_home="${trusted_root}/public-package-home"`,
+			want: true,
+		},
+		{
+			name:   "runner temp",
+			script: `clean_home="${RUNNER_TEMP}/public-package-home"`,
+		},
+		{
+			name: "declared but unused trusted root",
+			script: `trusted_root="/var/lib/amsftp-tests/$(id -u)"
+clean_home="${RUNNER_TEMP}/public-package-home"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run := &policyYAMLScalar{value: test.script}
+			job := workflowJob{steps: []workflowStep{{name: name, run: run}}}
+			if got := qualityLifecycleUsesTrustedPersistentRoot(job); got != test.want {
+				t.Fatalf("qualityLifecycleUsesTrustedPersistentRoot() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCIQualityAllowsOnlyCompleteCheckoutHistoryForHistoricalUpgradeGate(t *testing.T) {
 	const (
 		path        = ".github/workflows/ci.yml"

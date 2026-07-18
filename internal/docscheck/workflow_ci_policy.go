@@ -89,6 +89,25 @@ func checkCIQuality(job workflowJob, add func(int, string, string)) {
 	if !valid {
 		add(job.line, "workflow.ci_quality", "quality job must run on ubuntu-24.04 and execute make check and make supply-chain")
 	}
+	if !qualityLifecycleUsesTrustedPersistentRoot(job) {
+		add(job.line, "workflow.ci_quality_lifecycle_root", "quality installed lifecycle must place persistent HOME beneath the prepared owner-private test root")
+	}
+}
+
+func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil || step.name.value != "Exercise deterministic public packaging and clean-home lifecycle" {
+			continue
+		}
+		if step.run == nil {
+			return false
+		}
+		script := step.run.value
+		return strings.Contains(script, `trusted_root="/var/lib/amsftp-tests/$(id -u)"`) &&
+			strings.Contains(script, `clean_home="${trusted_root}/public-package-home"`) &&
+			!strings.Contains(script, `clean_home="${RUNNER_TEMP}`)
+	}
+	return true
 }
 
 func checkCINative(job workflowJob, add func(int, string, string)) {
