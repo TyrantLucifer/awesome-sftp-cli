@@ -34,6 +34,21 @@ def screen_observed(observer, output, wanted):
     raise RuntimeError("VT observer failed with exit %d: %s" % (result.returncode, result.stderr.decode(errors="replace")))
 
 
+def selection_ready(observer, output, wanted):
+    result = subprocess.run(
+        [observer, "-final", "-absent", "READ-ONLY | loading", "-columns", "120", "-rows", "24", wanted.decode("utf-8")],
+        input=output,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise RuntimeError("VT observer failed with exit %d: %s" % (result.returncode, result.stderr.decode(errors="replace")))
+
+
 def read_until(fd, observer, output, wanted, timeout=15):
     if screen_observed(observer, output, wanted):
         return bytes(output)
@@ -54,9 +69,23 @@ def read_until(fd, observer, output, wanted, timeout=15):
     raise RuntimeError("PTY output did not contain %r; tail=%r" % (wanted, bytes(output[-3000:])))
 
 
-def read_ready_selection(fd, observer, output, filename):
-    read_until(fd, observer, output, filename.encode("utf-8"))
-    read_until(fd, observer, output, b"READ-ONLY | sort:name")
+def read_ready_selection(fd, observer, output, filename, timeout=15):
+    wanted = ("> " + filename).encode("utf-8")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if selection_ready(observer, output, wanted):
+            return bytes(output)
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        output.extend(chunk)
+    raise RuntimeError("PTY selection did not become ready for %r; tail=%r" % (wanted, bytes(output[-3000:])))
 
 
 def wait_child(pid, fd, timeout=10):

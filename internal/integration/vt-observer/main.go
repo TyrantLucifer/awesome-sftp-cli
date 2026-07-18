@@ -23,6 +23,8 @@ func run(arguments []string, input io.Reader, stderr io.Writer) int {
 	checkpoint := flags.Int("checkpoint", 0, "ignore synchronized frames ending before this byte offset")
 	columns := flags.Int("columns", 200, "terminal columns")
 	rows := flags.Int("rows", 30, "terminal rows")
+	final := flags.Bool("final", false, "match only the final visible screen")
+	absent := flags.String("absent", "", "pattern that must be absent from the final visible screen")
 	if err := flags.Parse(arguments); err != nil {
 		return 2
 	}
@@ -36,7 +38,16 @@ func run(arguments []string, input io.Reader, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "read terminal stream: %v\n", err)
 		return 2
 	}
-	matched, err := observe(output, *checkpoint, *columns, *rows, patterns)
+	var matched bool
+	if *final {
+		matched, err = observeFinal(output, *columns, *rows, patterns, *absent)
+	} else {
+		if *absent != "" {
+			fmt.Fprintln(stderr, "absent requires final screen matching")
+			return 2
+		}
+		matched, err = observe(output, *checkpoint, *columns, *rows, patterns)
+	}
 	if err != nil {
 		fmt.Fprintf(stderr, "replay terminal stream: %v\n", err)
 		return 2
@@ -45,6 +56,24 @@ func run(arguments []string, input io.Reader, stderr io.Writer) int {
 		return 1
 	}
 	return 0
+}
+
+func observeFinal(output []byte, columns, rows int, patterns []string, absent string) (bool, error) {
+	terminal := vt.NewMockTerm(vt.MockOptSize{X: vt.Col(columns), Y: vt.Row(rows)})
+	if err := terminal.Start(); err != nil {
+		return false, err
+	}
+	defer terminal.Stop()
+	if _, err := terminal.Write(output); err != nil {
+		return false, err
+	}
+	screen := visibleScreen(terminal, columns, rows)
+	for _, pattern := range patterns {
+		if !strings.Contains(screen, pattern) {
+			return false, nil
+		}
+	}
+	return absent == "" || !strings.Contains(screen, absent), nil
 }
 
 func observe(output []byte, checkpoint, columns, rows int, patterns []string) (bool, error) {
@@ -79,6 +108,15 @@ func observe(output []byte, checkpoint, columns, rows int, patterns []string) (b
 }
 
 func recordVisiblePatterns(terminal vt.MockTerm, columns, rows int, patterns []string, observed map[string]bool) {
+	screen := visibleScreen(terminal, columns, rows)
+	for _, pattern := range patterns {
+		if strings.Contains(screen, pattern) {
+			observed[pattern] = true
+		}
+	}
+}
+
+func visibleScreen(terminal vt.MockTerm, columns, rows int) string {
 	var visible strings.Builder
 	visible.Grow((columns + 1) * rows)
 	for row := 0; row < rows; row++ {
@@ -94,10 +132,5 @@ func recordVisiblePatterns(terminal vt.MockTerm, columns, rows int, patterns []s
 			visible.WriteString(cell.C)
 		}
 	}
-	screen := visible.String()
-	for _, pattern := range patterns {
-		if strings.Contains(screen, pattern) {
-			observed[pattern] = true
-		}
-	}
+	return visible.String()
 }

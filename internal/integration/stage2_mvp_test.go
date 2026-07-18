@@ -41,8 +41,14 @@ func TestStage2PTYActionsWaitForReadySelection(t *testing.T) {
 			t.Fatalf("%s must observe a ready selected target before sending %s", check.function, check.action)
 		}
 	}
-	if !strings.Contains(text, "read_until(fd, observer, output, b\"READ-ONLY | sort:name\")") {
-		t.Fatal("ready-selection barrier must observe the loaded TUI state")
+	if !strings.Contains(text, "if selection_ready(observer, output, wanted):") {
+		t.Fatal("ready-selection barrier must observe the target after the loading state clears")
+	}
+	if !strings.Contains(text, "wanted = (\"> \" + filename).encode(\"utf-8\")") {
+		t.Fatal("ready-selection barrier must require the cursor-selected target")
+	}
+	if !strings.Contains(text, "\"-final\", \"-absent\", \"READ-ONLY | loading\"") {
+		t.Fatal("ready-selection barrier must reject loading on the final screen")
 	}
 }
 
