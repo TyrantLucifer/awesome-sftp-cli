@@ -61,6 +61,17 @@ func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testi
 			}
 		}
 	}
+	claimedRequest := restartFixtureRequest(t, 10)
+	claimedJob, _, err := store.Create(ctx, claimedRequest)
+	if err != nil {
+		t.Fatalf("create claimed retention fixture: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE jobs SET state='completed', terminal_summary='done', updated_at_unix=2200 WHERE job_id=?", claimedJob.JobID); err != nil {
+		t.Fatalf("terminalize claimed retention fixture: %v", err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO job_history_retention(singleton,job_id,policy_version,claimed_at_unix) VALUES(1,?,1,2)", claimedJob.JobID); err != nil {
+		t.Fatalf("claim restart retention fixture: %v", err)
+	}
 	if err := database.Close(); err != nil {
 		t.Fatalf("close restart fixture: %v", err)
 	}
@@ -108,6 +119,16 @@ func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testi
 		t.Fatalf("reopen recovered state: %v", err)
 	}
 	defer reopened.Close()
+	var retainedJobs, retainedClaims int
+	if err := reopened.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_id=?", claimedJob.JobID).Scan(&retainedJobs); err != nil {
+		t.Fatalf("read claimed retention fixture: %v", err)
+	}
+	if err := reopened.QueryRowContext(ctx, "SELECT count(*) FROM job_history_retention").Scan(&retainedClaims); err != nil {
+		t.Fatalf("read retention claims after restart: %v", err)
+	}
+	if retainedJobs != 0 || retainedClaims != 0 {
+		t.Fatalf("restart retention cleanup left jobs/claims = %d/%d, want 0/0", retainedJobs, retainedClaims)
+	}
 	for _, before := range states {
 		want := before
 		wantVersion := int64(1)
@@ -290,7 +311,8 @@ func addNewerSchemaHistory(t *testing.T, path string) {
 	if err != nil {
 		t.Fatalf("open database for newer history: %v", err)
 	}
-	compiledTarget := len([]migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()})
+	compiledMigrations, _ := migration.CompiledSet()
+	compiledTarget := len(compiledMigrations)
 	if _, err := database.Exec("INSERT INTO schema_migrations(version, name, sha256, applied_at) VALUES(?, 'future', ?, '2026-07-16T00:50:00Z')", compiledTarget+1, strings.Repeat("a", 64)); err != nil {
 		_ = database.Close()
 		t.Fatalf("insert newer history: %v", err)

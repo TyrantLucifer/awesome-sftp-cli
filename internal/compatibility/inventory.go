@@ -47,7 +47,7 @@ func Inventory() []Boundary {
 		{Name: "config document", Current: fmt.Sprint(config.SchemaVersion), Reads: "1", Writes: "1", OnUnsupported: "newer schema rejected before use", Owner: "internal/config"},
 		{Name: "config effective output", Current: fmt.Sprint(config.EffectiveOutputVersion), Reads: "1", Writes: "1", OnUnsupported: "unknown output version rejected by consumers", Owner: "internal/config"},
 		{Name: "workspace document", Current: fmt.Sprint(workspace.SchemaVersion), Reads: "1-2", Writes: "2", OnUnsupported: "newer schema rejected before write", Owner: "internal/workspace"},
-		{Name: "sqlite state", Current: fmt.Sprint(migration.SchemaHead), Reads: "1-3", Writes: "3", OnUnsupported: "newer head rejected before runtime write", Owner: "internal/state/migration"},
+		{Name: "sqlite state", Current: fmt.Sprint(migration.SchemaHead), Reads: "1-4", Writes: "4", OnUnsupported: "newer head rejected before runtime write", Owner: "internal/state/migration"},
 		{Name: "cache filesystem manifest", Current: fmt.Sprint(cachefs.ManifestFormat), Reads: "1", Writes: "1", OnUnsupported: "unknown format rejected before content use", Owner: "internal/cachefs"},
 		{Name: "client-daemon IPC", Current: fmt.Sprintf("%d.%d", ipc.ProtocolMajor, ipc.ProtocolMinor), Reads: "1.0", Writes: "1.0", OnUnsupported: "no shared major/minor fails handshake", Owner: "internal/ipc"},
 		{Name: "helper release manifest", Current: fmt.Sprint(helper.ManifestFormatVersion), Reads: "1", Writes: "release-only", OnUnsupported: "unknown header rejected before install", Owner: "internal/helper"},
@@ -102,7 +102,7 @@ func Markdown() string {
 	for _, boundary := range Inventory() {
 		fmt.Fprintf(&output, "| %s | %s | %s | %s | %s | `%s` |\n", boundary.Name, boundary.Current, boundary.Reads, boundary.Writes, boundary.OnUnsupported, boundary.Owner)
 	}
-	output.WriteString("\nThe SQLite `1-3` read range includes forward migration to head 3; it is not a promise that arbitrary historical or newer databases are writable. Cache catalog tables were introduced by SQLite schema 2, while cache filesystem manifests remain an independently validated format 1. Helper release-manifest writes are release-only and production distribution remains CLOSED until the protected signing/notarization/byte-binding gates pass.\n")
+	output.WriteString("\nThe SQLite `1-4` read range includes forward migration to head 4; it is not a promise that arbitrary historical or newer databases are writable. Cache catalog tables were introduced by SQLite schema 2, while cache filesystem manifests remain an independently validated format 1. Helper release-manifest writes are release-only and production distribution remains CLOSED until the protected signing/notarization/byte-binding gates pass.\n")
 	output.WriteString("\n## Frozen historical source inventory\n\n")
 	output.WriteString("This inventory freezes the complete set of persistent source formats before M6.2 migration code changes. Every row is captured as repository bytes pinned by SHA-256 and exercised by a current-owner reader test. Provenance names the commit that first wrote the source format, except the config sample which intentionally comes from the frozen exact-main baseline.\n\n")
 	output.WriteString("| Source | Version | Provenance commit | Capture status | Fixture | SHA-256 | Owner |\n")

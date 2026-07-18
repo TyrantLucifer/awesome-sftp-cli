@@ -34,9 +34,9 @@ func TestInspectMigrationStateReadOnlyClassifiesPinnedStatesWithoutMutation(t *t
 			head:        1,
 		},
 		{
-			name:        "current database is ready",
+			name:        "version 3 database can upgrade",
 			fixture:     "sqlite-v3-stage3.sqlite",
-			disposition: MigrationDispositionCurrent,
+			disposition: MigrationDispositionUpgradeAvailable,
 			head:        3,
 		},
 	}
@@ -53,7 +53,7 @@ func TestInspectMigrationStateReadOnlyClassifiesPinnedStatesWithoutMutation(t *t
 			if err != nil {
 				t.Fatal(err)
 			}
-			if report.Disposition != tt.disposition || report.SchemaHead != tt.head || report.BinaryTargetHead != 3 {
+			if report.Disposition != tt.disposition || report.SchemaHead != tt.head || report.BinaryTargetHead != 4 {
 				t.Fatalf("report = %#v", report)
 			}
 			if report.HoldAttemptID != tt.holdAttemptID {
@@ -78,7 +78,9 @@ func TestInspectMigrationStateReadOnlyReportsNewerSchemaWithoutWriting(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := database.ExecContext(context.Background(), "INSERT INTO schema_migrations(version, name, sha256, applied_at) VALUES(4, 'future', ?, 'future')", strings.Repeat("a", 64)); err != nil {
+	if _, err := database.ExecContext(context.Background(), `INSERT INTO schema_migrations(version, name, sha256, applied_at) VALUES
+		(4, 'future-4', ?, 'future'),
+		(5, 'future-5', ?, 'future')`, strings.Repeat("a", 64), strings.Repeat("b", 64)); err != nil {
 		_ = database.Close()
 		t.Fatal(err)
 	}
@@ -93,7 +95,7 @@ func TestInspectMigrationStateReadOnlyReportsNewerSchemaWithoutWriting(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Disposition != MigrationDispositionNewerSchema || report.SchemaHead != 4 || report.BinaryTargetHead != 3 {
+	if report.Disposition != MigrationDispositionNewerSchema || report.SchemaHead != 5 || report.BinaryTargetHead != 4 {
 		t.Fatalf("report = %#v", report)
 	}
 	after := snapshotMigrationDiagnosisFiles(t, root)

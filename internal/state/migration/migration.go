@@ -7,7 +7,7 @@ import (
 )
 
 const (
-	SchemaHead           uint64 = 3
+	SchemaHead           uint64 = 4
 	maxMigrationVersion         = uint64(math.MaxInt64)
 	maxMigrationWalBytes        = uint64(8*1024*1024*1024 + 64*1024*1024)
 )

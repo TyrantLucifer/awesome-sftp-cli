@@ -152,7 +152,11 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		if stateOpenErr == nil {
 			store, err := jobstore.New(ctx, stateDatabase)
 			if err == nil {
-				_, err = store.RecoverInterrupted(ctx, generator, time.Now())
+				startupNow := time.Now()
+				_, err = store.RecoverInterrupted(ctx, generator, startupNow)
+				if err == nil {
+					_, err = store.ReconcileHistory(ctx, startupNow)
+				}
 			}
 			if err == nil {
 				err = store.CheckpointIdle(ctx)

@@ -62,7 +62,7 @@ func TestApproveRestoredBackupForUpgradeBindsPreimageAndStartsExplicitAttempt(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if attempt.AttemptID != newAttemptID || attempt.Status != migration.AttemptPreparing || attempt.OriginalHead != 1 || attempt.TargetHead != 3 {
+	if attempt.AttemptID != newAttemptID || attempt.Status != migration.AttemptPreparing || attempt.OriginalHead != 1 || attempt.TargetHead != 4 {
 		t.Fatalf("attempt = %#v", attempt)
 	}
 	report, err := InspectMigrationStateReadOnly(context.Background(), MigrationInspectionConfig{Root: root, DatabasePath: path})
@@ -81,7 +81,7 @@ func TestApproveRestoredBackupForUpgradeBindsPreimageAndStartsExplicitAttempt(t 
 		t.Fatal(err)
 	}
 	defer database.Close()
-	if initializeReport.SchemaHead != 3 {
+	if initializeReport.SchemaHead != 4 {
 		t.Fatalf("initialize report = %#v", initializeReport)
 	}
 	var attempts, holdRows int

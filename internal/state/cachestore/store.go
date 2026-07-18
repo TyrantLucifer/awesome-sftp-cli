@@ -23,8 +23,9 @@ const (
 )
 
 type Store struct {
-	database *sql.DB
-	walGuard *wal.FileGuard
+	database        *sql.DB
+	walGuard        *wal.FileGuard
+	retentionClaims bool
 }
 
 func New(ctx context.Context, database *sql.DB) (*Store, error) {
@@ -40,9 +41,8 @@ func New(ctx context.Context, database *sql.DB) (*Store, error) {
 	if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&head); err != nil {
 		return nil, fmt.Errorf("new cache store: read schema head: %w", err)
 	}
-	compiled := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
-	contracts := map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract(), 3: migration.Version3SchemaContract()}
-	if head != 2 && head != 3 {
+	compiled, contracts := migration.CompiledSet()
+	if head != 2 && head != 3 && head != migration.SchemaHead {
 		return nil, fmt.Errorf("new cache store: unsupported schema head %d", head)
 	}
 	if err := migration.ValidateHead(ctx, connection, compiled, contracts, head); err != nil {
@@ -52,7 +52,7 @@ func New(ctx context.Context, database *sql.DB) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("new cache store: %w", err)
 	}
-	return &Store{database: database, walGuard: guard}, nil
+	return &Store{database: database, walGuard: guard, retentionClaims: head >= 4}, nil
 }
 
 func (store *Store) Publish(ctx context.Context, blob cache.Blob, entry cache.Entry) error {
@@ -241,7 +241,12 @@ func (store *Store) PrepareHandoff(ctx context.Context, item cache.Materializati
 		return fmt.Errorf("prepare cache handoff: %w", err)
 	}
 	pid, birth := processValues(lease.Process)
-	return store.write(ctx, 3, func(_ *sql.Conn, writer *transactionWriter) error {
+	return store.write(ctx, 3, func(connection *sql.Conn, writer *transactionWriter) error {
+		if store.retentionClaims {
+			if err := rejectClaimedUploadOwner(ctx, connection, reference.OwnerKind, reference.OwnerID); err != nil {
+				return fmt.Errorf("prepare cache handoff: %w", err)
+			}
+		}
 		result, err := writer.ExecContext(ctx, "INSERT INTO cache_materializations(materialization_id,entry_id,baseline_blob_sha256,basename,size_bytes,current_sha256,state,pinned,created_at_unix,updated_at_unix,last_access_unix) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM cache_entries AS e JOIN cache_blobs AS b ON b.sha256=e.blob_sha256 WHERE e.entry_id=? AND e.blob_sha256=? AND b.state='published' AND NOT EXISTS(SELECT 1 FROM cache_references AS r WHERE r.owner_kind='workspace' AND r.owner_id=?||e.entry_id AND r.blob_sha256=e.blob_sha256))", item.ID, item.EntryID, item.BaselineBlobID, materializationBasename(item.ID), item.Size, item.CurrentBlobID, item.State, boolInt(item.Pinned), unix(item.CreatedAt), unix(item.LastAccessAt), unix(item.LastAccessAt), item.EntryID, item.BaselineBlobID, evictionEntryOwnerPrefix)
 		if err := requireOne("prepare cache handoff materialization", result, err); err != nil {
 			return errors.Join(ErrEvictionProtected, fmt.Errorf("prepare cache handoff materialization %q: %w", item.ID, err))
@@ -281,7 +286,12 @@ func (store *Store) AddReference(ctx context.Context, item cache.Reference) erro
 		return fmt.Errorf("add cache reference: %w", err)
 	}
 	blob, materialization := targetValues(item.Target)
-	return store.write(ctx, 1, func(_ *sql.Conn, w *transactionWriter) error {
+	return store.write(ctx, 1, func(connection *sql.Conn, w *transactionWriter) error {
+		if store.retentionClaims {
+			if err := rejectClaimedUploadOwner(ctx, connection, item.OwnerKind, item.OwnerID); err != nil {
+				return fmt.Errorf("add cache reference: %w", err)
+			}
+		}
 		result, err := w.ExecContext(ctx, "INSERT INTO cache_references(reference_id,owner_kind,owner_id,blob_sha256,materialization_id,created_at_unix) SELECT ?,?,?,?,?,? WHERE (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_blobs WHERE sha256=? AND state='published')) OR (? IS NOT NULL AND EXISTS(SELECT 1 FROM cache_materializations WHERE materialization_id=? AND state<>'deleting'))", item.ID, item.OwnerKind, item.OwnerID, blob, materialization, unix(item.CreatedAt), blob, blob, materialization, materialization)
 		if err := requireOne("add cache reference", result, err); err != nil {
 			if err != nil && !strings.Contains(err.Error(), "UNIQUE constraint") {
@@ -291,6 +301,20 @@ func (store *Store) AddReference(ctx context.Context, item cache.Reference) erro
 		}
 		return nil
 	})
+}
+
+func rejectClaimedUploadOwner(ctx context.Context, connection *sql.Conn, ownerKind cache.ReferenceOwnerKind, ownerID string) error {
+	if ownerKind != cache.ReferenceOwnerUpload {
+		return nil
+	}
+	var claimed int
+	if err := connection.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM job_history_retention WHERE singleton=1 AND job_id=?)", ownerID).Scan(&claimed); err != nil {
+		return fmt.Errorf("inspect Job history retention claim: %w", err)
+	}
+	if claimed == 1 {
+		return fmt.Errorf("upload owner %q has an active Job history retention claim", ownerID)
+	}
+	return nil
 }
 
 func (store *Store) RemoveReference(ctx context.Context, id cache.ReferenceID) error {

@@ -28,7 +28,7 @@ cli contract | current 1 | reads 1 | writes 1 | unknown command or output versio
 config document | current 1 | reads 1 | writes 1 | newer schema rejected before use | internal/config
 config effective output | current 1 | reads 1 | writes 1 | unknown output version rejected by consumers | internal/config
 workspace document | current 2 | reads 1-2 | writes 2 | newer schema rejected before write | internal/workspace
-sqlite state | current 3 | reads 1-3 | writes 3 | newer head rejected before runtime write | internal/state/migration
+sqlite state | current 4 | reads 1-4 | writes 4 | newer head rejected before runtime write | internal/state/migration
 cache filesystem manifest | current 1 | reads 1 | writes 1 | unknown format rejected before content use | internal/cachefs
 client-daemon IPC | current 1.0 | reads 1.0 | writes 1.0 | no shared major/minor fails handshake | internal/ipc
 helper release manifest | current 1 | reads 1 | writes release-only | unknown header rejected before install | internal/helper
@@ -40,7 +40,7 @@ helper wire envelope | current 1 | reads 1 | writes 1 | unknown envelope rejecte
 
 func TestInventoryValuesComeFromOwningPackages(t *testing.T) {
 	if app.PublicCLIContractVersion != 1 || config.SchemaVersion != 1 || config.EffectiveOutputVersion != 1 || workspace.SchemaVersion != 2 ||
-		migration.SchemaHead != 3 || cachefs.ManifestFormat != 1 || ipc.ProtocolMajor != 1 || ipc.ProtocolMinor != 0 ||
+		migration.SchemaHead != 4 || cachefs.ManifestFormat != 1 || ipc.ProtocolMajor != 1 || ipc.ProtocolMinor != 0 ||
 		helper.ManifestFormatVersion != 1 || helper.EnvelopeVersion != 1 {
 		t.Fatal("an owning package version changed without updating the compatibility inventory")
 	}
@@ -147,7 +147,7 @@ func TestCapturedHistoricalSourcesAreImmutableAndReadableByCurrentOwners(t *test
 
 func validateHistoricalSQLiteFixture(t *testing.T, source HistoricalSource) {
 	t.Helper()
-	allMigrations := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
+	allMigrations, contracts := migration.CompiledSet()
 	var head uint64
 	var migrations []migration.Migration
 	switch source.Version {
@@ -172,11 +172,6 @@ func validateHistoricalSQLiteFixture(t *testing.T, source HistoricalSource) {
 		t.Fatalf("reserve historical SQLite %s: %v", source.Fixture, err)
 	}
 	defer connection.Close()
-	contracts := map[uint64][]byte{
-		1: migration.Version1SchemaContract(),
-		2: migration.Version2SchemaContract(),
-		3: migration.Version3SchemaContract(),
-	}
 	if err := migration.ValidateHead(context.Background(), connection, migrations, contracts, head); err != nil {
 		t.Fatalf("current SQLite owner rejected %s: %v", source.Fixture, err)
 	}

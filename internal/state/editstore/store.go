@@ -141,9 +141,15 @@ func New(ctx context.Context, database *sql.DB) (*Store, error) {
 		return nil, fmt.Errorf("new edit store: reserve connection: %w", err)
 	}
 	defer connection.Close()
-	compiled := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
-	contracts := map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract(), 3: migration.Version3SchemaContract()}
-	if err := migration.ValidateHead(ctx, connection, compiled, contracts, 3); err != nil {
+	compiled, contracts := migration.CompiledSet()
+	var head uint64
+	if err := connection.QueryRowContext(ctx, "SELECT COALESCE(MAX(version),0) FROM schema_migrations").Scan(&head); err != nil {
+		return nil, fmt.Errorf("new edit store: read schema head: %w", err)
+	}
+	if head != 3 && head != migration.SchemaHead {
+		return nil, fmt.Errorf("new edit store: unsupported schema head %d", head)
+	}
+	if err := migration.ValidateHead(ctx, connection, compiled, contracts, head); err != nil {
 		return nil, fmt.Errorf("new edit store: %w", err)
 	}
 	guard, err := wal.OpenFileGuard(ctx, connection)

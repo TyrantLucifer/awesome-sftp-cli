@@ -15,7 +15,7 @@ Stage 1 已有有界文本预览和 generation 丢弃，Stage 2 已冻结 Versio
 
 ### 版本、根目录与命名
 
-Stage 3 cache metadata format 固定为 `1`。SQLite Version `2` 新增 cache/lease/edit-session catalog，Version `3` 不改写 Version 2，只新增可完整重建编辑决策输入的 `edit_session_details`；当前 schema head 因此是 `3`。Version 1 与 Version 2 的 statements、checksum 和 whole-schema contract 保持字节不变。Version 3 checksum 是 `16ae664c033fb1fae7da937eae6c4b19c6b05430fa3499fa5f0da8daa58e1ab4`，head-3 whole-schema contract digest 是 `a523d6c4aeebb386780f7283b63aacb175cf0420027114edac51a032425615a2`。
+Stage 3 cache metadata format 固定为 `1`。SQLite Version `2` 新增 cache/lease/edit-session catalog，Version `3` 不改写 Version 2，只新增可完整重建编辑决策输入的 `edit_session_details`；Stage 3 完成时的 schema head 是 `3`，后续当前 head 由 compatibility inventory 记录。Version 1 与 Version 2 的 statements、checksum 和 whole-schema contract 保持字节不变。Version 3 checksum 是 `16ae664c033fb1fae7da937eae6c4b19c6b05430fa3499fa5f0da8daa58e1ab4`，head-3 whole-schema contract digest 是 `a523d6c4aeebb386780f7283b63aacb175cf0420027114edac51a032425615a2`。
 
 cache 根使用 ADR-0007 的 `Paths.CacheDir`，应用布局为：
 

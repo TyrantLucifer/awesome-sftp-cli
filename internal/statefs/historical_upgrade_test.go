@@ -48,7 +48,7 @@ func TestInitializeUpgradesEveryPinnedHistoricalSQLiteState(t *testing.T) {
 				t.Fatalf("Initialize(%s): %v", tt.fixture, err)
 			}
 			defer database.Close()
-			if report.SchemaHead != 3 {
+			if report.SchemaHead != 4 {
 				t.Fatalf("Initialize(%s) report = %#v", tt.fixture, report)
 			}
 			var jobs int
@@ -64,7 +64,7 @@ func TestInitializeUpgradesEveryPinnedHistoricalSQLiteState(t *testing.T) {
 				t.Fatalf("Initialize(%s) reserve retention connection: %v", tt.fixture, err)
 			}
 			defer connection.Close()
-			if _, err := ReconcileBackupRetentionAfterSchemaValidation(context.Background(), connection, root, 3); err != nil {
+			if _, err := ReconcileBackupRetentionAfterSchemaValidation(context.Background(), connection, root, 4); err != nil {
 				t.Fatalf("Initialize(%s) retained backup closure: %v", tt.fixture, err)
 			}
 		})
