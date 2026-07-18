@@ -86,9 +86,8 @@ func PrepareAttempt(ctx context.Context, connection *sql.Conn, request AttemptRe
 		if !errors.Is(err, ErrNoAttempt) {
 			return err
 		}
-		basename := ".amsftp-backup-v1-" + request.AttemptID + ".sqlite3"
-		if _, err := connection.ExecContext(ctx, "INSERT INTO migration_attempts(singleton, attempt_id, original_head, current_head, target_head, migration_set_sha256, reserved_backup_basename, backup_sha256, status, error_kind) VALUES(1, ?, ?, ?, ?, ?, ?, NULL, 'preparing', NULL)", request.AttemptID, request.OriginalHead, request.OriginalHead, request.TargetHead, hex.EncodeToString(request.MigrationSetDigest[:]), basename); err != nil {
-			return fmt.Errorf("prepare migration attempt: insert singleton: %w", err)
+		if err := insertPreparingAttempt(ctx, connection, request); err != nil {
+			return err
 		}
 		result, err = loadAttempt(ctx, connection)
 		return err
@@ -97,6 +96,59 @@ func PrepareAttempt(ctx context.Context, connection *sql.Conn, request AttemptRe
 		return Attempt{}, false, err
 	}
 	return result, reused, nil
+}
+
+// BeginAttemptFromRestoreHold atomically replaces one exact restored-backup
+// hold with a new preparing attempt. A crash after this transition remains
+// fail-closed because preparing attempts require explicit resume.
+func BeginAttemptFromRestoreHold(ctx context.Context, connection *sql.Conn, heldAttemptID string, request AttemptRequest) (Attempt, error) {
+	if connection == nil || !attemptIDPattern.MatchString(heldAttemptID) {
+		return Attempt{}, fmt.Errorf("begin migration attempt from restore hold: invalid input")
+	}
+	if err := validateAttemptRequest(request); err != nil {
+		return Attempt{}, fmt.Errorf("begin migration attempt from restore hold: %w", err)
+	}
+	var result Attempt
+	err := withImmediate(ctx, connection, func() error {
+		var historyRows, historyHead, attemptRows int64
+		if err := connection.QueryRowContext(ctx, "SELECT count(*), COALESCE(max(version), 0) FROM schema_migrations").Scan(&historyRows, &historyHead); err != nil {
+			return fmt.Errorf("begin migration attempt from restore hold: read history: %w", err)
+		}
+		if historyRows <= 0 || historyRows != historyHead || uint64(historyHead) != request.OriginalHead { //nolint:gosec // positive equality is checked before conversion matters
+			return fmt.Errorf("begin migration attempt from restore hold: history does not match frozen original head")
+		}
+		if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_attempts").Scan(&attemptRows); err != nil {
+			return fmt.Errorf("begin migration attempt from restore hold: count active attempts: %w", err)
+		}
+		if attemptRows != 0 {
+			return fmt.Errorf("begin migration attempt from restore hold: active attempt already exists")
+		}
+		updated, err := connection.ExecContext(ctx, "UPDATE migration_control SET upgrade_hold=0, hold_reason=NULL, hold_attempt_id=NULL WHERE singleton=1 AND upgrade_hold=1 AND hold_reason='restored_backup' AND hold_attempt_id=?", heldAttemptID)
+		if err != nil {
+			return fmt.Errorf("begin migration attempt from restore hold: clear exact hold: %w", err)
+		}
+		rows, err := updated.RowsAffected()
+		if err != nil || rows != 1 {
+			return fmt.Errorf("begin migration attempt from restore hold: exact hold did not match")
+		}
+		if err := insertPreparingAttempt(ctx, connection, request); err != nil {
+			return err
+		}
+		result, err = loadAttempt(ctx, connection)
+		return err
+	})
+	if err != nil {
+		return Attempt{}, err
+	}
+	return result, nil
+}
+
+func insertPreparingAttempt(ctx context.Context, connection *sql.Conn, request AttemptRequest) error {
+	basename := ".amsftp-backup-v1-" + request.AttemptID + ".sqlite3"
+	if _, err := connection.ExecContext(ctx, "INSERT INTO migration_attempts(singleton, attempt_id, original_head, current_head, target_head, migration_set_sha256, reserved_backup_basename, backup_sha256, status, error_kind) VALUES(1, ?, ?, ?, ?, ?, ?, NULL, 'preparing', NULL)", request.AttemptID, request.OriginalHead, request.OriginalHead, request.TargetHead, hex.EncodeToString(request.MigrationSetDigest[:]), basename); err != nil {
+		return fmt.Errorf("prepare migration attempt: insert singleton: %w", err)
+	}
+	return nil
 }
 
 func LoadAttempt(ctx context.Context, connection *sql.Conn) (Attempt, error) {
