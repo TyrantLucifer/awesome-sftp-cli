@@ -591,7 +591,7 @@ run_support_bundle_secret_scan \
   "${installed}" \
   "${client_home}" \
   "${state_home}" \
-  "${client_home}/support-bundle-scan" \
+  "${state_home}/support-bundle-scan" \
   "${auth_needles}" \
   "${client_home}/.ssh/client_key" \
   "${client_home}/.ssh/mfa_key"

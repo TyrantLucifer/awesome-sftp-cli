@@ -42,6 +42,7 @@ func TestHostedAuthenticationMatricesScanCreatedSupportBundles(t *testing.T) {
 	for _, required := range []string{
 		"support-bundle-secret-scan.sh",
 		`printf '%s\n' "${password}" "${mfa_password}" "${key_passphrase}"`,
+		`"${state_home}/support-bundle-scan"`,
 		`"${client_home}/.ssh/client_key"`,
 		`"${client_home}/.ssh/mfa_key"`,
 	} {
@@ -55,6 +56,7 @@ func TestHostedAuthenticationMatricesScanCreatedSupportBundles(t *testing.T) {
 	for _, required := range []string{
 		"support-bundle-secret-scan.sh",
 		`printf '%s\n' "${master_password}" "${client_principal}" "${client_ccache}" "${client_keytab}"`,
+		`"${state_home}/support-bundle-scan"`,
 		`"${client_ccache}"`,
 		`"${client_keytab}"`,
 		`"${host_keytab}"`,

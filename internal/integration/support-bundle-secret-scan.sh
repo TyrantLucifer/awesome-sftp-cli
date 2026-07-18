@@ -13,9 +13,9 @@ run_support_bundle_secret_scan() (
   shift 6
 
   case "${scan_root}" in
-    "${scan_home}"/*) ;;
+    "${scan_home}"/* | "${scan_state}"/*) ;;
     *)
-      printf 'support-bundle scan root must be beneath the isolated home\n' >&2
+      printf 'support-bundle scan root must be beneath the isolated home or state root\n' >&2
       return 1
       ;;
   esac

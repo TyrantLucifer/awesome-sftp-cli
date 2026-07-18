@@ -423,7 +423,7 @@ run_support_bundle_secret_scan \
   "${installed}" \
   "${client_home}" \
   "${state_home}" \
-  "${client_home}/support-bundle-scan" \
+  "${state_home}/support-bundle-scan" \
   "${kerberos_needles}" \
   "${client_ccache}" \
   "${client_keytab}" \
