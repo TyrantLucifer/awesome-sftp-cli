@@ -33,6 +33,7 @@ printf '%s\n' 'hostname 127.0.0.1' 'port 2222' 'stricthostkeychecking ask' 'user
 func TestInspectConfigFailsClosedOnUnboundedOrSecretBearingFailure(t *testing.T) {
 	t.Parallel()
 
+	// #nosec G101 -- fixed redaction canary for a subprocess-output test, not a credential.
 	secret := "stage6-openssh-config-secret"
 	tooLarge := "hostname " + strings.Repeat("x", maxConfigInspectionBytes+1)
 	for name, script := range map[string]string{
