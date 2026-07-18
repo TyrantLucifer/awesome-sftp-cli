@@ -11,9 +11,12 @@ Keep the real record outside the repository and run the validator with the exact
 ```sh
 GOTOOLCHAIN=local go run ./internal/tools/releasegate candidate /absolute/path/to/rc-gates.json
 GOTOOLCHAIN=local go run ./internal/tools/releasegate final /absolute/path/to/rc-gates.json
+GOTOOLCHAIN=local go run ./internal/tools/docscheck --release .
 ```
 
 `candidate` requires the complete gate catalog plus exact candidate push and PR runs. `final` requires the same evidence and an exact post-merge identity plus the successful `main` run for that merge commit. Input must be a non-empty, bounded, non-symlink regular file. Unknown fields, trailing JSON, invalid 40-character lowercase Git object IDs, duplicate/missing gates or runs, empty references, and file-identity changes while opening are rejected.
+
+The final-only documentation audit is separate from ordinary `docs-check`. It freezes the exact 23 Stage 6 feature IDs, rejects any final `Planned`, `In Progress`, or `Implemented` row, requires `Deferred`/`Removed` rows to link their ADR decision, and requires all 12 frozen Stage 6 exit criteria to remain exact and checked. It is expected to fail before the real release gates close; its current failure must not be presented as release evidence.
 
 ## Record v1
 

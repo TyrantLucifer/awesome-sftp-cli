@@ -36,6 +36,11 @@ func Check(root string) []Finding {
 	findings = append(findings, checkStateAndPlan(resolvedRoot)...)
 	findings = append(findings, checkWorkflows(resolvedRoot)...)
 
+	sortFindings(findings)
+	return findings
+}
+
+func sortFindings(findings []Finding) {
 	sort.Slice(findings, func(left, right int) bool {
 		if findings[left].Path != findings[right].Path {
 			return findings[left].Path < findings[right].Path
@@ -48,7 +53,6 @@ func Check(root string) []Finding {
 		}
 		return findings[left].Message < findings[right].Message
 	})
-	return findings
 }
 
 func readLines(root, relativePath string) ([]string, error) {
