@@ -619,19 +619,7 @@ jobs:
           }
           build_preview_bundle 0.9.0 "${old_input}" "${old_bundle}"
           build_preview_bundle 1.0.0 "${new_input}" "${new_bundle}"
-          python3 - "${asset_root}" "${port_file}" >"${server_log}" 2>&1 <<'PY' &
-          import functools
-          import http.server
-          import pathlib
-          import sys
-
-          root = pathlib.Path(sys.argv[1])
-          port_file = pathlib.Path(sys.argv[2])
-          handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=root)
-          server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
-          port_file.write_text(str(server.server_port), encoding="ascii")
-          server.serve_forever()
-          PY
+          go run ./internal/tools/homebrewpreview --serve "${asset_root}" "${port_file}" >"${server_log}" 2>&1 &
           server_pid=$!
           cleanup_homebrew_preview() {
             brew uninstall amsftp-ci/preview/amsftp >/dev/null 2>&1 || true
@@ -644,7 +632,10 @@ jobs:
             test -s "${port_file}" && break
             sleep 0.05
           done
-          test -s "${port_file}"
+          if ! test -s "${port_file}"; then
+            cat "${server_log}" >&2
+            exit 1
+          fi
           asset_port="$(cat "${port_file}")"
           asset_origin="http://127.0.0.1:${asset_port}"
           mkdir -p "${tap_remote}/Formula"

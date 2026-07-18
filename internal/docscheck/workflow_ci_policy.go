@@ -303,6 +303,7 @@ func nativeHomebrewPreviewLifecycleIsExact(job workflowJob) bool {
 		ordered := []string{
 			`preview_license="BSD-3-Clause"`,
 			`CI-only Homebrew preview license; this is not the project license.`,
+			`go run ./internal/tools/homebrewpreview --serve "${asset_root}" "${port_file}"`,
 			`asset_origin="http://127.0.0.1:${asset_port}"`,
 			`go run ./internal/tools/homebrewpreview 0.9.0 "${preview_license}"`,
 			`brew tap amsftp-ci/preview`,
