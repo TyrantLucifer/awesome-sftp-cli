@@ -51,6 +51,7 @@ jobs:
           head="$(git rev-parse HEAD)"
           tree="$(git rev-parse 'HEAD^{tree}')"
           source_epoch="$(git show -s --format=%ct HEAD)"
+          modules_json="$(tr -d '\n' <docs/release/runtime-dependencies.json)"
           ldflags="-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=1.0.0 -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=${head}"
           mkdir -p "${input}/bin"
           for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
@@ -77,9 +78,7 @@ jobs:
               {"os":"linux","arch":"amd64","path":"bin/linux-amd64"},
               {"os":"linux","arch":"arm64","path":"bin/linux-arm64"}
             ],
-            "modules": [
-              {"path":"github.com/gdamore/tcell/v3","version":"v3.4.0","sum":"h1:VUym1HQZiYodA5PGQrqLxF7QwqQndcAUwQD7G7XUy5E=","license":"Apache-2.0"}
-            ]
+            "modules": ${modules_json}
           }
           EOF
           go run ./internal/tools/releasepack "${input}/manifest.json" "${first}"

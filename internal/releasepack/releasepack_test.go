@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -230,6 +231,124 @@ func TestPublicBundleRejectsUnboundDirtyOrWrongTargetGoBuildEvidence(t *testing.
 	}
 }
 
+func TestPublicBundleRequiresExactBinaryDependencyAndReplacementInventory(t *testing.T) {
+	t.Run("target-specific dependency inventory", func(t *testing.T) {
+		request := releaseFixture(t)
+		darwinOnly := Module{Path: "example.com/darwin-only", Version: "v1.0.0", Sum: testModuleSum("darwin-only"), License: "MIT", Targets: []Target{{OS: "darwin", Arch: "amd64"}, {OS: "darwin", Arch: "arm64"}}}
+		request.Modules = append(request.Modules, darwinOnly)
+		for index := range request.Platforms {
+			if request.Platforms[index].Target.OS != "darwin" {
+				continue
+			}
+			evidence := *request.Platforms[index].Build
+			evidence.Modules = append([]GoModuleEvidence(nil), evidence.Modules...)
+			evidence.Modules = append(evidence.Modules, GoModuleEvidence{Path: darwinOnly.Path, Version: darwinOnly.Version, Sum: darwinOnly.Sum})
+			request.Platforms[index].Build = &evidence
+		}
+		if _, err := BuildPublicBundle(request); err != nil {
+			t.Fatalf("target-specific dependency inventory rejected: %v", err)
+		}
+		leaked := request
+		leaked.Platforms = append([]PlatformBinary(nil), request.Platforms...)
+		for index := range leaked.Platforms {
+			if leaked.Platforms[index].Target.OS != "linux" {
+				continue
+			}
+			evidence := *leaked.Platforms[index].Build
+			evidence.Modules = append([]GoModuleEvidence(nil), evidence.Modules...)
+			evidence.Modules = append(evidence.Modules, GoModuleEvidence{Path: darwinOnly.Path, Version: darwinOnly.Version, Sum: darwinOnly.Sum})
+			leaked.Platforms[index].Build = &evidence
+			break
+		}
+		if _, err := BuildPublicBundle(leaked); err == nil {
+			t.Fatal("accepted target-specific dependency in an undeclared target")
+		}
+	})
+	t.Run("missing binary dependency evidence", func(t *testing.T) {
+		request := releaseFixture(t)
+		evidence := *request.Platforms[0].Build
+		evidence.Modules = nil
+		request.Platforms[0].Build = &evidence
+		if _, err := BuildPublicBundle(request); err == nil {
+			t.Fatal("accepted incomplete binary dependency evidence")
+		}
+	})
+	t.Run("undeclared binary dependency", func(t *testing.T) {
+		request := releaseFixture(t)
+		evidence := *request.Platforms[0].Build
+		evidence.Modules = append([]GoModuleEvidence(nil), evidence.Modules...)
+		evidence.Modules = append(evidence.Modules, GoModuleEvidence{Path: "example.com/undeclared", Version: "v9.9.9", Sum: testModuleSum("undeclared")})
+		request.Platforms[0].Build = &evidence
+		if _, err := BuildPublicBundle(request); err == nil {
+			t.Fatal("accepted an undeclared linked dependency")
+		}
+	})
+	t.Run("replacement drift", func(t *testing.T) {
+		request := releaseFixture(t)
+		replacement := &ModuleReplacement{Path: "example.com/fork", Version: "v1.2.4", Sum: testModuleSum("fork")}
+		request.Modules[0].Replacement = replacement
+		for index := range request.Platforms {
+			evidence := *request.Platforms[index].Build
+			evidence.Modules = []GoModuleEvidence{{Path: request.Modules[0].Path, Version: request.Modules[0].Version, Replacement: &GoModuleEvidence{Path: "example.com/other-fork", Version: "v1.2.4", Sum: testModuleSum("fork")}}}
+			request.Platforms[index].Build = &evidence
+		}
+		if _, err := BuildPublicBundle(request); err == nil {
+			t.Fatal("accepted replacement source drift")
+		}
+	})
+	t.Run("replacement bound into SBOM", func(t *testing.T) {
+		request := releaseFixture(t)
+		replacement := &ModuleReplacement{Path: "example.com/fork", Version: "v1.2.4", Sum: testModuleSum("replacement")}
+		request.Modules[0].Sum = ""
+		request.Modules[0].Replacement = replacement
+		for index := range request.Platforms {
+			evidence := *request.Platforms[index].Build
+			evidence.Modules = []GoModuleEvidence{{Path: request.Modules[0].Path, Version: request.Modules[0].Version, Replacement: &GoModuleEvidence{Path: replacement.Path, Version: replacement.Version, Sum: replacement.Sum}}}
+			request.Platforms[index].Build = &evidence
+		}
+		bundle, err := BuildPublicBundle(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var document SPDXDocument
+		if err := json.Unmarshal(bundle.SBOM, &document); err != nil {
+			t.Fatal(err)
+		}
+		dependency := document.Packages[len(document.Packages)-1]
+		if dependency.Name != replacement.Path || dependency.VersionInfo != replacement.Version || !strings.Contains(dependency.Comment, request.Modules[0].Path+"@"+request.Modules[0].Version) {
+			t.Fatalf("replacement SPDX package = %#v", dependency)
+		}
+	})
+	t.Run("invalid sum or license", func(t *testing.T) {
+		for name, mutate := range map[string]func(*Module){
+			"invalid sum":          func(module *Module) { module.Sum = "h1:not-base64" },
+			"no assertion":         func(module *Module) { module.License = "NOASSERTION" },
+			"control license":      func(module *Module) { module.License = "MIT\nOR Apache-2.0" },
+			"dangling operator":    func(module *Module) { module.License = "MIT OR" },
+			"missing operator":     func(module *Module) { module.License = "MIT Apache-2.0" },
+			"unclosed parentheses": func(module *Module) { module.License = "(MIT OR Apache-2.0" },
+			"empty targets":        func(module *Module) { module.Targets = nil },
+			"duplicate target":     func(module *Module) { module.Targets = []Target{Targets[0], Targets[0]} },
+			"unsupported target":   func(module *Module) { module.Targets = []Target{{OS: "windows", Arch: "amd64"}} },
+		} {
+			t.Run(name, func(t *testing.T) {
+				request := releaseFixture(t)
+				mutate(&request.Modules[0])
+				if _, err := BuildPublicBundle(request); err == nil {
+					t.Fatal("accepted invalid dependency declaration")
+				}
+			})
+		}
+	})
+	t.Run("compound SPDX expression", func(t *testing.T) {
+		request := releaseFixture(t)
+		request.Modules[0].License = "BSD-3-Clause AND MIT"
+		if _, err := BuildPublicBundle(request); err != nil {
+			t.Fatalf("valid compound SPDX expression rejected: %v", err)
+		}
+	})
+}
+
 func TestWriteBundleCreatesExactReleaseDirectoryOnceWithoutOverwrite(t *testing.T) {
 	bundle, err := BuildPublicBundle(releaseFixture(t))
 	if err != nil {
@@ -281,18 +400,24 @@ func TestWriteBundleCreatesExactReleaseDirectoryOnceWithoutOverwrite(t *testing.
 func releaseFixture(t *testing.T) BundleRequest {
 	t.Helper()
 	platforms := make([]PlatformBinary, 0, len(Targets))
+	modules := []Module{{Path: "example.com/dependency", Version: "v1.2.3", Sum: testModuleSum("fixture"), License: "BSD-3-Clause", Targets: Targets[:]}}
 	for _, target := range Targets {
 		platforms = append(platforms, PlatformBinary{
 			Target: target, Bytes: []byte(fmt.Sprintf("fixture binary %s/%s\n", target.OS, target.Arch)), State: BinaryPublicPreview,
-			Build: &GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target.OS, GOARCH: target.Arch, CGOEnabled: false, Trimpath: true, VCSRevision: strings.Repeat("1", 40)},
+			Build: &GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target.OS, GOARCH: target.Arch, CGOEnabled: false, Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []GoModuleEvidence{{Path: modules[0].Path, Version: modules[0].Version, Sum: modules[0].Sum}}},
 		})
 	}
 	return BundleRequest{
 		Version: "1.0.0", Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), SourceDateEpoch: 1_700_000_000,
 		Materials: Materials{License: []byte("fixture project license\n"), Notice: []byte("fixture third-party notices\n"), Install: []byte("fixture install\n"), Uninstall: []byte("fixture uninstall\n")},
 		Platforms: platforms,
-		Modules:   []Module{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:fixture", License: "BSD-3-Clause"}},
+		Modules:   modules,
 	}
+}
+
+func testModuleSum(seed string) string {
+	digest := sha256.Sum256([]byte(seed))
+	return "h1:" + base64.StdEncoding.EncodeToString(digest[:])
 }
 
 type archiveEntry struct {

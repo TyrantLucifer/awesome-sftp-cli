@@ -34,12 +34,14 @@ The manifest itself may be named anywhere, but every referenced file must be a c
     {"os": "linux", "arch": "arm64", "path": "dist/amsftp-linux-arm64"}
   ],
   "modules": [
-    {"path": "example.invalid/replace-with-a-real-module", "version": "v0.0.0", "sum": "h1:replace-with-the-real-go-sum", "license": "replace-with-a-reviewed-SPDX-expression"}
+    {"path": "example.invalid/replace-with-a-real-module", "version": "v0.0.0", "sum": "h1:replace-with-the-real-go-sum", "license": "replace-with-a-reviewed-SPDX-expression", "targets": [{"os":"darwin","arch":"amd64"}]}
   ]
 }
 ```
 
 The example dependency row is deliberately not release-ready. A real manifest must contain the complete resolved build dependency inventory with reviewed SPDX license expressions and Go module sums. The repository currently has no project `LICENSE`; selecting one is a project-owner legal decision. Packaging therefore requires an explicit non-empty LF-terminated license input and fails closed until the owner supplies it.
+
+The current linked-module declaration is [runtime-dependencies.json](runtime-dependencies.json). Every module explicitly names the release targets where it must be linked; the packer filters that union and compares the resulting module/replacement set against each of the four binaries. An omitted target, extra target, missing row, unexpected row, version drift, sum drift, or replacement drift rejects the bundle. Module sums must be canonical `h1:` SHA-256 values, and `NONE`, `NOASSERTION`, malformed, or control-bearing license expressions are rejected. This declaration is an SBOM input and version-drift gate. `modernc.org/libc` includes MIT-covered third-party material in addition to its root BSD-3-Clause license; its complete `LICENSE-3RD-PARTY.md`, other redistribution texts, and the project-level license remain part of the separate final notice review gate.
 
 The maintained archive-facing instructions are [INSTALL.md](INSTALL.md) and [UNINSTALL.md](UNINSTALL.md). A release manifest may reference copied byte-identical versions of those files below its own confined input root.
 

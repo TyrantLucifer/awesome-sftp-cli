@@ -33,14 +33,14 @@ func TestRunBuildsExactPublicReleaseFromConfinedManifestInputs(t *testing.T) {
 		Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), SourceDateEpoch: 1_700_000_000,
 		Materials: manifestMaterials{License: "LICENSE", Notice: "NOTICE", Install: "INSTALL.md", Uninstall: "UNINSTALL.md"},
 		Platforms: platforms,
-		Modules:   []manifestModule{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:example", License: "BSD-3-Clause"}},
+		Modules:   []manifestModule{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", License: "BSD-3-Clause", Targets: []manifestTarget{{OS: "darwin", Arch: "amd64"}, {OS: "darwin", Arch: "arm64"}, {OS: "linux", Arch: "amd64"}, {OS: "linux", Arch: "arm64"}}}},
 	})
 	output := filepath.Join(root, "release")
 	var stdout bytes.Buffer
 	inspect := func(raw []byte) (releasepack.GoBuildEvidence, error) {
 		parts := strings.Fields(string(raw))
 		target := strings.Split(parts[0], "/")
-		return releasepack.GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target[0], GOARCH: target[1], Trimpath: true, VCSRevision: strings.Repeat("1", 40)}, nil
+		return releasepack.GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target[0], GOARCH: target[1], Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []releasepack.GoModuleEvidence{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}}, nil
 	}
 	if err := runWithInspector([]string{manifestPath, output}, &stdout, inspect); err != nil {
 		t.Fatal(err)

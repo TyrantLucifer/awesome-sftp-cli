@@ -181,7 +181,7 @@
 2. 建立发行构建、校验、渠道包和 provenance。
 3. 在干净 macOS/Linux 环境验证安装、daemon、SSH、升级、恢复和卸载。
 
-当前增量：Helper state v2 已覆盖 v1 原子迁移、并行精确产物、握手后 active 切换、冻结旧 Job 的 exact backend 解析和 durable exact removal claim；focused、current `make ci`、exact oldstable `make check` 与 implementation exact-SHA push/PR Hosted 已首轮全绿。production distribution、公开生命周期 CLI 与真实 Level 0 升级/卸载组合仍未完成，不能提前打开 Helper distribution。
+当前增量：Helper state v2 生命周期已通过 exact-SHA 门禁；公共四目标确定性 archive/checksum/SPDX/provenance、clean-home daemon 生命周期和卸载隔离也已通过首轮 24/24 push/PR Hosted。当前 20-module runtime 并集按目标精确绑定（二进制为 Darwin 20、Linux 18），path/version/h1/replacement/SPDX 漂移均 fail closed，并通过 current/oldstable 本地批次门禁。项目 LICENSE、完整第三方通知、production distribution、公开 Helper 生命周期 CLI 与真实升级/回滚组合仍未完成，不能提前打开 Helper distribution。
 
 门禁：支持平台不依赖开发机残留，失败升级可恢复。
 

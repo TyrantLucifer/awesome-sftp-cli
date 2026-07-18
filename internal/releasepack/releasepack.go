@@ -6,12 +6,14 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	gobuildinfo "debug/buildinfo"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -62,14 +64,22 @@ type PlatformBinary struct {
 }
 
 type GoBuildEvidence struct {
-	MainPath    string `json:"main_path"`
-	GoVersion   string `json:"go_version"`
-	GOOS        string `json:"goos"`
-	GOARCH      string `json:"goarch"`
-	CGOEnabled  bool   `json:"cgo_enabled"`
-	Trimpath    bool   `json:"trimpath"`
-	VCSRevision string `json:"vcs_revision"`
-	VCSModified bool   `json:"vcs_modified"`
+	MainPath    string             `json:"main_path"`
+	GoVersion   string             `json:"go_version"`
+	GOOS        string             `json:"goos"`
+	GOARCH      string             `json:"goarch"`
+	CGOEnabled  bool               `json:"cgo_enabled"`
+	Trimpath    bool               `json:"trimpath"`
+	VCSRevision string             `json:"vcs_revision"`
+	VCSModified bool               `json:"vcs_modified"`
+	Modules     []GoModuleEvidence `json:"modules"`
+}
+
+type GoModuleEvidence struct {
+	Path        string            `json:"path"`
+	Version     string            `json:"version"`
+	Sum         string            `json:"sum"`
+	Replacement *GoModuleEvidence `json:"replacement,omitempty"`
 }
 
 type Materials struct {
@@ -80,10 +90,18 @@ type Materials struct {
 }
 
 type Module struct {
+	Path        string             `json:"path"`
+	Version     string             `json:"version"`
+	Sum         string             `json:"sum"`
+	License     string             `json:"license"`
+	Targets     []Target           `json:"targets"`
+	Replacement *ModuleReplacement `json:"replacement,omitempty"`
+}
+
+type ModuleReplacement struct {
 	Path    string `json:"path"`
 	Version string `json:"version"`
 	Sum     string `json:"sum"`
-	License string `json:"license"`
 }
 
 type BundleRequest struct {
@@ -138,6 +156,7 @@ type SPDXPackage struct {
 	LicenseConcluded string            `json:"licenseConcluded"`
 	LicenseDeclared  string            `json:"licenseDeclared"`
 	CopyrightText    string            `json:"copyrightText"`
+	Comment          string            `json:"comment,omitempty"`
 	ExternalRefs     []SPDXExternalRef `json:"externalRefs,omitempty"`
 }
 
@@ -222,6 +241,16 @@ func InspectGoBinary(raw []byte) (GoBuildEvidence, error) {
 		return GoBuildEvidence{}, fmt.Errorf("inspect release binary: %w", err)
 	}
 	evidence := GoBuildEvidence{MainPath: info.Path, GoVersion: info.GoVersion}
+	for _, dependency := range info.Deps {
+		module := GoModuleEvidence{Path: dependency.Path, Version: dependency.Version, Sum: dependency.Sum}
+		if dependency.Replace != nil {
+			module.Replacement = &GoModuleEvidence{Path: dependency.Replace.Path, Version: dependency.Replace.Version, Sum: dependency.Replace.Sum}
+		}
+		evidence.Modules = append(evidence.Modules, module)
+	}
+	sort.Slice(evidence.Modules, func(left, right int) bool {
+		return goModuleEvidenceKey(evidence.Modules[left]) < goModuleEvidenceKey(evidence.Modules[right])
+	})
 	for _, setting := range info.Settings {
 		switch setting.Key {
 		case "GOOS":
@@ -352,7 +381,7 @@ func validateBundleRequest(request BundleRequest) error {
 	}
 	seen := make(map[Target]struct{}, len(Targets))
 	for _, platform := range request.Platforms {
-		if !validTarget(platform.Target) || platform.State != BinaryPublicPreview || platform.Darwin != nil || len(platform.Bytes) == 0 || len(platform.Bytes) > maxReleaseInputBytes || containsFixtureTrust(platform.Bytes) || !validPublicBuildEvidence(platform, request.Commit) {
+		if !validTarget(platform.Target) || platform.State != BinaryPublicPreview || platform.Darwin != nil || len(platform.Bytes) == 0 || len(platform.Bytes) > maxReleaseInputBytes || containsFixtureTrust(platform.Bytes) || !validPublicBuildEvidence(platform, request.Commit, request.Modules) {
 			return errors.New("build public release bundle: public platform input is invalid")
 		}
 		if _, duplicate := seen[platform.Target]; duplicate {
@@ -368,7 +397,7 @@ func validateBundleRequest(request BundleRequest) error {
 	moduleKeys := make(map[string]struct{}, len(request.Modules))
 	for _, module := range request.Modules {
 		key := module.Path + "@" + module.Version
-		if module.Path == "" || module.Version == "" || module.Sum == "" || module.License == "" || strings.IndexByte(key, 0) >= 0 {
+		if !validDeclaredModule(module) || strings.IndexByte(key, 0) >= 0 {
 			return errors.New("build public release bundle: module identity is invalid")
 		}
 		if _, duplicate := moduleKeys[key]; duplicate {
@@ -379,7 +408,7 @@ func validateBundleRequest(request BundleRequest) error {
 	return nil
 }
 
-func validPublicBuildEvidence(platform PlatformBinary, commit string) bool {
+func validPublicBuildEvidence(platform PlatformBinary, commit string, modules []Module) bool {
 	return platform.Build != nil &&
 		platform.Build.MainPath == "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp" &&
 		platform.Build.GOOS == platform.Target.OS &&
@@ -387,7 +416,209 @@ func validPublicBuildEvidence(platform PlatformBinary, commit string) bool {
 		!platform.Build.CGOEnabled &&
 		platform.Build.Trimpath &&
 		platform.Build.VCSRevision == commit &&
-		!platform.Build.VCSModified
+		!platform.Build.VCSModified &&
+		moduleEvidenceMatches(modulesForTarget(modules, platform.Target), platform.Build.Modules)
+}
+
+func validDeclaredModule(module Module) bool {
+	if !validModuleText(module.Path, 512) || !validModuleText(module.Version, 256) || !validSPDXExpression(module.License) || !validModuleTargets(module.Targets) {
+		return false
+	}
+	if module.Replacement == nil {
+		return validGoModuleSum(module.Sum)
+	}
+	return (module.Sum == "" || validGoModuleSum(module.Sum)) &&
+		validModuleText(module.Replacement.Path, 512) &&
+		validModuleText(module.Replacement.Version, 256) &&
+		validGoModuleSum(module.Replacement.Sum)
+}
+
+func validModuleTargets(targets []Target) bool {
+	if len(targets) == 0 || len(targets) > len(Targets) {
+		return false
+	}
+	seen := make(map[Target]struct{}, len(targets))
+	for _, target := range targets {
+		if !validTarget(target) {
+			return false
+		}
+		if _, duplicate := seen[target]; duplicate {
+			return false
+		}
+		seen[target] = struct{}{}
+	}
+	return true
+}
+
+func modulesForTarget(modules []Module, target Target) []Module {
+	selected := make([]Module, 0, len(modules))
+	for _, module := range modules {
+		for _, declaredTarget := range module.Targets {
+			if declaredTarget == target {
+				selected = append(selected, module)
+				break
+			}
+		}
+	}
+	return selected
+}
+
+func validModuleText(value string, maximum int) bool {
+	return value != "" && len(value) <= maximum && utf8.ValidString(value) && !strings.ContainsAny(value, "\x00\r\n\t ")
+}
+
+func validGoModuleSum(value string) bool {
+	if !strings.HasPrefix(value, "h1:") {
+		return false
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(value, "h1:"))
+	return err == nil && len(raw) == sha256.Size
+}
+
+func validSPDXExpression(value string) bool {
+	if value == "" || len(value) > 256 || value == "NOASSERTION" || value == "NONE" || strings.TrimSpace(value) != value {
+		return false
+	}
+	tokens, ok := tokenizeSPDXExpression(value)
+	if !ok {
+		return false
+	}
+	parser := spdxExpressionParser{tokens: tokens}
+	return parser.parseExpression() && parser.position == len(tokens)
+}
+
+func tokenizeSPDXExpression(value string) ([]string, bool) {
+	tokens := make([]string, 0, 8)
+	for position := 0; position < len(value); {
+		if value[position] == ' ' {
+			position++
+			continue
+		}
+		if value[position] == '(' || value[position] == ')' {
+			tokens = append(tokens, value[position:position+1])
+			position++
+			continue
+		}
+		start := position
+		for position < len(value) && isSPDXIdentifierCharacter(value[position]) {
+			position++
+		}
+		if start == position {
+			return nil, false
+		}
+		tokens = append(tokens, value[start:position])
+	}
+	return tokens, len(tokens) > 0
+}
+
+func isSPDXIdentifierCharacter(character byte) bool {
+	return character == '-' || character == '.' || character == '+' ||
+		character >= '0' && character <= '9' ||
+		character >= 'A' && character <= 'Z' ||
+		character >= 'a' && character <= 'z'
+}
+
+type spdxExpressionParser struct {
+	tokens   []string
+	position int
+}
+
+func (parser *spdxExpressionParser) parseExpression() bool {
+	if !parser.parseAndExpression() {
+		return false
+	}
+	for parser.consume("OR") {
+		if !parser.parseAndExpression() {
+			return false
+		}
+	}
+	return true
+}
+
+func (parser *spdxExpressionParser) parseAndExpression() bool {
+	if !parser.parseWithExpression() {
+		return false
+	}
+	for parser.consume("AND") {
+		if !parser.parseWithExpression() {
+			return false
+		}
+	}
+	return true
+}
+
+func (parser *spdxExpressionParser) parseWithExpression() bool {
+	if !parser.parsePrimary() {
+		return false
+	}
+	if parser.consume("WITH") {
+		return parser.consumeIdentifier()
+	}
+	return true
+}
+
+func (parser *spdxExpressionParser) parsePrimary() bool {
+	if parser.consume("(") {
+		return parser.parseExpression() && parser.consume(")")
+	}
+	return parser.consumeIdentifier()
+}
+
+func (parser *spdxExpressionParser) consumeIdentifier() bool {
+	if parser.position >= len(parser.tokens) {
+		return false
+	}
+	token := parser.tokens[parser.position]
+	if token == "(" || token == ")" || token == "AND" || token == "OR" || token == "WITH" || token == "NONE" || token == "NOASSERTION" {
+		return false
+	}
+	parser.position++
+	return true
+}
+
+func (parser *spdxExpressionParser) consume(expected string) bool {
+	if parser.position >= len(parser.tokens) || parser.tokens[parser.position] != expected {
+		return false
+	}
+	parser.position++
+	return true
+}
+
+func moduleEvidenceMatches(modules []Module, evidence []GoModuleEvidence) bool {
+	if len(modules) != len(evidence) {
+		return false
+	}
+	expected := make(map[string]struct{}, len(modules))
+	for _, module := range modules {
+		item := GoModuleEvidence{Path: module.Path, Version: module.Version, Sum: module.Sum}
+		if module.Replacement != nil {
+			item.Replacement = &GoModuleEvidence{Path: module.Replacement.Path, Version: module.Replacement.Version, Sum: module.Replacement.Sum}
+		}
+		expected[goModuleEvidenceKey(item)] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(evidence))
+	for _, item := range evidence {
+		key := goModuleEvidenceKey(item)
+		if item.Path == "" || item.Version == "" || item.Replacement != nil && item.Replacement.Replacement != nil {
+			return false
+		}
+		if _, exists := expected[key]; !exists {
+			return false
+		}
+		if _, duplicate := seen[key]; duplicate {
+			return false
+		}
+		seen[key] = struct{}{}
+	}
+	return true
+}
+
+func goModuleEvidenceKey(module GoModuleEvidence) string {
+	key := module.Path + "\x00" + module.Version + "\x00" + module.Sum
+	if module.Replacement != nil {
+		key += "\x00=>\x00" + module.Replacement.Path + "\x00" + module.Replacement.Version + "\x00" + module.Replacement.Sum
+	}
+	return key
 }
 
 func validateMaterials(materials Materials) error {
@@ -495,10 +726,17 @@ func buildSBOM(request BundleRequest, archives []Archive) ([]byte, error) {
 	modules := append([]Module(nil), request.Modules...)
 	sortModules(modules)
 	for index, module := range modules {
+		resolvedPath, resolvedVersion, resolvedSum := module.Path, module.Version, module.Sum
+		commentParts := []string{"Targets: " + formatModuleTargets(module.Targets)}
+		if module.Replacement != nil {
+			resolvedPath, resolvedVersion, resolvedSum = module.Replacement.Path, module.Replacement.Version, module.Replacement.Sum
+			commentParts = append(commentParts, "build replacement for "+module.Path+"@"+module.Version)
+		}
 		packages = append(packages, SPDXPackage{
-			Name: module.Path, SPDXID: fmt.Sprintf("SPDXRef-Module-%d", index+1), VersionInfo: module.Version,
+			Name: resolvedPath, SPDXID: fmt.Sprintf("SPDXRef-Module-%d", index+1), VersionInfo: resolvedVersion,
 			DownloadLocation: "NOASSERTION", FilesAnalyzed: false, LicenseConcluded: module.License, LicenseDeclared: module.License, CopyrightText: "NOASSERTION",
-			ExternalRefs: []SPDXExternalRef{{ReferenceCategory: "PACKAGE-MANAGER", ReferenceType: "purl", ReferenceLocator: "pkg:golang/" + module.Path + "@" + module.Version + "?checksum=" + module.Sum}},
+			Comment:      strings.Join(commentParts, "; "),
+			ExternalRefs: []SPDXExternalRef{{ReferenceCategory: "PACKAGE-MANAGER", ReferenceType: "purl", ReferenceLocator: "pkg:golang/" + resolvedPath + "@" + resolvedVersion + "?checksum=" + resolvedSum}},
 		})
 	}
 	document := SPDXDocument{
@@ -508,6 +746,15 @@ func buildSBOM(request BundleRequest, archives []Archive) ([]byte, error) {
 		Packages:          packages,
 	}
 	return marshalCanonicalJSON(document)
+}
+
+func formatModuleTargets(targets []Target) string {
+	values := make([]string, 0, len(targets))
+	for _, target := range targets {
+		values = append(values, target.OS+"/"+target.Arch)
+	}
+	sort.Strings(values)
+	return strings.Join(values, ",")
 }
 
 func buildProvenance(request BundleRequest, archives []Archive) ([]byte, error) {
@@ -638,14 +885,7 @@ func digestBytes(raw []byte) string {
 }
 
 func sortModules(modules []Module) {
-	for right := 1; right < len(modules); right++ {
-		for left := right; left > 0; left-- {
-			leftKey := modules[left-1].Path + "@" + modules[left-1].Version
-			rightKey := modules[left].Path + "@" + modules[left].Version
-			if leftKey <= rightKey {
-				break
-			}
-			modules[left-1], modules[left] = modules[left], modules[left-1]
-		}
-	}
+	sort.Slice(modules, func(left, right int) bool {
+		return modules[left].Path+"@"+modules[left].Version < modules[right].Path+"@"+modules[right].Version
+	})
 }

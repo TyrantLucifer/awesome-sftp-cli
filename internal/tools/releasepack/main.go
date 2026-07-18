@@ -43,10 +43,23 @@ type manifestPlatform struct {
 }
 
 type manifestModule struct {
+	Path        string                     `json:"path"`
+	Version     string                     `json:"version"`
+	Sum         string                     `json:"sum"`
+	License     string                     `json:"license"`
+	Targets     []manifestTarget           `json:"targets"`
+	Replacement *manifestModuleReplacement `json:"replacement,omitempty"`
+}
+
+type manifestTarget struct {
+	OS   string `json:"os"`
+	Arch string `json:"arch"`
+}
+
+type manifestModuleReplacement struct {
 	Path    string `json:"path"`
 	Version string `json:"version"`
 	Sum     string `json:"sum"`
-	License string `json:"license"`
 }
 
 func main() {
@@ -165,7 +178,15 @@ func loadBundleRequest(root string, manifest inputManifest, inspect binaryInspec
 	}
 	modules := make([]releasepack.Module, 0, len(manifest.Modules))
 	for _, module := range manifest.Modules {
-		modules = append(modules, releasepack.Module{Path: module.Path, Version: module.Version, Sum: module.Sum, License: module.License})
+		targets := make([]releasepack.Target, 0, len(module.Targets))
+		for _, target := range module.Targets {
+			targets = append(targets, releasepack.Target{OS: target.OS, Arch: target.Arch})
+		}
+		item := releasepack.Module{Path: module.Path, Version: module.Version, Sum: module.Sum, License: module.License, Targets: targets}
+		if module.Replacement != nil {
+			item.Replacement = &releasepack.ModuleReplacement{Path: module.Replacement.Path, Version: module.Replacement.Version, Sum: module.Replacement.Sum}
+		}
+		modules = append(modules, item)
 	}
 	return releasepack.BundleRequest{
 		Version: manifest.Version, Commit: manifest.Commit, Tree: manifest.Tree, SourceDateEpoch: manifest.SourceDateEpoch,
