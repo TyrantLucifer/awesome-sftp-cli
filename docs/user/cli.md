@@ -12,6 +12,7 @@ amsftp daemon stop --confirm stop [--format human|json]
 amsftp helper <status|disable> <SSH-host> [--format human|json]
 amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]
 amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]
+amsftp doctor [--endpoint <SSH-host>] [--format human|json]
 amsftp completion <bash|zsh|fish>
 ```
 
@@ -78,6 +79,20 @@ JSON failures are written only to stderr and retain the process exit status:
 ```
 
 The structural fields are always present. Local validation failures leave the RPC diagnostic fields empty. Daemon failures expose only the daemon's safe request ID, error code, retry advice, effect status, and public message; transport causes and credentials are not serialized.
+
+## Read-only doctor
+
+`amsftp doctor` runs the fixed config, runtime-directory, control-socket, daemon, system-OpenSSH, known-host policy, database, cache, Helper, and disk-space checks. It does not prepare missing directories, start or repair the daemon, migrate or checkpoint SQLite, change Helper state, prompt for credentials, or upload a report. A stopped database without WAL/SHM sidecars is opened only through SQLite immutable read-only validation and must match the compiled schema head. A database with live sidecars is reported as `database_active`; doctor does not open or alter it.
+
+`--endpoint <SSH-host>` adds one endpoint result. AMSFTP validates the host alias and the trusted `/usr/bin/ssh`, then runs bounded `ssh -G -T` configuration expansion. Duplicate security-relevant fields, unknown host-key policy values, failed expansion, and stdout/stderr beyond 64 KiB fail closed without exporting command output. The known-host result checks effective strict-host-key and known-host-file policy; it does not authenticate or claim that a particular key already exists. For a direct endpoint, doctor performs only a five-second TCP connect and sends no application bytes. ProxyJump or ProxyCommand configurations return `endpoint_proxy_not_probed` rather than invoking the proxy or misreporting direct reachability.
+
+Human output contains only stable tab-separated check, status, detail, and remediation tokens. JSON success is a versioned ordered report; raw errors, endpoint names, hostnames, ports, absolute paths, and subprocess output are excluded:
+
+```json
+{"output_version":1,"results":[{"code":"config","status":"pass","severity":"info","detail_code":"config_valid","remediation":"troubleshooting/config"}]}
+```
+
+`pass`, `warn`, `fail`, and `skipped` are per-check results; a completed diagnostic report exits `0` even when it contains warnings or failures. Invalid arguments use the normal usage exit `2`, and `--format json` preserves the versioned machine-error channel. Shell completion for doctor is static and offers only `--endpoint` and `--format`.
 
 ## Help, man page, and completion parity
 
