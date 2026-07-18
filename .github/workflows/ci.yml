@@ -135,7 +135,7 @@ jobs:
           env "${clean_env[@]}" "${old_binary}" daemon >"${RUNNER_TEMP}/stage5-daemon.log" 2>&1 &
           old_pid=$!
           old_running=0
-          for attempt in $(seq 1 200); do
+          for ((attempt = 0; attempt < 200; attempt++)); do
             env "${clean_env[@]}" "${installed}" daemon status --format json >"${RUNNER_TEMP}/stage5-status.json" 2>/dev/null || true
             if grep -qF '"running":true' "${RUNNER_TEMP}/stage5-status.json"; then
               old_running=1
@@ -158,7 +158,7 @@ jobs:
           env "${clean_env[@]}" "${old_binary}" daemon >"${RUNNER_TEMP}/stage5-rollback.log" 2>&1 &
           old_pid=$!
           old_running=0
-          for attempt in $(seq 1 200); do
+          for ((attempt = 0; attempt < 200; attempt++)); do
             env "${clean_env[@]}" "${installed}" daemon status --format json >"${RUNNER_TEMP}/stage5-rollback-status.json" 2>/dev/null || true
             if grep -qF '"running":true' "${RUNNER_TEMP}/stage5-rollback-status.json"; then
               old_running=1
