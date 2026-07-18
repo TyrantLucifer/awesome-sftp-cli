@@ -35,9 +35,13 @@ func newPreviewAssetHandler(root string) (http.Handler, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve Homebrew preview asset root: %w", err)
 	}
+	inputInfo, err := os.Lstat(absolute)
+	if err != nil || inputInfo.Mode()&os.ModeSymlink != 0 || !inputInfo.IsDir() {
+		return nil, errors.New("homebrew preview asset root must be a non-symlink directory")
+	}
 	resolved, err := filepath.EvalSymlinks(absolute)
-	if err != nil || resolved != absolute {
-		return nil, errors.New("homebrew preview asset root must not traverse symlinks")
+	if err != nil {
+		return nil, fmt.Errorf("resolve Homebrew preview asset root symlinks: %w", err)
 	}
 	info, err := os.Lstat(resolved)
 	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {

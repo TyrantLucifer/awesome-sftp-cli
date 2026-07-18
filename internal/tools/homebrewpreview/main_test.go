@@ -124,6 +124,25 @@ func TestPreviewAssetHandlerRejectsIncompleteExtraAndSymlinkSets(t *testing.T) {
 	}
 }
 
+func TestPreviewAssetHandlerAllowsResolvedParentSymlinkButNotRootSymlink(t *testing.T) {
+	root := exactPreviewAssetFixture(t)
+	aliasContainer := t.TempDir()
+	aliasParent := filepath.Join(aliasContainer, "resolved-parent")
+	if err := os.Symlink(filepath.Dir(root), aliasParent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newPreviewAssetHandler(filepath.Join(aliasParent, filepath.Base(root))); err != nil {
+		t.Fatalf("resolved parent symlink: %v", err)
+	}
+	rootAlias := filepath.Join(aliasContainer, "asset-root")
+	if err := os.Symlink(root, rootAlias); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := newPreviewAssetHandler(rootAlias); err == nil {
+		t.Fatal("asset root symlink was accepted")
+	}
+}
+
 func exactPreviewAssetFixture(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
