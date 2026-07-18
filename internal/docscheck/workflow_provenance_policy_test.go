@@ -163,6 +163,76 @@ func TestWorkflowProvenancePolicyRejectsKerberosWorkloadDrift(t *testing.T) {
 	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
 }
 
+func TestWorkflowProvenancePolicyRequiresPreviewBundleSSHDataflow(t *testing.T) {
+	tests := []struct {
+		name string
+		job  string
+		step string
+		old  string
+		new  string
+	}{
+		{
+			name: "quality upload action SHA",
+			job:  "quality",
+			step: "Upload public preview bundle",
+			old:  approvedActionCommits["actions/upload-artifact"],
+			new:  "1111111111111111111111111111111111111111",
+		},
+		{
+			name: "quality upload artifact identity",
+			job:  "quality",
+			step: "Upload public preview bundle",
+			old:  "public-preview-bundle-${{ github.sha }}",
+			new:  "public-preview-bundle-unbound",
+		},
+		{
+			name: "auth download action SHA",
+			job:  "auth-integration",
+			step: "Download public preview bundle",
+			old:  approvedActionCommits["actions/download-artifact"],
+			new:  "2222222222222222222222222222222222222222",
+		},
+		{
+			name: "checksum verification removed",
+			job:  "auth-integration",
+			step: "Verify and extract public preview bundle",
+			old:  `(cd "${bundle}" && sha256sum -c checksums.txt)`,
+			new:  `:`,
+		},
+		{
+			name: "archive identity smoke removed",
+			job:  "auth-integration",
+			step: "Verify and extract public preview bundle",
+			old:  `tar -xOf "${archive}" amsftp_1.0.0_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
+			new:  `:`,
+		},
+		{
+			name: "OpenSSH falls back to loose binary",
+			job:  "auth-integration",
+			step: "Run real OpenSSH authentication matrix",
+			old:  `AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_1.0.0_linux_amd64/amsftp"`,
+			new:  `AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/amsftp"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			content := replaceInWorkflowStep(t, readCanonicalWorkflow(t, ".github/workflows/ci.yml"), test.job, test.step, test.old, test.new)
+			assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
+		})
+	}
+}
+
+func TestWorkflowProvenancePolicyRequiresQualityBeforePreviewBundleAuth(t *testing.T) {
+	content := replaceInWorkflowJob(
+		t,
+		readCanonicalWorkflow(t, ".github/workflows/ci.yml"),
+		"auth-integration",
+		"    needs: quality\n",
+		"",
+	)
+	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
+}
+
 func TestWorkflowProvenancePolicyRejectsCanonicalShellWhitespaceDrift(t *testing.T) {
 	tests := []struct {
 		name string

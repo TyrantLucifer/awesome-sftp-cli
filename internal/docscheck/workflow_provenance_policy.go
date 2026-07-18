@@ -165,6 +165,7 @@ func canonicalProvenanceWorkflowProfile(path string) (provenanceWorkflowProfile,
 				},
 				{
 					jobID: "auth-integration", leg: "auth-integration", runsOn: "ubuntu-24.04", timeout: "30",
+					needs:  []string{"quality"},
 					matrix: noProvenanceMatrix, record: standardProvenanceRecord,
 					expectedLegs: legs[1:2], environment: map[string]string{"LEG": "auth-integration"},
 				},
@@ -307,8 +308,10 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 	}
 
 	switch profile.jobID {
+	case "quality":
+		return canonicalQualityPreviewBundleHandoff(job.steps[:recordIndex])
 	case "auth-integration":
-		return len(job.steps) == 8 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
+		return len(job.steps) == 9 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
 	case "build":
 		return len(job.steps) == 8 && canonicalBuildProducerPrefix(job.steps[:recordIndex])
 	case "fuzz":
@@ -325,7 +328,7 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 }
 
 func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
-	if len(steps) != 6 {
+	if len(steps) != 7 {
 		return false
 	}
 	return stepIsExactCheckout(steps[0]) && stepIsExactCurrentSetupGo(steps[1]) &&
@@ -340,24 +343,67 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`  netcat-openbsd \`,
 			`  openssh-server`,
 		}) &&
-		canonicalRunStep(steps[3], "Build installed same-binary fixture", []string{
+		canonicalPreviewBundleDownload(steps[3]) &&
+		canonicalRunStep(steps[4], "Verify and extract public preview bundle", []string{
 			`set -euo pipefail`,
-			`mkdir -p "${RUNNER_TEMP}/auth-integration"`,
-			`go build -trimpath -o "${RUNNER_TEMP}/auth-integration/amsftp" ./cmd/amsftp`,
+			`bundle="${RUNNER_TEMP}/auth-integration/bundle"`,
+			`test "$(find "${bundle}" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 7`,
+			`(cd "${bundle}" && sha256sum -c checksums.txt)`,
+			`archive="${bundle}/amsftp_1.0.0_linux_amd64.tar.gz"`,
+			`install_root="${RUNNER_TEMP}/auth-integration/install"`,
+			`test -f "${archive}"`,
+			`test ! -e "${install_root}"`,
+			`mkdir -p "${install_root}"`,
+			`tar -xzf "${archive}" -C "${install_root}"`,
+			`installed="${install_root}/amsftp_1.0.0_linux_amd64/amsftp"`,
+			`test -x "${installed}"`,
+			`"${installed}" --version | grep -F "1.0.0 commit=${GITHUB_SHA} dirty=false"`,
+			`tar -xOf "${archive}" amsftp_1.0.0_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
 		}) &&
-		canonicalRunStep(steps[4], "Run real OpenSSH authentication matrix", []string{
+		canonicalRunStep(steps[5], "Run real OpenSSH authentication matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
-			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \`,
+			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_1.0.0_linux_amd64/amsftp" \`,
 			`  AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-auth.sh`,
 		}) &&
-		canonicalRunStep(steps[5], "Run real MIT Kerberos/GSSAPI matrix", []string{
+		canonicalRunStep(steps[6], "Run real MIT Kerberos/GSSAPI matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
-			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \`,
+			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_1.0.0_linux_amd64/amsftp" \`,
 			`  AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-kerberos.sh`,
+		})
+}
+
+func canonicalQualityPreviewBundleHandoff(steps []workflowStep) bool {
+	packaging := -1
+	for index, step := range steps {
+		if step.name != nil && step.name.value == "Exercise deterministic public packaging and clean-home lifecycle" {
+			if packaging != -1 {
+				return false
+			}
+			packaging = index
+		}
+	}
+	return packaging >= 0 && packaging+1 < len(steps) && canonicalPreviewBundleUpload(steps[packaging+1])
+}
+
+func canonicalPreviewBundleUpload(step workflowStep) bool {
+	return canonicalBuildArtifactUpload(
+		step,
+		"Upload public preview bundle",
+		"public-preview-bundle-${{ github.sha }}",
+		"${{ runner.temp }}/public-package-first",
+	)
+}
+
+func canonicalPreviewBundleDownload(step workflowStep) bool {
+	return step.name != nil && step.name.value == "Download public preview bundle" && step.uses != nil &&
+		step.uses.value == "actions/download-artifact@"+approvedActionCommits["actions/download-artifact"] &&
+		nodeHasExactKeys(step.node, "name", "uses", "with") &&
+		mappingHasExactScalars(step.with, map[string]string{
+			"name": "public-preview-bundle-${{ github.sha }}", "path": "${{ runner.temp }}/auth-integration/bundle",
 		})
 }
 
