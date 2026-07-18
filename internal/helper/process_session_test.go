@@ -85,7 +85,7 @@ func TestOpenSSHProcessSessionAcceptsExactStderrHardCap(t *testing.T) {
 	session, err := StartOpenSSHSession(context.Background(), OpenSSHSessionConfig{
 		SSHPath: sshPath, HostAlias: "fixture-host", Plan: fixtureProcessInstallPlan(),
 		Environment: append(os.Environ(),
-			"AMSFTP_HELPER_CHILD=stderr-exact-exit",
+			"AMSFTP_HELPER_CHILD=stderr-exact",
 			"AMSFTP_HELPER_TEST_BINARY="+mustExecutable(t),
 			"AMSFTP_HELPER_ARG_CAPTURE="+capture,
 		),
@@ -98,12 +98,11 @@ func TestOpenSSHProcessSessionAcceptsExactStderrHardCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = session.Wait() // The child EOF may cancel exec.CommandContext; Wait is the terminal-reader barrier.
-	if got := len(session.Diagnostic()); got != MaxHelperStderrBytes {
-		t.Fatalf("diagnostic bytes = %d, want %d", got, MaxHelperStderrBytes)
-	}
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if got := len(session.Diagnostic()); got != MaxHelperStderrBytes {
+		t.Fatalf("diagnostic bytes = %d, want %d", got, MaxHelperStderrBytes)
 	}
 }
 
@@ -152,13 +151,6 @@ func TestOpenSSHHelperChild(t *testing.T) {
 	}
 	if mode == "stderr-exact" {
 		_, _ = os.Stderr.Write([]byte(strings.Repeat("x", MaxHelperStderrBytes)))
-	}
-	if mode == "stderr-exact-exit" {
-		_, _ = os.Stderr.Write([]byte(strings.Repeat("x", MaxHelperStderrBytes)))
-		_, _ = ServeHandshake(os.Stdin, os.Stdout, ServerConfig{
-			Protocol: 1, HelperVersion: Version{Major: 4}, MaximumFrame: MaxHelperFrameBytes, MaximumConcurrent: 1,
-		})
-		os.Exit(0)
 	}
 	if mode == "no-pong" {
 		_, _ = ServeHandshake(os.Stdin, os.Stdout, ServerConfig{
