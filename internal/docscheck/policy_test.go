@@ -1038,6 +1038,33 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
 	assertNoWorkflowRule(t, ".github/workflows/ci.yml", updated, "workflow.ci_quality")
 }
 
+func TestCIQualityAllowsOnlyCompleteCheckoutHistoryForHistoricalUpgradeGate(t *testing.T) {
+	const (
+		path        = ".github/workflows/ci.yml"
+		anchor      = "        with:\n          persist-credentials: false\n"
+		qualityRule = "workflow.ci_quality"
+		qualityMsg  = "quality job must run on ubuntu-24.04 and execute make check and make supply-chain"
+	)
+	t.Run("complete history", func(t *testing.T) {
+		root := prepareFixture(t, "valid")
+		fixturePath := filepath.Join(root, ".github", "workflows", "ci.yml")
+		content, err := os.ReadFile(fixturePath) // #nosec G304 -- fixturePath is rooted in the test-owned directory.
+		if err != nil {
+			t.Fatal(err)
+		}
+		updated := strings.Replace(string(content), anchor, "        with:\n          fetch-depth: 0\n          persist-credentials: false\n", 1)
+		if updated == string(content) {
+			t.Fatal("quality checkout anchor not found")
+		}
+		assertNoWorkflowRule(t, path, updated, qualityRule)
+	})
+	t.Run("arbitrary shallow depth", func(t *testing.T) {
+		root := prepareFixture(t, "valid")
+		replacePolicyFileOccurrence(t, root, path, anchor, "        with:\n          fetch-depth: 2\n          persist-credentials: false\n", 1)
+		assertPolicyFinding(t, root, policyFinding{Path: path, Line: 7, Rule: qualityRule, Message: qualityMsg})
+	})
+}
+
 func TestCIMakeControlEnvironmentPrecedence(t *testing.T) {
 	const (
 		path        = ".github/workflows/ci.yml"

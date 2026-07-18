@@ -181,7 +181,7 @@
 2. 建立发行构建、校验、渠道包和 provenance。
 3. 在干净 macOS/Linux 环境验证安装、daemon、SSH、升级、恢复和卸载。
 
-当前增量：Helper state v2 生命周期已通过 exact-SHA 门禁；公共四目标确定性 archive/checksum/SPDX/provenance、clean-home daemon 生命周期和卸载隔离也已通过首轮 24/24 push/PR Hosted。当前 20-module runtime 并集按目标精确绑定（二进制为 Darwin 20、Linux 18），path/version/h1/replacement/SPDX 漂移均 fail closed，并通过 current/oldstable 本地批次门禁。项目 LICENSE、完整第三方通知、production distribution、公开 Helper 生命周期 CLI 与真实升级/回滚组合仍未完成，不能提前打开 Helper distribution。
+当前增量：Helper state v2 生命周期已通过 exact-SHA 门禁；公共四目标确定性 archive/checksum/SPDX/provenance、clean-home daemon 生命周期和卸载隔离也已通过首轮 24/24 push/PR Hosted。20-module runtime 并集按目标精确绑定（二进制为 Darwin 20、Linux 18），path/version/h1/replacement/SPDX 漂移均 fail closed；commit `99db0e822b80d01519191e9bd13a894794c018c2` 的 push/PR Hosted 各首轮 24/24 全绿。当前批次把 canonical man page 纳入 archive、安装三种 shell 补全、用冻结 Stage 5 daemon 建 v3 并由 current 升级至 v4、证明旧 daemon 对 newer DB 只降级且不改字节，并只卸载 exact owned files 而保留 state；focused/current/oldstable 本地门禁已绿，exact clean-commit/Hosted 尚待完成。项目 LICENSE、完整第三方通知、production distribution、公开 Helper 生命周期 CLI、native macOS/channel 安装与 final release 组合仍未完成，不能提前打开 Helper distribution。
 
 门禁：支持平台不依赖开发机残留，失败升级可恢复。
 

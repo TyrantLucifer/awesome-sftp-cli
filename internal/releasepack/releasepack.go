@@ -87,6 +87,7 @@ type Materials struct {
 	Notice    []byte
 	Install   []byte
 	Uninstall []byte
+	Man       []byte
 }
 
 type Module struct {
@@ -630,6 +631,7 @@ func validateMaterials(materials Materials) error {
 		{name: "NOTICE", raw: materials.Notice},
 		{name: "INSTALL.md", raw: materials.Install},
 		{name: "UNINSTALL.md", raw: materials.Uninstall},
+		{name: "share/man/man1/amsftp.1", raw: materials.Man},
 	} {
 		if len(material.raw) == 0 || len(material.raw) > 1<<20 || !utf8.Valid(material.raw) || material.raw[len(material.raw)-1] != '\n' || bytes.IndexByte(material.raw, 0) >= 0 || containsFixtureTrust(material.raw) {
 			return fmt.Errorf("build public release bundle: %s material is invalid", material.name)
@@ -679,6 +681,18 @@ func buildArchive(request BundleRequest, platform PlatformBinary) (Archive, erro
 		if _, err := tarWriter.Write(file.body); err != nil {
 			return Archive{}, closeArchiveWriters(tarWriter, gzipWriter, err)
 		}
+	}
+	for _, directory := range []string{"share/", "share/man/", "share/man/man1/"} {
+		if err := tarWriter.WriteHeader(canonicalTarHeader(root+"/"+directory, 0o755, 0, tar.TypeDir, modTime)); err != nil {
+			return Archive{}, closeArchiveWriters(tarWriter, gzipWriter, err)
+		}
+	}
+	manHeader := canonicalTarHeader(root+"/share/man/man1/amsftp.1", 0o644, int64(len(request.Materials.Man)), tar.TypeReg, modTime)
+	if err := tarWriter.WriteHeader(manHeader); err != nil {
+		return Archive{}, closeArchiveWriters(tarWriter, gzipWriter, err)
+	}
+	if _, err := tarWriter.Write(request.Materials.Man); err != nil {
+		return Archive{}, closeArchiveWriters(tarWriter, gzipWriter, err)
 	}
 	if err := tarWriter.Close(); err != nil {
 		_ = gzipWriter.Close()

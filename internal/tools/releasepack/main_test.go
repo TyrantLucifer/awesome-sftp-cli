@@ -19,6 +19,7 @@ func TestRunBuildsExactPublicReleaseFromConfinedManifestInputs(t *testing.T) {
 	writeFixtureFile(t, root, "NOTICE", "dependency notices\n")
 	writeFixtureFile(t, root, "INSTALL.md", "install\n")
 	writeFixtureFile(t, root, "UNINSTALL.md", "uninstall\n")
+	writeFixtureFile(t, root, "amsftp.1", ".TH AMSFTP 1\n")
 	platforms := []manifestPlatform{
 		{OS: "darwin", Arch: "amd64", Path: "bin/darwin-amd64"},
 		{OS: "darwin", Arch: "arm64", Path: "bin/darwin-arm64"},
@@ -31,7 +32,7 @@ func TestRunBuildsExactPublicReleaseFromConfinedManifestInputs(t *testing.T) {
 	manifestPath := writeManifest(t, root, inputManifest{
 		Schema: "amsftp-public-release-manifest-v1", Version: "1.0.0",
 		Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), SourceDateEpoch: 1_700_000_000,
-		Materials: manifestMaterials{License: "LICENSE", Notice: "NOTICE", Install: "INSTALL.md", Uninstall: "UNINSTALL.md"},
+		Materials: manifestMaterials{License: "LICENSE", Notice: "NOTICE", Install: "INSTALL.md", Uninstall: "UNINSTALL.md", Man: "amsftp.1"},
 		Platforms: platforms,
 		Modules:   []manifestModule{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", License: "BSD-3-Clause", Targets: []manifestTarget{{OS: "darwin", Arch: "amd64"}, {OS: "darwin", Arch: "arm64"}, {OS: "linux", Arch: "amd64"}, {OS: "linux", Arch: "arm64"}}}},
 	})

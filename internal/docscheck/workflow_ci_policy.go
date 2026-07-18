@@ -236,9 +236,11 @@ func jobHasTrustedBuildPrefix(job workflowJob) bool {
 }
 
 func stepIsExactCheckout(step workflowStep) bool {
-	return step.uses != nil && step.uses.value == "actions/checkout@"+approvedActionCommits["actions/checkout"] &&
-		stepHasOnlyKeys(step, "name", "uses", "with") &&
-		mappingHasExactScalars(step.with, map[string]string{"persist-credentials": "false"})
+	if step.uses == nil || step.uses.value != "actions/checkout@"+approvedActionCommits["actions/checkout"] || !stepHasOnlyKeys(step, "name", "uses", "with") {
+		return false
+	}
+	return mappingHasExactScalars(step.with, map[string]string{"persist-credentials": "false"}) ||
+		mappingHasExactScalars(step.with, map[string]string{"fetch-depth": "0", "persist-credentials": "false"})
 }
 
 func stepIsExactCurrentSetupGo(step workflowStep) bool {

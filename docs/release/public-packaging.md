@@ -25,7 +25,8 @@ The manifest itself may be named anywhere, but every referenced file must be a c
     "license": "LICENSE",
     "notice": "release-input/NOTICE",
     "install": "release-input/INSTALL.md",
-    "uninstall": "release-input/UNINSTALL.md"
+    "uninstall": "release-input/UNINSTALL.md",
+    "man": "release-input/amsftp.1"
   },
   "platforms": [
     {"os": "darwin", "arch": "amd64", "path": "dist/amsftp-darwin-amd64"},
@@ -57,7 +58,7 @@ The command creates one previously absent directory containing exactly:
 - `sbom.spdx.json`
 - `provenance.input.json`
 
-Each archive has one canonical root directory and only `amsftp`, `VERSION.json`, `LICENSE`, `NOTICE`, `INSTALL.md`, and `UNINSTALL.md`. Timestamps use `source_date_epoch`; ownership, modes, gzip metadata, entry order, checksum order, SPDX package order, and provenance archive order are deterministic. The provenance file is an unsigned input, not an attestation.
+Each archive has one canonical root directory containing `amsftp`, `VERSION.json`, `LICENSE`, `NOTICE`, `INSTALL.md`, `UNINSTALL.md`, and `share/man/man1/amsftp.1`. Timestamps use `source_date_epoch`; ownership, modes, gzip metadata, entry order, checksum order, SPDX package order, and provenance archive order are deterministic. The provenance file is an unsigned input, not an attestation.
 
 `VERSION.json` also freezes the ADR-0009 identifiers: application/package ID `io.github.tyrantlucifer.amsftp`, launchd label `io.github.tyrantlucifer.amsftp.daemon`, systemd user unit `amsftp-daemon.service`, and Homebrew formula `amsftp`. CI builds all four clean public-preview binaries, packages the same inputs twice, compares every output byte, verifies the archive checksums, extracts the native Linux archive into a clean home, checks version/commit and service identifiers, starts/statuses/stops the daemon, and removes only the isolated install root. CI-only LICENSE/NOTICE bytes are explicitly non-release contract material; they do not satisfy the project-license or reviewed-notice release gates.
 

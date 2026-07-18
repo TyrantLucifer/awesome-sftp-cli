@@ -1,6 +1,6 @@
 # Stage 6 Execution Plan
 
-- **Status**: In Progress — M6.1 complete; M6.2 migration, retention, Helper lifecycle, public packaging, and clean-machine automation active
+- **Status**: In Progress — M6.1 complete; M6.2 migration, retention, Helper lifecycle, deterministic packaging/dependencies, and install/upgrade/rollback automation active
 - **Updated**: 2026-07-18
 - **Sole baseline**: commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`
 - **Fixed branch**: `codex/stage6-hardening-release`
@@ -65,6 +65,8 @@ For each RED/GREEN cycle, append to [Stage 6 verification](../verification/stage
 2. Implement bounded Job retention and Helper lifecycle cleanup with exact live-reference checks and explicit uninstall.
 3. Add release scripts/workflows that build immutable darwin/linux × arm64/amd64 archives, emit checksums/SBOM/provenance inputs, and enforce ADR-0009 identifiers and byte-binding order. PR builds exercise public deterministic paths only; protected credentials are unavailable there by design.
 4. Build clean-machine automation for supported macOS 15 and Linux matrices. Record native execution separately from cross-build evidence.
+
+**Current checkpoint**: public deterministic packaging/clean-home commit `958dec07addbe12c0c02404af4baf90558286909` and target-aware dependency/SBOM commit `99db0e822b80d01519191e9bd13a894794c018c2` each passed exact-SHA push/PR Hosted 24/24 on their first attempts. The active five-slice batch ships the generated man page, installs bash/zsh/fish completions from the admitted binary, exercises frozen Stage 5 v3 → current v4 upgrade, proves old-binary degraded rollback leaves the newer database byte-identical, and removes only the installed binary/man/completions while retaining state and extracted release bytes. Focused tests and both full local toolchain gates pass; exact clean-commit and Hosted evidence follow after commit. Native macOS/channel evidence, final license/notices, signing/notary, and production Helper/Level 2 remain open.
 
 ### M6.2 gate
 
