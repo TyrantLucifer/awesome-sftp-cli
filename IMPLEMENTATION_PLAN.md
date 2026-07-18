@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始；M6.1 已在 provenance-corrected exact commit `d4d524331b796ab408f292d0412e2d6728afacd0` 通过 current/oldstable 本地门禁和 push/PR Hosted 门禁，当前进入 M6.2，首个 RED slice 是在任何 owner mutation 前捕获剩余 SQLite/cache/Helper 真实历史 fixture。
+Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始；M6.1 已在 closeout commit `cb267a3b4adabf6f43fae51f7ed0a8f432d0aa53` 通过 current/oldstable 本地门禁和 push/PR Hosted 门禁。M6.2 首个 RED slice 要求任何 owner mutation 前捕获全部历史输入；11 项 config/workspace/SQLite/cache/Helper 来源现均有 provenance、不可变 fixture、SHA-256 与当前 owner reader，current Go 1.26.5 `make ci` 和 exact oldstable Go 1.25.12 `make check` 已通过，exact-SHA Hosted 交付门禁待执行。
 
 ## Stage 0: Foundation & Knowledge
 
@@ -316,4 +316,4 @@ Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evi
 
 **Status**: In Progress
 
-**Current checkpoint**: 唯一基线为 commit `312bcccbcbd54246bbe5ff9babf4f14560449176`、tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`，exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) 24/24 jobs 成功。M6.1 provenance-corrected commit `d4d524331b796ab408f292d0412e2d6728afacd0`、tree `2643255fe3cfc07bcd046af42b553c308face3ef` 完成配置/keymap/公共 CLI/兼容与历史来源 inventory，并通过本地 Go 1.26.5 `make ci`、Go 1.25.12 `make check` 及 push [29621518452](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29621518452) / PR [29621520034](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29621520034) Hosted attempt 2。M6.1 Complete，M6.2 从剩余八项真实历史 fixture 捕获开始；12 个 Stage 6 退出条件仍全部开放，production Helper distribution 与 production Level 2 保持 **CLOSED**。
+**Current checkpoint**: 唯一基线为 commit `312bcccbcbd54246bbe5ff9babf4f14560449176`、tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`，exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) 24/24 jobs 成功。M6.1 provenance-corrected implementation `d4d524331b796ab408f292d0412e2d6728afacd0` 经 closeout commit `cb267a3b4adabf6f43fae51f7ed0a8f432d0aa53` 完成配置/keymap/公共 CLI/兼容与历史来源 inventory，并通过本地双 Go 与 exact-SHA push/PR Hosted 门禁。M6.2 首个 RED 要求所有历史迁移输入在 owner mutation 前捕获；11/11 项来源现均以真实历史 writer 生成、固定 SHA-256 并由当前 owner 读取，current Go 1.26.5 `make ci` 与 exact oldstable Go 1.25.12 `make check` 已通过，下一门禁是 exact-SHA Hosted push/PR。12 个 Stage 6 退出条件仍全部开放，production Helper distribution 与 production Level 2 保持 **CLOSED**。

@@ -1,0 +1,1 @@
+{"schema":1,"records":[{"endpoint_id":"ep_aaaaaaaaaaaaaaaaaaaaaaaaaa","protocol_major":1,"os":"linux","arch":"amd64","version":"4.0.0","sha256":"0bd3084aa66fb81346ccf2b7ed3c301b5cbbef431ea26e61c959a4793262d243","metadata_id":"68cf7ed591b19b0f5e8247734ead9b1183fa20a211ffadd8ed3238e1ac6e95cf","final_path":"/home/alice/.local/lib/amsftp/helper","enabled":true}]}

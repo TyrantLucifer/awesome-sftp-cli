@@ -1,0 +1,9 @@
+amsftp-helper-manifest-v1
+version=4.0.0
+protocol_major=1
+os=linux
+arch=amd64
+size=28
+sha256=0bd3084aa66fb81346ccf2b7ed3c301b5cbbef431ea26e61c959a4793262d243
+key_id=fixture-rfc8032-nonrelease
+min_client=4.0.0

@@ -1,8 +1,11 @@
 package compatibility
 
 import (
+	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -15,6 +18,7 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
+	_ "github.com/TyrantLucifer/awesome-mac-sftp/internal/state/sqlite"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
 )
 
@@ -57,14 +61,14 @@ func TestHistoricalSourceSnapshotFreezesEveryPersistentMigrationInput(t *testing
 config document v1 | 312bcccbcbd54246bbe5ff9babf4f14560449176 | captured | internal/compatibility/testdata/historical/config-v1-exact-main.json | 8c7c60ffcb676a47669b45fbb01334dde662984d6fdfcf5a25983d226cf24e04 | internal/config
 workspace document v1 | e07413d46f516f8b0f92c61d006927c1aa319f0f | captured | internal/compatibility/testdata/historical/workspace-v1-stage1.json | 9b8b085174b455805cd38a899702cad1363e6b1cf19a4bc98b5b715ebf9c8220 | internal/workspace
 workspace document v2 | 8bbb0f144583bbff10746ebdb22f82f86b4655e6 | captured | internal/compatibility/testdata/historical/workspace-v2-stage3.json | 1f137d8470e2d005d1672df39fb3c8bf6c7107b766ce9b62d3581c92680cdd40 | internal/workspace
-sqlite state v1 | 486a63f90be51c0d79a454bef52e9e3302df5250 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/sqlite-v1-stage2.sqlite | - | internal/state/migration
-sqlite state v2 | 4eb1961b7b3b5495620fb1f6fcb3b88c52a4fba9 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/sqlite-v2-stage3.sqlite | - | internal/state/migration
-sqlite state v3 | 939ba9c5d978b8ea5bf1ae060ff62a0769d0d6c0 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/sqlite-v3-stage3.sqlite | - | internal/state/migration
-cache entry manifest v1 | 8a4ada06836b9ed71c72b40949d6b87d8e1f849a | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/cache-entry-manifest-v1-stage3.json | - | internal/cachefs
-cache materialization manifest v1 | 8a4ada06836b9ed71c72b40949d6b87d8e1f849a | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/cache-materialization-manifest-v1-stage3.json | - | internal/cachefs
-helper release manifest v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/helper-release-manifest-v1-stage4.txt | - | internal/helper
-helper state index v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/helper-state-index-v1-stage4.json | - | internal/helper
-helper metadata v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | capture-required-before-M6.2-mutation | internal/compatibility/testdata/historical/helper-metadata-v1-stage4.json | - | internal/helper`)
+sqlite state v1 | 486a63f90be51c0d79a454bef52e9e3302df5250 | captured | internal/compatibility/testdata/historical/sqlite-v1-stage2.sqlite | 51f218895205098523be59d6ce58ac87d93d5f61746caae3c9c4e01ed18ce080 | internal/state/migration
+sqlite state v2 | 4eb1961b7b3b5495620fb1f6fcb3b88c52a4fba9 | captured | internal/compatibility/testdata/historical/sqlite-v2-stage3.sqlite | 58187eddac511f9d68715a6bde7d17d50c02efc2b95fc9f15f94227330e17b0c | internal/state/migration
+sqlite state v3 | 939ba9c5d978b8ea5bf1ae060ff62a0769d0d6c0 | captured | internal/compatibility/testdata/historical/sqlite-v3-stage3.sqlite | a4ee36f8ba6eddb797ebe438225399e9a22f93e7d1b373f53403f2d4f0760d09 | internal/state/migration
+cache entry manifest v1 | 8a4ada06836b9ed71c72b40949d6b87d8e1f849a | captured | internal/compatibility/testdata/historical/cache-entry-manifest-v1-stage3.json | 9979ce7f860182d4553c482a91c05e2d30bc81a540cc0188351ee068781ff1e0 | internal/cachefs
+cache materialization manifest v1 | 8a4ada06836b9ed71c72b40949d6b87d8e1f849a | captured | internal/compatibility/testdata/historical/cache-materialization-manifest-v1-stage3.json | b2992fbc5fe52198d1738ac42d3dd165289632e2103e1f760d2652f058a5272c | internal/cachefs
+helper release manifest v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | captured | internal/compatibility/testdata/historical/helper-release-manifest-v1-stage4.txt | fdaa89f1dc9fa60458b8cec81f19dfd3c028fee21f056b1c0f4650fcf4556c6f | internal/helper
+helper state index v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | captured | internal/compatibility/testdata/historical/helper-state-index-v1-stage4.json | ed71e086bdd008dd959afa5b14b02a1713bd2b811ebc2d4be44027e4acdfb9fa | internal/helper
+helper metadata v1 | 145b50ae871aa91f8acc0505d2b6b9bd19bae742 | captured | internal/compatibility/testdata/historical/helper-metadata-v1-stage4.json | 8062c2e12178bd0e0f002f4e0901198cd2363e1317b21d199bf57dd34f1016b1 | internal/helper`)
 	if got := HistoricalSourceSnapshotText(); got != want {
 		t.Fatalf("historical source inventory changed:\n%s\nwant:\n%s", got, want)
 	}
@@ -78,6 +82,14 @@ func TestHistoricalSourceProvenanceCommitsAreCanonicalObjectIDs(t *testing.T) {
 		}
 		if _, err := hex.DecodeString(source.ProvenanceCommit); err != nil || source.ProvenanceCommit != strings.ToLower(source.ProvenanceCommit) {
 			t.Errorf("%s v%s provenance is not a canonical lowercase object ID: %q", source.Boundary, source.Version, source.ProvenanceCommit)
+		}
+	}
+}
+
+func TestEveryHistoricalMigrationInputIsCapturedBeforeM62Mutation(t *testing.T) {
+	for _, source := range HistoricalSources() {
+		if source.Status != HistoricalSourceCaptured {
+			t.Errorf("%s v%s status = %q, want %q before M6.2 owner mutation", source.Boundary, source.Version, source.Status, HistoricalSourceCaptured)
 		}
 	}
 }
@@ -105,8 +117,65 @@ func TestCapturedHistoricalSourcesAreImmutableAndReadableByCurrentOwners(t *test
 			if _, err := workspace.Decode(strings.NewReader(string(raw))); err != nil {
 				t.Fatalf("current workspace reader rejected %s: %v", source.Fixture, err)
 			}
+		case "sqlite state":
+			validateHistoricalSQLiteFixture(t, source)
+		case "cache entry manifest":
+			var manifest cachefs.EntryManifest
+			if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Format != cachefs.ManifestFormat {
+				t.Fatalf("current cache entry type rejected %s: %#v, %v", source.Fixture, manifest, err)
+			}
+		case "cache materialization manifest":
+			var manifest cachefs.MaterializationManifest
+			if err := json.Unmarshal(raw, &manifest); err != nil || manifest.Format != cachefs.ManifestFormat {
+				t.Fatalf("current cache materialization type rejected %s: %#v, %v", source.Fixture, manifest, err)
+			}
+		case "helper release manifest":
+			if _, err := helper.ParseManifestV1(raw); err != nil {
+				t.Fatalf("current Helper manifest reader rejected %s: %v", source.Fixture, err)
+			}
+		case "helper state index", "helper metadata":
+			if !json.Valid(raw) {
+				t.Fatalf("historical Helper state is not JSON: %s", source.Fixture)
+			}
 		default:
 			t.Fatalf("captured fixture %s has no owner reader assertion", source.Fixture)
 		}
+	}
+}
+
+func validateHistoricalSQLiteFixture(t *testing.T, source HistoricalSource) {
+	t.Helper()
+	allMigrations := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
+	var head uint64
+	var migrations []migration.Migration
+	switch source.Version {
+	case "1":
+		head, migrations = 1, allMigrations[:1]
+	case "2":
+		head, migrations = 2, allMigrations[:2]
+	case "3":
+		head, migrations = 3, allMigrations[:3]
+	default:
+		t.Fatalf("invalid historical SQLite head %q", source.Version)
+	}
+	path := filepath.Clean(filepath.Join("..", "..", source.Fixture))
+	database, err := sql.Open("sqlite", "file:"+path+"?mode=ro&immutable=1")
+	if err != nil {
+		t.Fatalf("open historical SQLite %s: %v", source.Fixture, err)
+	}
+	database.SetMaxOpenConns(1)
+	defer database.Close()
+	connection, err := database.Conn(context.Background())
+	if err != nil {
+		t.Fatalf("reserve historical SQLite %s: %v", source.Fixture, err)
+	}
+	defer connection.Close()
+	contracts := map[uint64][]byte{
+		1: migration.Version1SchemaContract(),
+		2: migration.Version2SchemaContract(),
+		3: migration.Version3SchemaContract(),
+	}
+	if err := migration.ValidateHead(context.Background(), connection, migrations, contracts, head); err != nil {
+		t.Fatalf("current SQLite owner rejected %s: %v", source.Fixture, err)
 	}
 }
