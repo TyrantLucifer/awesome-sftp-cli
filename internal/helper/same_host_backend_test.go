@@ -142,6 +142,66 @@ func TestSameHostBackendRejectsWrongEndpointAndChangedProviderIdentity(t *testin
 	}
 }
 
+func TestSameHostRegistrySwitchesFuturePlansButResolvesFrozenOldArtifact(t *testing.T) {
+	endpointID, err := domain.ParseEndpointID("ep_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldArtifact := ArtifactID{ProtocolMajor: 1, Version: "4.0.0", OS: "linux", Arch: "amd64", SHA256: strings.Repeat("a", 64)}
+	newArtifact := ArtifactID{ProtocolMajor: 1, Version: "5.0.0", OS: "linux", Arch: "amd64", SHA256: strings.Repeat("b", 64)}
+	oldBackend := &registrySameHostBackend{artifact: oldArtifact}
+	newBackend := &registrySameHostBackend{artifact: newArtifact}
+	registry := NewSameHostCopyRegistry()
+	if err := registry.Register(endpointID, oldArtifact, oldBackend); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Register(endpointID, newArtifact, newBackend); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Activate(endpointID, oldArtifact); err != nil {
+		t.Fatal(err)
+	}
+	request := transfer.SameHostCopyPrepareRequest{Source: domain.Location{EndpointID: endpointID}, Part: domain.Location{EndpointID: endpointID}, Final: domain.Location{EndpointID: endpointID}}
+	if binding, err := registry.PrepareCopy(context.Background(), request); err != nil || binding.ArtifactID != oldArtifact {
+		t.Fatalf("old active binding = %#v, %v", binding, err)
+	}
+	if err := registry.Activate(endpointID, newArtifact); err != nil {
+		t.Fatal(err)
+	}
+	if binding, err := registry.PrepareCopy(context.Background(), request); err != nil || binding.ArtifactID != newArtifact {
+		t.Fatalf("new active binding = %#v, %v", binding, err)
+	}
+	resolved, err := registry.ResolveSameHostCopy(context.Background(), endpointID, oldArtifact)
+	if err != nil || resolved != oldBackend {
+		t.Fatalf("resolved old backend = %#v, %v", resolved, err)
+	}
+	if err := registry.Register(endpointID, oldArtifact, newBackend); err == nil {
+		t.Fatal("registry replaced an exact artifact mapping")
+	}
+	mismatched := NewSameHostCopyRegistry()
+	if err := mismatched.Register(endpointID, oldArtifact, newBackend); err != nil {
+		t.Fatal(err)
+	}
+	if err := mismatched.Activate(endpointID, oldArtifact); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mismatched.PrepareCopy(context.Background(), request); err == nil {
+		t.Fatal("registry accepted a backend binding for a different exact artifact")
+	}
+}
+
+type registrySameHostBackend struct {
+	artifact ArtifactID
+}
+
+func (backend *registrySameHostBackend) PrepareCopy(_ context.Context, request transfer.SameHostCopyPrepareRequest) (transfer.SameHostCopyBinding, error) {
+	return transfer.SameHostCopyBinding{EndpointID: request.Source.EndpointID, ArtifactID: backend.artifact}, nil
+}
+
+func (backend *registrySameHostBackend) StageCopy(context.Context, transfer.SameHostCopyStageRequest) (transfer.SameHostCopyStageResult, error) {
+	return transfer.SameHostCopyStageResult{}, nil
+}
+
 func sameHostTestManifest() Manifest {
 	return Manifest{
 		Raw: []byte("persisted"), ProtocolMajor: 1, Version: Version{Major: 4},

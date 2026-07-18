@@ -181,6 +181,8 @@
 2. 建立发行构建、校验、渠道包和 provenance。
 3. 在干净 macOS/Linux 环境验证安装、daemon、SSH、升级、恢复和卸载。
 
+当前增量：Helper state v2 已覆盖 v1 原子迁移、并行精确产物、握手后 active 切换、冻结旧 Job 的 exact backend 解析和 durable exact removal claim；focused、current `make ci` 与 exact oldstable `make check` 已绿，仍须通过 exact-SHA Hosted，并继续完成 production distribution、公开生命周期 CLI 与真实 Level 0 升级/卸载组合，不能提前打开 Helper distribution。
+
 门禁：支持平台不依赖开发机残留，失败升级可恢复。
 
 ### M6.3 — 安全、兼容与诊断

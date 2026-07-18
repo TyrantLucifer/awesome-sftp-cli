@@ -32,6 +32,7 @@ sqlite state | current 4 | reads 1-4 | writes 4 | newer head rejected before run
 cache filesystem manifest | current 1 | reads 1 | writes 1 | unknown format rejected before content use | internal/cachefs
 client-daemon IPC | current 1.0 | reads 1.0 | writes 1.0 | no shared major/minor fails handshake | internal/ipc
 helper release manifest | current 1 | reads 1 | writes release-only | unknown header rejected before install | internal/helper
+helper state index | current 2 | reads 1-2 | writes 2 | unknown or newer schema rejected before mutation | internal/helper
 helper wire envelope | current 1 | reads 1 | writes 1 | unknown envelope rejected before dispatch | internal/helper`)
 	if got := SnapshotText(); got != want {
 		t.Fatalf("compatibility inventory changed:\n%s\nwant:\n%s", got, want)
@@ -41,7 +42,7 @@ helper wire envelope | current 1 | reads 1 | writes 1 | unknown envelope rejecte
 func TestInventoryValuesComeFromOwningPackages(t *testing.T) {
 	if app.PublicCLIContractVersion != 1 || config.SchemaVersion != 1 || config.EffectiveOutputVersion != 1 || workspace.SchemaVersion != 2 ||
 		migration.SchemaHead != 4 || cachefs.ManifestFormat != 1 || ipc.ProtocolMajor != 1 || ipc.ProtocolMinor != 0 ||
-		helper.ManifestFormatVersion != 1 || helper.EnvelopeVersion != 1 {
+		helper.ManifestFormatVersion != 1 || helper.HelperStateSchemaVersion != 2 || helper.EnvelopeVersion != 1 {
 		t.Fatal("an owning package version changed without updating the compatibility inventory")
 	}
 }

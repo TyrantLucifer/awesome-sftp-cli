@@ -19,6 +19,12 @@ type SameHostCopyBackend interface {
 	StageCopy(context.Context, SameHostCopyStageRequest) (SameHostCopyStageResult, error)
 }
 
+// SameHostCopyResolver lets a durable Worker resolve the exact Helper artifact
+// frozen in a Job after the endpoint's active Helper has switched versions.
+type SameHostCopyResolver interface {
+	ResolveSameHostCopy(context.Context, domain.EndpointID, domain.HelperArtifactID) (SameHostCopyBackend, error)
+}
+
 type SameHostCopyPrepareRequest struct {
 	Source              domain.Location
 	Part                domain.Location
@@ -148,7 +154,16 @@ func (worker *Worker) executeSameHostCopy(
 		if control != nil {
 			go monitorStagedCopyControl(stageCtx, control, *checkpoint, cancelStage, controlled, stageDone)
 		}
-		result, stageErr := worker.sameHost.StageCopy(stageCtx, SameHostCopyStageRequest{
+		backend := worker.sameHost
+		if registry, ok := worker.sameHost.(SameHostCopyResolver); ok {
+			backend, err = registry.ResolveSameHostCopy(stageCtx, plan.SourceEndpoint.ID, plan.SameHostCopy.ArtifactID)
+			if err != nil {
+				close(stageDone)
+				cancelStage()
+				return Result{}, planError(domain.CodeCapabilityLost, "stage_same_host_copy", plan.Part, "frozen Helper artifact is unavailable", domain.RetryAfterReplan)
+			}
+		}
+		result, stageErr := backend.StageCopy(stageCtx, SameHostCopyStageRequest{
 			Source: plan.Source.Location, Part: plan.Part, Final: plan.Final, JobID: plan.JobID,
 			Binding: *plan.SameHostCopy, MaxBytes: MaxSameHostCopyBytes,
 		})

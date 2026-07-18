@@ -12,9 +12,10 @@ This is the frozen AMSFTP 1.0 public version inventory. The owning package remai
 | cache filesystem manifest | 1 | 1 | 1 | unknown format rejected before content use | `internal/cachefs` |
 | client-daemon IPC | 1.0 | 1.0 | 1.0 | no shared major/minor fails handshake | `internal/ipc` |
 | helper release manifest | 1 | 1 | release-only | unknown header rejected before install | `internal/helper` |
+| helper state index | 2 | 1-2 | 2 | unknown or newer schema rejected before mutation | `internal/helper` |
 | helper wire envelope | 1 | 1 | 1 | unknown envelope rejected before dispatch | `internal/helper` |
 
-The SQLite `1-4` read range includes forward migration to head 4; it is not a promise that arbitrary historical or newer databases are writable. Cache catalog tables were introduced by SQLite schema 2, while cache filesystem manifests remain an independently validated format 1. Helper release-manifest writes are release-only and production distribution remains CLOSED until the protected signing/notarization/byte-binding gates pass.
+The SQLite `1-4` read range includes forward migration to head 4; it is not a promise that arbitrary historical or newer databases are writable. Cache catalog tables were introduced by SQLite schema 2, while cache filesystem manifests remain an independently validated format 1. Helper state v1 is atomically migrated to v2 before mutation; v2 retains parallel exact artifacts, one active selection, the monotonic high-water, and at most one durable removal claim. Helper release-manifest writes are release-only and production distribution remains CLOSED until the protected signing/notarization/byte-binding gates pass.
 
 ## Frozen historical source inventory
 
