@@ -85,16 +85,16 @@ func releaseRedirectPolicy(baseURL string) func(*http.Request, []*http.Request) 
 	base, _ := url.Parse(baseURL)
 	return func(request *http.Request, via []*http.Request) error {
 		if request == nil || request.URL == nil || len(via) == 0 || len(via) >= 3 || request.URL.User != nil {
-			return errors.New("Helper release asset redirect is invalid")
+			return errors.New("helper release asset redirect is invalid")
 		}
 		if base != nil && base.Scheme == "https" && strings.EqualFold(base.Hostname(), "github.com") {
 			if request.URL.Scheme != "https" || !officialGitHubReleaseAssetHost(request.URL.Hostname()) {
-				return errors.New("Helper release asset redirect left the official HTTPS CDN")
+				return errors.New("helper release asset redirect left the official HTTPS CDN")
 			}
 			return nil
 		}
 		if base == nil || request.URL.Scheme != base.Scheme || !strings.EqualFold(request.URL.Host, base.Host) {
-			return errors.New("Helper release asset redirect left the injected test origin")
+			return errors.New("helper release asset redirect left the injected test origin")
 		}
 		return nil
 	}
@@ -266,12 +266,12 @@ func materializeCanonicalHelperBinaryWithLimit(ctx context.Context, compressed *
 			return nil, err
 		}
 		if expectation.binary {
-			written, copyErr := io.Copy(artifact, tarReader)
+			written, copyErr := io.Copy(artifact, tarReader) //nolint:gosec // gzip output is hard-limited before tar parsing and the signed entry size is capped.
 			if copyErr != nil || written != header.Size {
 				_ = gzipReader.Close()
 				return nil, errors.New("extract Helper release: binary stream is incomplete")
 			}
-		} else if _, err := io.Copy(io.Discard, tarReader); err != nil {
+		} else if _, err := io.Copy(io.Discard, tarReader); err != nil { //nolint:gosec // every material header and the entire gzip output have hard limits.
 			_ = gzipReader.Close()
 			return nil, fmt.Errorf("extract Helper release: material: %w", err)
 		}
@@ -330,7 +330,7 @@ func canonicalReleaseEntries(root string, manifest Manifest) []releaseEntryExpec
 }
 
 func validateReleaseHeader(header *tar.Header, expected releaseEntryExpectation) error {
-	if header == nil || header.Format != tar.FormatUSTAR || header.Name != expected.name || header.Typeflag != expected.typeflag || header.Mode != expected.mode || header.Uid != 0 || header.Gid != 0 || header.Uname != "" || header.Gname != "" || header.Linkname != "" || len(header.PAXRecords) != 0 || len(header.Xattrs) != 0 {
+	if header == nil || header.Format != tar.FormatUSTAR || header.Name != expected.name || header.Typeflag != expected.typeflag || header.Mode != expected.mode || header.Uid != 0 || header.Gid != 0 || header.Uname != "" || header.Gname != "" || header.Linkname != "" || len(header.PAXRecords) != 0 {
 		return errors.New("extract Helper release: archive header is not canonical")
 	}
 	if expected.typeflag == tar.TypeDir {

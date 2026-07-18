@@ -82,7 +82,7 @@ func TestProductionReleaseSourceAllowsOnlyExpectedHTTPSCDNRedirects(t *testing.T
 
 func TestReleaseSourceVerifiesMetadataAndCurrentPolicyBeforeArchiveRead(t *testing.T) {
 	fixture := newInstallerFixture(t)
-	archive := canonicalHelperArchive(t, "4.0.0", fixture.manifest.Target(), fixture.artifact)
+	archive := canonicalHelperArchive(t, fixture.manifest.Target(), fixture.artifact)
 	for name, mutate := range map[string]func(*releaseFixtureAssets, *Policy){
 		"untrusted signature": func(assets *releaseFixtureAssets, _ *Policy) {
 			assets.signature[0] ^= 1
@@ -99,7 +99,7 @@ func TestReleaseSourceVerifiesMetadataAndCurrentPolicyBeforeArchiveRead(t *testi
 			assets := releaseFixtureAssets{manifest: append([]byte(nil), fixture.request.RawManifest...), signature: append([]byte(nil), fixture.request.RawSignature...), archive: archive}
 			policy := fixture.request.Policy
 			mutate(&assets, &policy)
-			server, hits := serveReleaseAssets(t, "4.0.0", Target{OS: "linux", Arch: "amd64"}, assets)
+			server, hits := serveReleaseAssets(t, Target{OS: "linux", Arch: "amd64"}, assets)
 			defer server.Close()
 			source := newReleaseSource(server.Client(), server.URL)
 			if _, err := source.Resolve(context.Background(), "4.0.0", Target{OS: "linux", Arch: "amd64"}, fixture.request.Verifier, policy); err == nil {
@@ -117,9 +117,9 @@ func TestReleaseSourceExtractsExactBoundBinaryAndComposesInstaller(t *testing.T)
 	assets := releaseFixtureAssets{
 		manifest:  fixture.request.RawManifest,
 		signature: fixture.request.RawSignature,
-		archive:   canonicalHelperArchive(t, "4.0.0", fixture.manifest.Target(), fixture.artifact),
+		archive:   canonicalHelperArchive(t, fixture.manifest.Target(), fixture.artifact),
 	}
-	server, hits := serveReleaseAssets(t, "4.0.0", fixture.manifest.Target(), assets)
+	server, hits := serveReleaseAssets(t, fixture.manifest.Target(), assets)
 	defer server.Close()
 	source := newReleaseSource(server.Client(), server.URL)
 	resolved, err := source.Resolve(context.Background(), "4.0.0", fixture.manifest.Target(), fixture.request.Verifier, fixture.request.Policy)
@@ -164,8 +164,8 @@ func TestReleaseSourceExtractsExactBoundBinaryAndComposesInstaller(t *testing.T)
 
 func TestReleaseSourceDefersArchiveUntilPreliminaryConsent(t *testing.T) {
 	fixture := newInstallerFixture(t)
-	assets := releaseFixtureAssets{manifest: fixture.request.RawManifest, signature: fixture.request.RawSignature, archive: canonicalHelperArchive(t, "4.0.0", fixture.manifest.Target(), fixture.artifact)}
-	server, hits := serveReleaseAssets(t, "4.0.0", fixture.manifest.Target(), assets)
+	assets := releaseFixtureAssets{manifest: fixture.request.RawManifest, signature: fixture.request.RawSignature, archive: canonicalHelperArchive(t, fixture.manifest.Target(), fixture.artifact)}
+	server, hits := serveReleaseAssets(t, fixture.manifest.Target(), assets)
 	defer server.Close()
 	resolved, err := newReleaseSource(server.Client(), server.URL).Resolve(context.Background(), "4.0.0", fixture.manifest.Target(), fixture.request.Verifier, fixture.request.Policy)
 	if err != nil {
@@ -190,7 +190,7 @@ func TestReleaseSourceDefersArchiveUntilPreliminaryConsent(t *testing.T) {
 func TestReleaseSourceRejectsNoncanonicalArchiveWithoutReturningArtifact(t *testing.T) {
 	fixture := newInstallerFixture(t)
 	for name, entries := range map[string][]releaseArchiveEntry{
-		"wrong binary path": canonicalArchiveEntries("4.0.0", fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
+		"wrong binary path": canonicalArchiveEntries(fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
 			for index := range entries {
 				if strings.HasSuffix(entries[index].name, "/amsftp") {
 					entries[index].name = "other/amsftp"
@@ -198,7 +198,7 @@ func TestReleaseSourceRejectsNoncanonicalArchiveWithoutReturningArtifact(t *test
 			}
 			return entries
 		}),
-		"symlink binary": canonicalArchiveEntries("4.0.0", fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
+		"symlink binary": canonicalArchiveEntries(fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
 			for index := range entries {
 				if strings.HasSuffix(entries[index].name, "/amsftp") {
 					entries[index].typeflag = tar.TypeSymlink
@@ -208,7 +208,7 @@ func TestReleaseSourceRejectsNoncanonicalArchiveWithoutReturningArtifact(t *test
 			}
 			return entries
 		}),
-		"duplicate binary": canonicalArchiveEntries("4.0.0", fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
+		"duplicate binary": canonicalArchiveEntries(fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
 			for _, entry := range entries {
 				if strings.HasSuffix(entry.name, "/amsftp") {
 					return append(entries, entry)
@@ -216,11 +216,11 @@ func TestReleaseSourceRejectsNoncanonicalArchiveWithoutReturningArtifact(t *test
 			}
 			return entries
 		}),
-		"unexpected entry": canonicalArchiveEntries("4.0.0", fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
+		"unexpected entry": canonicalArchiveEntries(fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
 			root := "amsftp_4.0.0_linux_amd64"
 			return append(entries, releaseArchiveEntry{name: root + "/helper", mode: 0o755, typeflag: tar.TypeReg, body: fixture.artifact})
 		}),
-		"tampered binary": canonicalArchiveEntries("4.0.0", fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
+		"tampered binary": canonicalArchiveEntries(fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
 			for index := range entries {
 				if strings.HasSuffix(entries[index].name, "/amsftp") {
 					entries[index].body = append([]byte(nil), entries[index].body...)
@@ -229,7 +229,7 @@ func TestReleaseSourceRejectsNoncanonicalArchiveWithoutReturningArtifact(t *test
 			}
 			return entries
 		}),
-		"GNU binary header": canonicalArchiveEntries("4.0.0", fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
+		"GNU binary header": canonicalArchiveEntries(fixture.manifest.Target(), fixture.artifact, func(entries []releaseArchiveEntry) []releaseArchiveEntry {
 			for index := range entries {
 				if strings.HasSuffix(entries[index].name, "/amsftp") {
 					entries[index].format = tar.FormatGNU
@@ -240,7 +240,7 @@ func TestReleaseSourceRejectsNoncanonicalArchiveWithoutReturningArtifact(t *test
 	} {
 		t.Run(name, func(t *testing.T) {
 			assets := releaseFixtureAssets{manifest: fixture.request.RawManifest, signature: fixture.request.RawSignature, archive: writeHelperArchive(t, entries)}
-			server, _ := serveReleaseAssets(t, "4.0.0", fixture.manifest.Target(), assets)
+			server, _ := serveReleaseAssets(t, fixture.manifest.Target(), assets)
 			defer server.Close()
 			resolved, err := newReleaseSource(server.Client(), server.URL).Resolve(context.Background(), "4.0.0", fixture.manifest.Target(), fixture.request.Verifier, fixture.request.Policy)
 			if err != nil {
@@ -265,7 +265,7 @@ func TestReleaseSourceRejectsNoncanonicalArchiveWithoutReturningArtifact(t *test
 func TestReleaseArchiveExpandedLimitIsEnforcedInsideTarReader(t *testing.T) {
 	fixture := newInstallerFixture(t)
 	archiveName := "amsftp_4.0.0_linux_amd64.tar.gz"
-	archive := canonicalHelperArchive(t, "4.0.0", fixture.manifest.Target(), fixture.artifact)
+	archive := canonicalHelperArchive(t, fixture.manifest.Target(), fixture.artifact)
 	reader, err := materializeCanonicalHelperBinaryWithLimit(context.Background(), bufio.NewReader(bytes.NewReader(archive)), archiveName, fixture.manifest, 1024)
 	if err == nil {
 		_ = reader.Close()
@@ -290,9 +290,10 @@ func (h *releaseHits) archiveCount() int {
 	return h.archive
 }
 
-func serveReleaseAssets(t *testing.T, version string, target Target, assets releaseFixtureAssets) (*httptest.Server, *releaseHits) {
+func serveReleaseAssets(t *testing.T, target Target, assets releaseFixtureAssets) (*httptest.Server, *releaseHits) {
 	t.Helper()
 	hits := &releaseHits{}
+	version := "4.0.0"
 	base := "amsftp_" + version + "_" + target.OS + "_" + target.Arch
 	bodies := map[string][]byte{
 		"/v" + version + "/" + base + ".helper-manifest":     assets.manifest,
@@ -325,13 +326,13 @@ type releaseArchiveEntry struct {
 	body     []byte
 }
 
-func canonicalHelperArchive(t *testing.T, version string, target Target, binary []byte) []byte {
+func canonicalHelperArchive(t *testing.T, target Target, binary []byte) []byte {
 	t.Helper()
-	return writeHelperArchive(t, canonicalArchiveEntries(version, target, binary, nil))
+	return writeHelperArchive(t, canonicalArchiveEntries(target, binary, nil))
 }
 
-func canonicalArchiveEntries(version string, target Target, binary []byte, mutate func([]releaseArchiveEntry) []releaseArchiveEntry) []releaseArchiveEntry {
-	root := "amsftp_" + version + "_" + target.OS + "_" + target.Arch
+func canonicalArchiveEntries(target Target, binary []byte, mutate func([]releaseArchiveEntry) []releaseArchiveEntry) []releaseArchiveEntry {
+	root := "amsftp_4.0.0_" + target.OS + "_" + target.Arch
 	entries := []releaseArchiveEntry{
 		{name: root + "/", mode: 0o755, typeflag: tar.TypeDir},
 		{name: root + "/INSTALL.md", mode: 0o644, typeflag: tar.TypeReg, body: []byte("install\n")},
@@ -355,7 +356,7 @@ func writeHelperArchive(t *testing.T, entries []releaseArchiveEntry) []byte {
 	t.Helper()
 	var output bytes.Buffer
 	gzipWriter := gzip.NewWriter(&output)
-	gzipWriter.Header.ModTime = time.Unix(1, 0)
+	gzipWriter.ModTime = time.Unix(1, 0)
 	tarWriter := tar.NewWriter(gzipWriter)
 	for _, entry := range entries {
 		header := &tar.Header{Name: entry.name, Mode: entry.mode, Typeflag: entry.typeflag, Format: entry.format, Linkname: entry.linkname, Size: int64(len(entry.body)), ModTime: time.Unix(1, 0)}
