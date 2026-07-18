@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -146,11 +147,15 @@ func TestOpenSSHHelperChild(t *testing.T) {
 		return
 	}
 	if mode == "stderr-overflow" {
-		_, _ = os.Stderr.Write(make([]byte, MaxHelperStderrBytes+1))
+		if _, err := io.CopyN(os.Stderr, strings.NewReader(strings.Repeat("x", MaxHelperStderrBytes+1)), MaxHelperStderrBytes+1); err != nil {
+			os.Exit(12)
+		}
 		select {}
 	}
 	if mode == "stderr-exact" {
-		_, _ = os.Stderr.Write([]byte(strings.Repeat("x", MaxHelperStderrBytes)))
+		if _, err := io.CopyN(os.Stderr, strings.NewReader(strings.Repeat("x", MaxHelperStderrBytes)), MaxHelperStderrBytes); err != nil {
+			os.Exit(12)
+		}
 	}
 	if mode == "no-pong" {
 		_, _ = ServeHandshake(os.Stdin, os.Stdout, ServerConfig{
