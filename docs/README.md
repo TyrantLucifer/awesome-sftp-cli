@@ -14,6 +14,18 @@ This repository treats documentation as part of the product contract. A feature 
 8. [Stage verification](verification/stage-06.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 0–5 ledgers remain immutable historical evidence.
 9. [Project state](../PROJECT_STATE.md) is the short, current handoff for the next work session.
 
+## User and operations path
+
+Follow this order for a first installation or a recovery rehearsal:
+
+1. [Install](release/INSTALL.md) the exact platform archive and verify its published identity.
+2. Complete the [First run](user/getting-started.md), including SSH and Kerberos prerequisites, configuration validation, daemon health, workspaces, and the default keymap.
+3. Use the [Durable Transfers guide](user/durable-transfers.md) for transfer safety, conflict decisions, Helper and direct transfer boundaries, and durable Job recovery.
+4. Keep the [Operations and recovery](operations/runbook.md) runbook with the [troubleshooting](user/troubleshooting.md) code map for read-only doctor triage and bounded recovery.
+5. Use [Upgrade and rollback](release/UPGRADE.md) for a version change or release withdrawal, and [Uninstall](release/UNINSTALL.md) for exact binary/service removal without implicit data deletion.
+
+These documents describe the current public surface. Production Helper and direct-transfer Level 2 remain closed until their separately listed release-trust gates pass.
+
 ## Engineering gates
 
 - [Local testing and quality gates](development/testing.md) documents the repeatable Make entrypoints, exact toolchains, and platform matrix.

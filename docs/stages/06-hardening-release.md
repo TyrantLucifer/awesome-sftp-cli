@@ -206,6 +206,8 @@
 3. 生成最终发行物、校验和、变更说明与验证记录。
 4. 发布后执行安装/更新冒烟并准备可逆撤回方案。
 
+当前增量：REL-009 的四条文档契约已从缺失入口、首次使用、运维恢复和升级回滚路径的预期 RED 转绿；新增文档覆盖安装、SSH/Kerberos 前提、默认键位、工作区、传输安全、Helper、直传降级、恢复、doctor 与故障排查，并保持 production Helper/Level 2 CLOSED。exact current Go 1.26.5 `make ci`、exact oldstable Go 1.25.12 `make check`、focused docscheck 与 help/man/completion parity 通过。尚未冻结 RC，Hosted evidence 与独立新用户演练仍开放，因此 REL-009 仅为 `In Progress`。
+
 门禁：所有发布原则、退出标准和功能矩阵证据一致，才标记 1.0。
 
 ## 6. 可验证退出标准

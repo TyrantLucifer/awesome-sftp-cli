@@ -107,6 +107,8 @@ For each RED/GREEN cycle, append to [Stage 6 verification](../verification/stage
 
 **Features owned**: REL-008, REL-009, REL-010 and final verification of every Stage 6/shared row; closes REL-004/005/007/012/SEC-014.
 
+**Current checkpoint**: REL-009 has begun with four executable documentation contracts and a linked install → first run → operations/recovery → upgrade/rollback → uninstall path. Exact command spellings, SSH/Kerberos prerequisites, default keymap/workspaces, transfer safety, Helper/direct fallback, doctor/support-bundle triage, durable Job recovery, and release withdrawal are documented. Exact current Go 1.26.5 `make ci`, exact oldstable Go 1.25.12 `make check`, focused docscheck, and public help/man/completion parity pass. The feature remains `In Progress` until Hosted gates and an independent new-user exercise pass on the exact RC. No RC is frozen and no release/channel action is authorized.
+
 ### RC freeze and final gates
 
 1. Freeze one exact RC SHA/tree. Only release-blocking defects may change it; every change creates a new RC and reruns all affected plus global gates.

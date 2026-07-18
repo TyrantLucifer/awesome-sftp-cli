@@ -25,7 +25,7 @@ type Entry struct {
 
 func Entries() []Entry {
 	return []Entry{
-		{DoctorCheck, string(doctor.CheckConfig), "Configuration could not be validated or is not usable.", "Run `amsftp config effective --json`; correct the reported configuration source without replacing unrelated settings."},
+		{DoctorCheck, string(doctor.CheckConfig), "Configuration could not be validated or is not usable.", "Run `amsftp config print-effective`; correct the reported configuration source without replacing unrelated settings."},
 		{DoctorCheck, string(doctor.CheckRuntimeDirectory), "The per-user runtime directory is absent, unsafe, or inaccessible.", "Restore ownership and private permissions for the reported runtime directory, then rerun `amsftp doctor`."},
 		{DoctorCheck, string(doctor.CheckSocket), "The daemon socket is absent, stale, unsafe, or unreachable.", "Check `amsftp daemon status`; start the daemon normally and do not delete an active socket by hand."},
 		{DoctorCheck, string(doctor.CheckDaemon), "The daemon health probe did not return a valid healthy response.", "Run `amsftp daemon status`; restart only your own AMSFTP daemon if the status remains unhealthy."},
@@ -57,7 +57,7 @@ func Entries() []Entry {
 func Markdown() string {
 	var output strings.Builder
 	output.WriteString("# Troubleshooting Code Map\n\n")
-	output.WriteString("AMSFTP exposes stable doctor and domain codes without persisting raw error causes. Match the exact `kind/code` below, perform only the bounded action, and rerun the original read-only check before mutation. For additional evidence, run `amsftp doctor --json` and preview a support bundle before creating it.\n\n")
+	output.WriteString("AMSFTP exposes stable doctor and domain codes without persisting raw error causes. Match the exact `kind/code` below, perform only the bounded action, and rerun the original read-only check before mutation. For additional evidence, run `amsftp doctor --format json` and preview a support bundle before creating it. The ordered [operations runbook](../operations/runbook.md) covers escalation, Job recovery, safe fallback, and rollback.\n\n")
 	output.WriteString("| Kind | Code | Meaning | Bounded action |\n")
 	output.WriteString("|---|---|---|---|\n")
 	for _, entry := range Entries() {

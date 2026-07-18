@@ -3,11 +3,15 @@
 - **Updated**: 2026-07-18
 - **Lifecycle**: Stage 6 In Progress
 - **Active stage**: Stage 6 — Hardening & 1.0 Release
-- **Current milestone**: M6.3 — security, compatibility, and diagnostics
+- **Current milestone**: M6.4 — independent release documentation and RC preparation; M6.3 external/protected gates remain open
 - **Product / command**: `AMSFTP` / `amsftp`
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
+
+REL-009 is now `In Progress`: four canonical documentation contracts first failed on the missing user/operations index, first-run authentication path, bounded operations/recovery runbook, and exact upgrade/rollback procedure. The new [first-run guide](docs/user/getting-started.md), [operations runbook](docs/operations/runbook.md), and [upgrade/rollback procedure](docs/release/UPGRADE.md) cover all ten required domains and keep Production Helper/Level 2 closed. Exact current Go 1.26.5 `make ci`, exact oldstable Go 1.25.12 `make check`, focused docscheck, and public help/man/completion parity pass after correcting the generated troubleshooting source and fixed-path lint annotation. Hosted push/PR are the next evidence step. REL-009 cannot be `Verified` until an independent new-user path passes on the exact release candidate.
+
+REL-007 evidence-sync SHA `1fff139a32a30e1f47edf34650051446903d4d10` has completed Hosted classification without rerun. Push `29655548628` and PR `29655549777` each finished 20 success / 2 failure / 2 dependency-skipped. Push Ubuntu 24.04 hit the existing tail truncate/rotate polling fixture while the same-SHA PR companion passed; PR macOS Intel hit the existing Helper heartbeat client-failure visibility while the same-SHA push companion passed. Both quality jobs completed packaging, checksums, completion, and version checks before the existing Stage 5 initial-daemon readiness poll expired; both quality jobs on immediate parent `cc6559e` passed with the same product code. Classification: documentation-only evidence sync with known tail/Helper/readiness timing residuals, not a REL-007 regression. No rerun, assertion, timeout, workflow, support boundary, or production policy changed.
 
 REL-007 is now `In Progress`: SHA `cc6559e41572aa21a7fc249fe0086fe4df50fe27`, tree `6d1ead4f23de7a1ac344d959f0b8cb75c004ab7f`, gives the finding ledger stable rows for credentials/authentication, host key, path races, delete/overwrite, Helper, direct transfer, log redaction, and recovery, each bound to existing executable negative evidence. Three canonical RED slices turned green; exact current Go 1.26.5 `make ci` and exact oldstable Go 1.25.12 `make check` pass. Push `29655143700` and PR `29655145234` each finished 22 success / 1 failure / 1 dependency-skipped: push macOS Intel hit the existing Helper stderr-overflow reader race while the PR Intel companion passed; PR macOS ARM reached Homebrew 0.9 install then external `formulae.brew.sh` API download failed during update while push ARM completed the full lifecycle. Both quality and auth jobs passed. Current reviewed implementation scope has no unresolved high-severity finding. Hardware/platform/protected-artifact gaps, production Helper/Level 2, and final independent security review remain explicitly open, so REL-007 is not `Verified`.
 
