@@ -181,7 +181,7 @@
 2. 建立发行构建、校验、渠道包和 provenance。
 3. 在干净 macOS/Linux 环境验证安装、daemon、SSH、升级、恢复和卸载。
 
-当前增量：Helper state v2、公共四目标 deterministic package/provenance 与 target-aware dependency closure 已有 exact-SHA Hosted。installed lifecycle fix `b7a740010c7e7188f9514e6676a0324aa34433a2` 将 persistent HOME 从不受信 `RUNNER_TEMP` 移至 owner-private root，并通过完整 exact clean v3→v4/rollback/uninstall，replacement Hosted 待完成。当前公共 Helper 批次只开放 `install|upgrade` 语法：必须显式接受 shared-session/stable-home，任意 manifest/artifact/path/serve 输入在 runtime 前拒绝；protected distribution trust 未完成时 human/JSON 均稳定 exit 3，RPC/SSH/probe/write 为 0，help/man/bash/zsh/fish 同源。两套完整本地工具链门禁已绿，但真实 artifact composition、公开 disable/remove、项目 LICENSE、完整第三方通知、native/channel、signing/notary 与 final release 仍未完成，不能提前打开 Helper distribution。
+当前增量：Helper state v2、公共四目标 deterministic package/provenance 与 target-aware dependency closure 已有 exact-SHA Hosted。installed lifecycle fix `b7a740010c7e7188f9514e6676a0324aa34433a2` 将 persistent HOME 从不受信 `RUNNER_TEMP` 移至 owner-private root，并通过完整 exact clean v3→v4/rollback/uninstall，replacement Hosted 待完成。当前公共 Helper 批次只开放 install/upgrade 管理语法：必须显式接受 shared-session/stable-home，任意 manifest/artifact/path 输入在 runtime 前拒绝；restricted serve 保持独立私有 stdio 角色且不进入补全。protected distribution trust 未完成时 human/JSON 均稳定 exit 3，RPC/SSH/probe/write 为 0。两套完整本地工具链门禁已绿，但真实 artifact composition、公开 disable/remove、项目 LICENSE、完整第三方通知、native/channel、signing/notary 与 final release 仍未完成，不能提前打开 Helper distribution。
 
 门禁：支持平台不依赖开发机残留，失败升级可恢复。
 
