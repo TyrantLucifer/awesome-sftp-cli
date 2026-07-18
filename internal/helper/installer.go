@@ -59,11 +59,14 @@ type InstallRemote interface {
 	RemoveExact(context.Context, string) error
 }
 
-type ArtifactOpener func() (io.ReadCloser, error)
+type ArtifactOpener func(context.Context) (io.ReadCloser, error)
 
 func ReopenBytes(value []byte) ArtifactOpener {
 	frozen := append([]byte(nil), value...)
-	return func() (io.ReadCloser, error) {
+	return func(ctx context.Context) (io.ReadCloser, error) {
+		if ctx == nil {
+			return nil, errors.New("open helper artifact: context is required")
+		}
 		return io.NopCloser(strings.NewReader(string(frozen))), nil
 	}
 }
@@ -498,7 +501,7 @@ func writeDigestField(writer io.Writer, value string) {
 }
 
 func validateArtifactFromOpener(ctx context.Context, opener ArtifactOpener, manifest Manifest) error {
-	reader, err := opener()
+	reader, err := opener(ctx)
 	if err != nil {
 		return fmt.Errorf("install helper: open local artifact: %w", err)
 	}
@@ -538,7 +541,7 @@ func exactOwned(attrs RemoteAttrs, uid uint32, kind RemoteKind, mode uint32, siz
 }
 
 func streamArtifactToHandle(ctx context.Context, opener ArtifactOpener, handle RemoteWriteHandle, manifest Manifest) error {
-	reader, err := opener()
+	reader, err := opener(ctx)
 	if err != nil {
 		return fmt.Errorf("install helper: reopen local artifact: %w", err)
 	}
