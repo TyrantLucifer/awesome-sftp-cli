@@ -42,6 +42,7 @@ var lowerHex40 = regexp.MustCompile(`^[0-9a-f]{40}$`)
 type physicalReleaseEnvironment struct {
 	RepoRoot        string
 	LabRoot         string
+	ControlRoot     string
 	EvidencePath    string
 	CandidateCommit string
 	CandidateTree   string
@@ -76,20 +77,30 @@ func validatePhysicalReleaseEnvironment(environment physicalReleaseEnvironment) 
 	for label, path := range map[string]string{
 		"repository root": environment.RepoRoot,
 		"lab root":        environment.LabRoot,
+		"control root":    environment.ControlRoot,
 		"evidence path":   environment.EvidencePath,
 	} {
 		if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 			return fmt.Errorf("%s must be absolute and canonical", label)
 		}
 	}
-	if environment.LabRoot == string(filepath.Separator) {
-		return errors.New("lab root must not be the filesystem root")
+	if environment.LabRoot == string(filepath.Separator) || environment.ControlRoot == string(filepath.Separator) {
+		return errors.New("lab and control roots must not be the filesystem root")
 	}
 	if pathWithin(environment.RepoRoot, environment.LabRoot) {
 		return errors.New("lab root must be outside repository")
 	}
+	if pathWithin(environment.RepoRoot, environment.ControlRoot) {
+		return errors.New("control root must be outside repository")
+	}
+	if pathWithin(environment.LabRoot, environment.ControlRoot) || pathWithin(environment.ControlRoot, environment.LabRoot) {
+		return errors.New("control root must be separate from lab root")
+	}
 	if pathWithin(environment.LabRoot, environment.EvidencePath) {
 		return errors.New("evidence path must be outside lab root")
+	}
+	if pathWithin(environment.ControlRoot, environment.EvidencePath) {
+		return errors.New("evidence path must be outside control root")
 	}
 	if pathWithin(environment.RepoRoot, environment.EvidencePath) {
 		return errors.New("evidence path must be outside repository")
@@ -184,9 +195,16 @@ func runPhysicalReleaseRoundTrip(t *testing.T) {
 	if err := os.Mkdir(environment.LabRoot, 0o700); err != nil {
 		t.Fatalf("create exclusive release lab root: %v", err)
 	}
+	if err := os.Mkdir(environment.ControlRoot, 0o700); err != nil {
+		_ = os.Remove(environment.LabRoot)
+		t.Fatalf("create exclusive release control root: %v", err)
+	}
 	t.Cleanup(func() {
 		if err := os.RemoveAll(environment.LabRoot); err != nil {
 			t.Errorf("remove release lab root: %v", err)
+		}
+		if err := os.RemoveAll(environment.ControlRoot); err != nil {
+			t.Errorf("remove release control root: %v", err)
 		}
 	})
 	if err := requirePhysicalCapacity(environment.LabRoot, 220<<30); err != nil {
@@ -197,8 +215,8 @@ func runPhysicalReleaseRoundTrip(t *testing.T) {
 	sourceRoot := filepath.Join(environment.LabRoot, "source")
 	remoteRoot := filepath.Join(environment.LabRoot, "remote")
 	downloadRoot := filepath.Join(environment.LabRoot, "download")
-	controlRoot := filepath.Join(environment.LabRoot, "control")
-	for _, path := range []string{sourceRoot, remoteRoot, downloadRoot, controlRoot} {
+	controlRoot := environment.ControlRoot
+	for _, path := range []string{sourceRoot, remoteRoot, downloadRoot} {
 		if err := os.Mkdir(path, 0o700); err != nil {
 			t.Fatal(err)
 		}
@@ -365,6 +383,7 @@ func physicalReleaseEnvironmentFromProcess(t *testing.T) physicalReleaseEnvironm
 	return physicalReleaseEnvironment{
 		RepoRoot:        repository,
 		LabRoot:         os.Getenv("AMSFTP_RELEASE_LAB_ROOT"),
+		ControlRoot:     os.Getenv("AMSFTP_RELEASE_CONTROL_ROOT"),
 		EvidencePath:    os.Getenv("AMSFTP_RELEASE_EVIDENCE_PATH"),
 		CandidateCommit: os.Getenv("AMSFTP_RELEASE_CANDIDATE_COMMIT"),
 		CandidateTree:   os.Getenv("AMSFTP_RELEASE_CANDIDATE_TREE"),

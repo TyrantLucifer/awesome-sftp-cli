@@ -18,6 +18,7 @@ func TestPhysicalReleaseEnvironmentRequiresExplicitSafeExternalPaths(t *testing.
 	valid := physicalReleaseEnvironment{
 		RepoRoot:        repoRoot,
 		LabRoot:         filepath.Join(externalRoot, "lab"),
+		ControlRoot:     filepath.Join(externalRoot, "control"),
 		EvidencePath:    filepath.Join(externalRoot, "evidence", "physical-100gib.json"),
 		CandidateCommit: strings.Repeat("a", 40),
 		CandidateTree:   strings.Repeat("b", 40),
@@ -35,7 +36,12 @@ func TestPhysicalReleaseEnvironmentRequiresExplicitSafeExternalPaths(t *testing.
 	}{
 		{name: "relative lab", mutate: func(env *physicalReleaseEnvironment) { env.LabRoot = "relative" }, want: "lab root must be absolute"},
 		{name: "lab inside repository", mutate: func(env *physicalReleaseEnvironment) { env.LabRoot = filepath.Join(repoRoot, "lab") }, want: "outside repository"},
+		{name: "control inside lab", mutate: func(env *physicalReleaseEnvironment) { env.ControlRoot = filepath.Join(env.LabRoot, "control") }, want: "control root must be separate"},
+		{name: "lab inside control", mutate: func(env *physicalReleaseEnvironment) { env.LabRoot = filepath.Join(env.ControlRoot, "lab") }, want: "control root must be separate"},
 		{name: "evidence inside lab", mutate: func(env *physicalReleaseEnvironment) { env.EvidencePath = filepath.Join(env.LabRoot, "evidence.json") }, want: "outside lab root"},
+		{name: "evidence inside control", mutate: func(env *physicalReleaseEnvironment) {
+			env.EvidencePath = filepath.Join(env.ControlRoot, "evidence.json")
+		}, want: "outside control root"},
 		{name: "wrong size", mutate: func(env *physicalReleaseEnvironment) { env.Bytes-- }, want: "exactly 100 GiB"},
 		{name: "bad checkpoint", mutate: func(env *physicalReleaseEnvironment) { env.CancelAfter = env.Bytes }, want: "cancel checkpoint"},
 		{name: "bad commit", mutate: func(env *physicalReleaseEnvironment) { env.CandidateCommit = "HEAD" }, want: "40 lowercase hexadecimal"},
