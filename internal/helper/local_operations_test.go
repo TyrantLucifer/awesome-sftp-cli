@@ -253,6 +253,12 @@ func TestLocalTailDetectsTruncateAndRotateAsHints(t *testing.T) {
 	file := filepath.Join(root, "tail.log")
 	mustWriteFile(t, file, []byte("old"))
 	operations := NewLocalOperations()
+	polls := make(chan time.Time, 2)
+	polls <- time.Time{}
+	polls <- time.Time{}
+	operations.tailPoll = polls
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	step := 0
 	operations.afterTailPoll = func() {
 		step++
@@ -262,11 +268,12 @@ func TestLocalTailDetectsTruncateAndRotateAsHints(t *testing.T) {
 		case 2:
 			_ = os.Rename(file, file+".1")
 			_ = os.WriteFile(file, []byte("rotated"), 0600)
+			cancel()
 		}
 	}
 	var notices []TailNotice
 	var chunks []TailChunk
-	completion, err := operations.Tail(context.Background(), marshalBody(t, TailRequest{Path: file, Offset: 3, MaxBytes: 64, DurationMS: 80, PollIntervalMS: 10}), func(kind FrameType, payload any) error {
+	completion, err := operations.Tail(ctx, marshalBody(t, TailRequest{Path: file, Offset: 3, MaxBytes: 64, DurationMS: 80, PollIntervalMS: 10}), func(kind FrameType, payload any) error {
 		switch kind {
 		case FrameProgress:
 			notices = append(notices, payload.(TailNotice))
@@ -275,7 +282,7 @@ func TestLocalTailDetectsTruncateAndRotateAsHints(t *testing.T) {
 		}
 		return nil
 	})
-	if err != nil || completion.Status != "complete" || completion.Reason != "duration_reached" {
+	if err != nil || completion.Status != "canceled" || completion.Reason != "canceled" {
 		t.Fatalf("completion=%#v err=%v", completion, err)
 	}
 	foundRotate := false

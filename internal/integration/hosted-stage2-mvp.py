@@ -35,6 +35,8 @@ def screen_observed(observer, output, wanted):
 
 
 def read_until(fd, observer, output, wanted, timeout=15):
+    if screen_observed(observer, output, wanted):
+        return bytes(output)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], 0.1)
@@ -50,6 +52,11 @@ def read_until(fd, observer, output, wanted, timeout=15):
         if screen_observed(observer, output, wanted):
             return bytes(output)
     raise RuntimeError("PTY output did not contain %r; tail=%r" % (wanted, bytes(output[-3000:])))
+
+
+def read_ready_selection(fd, observer, output, filename):
+    read_until(fd, observer, output, filename.encode("utf-8"))
+    read_until(fd, observer, output, b"cache:lru | normal")
 
 
 def wait_child(pid, fd, timeout=10):
@@ -202,7 +209,7 @@ def run_delete(binary, observer, source, destination, environment, filename):
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
     try:
-        read_until(fd, observer, output, filename.encode("utf-8"))
+        read_ready_selection(fd, observer, output, filename)
         os.write(fd, b"D")
         read_until(fd, observer, output, b"Delete frozen selection")
         os.write(fd, b"\r")

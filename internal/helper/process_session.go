@@ -36,12 +36,17 @@ type OpenSSHSessionConfig struct {
 type ProcessSession struct {
 	client     *Client
 	cancel     context.CancelFunc
-	wait       <-chan error
+	process    *processCompletion
 	stderrDone <-chan struct{}
 	stderr     *helperStderrBuffer
 
 	closeOnce sync.Once
 	closeErr  error
+}
+
+type processCompletion struct {
+	done chan struct{}
+	err  error
 }
 
 // StartOpenSSHSession launches one fresh, non-listening Helper over OpenSSH
@@ -110,9 +115,10 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 		close(stderrDone)
 	}()
 	stopTermination := context.AfterFunc(processContext, func() { terminateHelperProcess(command) })
-	wait := make(chan error, 1)
+	process := &processCompletion{done: make(chan struct{})}
 	go func() {
-		wait <- command.Wait()
+		process.err = command.Wait()
+		close(process.done)
 		stopTermination()
 	}()
 	handshakeContext, stopHandshake := context.WithTimeout(processContext, config.HandshakeTimeout)
@@ -124,7 +130,7 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 		cancel()
 		_ = stdin.Close()
 		_ = stdout.Close()
-		<-wait
+		<-process.done
 		<-stderrDone
 		if collector.Overflowed() {
 			return nil, fmt.Errorf("start helper OpenSSH session: stderr exceeded %d bytes: %s", MaxHelperStderrBytes, collector.String())
@@ -134,11 +140,11 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 	if err := client.EnableHeartbeat(config.HeartbeatInterval, config.HeartbeatTimeout); err != nil {
 		_ = client.Close()
 		cancel()
-		<-wait
+		<-process.done
 		<-stderrDone
 		return nil, err
 	}
-	return &ProcessSession{client: client, cancel: cancel, wait: wait, stderrDone: stderrDone, stderr: collector}, nil
+	return &ProcessSession{client: client, cancel: cancel, process: process, stderrDone: stderrDone, stderr: collector}, nil
 }
 
 func (s *ProcessSession) Client() *Client {
@@ -155,6 +161,19 @@ func (s *ProcessSession) Diagnostic() string {
 	return s.stderr.String()
 }
 
+// Wait blocks until the client reader, OpenSSH process, and stderr reader have
+// all reached terminal state. The returned error is the process wait result;
+// protocol and heartbeat failures remain available through Client().Failure().
+func (s *ProcessSession) Wait() error {
+	if s == nil {
+		return nil
+	}
+	<-s.client.done
+	<-s.process.done
+	<-s.stderrDone
+	return s.process.err
+}
+
 func (s *ProcessSession) Close() error {
 	if s == nil {
 		return nil
@@ -162,8 +181,7 @@ func (s *ProcessSession) Close() error {
 	s.closeOnce.Do(func() {
 		s.cancel()
 		s.closeErr = s.client.Close()
-		<-s.wait
-		<-s.stderrDone
+		_ = s.Wait()
 	})
 	return s.closeErr
 }

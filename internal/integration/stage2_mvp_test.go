@@ -6,8 +6,34 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestStage2PTYDeleteWaitsForReadySelection(t *testing.T) {
+	script, err := os.ReadFile("hosted-stage2-mvp.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	start := strings.Index(text, "def run_delete(")
+	if start < 0 {
+		t.Fatal("run_delete function is missing")
+	}
+	end := strings.Index(text[start:], "\ndef ")
+	if end < 0 {
+		t.Fatal("run_delete function is malformed")
+	}
+	deleteBody := text[start : start+end]
+	ready := strings.Index(deleteBody, "read_ready_selection(fd, observer, output, filename)")
+	action := strings.Index(deleteBody, "os.write(fd, b\"D\")")
+	if ready < 0 || action < 0 || ready > action {
+		t.Fatal("run_delete must observe a ready selected target before sending D")
+	}
+	if !strings.Contains(text, "read_until(fd, observer, output, b\"cache:lru | normal\")") {
+		t.Fatal("ready-selection barrier must observe the normal TUI state")
+	}
+}
 
 func TestStage2LocalPTYCopyAndDurableJobsReattachMVP(t *testing.T) {
 	binary, observer := buildStage2MVPFixtures(t)
