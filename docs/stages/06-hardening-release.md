@@ -195,7 +195,7 @@
 2. 跑完 OS/终端/OpenSSH/SFTP/Helper 兼容矩阵。
 3. 完成 doctor、支持包、脱敏和故障文档。
 
-当前增量：foundation、doctor、support-bundle、semantic hardening、compatibility/troubleshooting、threat model 与 initial finding ledger 已交付。evidence SHA `6653a617045b1ed0c03c5b297dbcbd38db27116d` 的 PR 24/24；push 21 success / 2 known scheduler/Helper timing failures / 1 dependency-skipped，两个同平台 PR companion 与全部新包通过，未 rerun。auth-artifact harness SHA `403a8fb123942225fa2e0e7f29a8a74b68a0d7bd` 让真实 OpenSSH/Askpass 与 MIT Kerberos matrix preview/create/expand 0600 support bundle，并扫描 literal/private path、credential SHA-256/base64 与 exact private-key/ccache/keytab copy。Bash syntax、focused normal/race/vet/docscheck、exact current Go 1.26.5 `make ci` 与 oldstable Go 1.25.12 `make check` 全绿；首轮 current lint 的两处新增 variable-path gosec finding 以固定 repo-owned 路径的 line-scoped 审计说明修复后从头通过。真实 auth-integration 执行、production-Helper artifact scan 与 final independent review 仍开放。
+当前增量：foundation、doctor、support-bundle、semantic hardening、compatibility/troubleshooting、threat model 与 initial finding ledger 已交付。初始 auth-artifact Hosted SHA `00ca5d8ecf5f4ab47d7150f3dbaf17163678fb80` 证明 login-home output 在完整 OpenSSH/Askpass matrix 后被 public persistent-private publication 门禁拒绝。修正 SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` 仅将 scan artifact root 移到既有 0700 `XDG_STATE_HOME`；focused 与 dual-Go full local gates 全绿。PR `29651141681` 24/24；push `29651140328` 的两个既有 macOS Helper timing failure 均有 exact same-SHA PR companion。push/PR auth job `88098085447`/`88098124518` 均通过，每份日志恰有两条 scan-pass marker，分别位于完整 OpenSSH/Askpass 和 externally-renewed Kerberos/GSSAPI matrix 之后。production-Helper artifact scan 与 final independent review 仍开放。
 
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 
