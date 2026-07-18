@@ -12,7 +12,7 @@ These areas remain unexecuted or incomplete; they are release scope rather than 
 
 - The production Helper final-byte trust, signing/notarization credentials, offline-key procedure, real artifact secret scan, distribution, rollback, and recovery remain open. The production Helper remains **CLOSED**.
 - Production Level 2 isolated-network identity/authentication, containment, integrity, cancellation, negative routing, and relay fallback. Level 2 remains **CLOSED**.
-- Actual Askpass/Kerberos authentication artifacts and production package/Helper artifacts have not yet been scanned with the release corpus.
+- Actual OpenSSH/Askpass and externally renewed Kerberos/GSSAPI authentication artifacts have passed the public support-bundle release-corpus scan in both push and PR workflows. Production package/Helper artifacts remain unscanned because final protected bytes do not yet exist.
 - Real hardware security-key authentication, macOS Kerberos, vendor SFTP servers, Linux arm64 native smoke, and a physical 100 GiB execution remain outside current native evidence.
 - Independent correctness/security reviews, final finding disposition, project LICENSE owner/legal choice, and protected public-channel evidence remain open.
 

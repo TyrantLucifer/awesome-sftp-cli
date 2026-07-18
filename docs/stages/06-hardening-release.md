@@ -195,7 +195,7 @@
 2. 跑完 OS/终端/OpenSSH/SFTP/Helper 兼容矩阵。
 3. 完成 doctor、支持包、脱敏和故障文档。
 
-当前增量：foundation、doctor、support-bundle、semantic hardening、compatibility/troubleshooting、threat model 与 initial finding ledger 已交付。初始 auth-artifact Hosted SHA `00ca5d8ecf5f4ab47d7150f3dbaf17163678fb80` 证明 login-home output 在完整 OpenSSH/Askpass matrix 后被 public persistent-private publication 门禁拒绝。修正 SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` 仅将 scan artifact root 移到既有 0700 `XDG_STATE_HOME`；focused 与 dual-Go full local gates 全绿。PR `29651141681` 24/24；push `29651140328` 的两个既有 macOS Helper timing failure 均有 exact same-SHA PR companion。push/PR auth job `88098085447`/`88098124518` 均通过，每份日志恰有两条 scan-pass marker，分别位于完整 OpenSSH/Askpass 和 externally-renewed Kerberos/GSSAPI matrix 之后。production-Helper artifact scan 与 final independent review 仍开放。
+当前增量：foundation、doctor、support-bundle、semantic hardening、compatibility/troubleshooting、threat model 与 initial finding ledger 已交付。real-auth correction SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` 已有 push/PR 完整 OpenSSH/Askpass 与 externally-renewed Kerberos/GSSAPI support-bundle scan 证据。OpenSSH floor SHA `e7733ec23ec1903dbdc41a926db20fe6defcccc7` 通过 dual-Go full local gates；push/PR Ubuntu 22.04 native job `88099968231`/`88099973802` 均精确记录 `OpenSSH_8.9p1 Ubuntu-3ubuntu0.16`，随后 public doctor、完整认证和真实 support-bundle scan 全绿，且生产 runtime 无版本字符串硬拒绝。两轮残余三个 macOS failure 均为既有 PTY selection/Helper heartbeat timing，并有 exact same-SHA opposite-workflow 成功 companion；未重跑。PLAT-009 进入 `In Progress`，current OpenSSH 精确版本留档、production-Helper artifact scan 与 final independent review 仍开放。
 
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 

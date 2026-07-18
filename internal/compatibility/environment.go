@@ -28,7 +28,7 @@ func EnvironmentMatrix() []EnvironmentCase {
 	return []EnvironmentCase{
 		{Area: "platform", Case: "macOS 15 arm64", Status: NativeTested, Behavior: "supported", Evidence: "Hosted native install, daemon, Job, uninstall, APFS and current/oldstable gates"},
 		{Area: "platform", Case: "macOS 15 amd64", Status: NativeTested, Behavior: "supported", Evidence: "Hosted native install, daemon, Job, uninstall, APFS and current/oldstable gates"},
-		{Area: "platform", Case: "Ubuntu 22.04 amd64", Status: NativeTested, Behavior: "supported floor", Evidence: "Hosted native install, OpenSSH 8.9p1, ext4/XFS and current/oldstable gates"},
+		{Area: "platform", Case: "Ubuntu 22.04 amd64", Status: NativeTested, Behavior: "supported floor", Evidence: "Hosted /usr/bin/ssh reports OpenSSH_8.9p1; native doctor, full authentication/support scan, ext4/XFS and current/oldstable gates"},
 		{Area: "platform", Case: "Ubuntu 24.04 amd64", Status: NativeTested, Behavior: "supported", Evidence: "Hosted native install, current OpenSSH, ext4/XFS and current/oldstable gates"},
 		{Area: "platform", Case: "Linux arm64", Status: BuildOnly, Behavior: "release target pending native smoke", Evidence: "deterministic cross-build and reproducibility only"},
 		{Area: "platform", Case: "Windows", Status: Unsupported, Behavior: "fail before runtime", Evidence: "outside the 1.0 product scope"},
