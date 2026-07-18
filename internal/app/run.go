@@ -11,14 +11,15 @@ import (
 type Handler func(context.Context, []string, io.Writer, io.Writer) error
 
 type Handlers struct {
-	Client     Handler
-	Daemon     Handler
-	Askpass    Handler
-	Helper     Handler
-	Job        Handler
-	Config     Handler
-	Doctor     Handler
-	Completion Handler
+	Client        Handler
+	Daemon        Handler
+	Askpass       Handler
+	Helper        Handler
+	Job           Handler
+	Config        Handler
+	Doctor        Handler
+	SupportBundle Handler
+	Completion    Handler
 }
 
 func Run(
@@ -79,6 +80,8 @@ func (h Handlers) handler(role Role) Handler {
 		return h.Config
 	case RoleDoctor:
 		return h.Doctor
+	case RoleSupportBundle:
+		return h.SupportBundle
 	case RoleCompletion:
 		return h.Completion
 	default:

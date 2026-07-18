@@ -24,6 +24,9 @@ Validate configuration, print versioned effective output, or explicitly reset ke
 \fBamsftp doctor [--endpoint <SSH-host>] [--format human|json]\fR
 Run bounded read-only local checks and optionally test one SSH endpoint without prompting for credentials.
 .TP
+\fBamsftp support-bundle preview [--format human|json] | amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]\fR
+Preview the exact reviewed diagnostic archive, then explicitly publish it to a private no-replace local file.
+.TP
 \fBamsftp completion <bash|zsh|fish>\fR
 Print a static shell completion script.
 .TP

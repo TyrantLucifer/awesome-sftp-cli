@@ -25,6 +25,7 @@ var publicCLIContract = []cliCommandFact{
 	{name: "helper", syntax: "amsftp helper <status|disable> <SSH-host> [--format human|json] | amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]", description: "Inspect or disable Helper state, or request release-admitted install/upgrade/exact removal; lifecycle remains fail-closed until protected composition exists.", children: []string{"status", "install", "upgrade", "disable", "remove"}, childArguments: map[string][]string{"status": {"--format"}, "install": {"--accept-shared-session-stable-home", "--format"}, "upgrade": {"--accept-shared-session-stable-home", "--format"}, "disable": {"--format"}, "remove": {"--accept-shared-session-stable-home", "--format"}}},
 	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
 	{name: "doctor", syntax: "amsftp doctor [--endpoint <SSH-host>] [--format human|json]", description: "Run bounded read-only local checks and optionally test one SSH endpoint without prompting for credentials.", arguments: []string{"--endpoint", "--format"}},
+	{name: "support-bundle", syntax: "amsftp support-bundle preview [--format human|json] | amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]", description: "Preview the exact reviewed diagnostic archive, then explicitly publish it to a private no-replace local file.", children: []string{"preview", "create"}, childArguments: map[string][]string{"preview": {"--format"}, "create": {"--consent", "--output", "--format"}}},
 	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a static shell completion script.", children: []string{"bash", "zsh", "fish"}},
 	{syntax: "amsftp [client|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
 	{name: "--help", syntax: "amsftp --help", description: "Print command help."},
@@ -85,6 +86,9 @@ func RenderCompletion(shell string) (string, error) {
 	helperDisable := strings.Join(childArgumentsFor("helper", "disable"), " ")
 	helperRemove := strings.Join(childArgumentsFor("helper", "remove"), " ")
 	doctor := strings.Join(argumentsFor("doctor"), " ")
+	supportBundle := strings.Join(childrenFor("support-bundle"), " ")
+	supportBundlePreview := strings.Join(childArgumentsFor("support-bundle", "preview"), " ")
+	supportBundleCreate := strings.Join(childArgumentsFor("support-bundle", "create"), " ")
 	completion := strings.Join(childrenFor("completion"), " ")
 	switch shell {
 	case "bash":
@@ -98,6 +102,7 @@ func RenderCompletion(shell string) (string, error) {
     job) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     helper) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
 	doctor) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+	support-bundle) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     completion) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     reset-keymap) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     start) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
@@ -111,27 +116,30 @@ func RenderCompletion(shell string) (string, error) {
     events) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     pause) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     resume) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
-    cancel) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+	cancel) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+	preview) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
+	create) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     *) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
   esac
 }
 complete -F _amsftp amsftp
-`, config, daemon, job, helper, doctor, completion, configReset, daemonStart, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, top), nil
+`, config, daemon, job, helper, doctor, supportBundle, completion, configReset, daemonStart, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, supportBundlePreview, supportBundleCreate, top), nil
 	case "zsh":
 		return fmt.Sprintf(`#compdef amsftp
 _amsftp() {
-  local -a commands config_commands daemon_commands job_commands helper_commands doctor_arguments completion_commands
+  local -a commands config_commands daemon_commands job_commands helper_commands doctor_arguments support_bundle_commands completion_commands
   commands=(%s)
   config_commands=(%s)
   daemon_commands=(%s)
   job_commands=(%s)
   helper_commands=(%s)
 	doctor_arguments=(%s)
+	support_bundle_commands=(%s)
   completion_commands=(%s)
-  _arguments '1:command:($commands)' '2:subcommand or argument:($config_commands $daemon_commands $job_commands $helper_commands $doctor_arguments $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
+  _arguments '1:command:($commands)' '2:subcommand or argument:($config_commands $daemon_commands $job_commands $helper_commands $doctor_arguments $support_bundle_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
 }
 _amsftp
-`, top, config, daemon, job, helper, doctor, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove), nil
+`, top, config, daemon, job, helper, doctor, supportBundle, completion, configReset, daemonStart, daemonStatus, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove, supportBundlePreview, supportBundleCreate), nil
 	case "fish":
 		var builder strings.Builder
 		for _, word := range strings.Fields(top) {
@@ -164,6 +172,14 @@ _amsftp
 		}
 		for _, word := range argumentsFor("doctor") {
 			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from doctor' -a %q\n", word)
+		}
+		for _, word := range childrenFor("support-bundle") {
+			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from support-bundle' -a %q\n", word)
+		}
+		for _, child := range childrenFor("support-bundle") {
+			for _, word := range childArgumentsFor("support-bundle", child) {
+				fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from %s' -a %q\n", child, word)
+			}
 		}
 		for _, child := range childrenFor("helper") {
 			for _, word := range childArgumentsFor("helper", child) {

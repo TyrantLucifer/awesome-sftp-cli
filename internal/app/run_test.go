@@ -33,6 +33,7 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 		{name: "job", args: []string{"job", "list", "--limit", "5"}, wantRole: app.RoleJob, wantArgs: []string{"list", "--limit", "5"}},
 		{name: "config", args: []string{"config", "validate"}, wantRole: app.RoleConfig, wantArgs: []string{"validate"}},
 		{name: "doctor", args: []string{"doctor", "--format", "json"}, wantRole: app.RoleDoctor, wantArgs: []string{"--format", "json"}},
+		{name: "support bundle", args: []string{"support-bundle", "preview", "--format", "json"}, wantRole: app.RoleSupportBundle, wantArgs: []string{"preview", "--format", "json"}},
 		{name: "completion", args: []string{"completion", "zsh"}, wantRole: app.RoleCompletion, wantArgs: []string{"zsh"}},
 	}
 
@@ -55,14 +56,15 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 				}
 			}
 			handlers := app.Handlers{
-				Client:     record(app.RoleClient),
-				Daemon:     record(app.RoleDaemon),
-				Askpass:    record(app.RoleAskpass),
-				Helper:     record(app.RoleHelper),
-				Job:        record(app.RoleJob),
-				Config:     record(app.RoleConfig),
-				Doctor:     record(app.RoleDoctor),
-				Completion: record(app.RoleCompletion),
+				Client:        record(app.RoleClient),
+				Daemon:        record(app.RoleDaemon),
+				Askpass:       record(app.RoleAskpass),
+				Helper:        record(app.RoleHelper),
+				Job:           record(app.RoleJob),
+				Config:        record(app.RoleConfig),
+				Doctor:        record(app.RoleDoctor),
+				SupportBundle: record(app.RoleSupportBundle),
+				Completion:    record(app.RoleCompletion),
 			}
 
 			var stdout bytes.Buffer
