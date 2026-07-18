@@ -1,13 +1,13 @@
 # Stage 6 Execution Plan
 
-- **Status**: In Progress — M6.1 complete; M6.2 migration, retention, Helper lifecycle, deterministic packaging/dependencies, native lifecycle, preview-archive picker, pinned-cache recovery, reviewed third-party NOTICE, and CI-only local-tap Homebrew preview evidence active
+- **Status**: In Progress — M6.1 complete; M6.2 independent migration/package/native/preview-channel evidence active; M6.3 shared redaction, doctor-report, and bounded support-bundle foundations active
 - **Updated**: 2026-07-18
 - **Sole baseline**: commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`
 - **Fixed branch**: `codex/stage6-hardening-release`
 - **Delivery PR**: Draft PR [#6](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/6), title `feat: ship AMSFTP 1.0.0`, base `main`
 - **Authoritative scope**: [Stage 6 specification](06-hardening-release.md), [ADR-0009](../architecture/adr/0009-supported-platform-ci-and-packaging-baseline.md), [ADR-0010](../architecture/adr/0010-helper-artifact-trust-and-distribution.md), [ADR-0017](../architecture/adr/0017-stage5-unified-routing-direct-transfer-and-resource-budgets.md), and the frozen feature rows below
 
-This is an execution plan, not release evidence. A row advances from `Planned` only after its first failing contract is recorded, and reaches `Verified` only after its focused, milestone, exact-candidate, platform, documentation, and Hosted gates are green. Milestones run strictly in the order M6.1 → M6.2 → M6.3 → M6.4.
+This is an execution plan, not release evidence. A row advances from `Planned` only after its first failing contract is recorded, and reaches `Verified` only after its focused, milestone, exact-candidate, platform, documentation, and Hosted gates are green. Milestone ownership remains M6.1 → M6.2 → M6.3 → M6.4; when an earlier milestone's remaining gates require owner/external release authority or final protected bytes, later independent non-release work may proceed without falsely closing the earlier milestone.
 
 ## Non-negotiable execution rules
 
@@ -94,6 +94,8 @@ For each RED/GREEN cycle, append to [Stage 6 verification](../verification/stage
 2. Implement one structured redaction policy shared by diagnostics, logs, doctor, and support bundles. Keep raw causes daemon-local where already required; exports contain only bounded safe summaries.
 3. Implement read-only `doctor` and local support-bundle commands. Neither command performs destructive repair, remote mutation, credential prompting floods, or automatic network upload.
 4. Publish the threat model, finding ledger, compatibility matrix, privacy/support-bundle contract, and troubleshooting code map.
+
+**Current checkpoint**: foundation SHA `ae172d9bb419bc6b0b05cf3ef3467258496d463f` implements the first three internal contracts without yet exposing a user command. One shared sensitivity/export policy now serves effective-config arguments and persistent diagnostic tokens. Doctor reports enumerate the ten required local checks plus optional endpoint in fixed order and export only stable code/status/severity/detail/remediation; raw causes are discarded. Support-bundle preview/build accepts only the reviewed JSON layout/sensitivity, copies one bounded snapshot, binds SHA-256 and consent, rejects post-preview drift, and emits deterministic 0600 USTAR/gzip. A security-review correction additionally rejects seeded secret-bearing JSON even when falsely labelled reviewed, with iterative depth/node bounds. Exact local current/oldstable gates and push Hosted 24/24 pass; PR's sole Stage 2 PTY refresh failure has a same-SHA successful push Intel companion, and all new packages pass there. CLI, actual read-only probes, private no-replace publication/cleanup, corrupted-state composition, complete secret matrix, compatibility matrix, and threat/finding ledgers remain open.
 
 ### M6.3 gate
 

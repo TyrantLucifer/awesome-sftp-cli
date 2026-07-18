@@ -195,6 +195,8 @@
 2. 跑完 OS/终端/OpenSSH/SFTP/Helper 兼容矩阵。
 3. 完成 doctor、支持包、脱敏和故障文档。
 
+当前增量：SHA `ae172d9bb419bc6b0b05cf3ef3467258496d463f` 只完成内部 foundation，不提前声称用户可用。shared export policy 冻结 `public/system_metadata/pseudonymous/secret/content`；effective config 与 persistent diagnostics 已复用。doctor report 固定 config/runtime/socket/daemon/OpenSSH/known-host/database/cache/Helper/disk-space 与 optional endpoint 的顺序、code/status/severity/detail/remediation，缺失、非法或错误 probe 只导出安全结果，不导出 raw cause。support-bundle core 只接收 reviewed JSON file/sensitivity allowlist，预览每份 size/SHA-256，显式 consent digest 绑定单次复制 snapshot，拒绝 preview 后变化，并以 512 KiB/file、3 MiB expanded、4 MiB compressed 上限生成 deterministic 0600 USTAR/gzip。seeded host/path/token 即使误标 reviewed 也由 32-depth/8192-node iterative scan 拒绝。exact local current/oldstable 和 Hosted push 24/24 通过；PR 唯一 Stage 2 PTY refresh 失败有同 SHA push Intel 成功 companion，新增包在失败 job 通过，未 rerun。真实 read-only probes、CLI、private no-replace 写盘/cleanup、corrupt-state、完整 secret matrix、兼容矩阵与 finding ledger 仍开放。
+
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 
 ### M6.4 — Release Candidate 与 1.0
