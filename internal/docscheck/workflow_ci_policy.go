@@ -313,7 +313,8 @@ func nativeHomebrewPreviewLifecycleIsExact(job workflowJob) bool {
 			`brew update`,
 			`brew upgrade amsftp-ci/preview/amsftp`,
 			`1.0.0 commit=`,
-			`brew uninstall amsftp-ci/preview/amsftp`,
+			`brew uninstall --force amsftp-ci/preview/amsftp`,
+			`test ! -d "$(brew --cellar)/amsftp"`,
 			`brew untap amsftp-ci/preview`,
 		}
 		if embedded {
@@ -330,7 +331,12 @@ func nativeHomebrewPreviewLifecycleIsExact(job workflowJob) bool {
 			}
 			cursor += relative + len(fragment)
 		}
-		if complete && !strings.Contains(script, `cp LICENSE`) && !strings.Contains(script, `license="MIT"`) {
+		exactUninstallCount := 1
+		if dedicated {
+			exactUninstallCount = 2
+		}
+		if complete && strings.Count(script, `brew uninstall --force amsftp-ci/preview/amsftp`) == exactUninstallCount &&
+			!strings.Contains(script, `cp LICENSE`) && !strings.Contains(script, `license="MIT"`) {
 			return true
 		}
 	}

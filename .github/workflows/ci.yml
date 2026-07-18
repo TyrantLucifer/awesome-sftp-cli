@@ -622,7 +622,7 @@ jobs:
           go run ./internal/tools/homebrewpreview --serve "${asset_root}" "${port_file}" >"${server_log}" 2>&1 &
           server_pid=$!
           cleanup_homebrew_preview() {
-            brew uninstall amsftp-ci/preview/amsftp >/dev/null 2>&1 || true
+            brew uninstall --force amsftp-ci/preview/amsftp >/dev/null 2>&1 || true
             brew untap amsftp-ci/preview >/dev/null 2>&1 || true
             kill "${server_pid}" >/dev/null 2>&1 || true
             wait "${server_pid}" >/dev/null 2>&1 || true
@@ -656,8 +656,9 @@ jobs:
           HOMEBREW_NO_AUTO_UPDATE=1 brew upgrade amsftp-ci/preview/amsftp
           "$(brew --prefix)/bin/amsftp" --version | grep -F "1.0.0 commit=${head} dirty=false"
           brew test amsftp-ci/preview/amsftp
-          brew uninstall amsftp-ci/preview/amsftp
+          brew uninstall --force amsftp-ci/preview/amsftp
           test ! -e "$(brew --prefix)/bin/amsftp"
+          test ! -d "$(brew --cellar)/amsftp"
           brew untap amsftp-ci/preview
           kill "${server_pid}"
           wait "${server_pid}"
