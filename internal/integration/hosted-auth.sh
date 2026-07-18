@@ -9,6 +9,14 @@ if test "$(id -u)" -ne 0; then
 fi
 
 : "${AMSFTP_AUTH_BINARY:?AMSFTP_AUTH_BINARY is required}"
+: "${AMSFTP_AUTH_EXPECT_OPENSSH_VERSION:?AMSFTP_AUTH_EXPECT_OPENSSH_VERSION is required}"
+
+actual_openssh_version="$(/usr/bin/ssh -V 2>&1)"
+if ! test "${actual_openssh_version}" = "${AMSFTP_AUTH_EXPECT_OPENSSH_VERSION}"; then
+  printf 'current OpenSSH version drifted before authentication\n' >&2
+  exit 1
+fi
+printf 'current OpenSSH version binding passed\n'
 
 root="${AMSFTP_AUTH_ROOT:-/tmp/amsftp-hosted-auth}"
 case "${root}" in

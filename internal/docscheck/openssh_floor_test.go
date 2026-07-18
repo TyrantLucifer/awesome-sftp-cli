@@ -19,6 +19,7 @@ func TestUbuntu2204RunsRealOpenSSH89FloorAndRecordsExactVersion(t *testing.T) {
 		`OpenSSH_8.9p1\ *)`,
 		`"${RUNNER_TEMP}/native/openssh-floor-version"`,
 		`AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/native/bin/amsftp"`,
+		`AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="${floor_version}"`,
 		`bash ./internal/integration/hosted-auth.sh`,
 	})
 }
@@ -33,6 +34,42 @@ func TestHostedAuthenticationMatrixRunsDoctorAgainstSystemOpenSSH(t *testing.T) 
 		`result["code"] == "endpoint" and result["status"] == "pass"`,
 		`authentication doctor OpenSSH and endpoint checks passed`,
 		`preflight_sftp_transport auth-include-match`,
+	})
+}
+
+func TestUbuntu2404CapturesExactCurrentOpenSSHVersion(t *testing.T) {
+	t.Parallel()
+	workflow := readOpenSSHFloorContractFile(t, "../../.github/workflows/ci.yml")
+	assertOpenSSHFloorOrder(t, workflow, []string{
+		`auth-integration:`,
+		`runs-on: ubuntu-24.04`,
+		`- name: Capture current OpenSSH version`,
+		`current_version="$(/usr/bin/ssh -V 2>&1)"`,
+		`OpenSSH_*)`,
+		`"${RUNNER_TEMP}/auth-integration/openssh-current-version"`,
+	})
+}
+
+func TestCurrentOpenSSHVersionIsBoundIntoRealAuthenticationHarness(t *testing.T) {
+	t.Parallel()
+	workflow := readOpenSSHFloorContractFile(t, "../../.github/workflows/ci.yml")
+	assertOpenSSHFloorOrder(t, workflow, []string{
+		`- name: Capture current OpenSSH version`,
+		`- name: Run real OpenSSH authentication matrix`,
+		`AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/openssh-current-version")"`,
+		`bash ./internal/integration/hosted-auth.sh`,
+	})
+}
+
+func TestHostedAuthenticationRejectsCurrentOpenSSHVersionDriftBeforeMutation(t *testing.T) {
+	t.Parallel()
+	auth := readOpenSSHFloorContractFile(t, "../integration/hosted-auth.sh")
+	assertOpenSSHFloorOrder(t, auth, []string{
+		`: "${AMSFTP_AUTH_EXPECT_OPENSSH_VERSION:?AMSFTP_AUTH_EXPECT_OPENSSH_VERSION is required}"`,
+		`actual_openssh_version="$(/usr/bin/ssh -V 2>&1)"`,
+		`test "${actual_openssh_version}" = "${AMSFTP_AUTH_EXPECT_OPENSSH_VERSION}"`,
+		`current OpenSSH version binding passed`,
+		`for user_name in "${client_user}" "${target_user}" "${mfa_user}"`,
 	})
 }
 

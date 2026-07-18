@@ -311,7 +311,7 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 	case "quality":
 		return canonicalQualityPreviewBundleHandoff(job.steps[:recordIndex])
 	case "auth-integration":
-		return len(job.steps) == 9 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
+		return len(job.steps) == 10 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
 	case "build":
 		return len(job.steps) == 8 && canonicalBuildProducerPrefix(job.steps[:recordIndex])
 	case "fuzz":
@@ -328,7 +328,7 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 }
 
 func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
-	if len(steps) != 7 {
+	if len(steps) != 8 {
 		return false
 	}
 	return stepIsExactCheckout(steps[0]) && stepIsExactCurrentSetupGo(steps[1]) &&
@@ -343,8 +343,21 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`  netcat-openbsd \`,
 			`  openssh-server`,
 		}) &&
-		canonicalPreviewBundleDownload(steps[3]) &&
-		canonicalRunStep(steps[4], "Verify and extract public preview bundle", []string{
+		canonicalRunStep(steps[3], "Capture current OpenSSH version", []string{
+			`set -euo pipefail`,
+			`current_version="$(/usr/bin/ssh -V 2>&1)"`,
+			`case "${current_version}" in`,
+			`  OpenSSH_*) ;;`,
+			`  *)`,
+			`    printf 'system ssh did not report an OpenSSH version\n' >&2`,
+			`    exit 1`,
+			`    ;;`,
+			`esac`,
+			`mkdir -p "${RUNNER_TEMP}/auth-integration"`,
+			`printf '%s\n' "${current_version}" | tee "${RUNNER_TEMP}/auth-integration/openssh-current-version"`,
+		}) &&
+		canonicalPreviewBundleDownload(steps[4]) &&
+		canonicalRunStep(steps[5], "Verify and extract public preview bundle", []string{
 			`set -euo pipefail`,
 			`bundle="${RUNNER_TEMP}/auth-integration/bundle"`,
 			`test "$(find "${bundle}" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 7`,
@@ -360,14 +373,15 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`"${installed}" --version | grep -F "1.0.0 commit=${GITHUB_SHA} dirty=false"`,
 			`tar -xOf "${archive}" amsftp_1.0.0_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
 		}) &&
-		canonicalRunStep(steps[5], "Run real OpenSSH authentication matrix", []string{
+		canonicalRunStep(steps[6], "Run real OpenSSH authentication matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
 			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_1.0.0_linux_amd64/amsftp" \`,
+			`  AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/openssh-current-version")" \`,
 			`  AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-auth.sh`,
 		}) &&
-		canonicalRunStep(steps[6], "Run real MIT Kerberos/GSSAPI matrix", []string{
+		canonicalRunStep(steps[7], "Run real MIT Kerberos/GSSAPI matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
 			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_1.0.0_linux_amd64/amsftp" \`,
