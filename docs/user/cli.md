@@ -13,6 +13,8 @@ amsftp helper <status|disable> <SSH-host> [--format human|json]
 amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]
 amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]
 amsftp doctor [--endpoint <SSH-host>] [--format human|json]
+amsftp support-bundle preview [--format human|json]
+amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]
 amsftp completion <bash|zsh|fish>
 ```
 
@@ -93,6 +95,22 @@ Human output contains only stable tab-separated check, status, detail, and remed
 ```
 
 `pass`, `warn`, `fail`, and `skipped` are per-check results; a completed diagnostic report exits `0` even when it contains warnings or failures. Invalid arguments use the normal usage exit `2`, and `--format json` preserves the versioned machine-error channel. Shell completion for doctor is static and offers only `--endpoint` and `--format`.
+
+## Local support bundle
+
+`amsftp support-bundle preview` composes the exact local-only diagnostic snapshot that a later create may publish. The preview lists `manifest.json` plus eight reviewed sources: version, platform, configuration shape, doctor report, bounded recent diagnostics, bounded Job summaries, database health, and daemon/protocol capabilities. Every entry includes its sensitivity label, exact byte size, and SHA-256. The final `consent_digest` binds the ordered file metadata and content hashes; it is not permission to collect a later, changed snapshot.
+
+The sources deliberately omit file content, diagnostic messages, endpoint/Job/request IDs, locations, command executables and arguments, waiting/error text, credentials, authentication prompts, and raw probe/RPC failures. Configuration contributes only schema/status/count/boolean shape. Diagnostics contribute sequence/time plus reviewed level/component/event/error-code tokens. Jobs contribute state, kind, route, phase, counters, and control booleans. Unsafe version, capability, event, database, or diagnostic strings become `<redacted>`. An absent, unhealthy, or incompatible daemon produces stable unavailable/empty summaries rather than starting it; invalid configuration is represented by a safe status and defaults-shaped counts. Preview never prepares application paths, repairs state, prompts, connects to an endpoint, or uploads anything.
+
+Creation is an explicit second step:
+
+```text
+amsftp support-bundle create --consent <preview-consent-digest> --output /absolute/private/directory/support.tar.gz
+```
+
+AMSFTP recomposes all sources and refuses exit `6` if any file differs from the preview. The output must be a canonical absolute path beneath an existing owner-private `0700` directory; the target must not exist. Publication uses no-follow/no-replace creation, writes a regular `0600` file, synchronizes the file and parent directory, and removes the exact partial target after cancellation or publication failure. It never overwrites a file or follows an output symlink. The deterministic gzip/USTAR archive is limited to 512 KiB per source, 3 MiB expanded, and 4 MiB compressed. No command uploads it, and success output reports only status, size, and archive SHA-256—not the destination path.
+
+Invalid command, format, digest, or output-path arguments are rejected before source composition or publication. JSON errors use the normal versioned machine-error channel without embedding the output path. Shell completion exposes only `preview`, `create`, `--format`, `--consent`, and `--output`.
 
 ## Help, man page, and completion parity
 
