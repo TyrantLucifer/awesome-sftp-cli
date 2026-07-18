@@ -26,7 +26,7 @@ func TestStage6SecurityDocumentsFreezeThreatAndFindingContracts(t *testing.T) {
 	for _, required := range []string{
 		"| ID | Severity | Status | Boundary | Finding | Disposition | Evidence | Owner |",
 		"M6-SEC-001", "safe-shaped", "fixed", "ba334b8d8968f5b09c91c0185996994b9a307ff4",
-		"## Open review coverage", "production Helper", "Level 2",
+		"## Review coverage", "## Open release boundaries", "Production Helper", "Production Level 2",
 	} {
 		if !strings.Contains(text, required) {
 			t.Errorf("finding ledger missing %q", required)

@@ -1,6 +1,6 @@
 # AMSFTP 1.0 Threat Model
 
-This model records the security boundaries exercised by the 1.0 implementation and the scope that is still open. It does not convert fixture or build evidence into a production compatibility claim.
+This model records the security boundaries exercised by the 1.0 implementation and the scope that is still open. It does not convert fixture or build evidence into a production compatibility claim. The executable-evidence disposition of each REL-007 review domain is maintained in the [security finding ledger](finding-ledger.md#review-coverage).
 
 ## Assets
 

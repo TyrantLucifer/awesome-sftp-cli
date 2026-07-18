@@ -195,7 +195,7 @@
 2. 跑完 OS/终端/OpenSSH/SFTP/Helper 兼容矩阵。
 3. 完成 doctor、支持包、脱敏和故障文档。
 
-当前增量：foundation、doctor、support-bundle、semantic hardening、compatibility/troubleshooting、threat model 与 initial finding ledger 已交付。real-auth correction SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` 已有 push/PR 完整 OpenSSH/Askpass 与 externally-renewed Kerberos/GSSAPI support-bundle scan 证据。OpenSSH floor/current SHA `e7733ec23ec1903dbdc41a926db20fe6defcccc7`/`a7f3ddd8a99df973518140de7eae45e295ae6ea2` 与 Kerberos binding SHA `14e5ec4e63c70fb93ed93d15adbe7fdf7cce5d5e` 通过 dual-Go full local gates；双工作流精确记录 `OpenSSH_8.9p1 Ubuntu-3ubuntu0.16`、`OpenSSH_9.6p1 Ubuntu-3ubuntu13.18` 与 `Kerberos 5 version 1.20.1`，并在任何测试账户/服务变更前重检 retained version。PLAT-009 已 `Verified`；REL-006 已 `In Progress`，但 macOS Kerberos、vendor SFTP、Linux arm64 native 与 production Helper 仍明确未测试。production-Helper artifact scan 与 final independent review 仍开放。
+当前增量：foundation、doctor、support-bundle、semantic hardening、compatibility/troubleshooting、threat model 与 initial finding ledger 已交付。real-auth correction SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` 已有 push/PR 完整 OpenSSH/Askpass 与 externally-renewed Kerberos/GSSAPI support-bundle scan 证据。OpenSSH floor/current SHA `e7733ec23ec1903dbdc41a926db20fe6defcccc7`/`a7f3ddd8a99df973518140de7eae45e295ae6ea2` 与 Kerberos binding SHA `14e5ec4e63c70fb93ed93d15adbe7fdf7cce5d5e` 通过 dual-Go full local gates；双工作流精确记录 `OpenSSH_8.9p1 Ubuntu-3ubuntu0.16`、`OpenSSH_9.6p1 Ubuntu-3ubuntu13.18` 与 `Kerberos 5 version 1.20.1`，并在任何测试账户/服务变更前重检 retained version。REL-007 台账现已覆盖八个强制审查域并绑定可执行负向证据。PLAT-009 已 `Verified`；REL-006、REL-007 已 `In Progress`。production Helper/Level 2、protected final artifacts 与 final independent review 仍开放。
 
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 
