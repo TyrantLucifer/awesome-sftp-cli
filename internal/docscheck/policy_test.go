@@ -1072,6 +1072,49 @@ clean_home="${RUNNER_TEMP}/public-package-home"`,
 	}
 }
 
+func TestCIQualityLifecycleRequiresPinnedCacheUpgradeRecoveryProof(t *testing.T) {
+	name := &policyYAMLScalar{value: "Exercise deterministic public packaging and clean-home lifecycle"}
+	complete := `old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"
+current_cache_harness="${RUNNER_TEMP}/pinned-cache-current"
+failure_harness="${RUNNER_TEMP}/pinned-cache-failure"
+cp -R internal/integration/pinned-cache-lifecycle "${old_source}/internal/integration/"
+-o "${old_cache_harness}" ./internal/integration/pinned-cache-lifecycle
+-o "${current_cache_harness}" ./internal/integration/pinned-cache-lifecycle
+-o "${failure_harness}" ./internal/integration/pinned-cache-failure
+"${old_cache_harness}" seed
+"${old_cache_harness}" verify
+"${current_cache_harness}" verify
+"${failure_harness}" prepare
+"${current_cache_harness}" verify
+"${installed}" daemon
+grep -F 'durable transfer service is unavailable'
+"${installed}" daemon --resume-migration
+"${current_cache_harness}" verify
+"${old_binary}" daemon
+"${current_cache_harness}" verify`
+	tests := []struct {
+		name   string
+		script string
+		want   bool
+	}{
+		{name: "complete composition", script: complete, want: true},
+		{name: "missing frozen seed", script: strings.Replace(complete, `"${old_cache_harness}" seed`, "", 1)},
+		{name: "missing failed attempt", script: strings.Replace(complete, `"${failure_harness}" prepare`, "", 1)},
+		{name: "missing explicit recovery", script: strings.Replace(complete, `"${installed}" daemon --resume-migration`, "", 1)},
+		{name: "missing post-rollback verify", script: strings.TrimSuffix(complete, `
+"${current_cache_harness}" verify`)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run := &policyYAMLScalar{value: test.script}
+			job := workflowJob{steps: []workflowStep{{name: name, run: run}}}
+			if got := qualityLifecycleProvesPinnedCacheUpgradeRecovery(job); got != test.want {
+				t.Fatalf("qualityLifecycleProvesPinnedCacheUpgradeRecovery() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCIQualityAllowsOnlyCompleteCheckoutHistoryForHistoricalUpgradeGate(t *testing.T) {
 	const (
 		path        = ".github/workflows/ci.yml"

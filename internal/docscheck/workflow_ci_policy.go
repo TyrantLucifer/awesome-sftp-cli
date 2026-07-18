@@ -92,6 +92,9 @@ func checkCIQuality(job workflowJob, add func(int, string, string)) {
 	if !qualityLifecycleUsesTrustedPersistentRoot(job) {
 		add(job.line, "workflow.ci_quality_lifecycle_root", "quality installed lifecycle must place persistent HOME beneath the prepared owner-private test root")
 	}
+	if !qualityLifecycleProvesPinnedCacheUpgradeRecovery(job) {
+		add(job.line, "workflow.ci_quality_pinned_cache", "quality installed lifecycle must preserve one frozen Stage 5 pinned cache identity across failed-upgrade recovery and rollback")
+	}
 }
 
 func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
@@ -106,6 +109,48 @@ func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
 		return strings.Contains(script, `trusted_root="/var/lib/amsftp-tests/$(id -u)"`) &&
 			strings.Contains(script, `clean_home="${trusted_root}/public-package-home"`) &&
 			!strings.Contains(script, `clean_home="${RUNNER_TEMP}`)
+	}
+	return true
+}
+
+func qualityLifecycleProvesPinnedCacheUpgradeRecovery(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil || step.name.value != "Exercise deterministic public packaging and clean-home lifecycle" {
+			continue
+		}
+		if step.run == nil {
+			return false
+		}
+		script := step.run.value
+		ordered := []string{
+			`old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"`,
+			`current_cache_harness="${RUNNER_TEMP}/pinned-cache-current"`,
+			`failure_harness="${RUNNER_TEMP}/pinned-cache-failure"`,
+			`cp -R internal/integration/pinned-cache-lifecycle "${old_source}/internal/integration/"`,
+			`-o "${old_cache_harness}" ./internal/integration/pinned-cache-lifecycle`,
+			`-o "${current_cache_harness}" ./internal/integration/pinned-cache-lifecycle`,
+			`-o "${failure_harness}" ./internal/integration/pinned-cache-failure`,
+			`"${old_cache_harness}" seed`,
+			`"${old_cache_harness}" verify`,
+			`"${current_cache_harness}" verify`,
+			`"${failure_harness}" prepare`,
+			`"${current_cache_harness}" verify`,
+			`"${installed}" daemon`,
+			`grep -F 'durable transfer service is unavailable'`,
+			`"${installed}" daemon --resume-migration`,
+			`"${current_cache_harness}" verify`,
+			`"${old_binary}" daemon`,
+			`"${current_cache_harness}" verify`,
+		}
+		cursor := 0
+		for _, fragment := range ordered {
+			relative := strings.Index(script[cursor:], fragment)
+			if relative < 0 {
+				return false
+			}
+			cursor += relative + len(fragment)
+		}
+		return true
 	}
 	return true
 }

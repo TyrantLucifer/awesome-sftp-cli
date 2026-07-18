@@ -53,6 +53,10 @@ jobs:
           clean_home="${trusted_root}/public-package-home"
           old_source="${RUNNER_TEMP}/stage5-source"
           old_binary="${RUNNER_TEMP}/amsftp-stage5"
+          old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"
+          current_cache_harness="${RUNNER_TEMP}/pinned-cache-current"
+          failure_harness="${RUNNER_TEMP}/pinned-cache-failure"
+          cache_record="${RUNNER_TEMP}/pinned-cache-evidence.json"
           head="$(git rev-parse HEAD)"
           tree="$(git rev-parse 'HEAD^{tree}')"
           source_epoch="$(git show -s --format=%ct HEAD)"
@@ -123,12 +127,20 @@ jobs:
           )
           mkdir -p "${old_source}"
           git archive 312bcccbcbd54246bbe5ff9babf4f14560449176 | tar -x -C "${old_source}"
+          mkdir -p "${old_source}/internal/integration"
+          cp -R internal/integration/pinned-cache-lifecycle "${old_source}/internal/integration/"
           (
             cd "${old_source}"
             CGO_ENABLED=0 go build -buildvcs=false -trimpath \
               -ldflags='-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=stage5 -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=312bcccbcbd54246bbe5ff9babf4f14560449176' \
               -o "${old_binary}" ./cmd/amsftp
+            CGO_ENABLED=0 go build -buildvcs=false -trimpath \
+              -o "${old_cache_harness}" ./internal/integration/pinned-cache-lifecycle
           )
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath \
+            -o "${current_cache_harness}" ./internal/integration/pinned-cache-lifecycle
+          CGO_ENABLED=0 go build -buildvcs=false -trimpath \
+            -o "${failure_harness}" ./internal/integration/pinned-cache-failure
           cleanup_daemon() {
             env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json >/dev/null 2>&1 || true
           }
@@ -148,12 +160,72 @@ jobs:
           grep -F 'stage5 commit=312bcccbcbd54246bbe5ff9babf4f14560449176' "${RUNNER_TEMP}/stage5-status.json"
           kill -TERM "${old_pid}"
           wait "${old_pid}"
+          state_root="${clean_home}/state/amsftp"
+          database="${state_root}/amsftp.db"
+          cache_root="${clean_home}/cache/amsftp"
+          test -f "${database}"
+          test -d "${cache_root}"
+          "${old_cache_harness}" seed \
+            --database "${database}" --cache-root "${cache_root}" --record "${cache_record}"
+          "${old_cache_harness}" verify \
+            --database "${database}" --cache-root "${cache_root}" --record "${cache_record}"
+          "${current_cache_harness}" verify \
+            --database "${database}" --cache-root "${cache_root}" --record "${cache_record}"
+          "${failure_harness}" prepare \
+            --state-root "${state_root}" --database "${database}" | tee "${RUNNER_TEMP}/failed-upgrade.json"
+          grep -F '"original_head":3' "${RUNNER_TEMP}/failed-upgrade.json"
+          grep -F '"target_head":4' "${RUNNER_TEMP}/failed-upgrade.json"
+          grep -F '"status":"failed"' "${RUNNER_TEMP}/failed-upgrade.json"
+          "${current_cache_harness}" verify \
+            --database "${database}" --cache-root "${cache_root}" --record "${cache_record}"
+          failed_database_before="$(sha256sum "${database}")"
+          env "${clean_env[@]}" "${installed}" daemon >"${RUNNER_TEMP}/failed-upgrade-daemon.log" 2>&1 &
+          failed_pid=$!
+          failed_running=0
+          for ((attempt = 0; attempt < 200; attempt++)); do
+            env "${clean_env[@]}" "${installed}" daemon status --format json >"${RUNNER_TEMP}/failed-upgrade-status.json" 2>/dev/null || true
+            if grep -qF '"running":true' "${RUNNER_TEMP}/failed-upgrade-status.json"; then
+              failed_running=1
+              break
+            fi
+            sleep 0.05
+          done
+          test "${failed_running}" = 1
+          set +e
+          env "${clean_env[@]}" "${installed}" job list --format json >"${RUNNER_TEMP}/failed-upgrade-jobs.out" 2>"${RUNNER_TEMP}/failed-upgrade-jobs.err"
+          failed_job_rc=$?
+          set -e
+          test "${failed_job_rc}" -ne 0
+          grep -F 'durable transfer service is unavailable' "${RUNNER_TEMP}/failed-upgrade-jobs.err"
+          kill -TERM "${failed_pid}"
+          wait "${failed_pid}"
+          failed_database_after="$(sha256sum "${database}")"
+          test "${failed_database_before}" = "${failed_database_after}"
+          "${current_cache_harness}" verify \
+            --database "${database}" --cache-root "${cache_root}" --record "${cache_record}"
+          env "${clean_env[@]}" "${installed}" daemon --resume-migration >"${RUNNER_TEMP}/resumed-upgrade-daemon.log" 2>&1 &
+          resumed_pid=$!
+          resumed_running=0
+          for ((attempt = 0; attempt < 200; attempt++)); do
+            env "${clean_env[@]}" "${installed}" daemon status --format json >"${RUNNER_TEMP}/resumed-upgrade-status.json" 2>/dev/null || true
+            if grep -qF '"running":true' "${RUNNER_TEMP}/resumed-upgrade-status.json"; then
+              resumed_running=1
+              break
+            fi
+            sleep 0.05
+          done
+          test "${resumed_running}" = 1
+          grep -F "1.0.0 commit=${head}" "${RUNNER_TEMP}/resumed-upgrade-status.json"
+          env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'
+          kill -TERM "${resumed_pid}"
+          wait "${resumed_pid}"
+          "${current_cache_harness}" verify \
+            --database "${database}" --cache-root "${cache_root}" --record "${cache_record}"
           env "${clean_env[@]}" "${installed}" daemon start --format json | grep -F '"running":true'
           env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'
           env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":true'
           env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json | grep -F '"running":false'
           env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":false'
-          database="${clean_home}/state/amsftp/amsftp.db"
           test -f "${database}"
           database_before="$(sha256sum "${database}")"
           env "${clean_env[@]}" "${old_binary}" daemon >"${RUNNER_TEMP}/stage5-rollback.log" 2>&1 &
@@ -178,9 +250,13 @@ jobs:
           wait "${old_pid}"
           database_after="$(sha256sum "${database}")"
           test "${database_before}" = "${database_after}"
+          "${current_cache_harness}" verify \
+            --database "${database}" --cache-root "${cache_root}" --record "${cache_record}"
           env "${clean_env[@]}" "${installed}" daemon start --format json | grep -F '"running":true'
           env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'
           env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json | grep -F '"running":false'
+          "${current_cache_harness}" verify \
+            --database "${database}" --cache-root "${cache_root}" --record "${cache_record}"
           trap - EXIT
           rm -f \
             "${installed}" \
