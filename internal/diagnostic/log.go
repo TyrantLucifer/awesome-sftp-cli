@@ -13,6 +13,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/redaction"
 )
 
 const (
@@ -181,15 +182,7 @@ func allowPersistentAttr(groups []string, attr slog.Attr) bool {
 }
 
 func validToken(value string) bool {
-	if value == "" || len(value) > 64 {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' {
-			return false
-		}
-	}
-	return true
+	return redaction.SafeToken(value)
 }
 
 func validErrorCode(code domain.Code) bool {

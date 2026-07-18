@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/redaction"
 )
 
 const (
 	EffectiveOutputVersion = 1
-	RedactedValue          = "<redacted>"
+	RedactedValue          = redaction.Placeholder
 )
 
 type effectiveOutput struct {
@@ -86,7 +88,7 @@ func redactCommand(input CommandConfig) CommandConfig {
 	result := input
 	result.Args = make([]string, len(input.Args))
 	for index := range result.Args {
-		result.Args[index] = RedactedValue
+		result.Args[index], _ = redaction.ExportString(redaction.Pseudonymous, input.Args[index])
 	}
 	return result
 }
