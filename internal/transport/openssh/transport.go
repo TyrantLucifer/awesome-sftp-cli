@@ -28,6 +28,7 @@ var fixedSFTPArguments = []string{
 
 type Config struct {
 	Binary, HostAlias string
+	ConfigFile        string
 	Environment       []string
 	Redact            []string
 	Fresh             bool
@@ -55,10 +56,33 @@ func freshArguments(hostAlias string) ([]string, error) {
 }
 
 func argumentsForConfig(config Config) ([]string, error) {
-	if config.Fresh {
-		return freshArguments(config.HostAlias)
+	if err := validateExplicitConfigFile(config.ConfigFile); err != nil {
+		return nil, err
 	}
-	return Arguments(config.HostAlias)
+	var arguments []string
+	var err error
+	if config.Fresh {
+		arguments, err = freshArguments(config.HostAlias)
+	} else {
+		arguments, err = Arguments(config.HostAlias)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if config.ConfigFile != "" {
+		arguments = append([]string{"-F", config.ConfigFile}, arguments...)
+	}
+	return arguments, nil
+}
+
+func validateExplicitConfigFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := platform.ValidatePrivateFile(path, platform.ValidateRuntime); err != nil {
+		return fmt.Errorf("validate explicit OpenSSH config: %w", err)
+	}
+	return nil
 }
 
 func ValidateHostAlias(value string) error {
