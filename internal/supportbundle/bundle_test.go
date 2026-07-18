@@ -86,6 +86,18 @@ func TestPreviewRejectsUnreviewedLayoutAndSensitiveOrUnboundedSources(t *testing
 	}
 }
 
+func TestPreviewRejectsSeededSecretsInsideClaimedReviewedJSON(t *testing.T) {
+	const secret = "stage6-secret-user@example.com/private/key?token=askpass-answer"
+	for _, source := range []Source{
+		{Name: "version.json", Sensitivity: redaction.SystemMetadata, Bytes: []byte(`{"version":"` + secret + `"}`)},
+		{Name: "config-shape.json", Sensitivity: redaction.Pseudonymous, Bytes: []byte(`{"host":"` + secret + `"}`)},
+	} {
+		if _, err := Preview([]Source{source}); err == nil {
+			t.Fatalf("Preview(%q) accepted seeded secret", source.Name)
+		}
+	}
+}
+
 func assertArchive(t *testing.T, bundle []byte, want []string) {
 	t.Helper()
 	compressed, err := gzip.NewReader(bytes.NewReader(bundle))

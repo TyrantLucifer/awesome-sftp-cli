@@ -46,3 +46,25 @@ func TestSafeTokenAndSystemMetadataAreBounded(t *testing.T) {
 		}
 	}
 }
+
+func TestReviewedExportStringRejectsUnredactedStructuredValues(t *testing.T) {
+	for _, class := range []Sensitivity{Public, SystemMetadata, Pseudonymous} {
+		if ReviewedExportString(class, "stage6-secret@example.com/private/key?token=answer") {
+			t.Fatalf("ReviewedExportString(%q, secret) = true", class)
+		}
+	}
+	for _, test := range []struct {
+		class Sensitivity
+		value string
+	}{
+		{class: Public, value: "daemon_running"},
+		{class: SystemMetadata, value: "go1.26.5"},
+		{class: SystemMetadata, value: "troubleshooting/database"},
+		{class: Pseudonymous, value: Placeholder},
+		{class: Pseudonymous, value: "endpoint_01"},
+	} {
+		if !ReviewedExportString(test.class, test.value) {
+			t.Fatalf("ReviewedExportString(%q, %q) = false", test.class, test.value)
+		}
+	}
+}

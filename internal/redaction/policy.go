@@ -59,3 +59,19 @@ func SafeSystemMetadata(value string) bool {
 	}
 	return true
 }
+
+func ReviewedExportString(class Sensitivity, value string) bool {
+	switch class {
+	case Public:
+		return SafeToken(value)
+	case SystemMetadata, Pseudonymous:
+		return value == Placeholder || SafeToken(value) || SafeSystemMetadata(value) || safeRemediation(value)
+	default:
+		return false
+	}
+}
+
+func safeRemediation(value string) bool {
+	const prefix = "troubleshooting/"
+	return len(value) > len(prefix) && len(value) <= len(prefix)+64 && value[:len(prefix)] == prefix && SafeToken(value[len(prefix):])
+}

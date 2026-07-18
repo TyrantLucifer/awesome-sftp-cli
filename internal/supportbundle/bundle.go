@@ -19,6 +19,8 @@ const (
 	MaxFileBytes     = 512 * 1024
 	MaxExpandedBytes = 3 * 1024 * 1024
 	MaxBundleBytes   = 4 * 1024 * 1024
+	maxJSONNodes     = 8192
+	maxJSONDepth     = 32
 )
 
 type Source struct {
@@ -163,6 +165,9 @@ func normalize(sources []Source) ([]normalizedSource, []byte, error) {
 		if !json.Valid(source.Bytes) {
 			return nil, nil, fmt.Errorf("preview support bundle: source %q is not valid JSON", source.Name)
 		}
+		if err := validateReviewedJSON(source.Sensitivity, source.Bytes); err != nil {
+			return nil, nil, fmt.Errorf("preview support bundle: source %q contains unreviewed values: %w", source.Name, err)
+		}
 		content := append([]byte(nil), source.Bytes...)
 		expanded += int64(len(content))
 		if expanded > MaxExpandedBytes {
@@ -185,6 +190,51 @@ func normalize(sources []Source) ([]normalizedSource, []byte, error) {
 		return nil, nil, errors.New("preview support bundle: manifest exceeds maximum size")
 	}
 	return normalized, manifestBytes, nil
+}
+
+func validateReviewedJSON(class redaction.Sensitivity, content []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(content))
+	decoder.UseNumber()
+	var root any
+	if err := decoder.Decode(&root); err != nil {
+		return errors.New("decode reviewed JSON")
+	}
+	type frame struct {
+		value any
+		depth int
+	}
+	stack := []frame{{value: root}}
+	nodes := 0
+	for len(stack) != 0 {
+		last := len(stack) - 1
+		current := stack[last]
+		stack = stack[:last]
+		nodes++
+		if nodes > maxJSONNodes || current.depth > maxJSONDepth {
+			return errors.New("reviewed JSON structure exceeds bounds")
+		}
+		switch value := current.value.(type) {
+		case nil, bool, json.Number:
+		case string:
+			if !redaction.ReviewedExportString(class, value) {
+				return errors.New("reviewed JSON string violates redaction policy")
+			}
+		case []any:
+			for index := len(value) - 1; index >= 0; index-- {
+				stack = append(stack, frame{value: value[index], depth: current.depth + 1})
+			}
+		case map[string]any:
+			for key, child := range value {
+				if !redaction.SafeToken(key) {
+					return errors.New("reviewed JSON key violates redaction policy")
+				}
+				stack = append(stack, frame{value: child, depth: current.depth + 1})
+			}
+		default:
+			return errors.New("reviewed JSON contains unsupported value")
+		}
+	}
+	return nil
 }
 
 func previewFile(name string, sensitivity redaction.Sensitivity, content []byte) File {
