@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source ./internal/integration/support-bundle-secret-scan.sh
+
 if test "$(id -u)" -ne 0; then
   printf 'hosted-auth.sh must run as root\n' >&2
   exit 1
@@ -579,6 +581,21 @@ for secret in "${password}" "${mfa_password}" "${key_passphrase}"; do
     exit 1
   fi
 done
+
+auth_needles="${root}/support-bundle-secret-needles"
+printf '%s\n' "${password}" "${mfa_password}" "${key_passphrase}" >"${auth_needles}"
+printf '%s\n' "${client_home}" "${state_home}" "${root}" >>"${auth_needles}"
+chmod 0600 "${auth_needles}"
+run_support_bundle_secret_scan \
+  "${client_user}" \
+  "${installed}" \
+  "${client_home}" \
+  "${state_home}" \
+  "${client_home}/support-bundle-scan" \
+  "${auth_needles}" \
+  "${client_home}/.ssh/client_key" \
+  "${client_home}/.ssh/mfa_key"
+rm -f "${auth_needles}"
 
 AMSFTP_RECOVERY_BINARY="${installed}" \
   AMSFTP_RECOVERY_ROOT="${root}-recovery" \
