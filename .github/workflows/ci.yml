@@ -387,6 +387,19 @@ jobs:
           esac
           mkdir -p "${RUNNER_TEMP}/auth-integration"
           printf '%s\n' "${current_version}" | tee "${RUNNER_TEMP}/auth-integration/openssh-current-version"
+      - name: Capture current MIT Kerberos version
+        run: |
+          set -euo pipefail
+          kerberos_version="$(/usr/bin/klist -V 2>&1)"
+          case "${kerberos_version}" in
+            Kerberos\ 5\ version\ *) ;;
+            *)
+              printf 'system klist did not report an MIT Kerberos version\n' >&2
+              exit 1
+              ;;
+          esac
+          mkdir -p "${RUNNER_TEMP}/auth-integration"
+          printf '%s\n' "${kerberos_version}" | tee "${RUNNER_TEMP}/auth-integration/kerberos-current-version"
       - name: Download public preview bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -421,6 +434,7 @@ jobs:
           set -euo pipefail
           sudo env \
             AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_1.0.0_linux_amd64/amsftp" \
+            AMSFTP_KERBEROS_EXPECT_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/kerberos-current-version")" \
             AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             bash ./internal/integration/hosted-kerberos.sh
       - name: Record provenance

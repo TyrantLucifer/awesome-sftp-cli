@@ -9,6 +9,14 @@ if test "$(id -u)" -ne 0; then
 fi
 
 : "${AMSFTP_KERBEROS_BINARY:?AMSFTP_KERBEROS_BINARY is required}"
+: "${AMSFTP_KERBEROS_EXPECT_VERSION:?AMSFTP_KERBEROS_EXPECT_VERSION is required}"
+
+actual_kerberos_version="$(/usr/bin/klist -V 2>&1)"
+if ! test "${actual_kerberos_version}" = "${AMSFTP_KERBEROS_EXPECT_VERSION}"; then
+  printf 'current MIT Kerberos version drifted before authentication\n' >&2
+  exit 1
+fi
+printf 'current MIT Kerberos version binding passed\n'
 
 root="${AMSFTP_KERBEROS_ROOT:-/tmp/amsftp-hosted-kerberos}"
 case "${root}" in
