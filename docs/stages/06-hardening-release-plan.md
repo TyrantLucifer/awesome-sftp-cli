@@ -1,6 +1,6 @@
 # Stage 6 Execution Plan
 
-- **Status**: In Progress — M6.1 complete; M6.2 migration/retention active
+- **Status**: In Progress — M6.1 complete; M6.2 migration, retention, Helper lifecycle, and public packaging active
 - **Updated**: 2026-07-18
 - **Sole baseline**: commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`
 - **Fixed branch**: `codex/stage6-hardening-release`
