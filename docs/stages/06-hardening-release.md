@@ -181,7 +181,7 @@
 2. 建立发行构建、校验、渠道包和 provenance。
 3. 在干净 macOS/Linux 环境验证安装、daemon、SSH、升级、恢复和卸载。
 
-当前增量：Helper state v2 生命周期、公共四目标确定性 archive/checksum/SPDX/provenance 与 target-aware 20-module runtime 并集已有 exact-SHA Hosted 证据。安装批次把 canonical man page 纳入 archive、安装三种 shell 补全、用冻结 Stage 5 daemon 建 v3 并由 current 升级至 v4、证明旧 daemon 对 newer DB 只降级且不改字节，并只卸载 exact owned files 而保留 state。replacement SHA `f9dd5fe09e857a4d31ad91f308b2de82692a23bf` 两侧 Hosted 均证明 lint、打包、checksum、man、completion、identity 与 Stage 5 启动，但新 harness 将 persistent HOME 置于不受信 `RUNNER_TEMP`，安全祖先检查正确触发 degraded；不安全根精确复现与受信根 5/5 对照排除了产品 migration regression。fix `b7a740010c7e7188f9514e6676a0324aa34433a2` 改用预置 owner-private root、加入 workflow policy，并通过完整 exact clean lifecycle，本次 replacement Hosted 尚待完成。项目 LICENSE、完整第三方通知、production distribution、公开 Helper 生命周期真实 composition、native macOS/channel 安装与 final release 组合仍未完成，不能提前打开 Helper distribution。
+当前增量：Helper state v2、公共四目标 deterministic package/provenance 与 target-aware dependency closure 已有 exact-SHA Hosted。installed lifecycle fix `b7a740010c7e7188f9514e6676a0324aa34433a2` 将 persistent HOME 从不受信 `RUNNER_TEMP` 移至 owner-private root，并通过完整 exact clean v3→v4/rollback/uninstall，replacement Hosted 待完成。当前公共 Helper 批次只开放 `install|upgrade` 语法：必须显式接受 shared-session/stable-home，任意 manifest/artifact/path/serve 输入在 runtime 前拒绝；protected distribution trust 未完成时 human/JSON 均稳定 exit 3，RPC/SSH/probe/write 为 0，help/man/bash/zsh/fish 同源。两套完整本地工具链门禁已绿，但真实 artifact composition、公开 disable/remove、项目 LICENSE、完整第三方通知、native/channel、signing/notary 与 final release 仍未完成，不能提前打开 Helper distribution。
 
 门禁：支持平台不依赖开发机残留，失败升级可恢复。
 

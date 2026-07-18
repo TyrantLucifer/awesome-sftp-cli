@@ -121,10 +121,68 @@ func TestHelperStatusHumanLevelZeroExplainsSafeFallbackAndClosedDistribution(t *
 	}
 }
 
+func TestHelperInstallAndUpgradeFailClosedBeforeRPCOrRuntime(t *testing.T) {
+	for _, command := range []string{"install", "upgrade"} {
+		for _, format := range []string{"human", "json"} {
+			t.Run(command+"/"+format, func(t *testing.T) {
+				connections := 0
+				args := []string{command, "work", "--accept-shared-session-stable-home", "--format", format}
+				var stdout bytes.Buffer
+				err := runHelperWithConnector(t.Context(), args, &stdout, func(context.Context) (helperRPC, io.Closer, error) {
+					connections++
+					return &fakeHelperRPC{t: t}, nopCloser{}, nil
+				})
+				if err == nil || exitCode(err) != ExitConfig || !strings.Contains(err.Error(), "production Helper distribution is closed") {
+					t.Fatalf("error = %v, exit = %d", err, exitCode(err))
+				}
+				if connections != 0 || stdout.Len() != 0 {
+					t.Fatalf("connections = %d, stdout = %q", connections, stdout.String())
+				}
+				if format == "json" {
+					var rendered bytes.Buffer
+					renderer, ok := err.(interface{ RenderCLIError(io.Writer) error })
+					if !ok {
+						t.Fatalf("error %T has no machine renderer", err)
+					}
+					if renderErr := renderer.RenderCLIError(&rendered); renderErr != nil {
+						t.Fatal(renderErr)
+					}
+					if !strings.Contains(rendered.String(), `"output_version":1`) || !strings.Contains(rendered.String(), `"class":"configuration"`) || !strings.Contains(rendered.String(), "production Helper distribution is closed") {
+						t.Fatalf("machine error = %q", rendered.String())
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestHelperInstallAndUpgradeRejectUntrustedInputsOrMissingConsentBeforeRuntime(t *testing.T) {
+	for _, args := range [][]string{
+		{"install", "work"},
+		{"upgrade", "work"},
+		{"install", "-oProxyCommand=bad", "--accept-shared-session-stable-home"},
+		{"upgrade", "work", "--accept-shared-session-stable-home", "--accept-shared-session-stable-home"},
+		{"install", "work", "--accept-shared-session-stable-home", "--manifest", "/tmp/manifest"},
+		{"upgrade", "work", "--accept-shared-session-stable-home", "--artifact", "/tmp/amsftp"},
+		{"serve"},
+	} {
+		connections := 0
+		err := runHelperWithConnector(t.Context(), args, &bytes.Buffer{}, func(context.Context) (helperRPC, io.Closer, error) {
+			connections++
+			return &fakeHelperRPC{t: t}, nopCloser{}, nil
+		})
+		if err == nil || exitCode(err) != ExitUsage {
+			t.Fatalf("args %q error = %v, exit = %d", args, err, exitCode(err))
+		}
+		if connections != 0 {
+			t.Fatalf("args %q made %d connections", args, connections)
+		}
+	}
+}
+
 func TestHelperStatusValidatesBeforeConnecting(t *testing.T) {
 	for _, args := range [][]string{
 		nil,
-		{"install", "work"},
 		{"status", "-oProxyCommand=bad"},
 		{"status", "work", "--format", "yaml"},
 		{"status", "work", "extra"},

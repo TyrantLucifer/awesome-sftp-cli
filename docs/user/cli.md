@@ -10,6 +10,7 @@ amsftp --workspace <name>
 amsftp daemon <start|status> [--format human|json]
 amsftp daemon stop --confirm stop [--format human|json]
 amsftp helper status <SSH-host> [--format human|json]
+amsftp helper <install|upgrade> <SSH-host> --accept-shared-session-stable-home [--format human|json]
 amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]
 amsftp completion <bash|zsh|fish>
 ```
@@ -28,7 +29,7 @@ Daemon JSON success has a stable v1 shape:
 {"output_version":1,"daemon":{"running":true,"state":"running","daemon_version":"1.0.0","protocol":"1.0"}}
 ```
 
-## Helper status
+## Helper status and release-gated install/upgrade
 
 `amsftp helper status <SSH-host>` validates the host alias and output format before resolving runtime paths or connecting to the daemon. It opens one ordinary SSH Provider session through the daemon, reads the negotiated capability snapshot, and releases that temporary Endpoint whether the snapshot succeeds or fails. It does not install, enable, upgrade, disable, or remove Helper bytes.
 
@@ -38,7 +39,9 @@ The command reports Level 0 with a safe fallback reason/recovery or Level 1 with
 {"output_version":1,"command":"helper status","host":"work","endpoint_id":"ep_aaaaaaaaaaaaaaaaaaaaaaaaaa","state":"ready","helper":{"level":0,"version":"","capabilities":[],"reason":"not_available","recovery":"continue with Level 0; enable a verified Helper explicitly when available","production_distribution_open":false}}
 ```
 
-Production distribution remains closed until the protected signing, notarization, manifest, custody, and final-byte gates are satisfied. The restricted remote process role `amsftp helper serve` remains separate from this public status command and is never offered by shell completion.
+`amsftp helper install` and `amsftp helper upgrade` require the literal `--accept-shared-session-stable-home` assertion. The parser rejects duplicate consent, arbitrary manifest/artifact/path options, option-shaped host aliases, unknown output formats, and all other arguments before resolving runtime paths or opening an RPC/SSH connection. While protected signing, notarization, release-admitted artifact, offline manifest-signing custody, and final-byte gates are incomplete, both commands return configuration exit `3` with `production Helper distribution is closed`; JSON requests receive the same versioned machine-error shape. This closed public surface cannot probe a host, stage local metadata, create a remote directory, or write content.
+
+The restricted remote process role `amsftp helper serve` remains separate from public lifecycle commands and is never offered by shell completion. No public command accepts a remote command string, local artifact/manifest path, fixture trust, or custom remote install path. Standard SFTP remains Level 0 regardless of this release gate.
 
 ## Durable Job query and control
 

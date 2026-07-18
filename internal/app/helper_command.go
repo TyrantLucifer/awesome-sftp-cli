@@ -33,9 +33,10 @@ type helperRPC interface {
 type helperRPCConnector func(context.Context) (helperRPC, io.Closer, error)
 
 type helperCommandOptions struct {
-	command string
-	host    string
-	format  string
+	command                       string
+	host                          string
+	format                        string
+	acceptSharedSessionStableHome bool
 }
 
 type helperStatusOutput struct {
@@ -75,6 +76,9 @@ func runHelperWithConnector(ctx context.Context, args []string, stdout io.Writer
 	if err != nil {
 		return machineCommandError(args, NewExitError(ExitUsage, err))
 	}
+	if err := rejectClosedHelperDistribution(options); err != nil {
+		return machineCommandError(args, err)
+	}
 	if connector == nil {
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("helper RPC connector is not configured")))
 	}
@@ -100,6 +104,9 @@ func runHelperCommand(ctx context.Context, args []string, stdout io.Writer, rpc 
 	options, err := parseHelperCommand(args)
 	if err != nil {
 		return NewExitError(ExitUsage, err)
+	}
+	if err := rejectClosedHelperDistribution(options); err != nil {
+		return err
 	}
 	output, err := executeHelperCommand(ctx, options, rpc)
 	if err != nil {
@@ -294,36 +301,56 @@ func validHelperConnectionState(state domain.ConnectionState) bool {
 func parseHelperCommand(args []string) (helperCommandOptions, error) {
 	options := helperCommandOptions{format: "human"}
 	if len(args) == 0 {
-		return options, errors.New("helper requires: status <SSH-host> [--format human|json]")
+		return options, errors.New("helper requires status, install, or upgrade")
 	}
-	if args[0] != "status" {
+	if args[0] != "status" && args[0] != "install" && args[0] != "upgrade" {
 		return options, fmt.Errorf("unknown public helper command %q", args[0])
 	}
 	options.command = args[0]
 	if len(args) < 2 {
-		return options, errors.New("helper status requires exactly one SSH host alias")
+		return options, fmt.Errorf("helper %s requires exactly one SSH host alias", options.command)
 	}
 	options.host = args[1]
 	if err := openssh.ValidateHostAlias(options.host); err != nil {
-		return options, fmt.Errorf("helper status SSH host: %w", err)
+		return options, fmt.Errorf("helper %s SSH host: %w", options.command, err)
 	}
 	seenFormat := false
 	for index := 2; index < len(args); index++ {
-		if args[index] != "--format" {
-			return options, fmt.Errorf("unknown helper status option %q", args[index])
+		switch args[index] {
+		case "--format":
+			if seenFormat {
+				return options, fmt.Errorf("helper %s --format may be provided only once", options.command)
+			}
+			seenFormat = true
+			if index+1 >= len(args) {
+				return options, fmt.Errorf("helper %s --format requires a value", options.command)
+			}
+			index++
+			if args[index] != "human" && args[index] != "json" {
+				return options, fmt.Errorf("helper %s --format must be human or json", options.command)
+			}
+			options.format = args[index]
+		case "--accept-shared-session-stable-home":
+			if options.command == "status" {
+				return options, fmt.Errorf("unknown helper status option %q", args[index])
+			}
+			if options.acceptSharedSessionStableHome {
+				return options, fmt.Errorf("helper %s --accept-shared-session-stable-home may be provided only once", options.command)
+			}
+			options.acceptSharedSessionStableHome = true
+		default:
+			return options, fmt.Errorf("unknown helper %s option %q", options.command, args[index])
 		}
-		if seenFormat {
-			return options, errors.New("helper status --format may be provided only once")
-		}
-		seenFormat = true
-		if index+1 >= len(args) {
-			return options, errors.New("helper status --format requires a value")
-		}
-		index++
-		if args[index] != "human" && args[index] != "json" {
-			return options, errors.New("helper status --format must be human or json")
-		}
-		options.format = args[index]
+	}
+	if options.command != "status" && !options.acceptSharedSessionStableHome {
+		return options, fmt.Errorf("helper %s requires --accept-shared-session-stable-home", options.command)
 	}
 	return options, nil
+}
+
+func rejectClosedHelperDistribution(options helperCommandOptions) error {
+	if options.command == "status" {
+		return nil
+	}
+	return NewExitError(ExitConfig, errors.New("production Helper distribution is closed; release-admitted install and upgrade artifacts are not configured"))
 }
