@@ -206,7 +206,7 @@
 3. 生成最终发行物、校验和、变更说明与验证记录。
 4. 发布后执行安装/更新冒烟并准备可逆撤回方案。
 
-当前增量：REL-009 SHA `19e8ab73d5f90a51815634b9b36112f86711f372` 的文档路径已有完整本地与双工作流分类证据，独立 exact-RC 新用户演练仍开放。REL-008 SHA `bad687f67789960bac426bd9414cfbcc5b859b49` 新增五条 executable contracts 与 `amsftp-release-gate-record-v1`：17 项门禁必须绑定同一 candidate SHA/tree 且 completed/success；physical 100 GiB、process/network-isolated Level 2、soak、两份独立终审、candidate push/PR 和 post-merge main 均有不可互换的精确边界。双 Go 本地门禁通过；PR 24/24，push quality/auth 通过，残余两个既有 Helper reader 时序失败有同 SHA PR companion。REL-010 的四条 contract 新增 final-only `docscheck --release`，冻结 23 个 Stage 6 ID、ADR-backed final decisions 与原序 12 项退出条件；当前它确定报告 21 个非终态行和 12 个未勾选条件。validator/audit 只验真，不冻结 RC、不查询或生成证据。当前没有 RC record，production Helper/Level 2 与所有受保护发布门禁保持 CLOSED。
+当前增量：REL-009 SHA `19e8ab73d5f90a51815634b9b36112f86711f372` 的文档路径已有完整本地与双工作流分类证据，独立 exact-RC 新用户演练仍开放。REL-008 SHA `bad687f67789960bac426bd9414cfbcc5b859b49` 新增五条 executable contracts 与 `amsftp-release-gate-record-v1`：17 项门禁必须绑定同一 candidate SHA/tree 且 completed/success；physical 100 GiB、process/network-isolated Level 2、soak、两份独立终审、candidate push/PR 和 post-merge main 均有不可互换的精确边界。双 Go 本地门禁通过；PR 24/24，push quality/auth 通过，残余两个既有 Helper reader 时序失败有同 SHA PR companion。REL-010 SHA `181f8a8fbf083c5dadf450373981693e82ecdf74` 的四条 contract 新增 final-only `docscheck --release`，冻结 23 个 Stage 6 ID、ADR-backed final decisions 与原序 12 项退出条件；精确双 Go 本地门禁及 push/PR 各 24/24 通过，当前它仍确定报告 21 个非终态行和 12 个未勾选条件。validator/audit 只验真，不冻结 RC、不查询或生成证据。当前没有 RC record，production Helper/Level 2 与所有受保护发布门禁保持 CLOSED。
 
 门禁：所有发布原则、退出标准和功能矩阵证据一致，才标记 1.0。
 
