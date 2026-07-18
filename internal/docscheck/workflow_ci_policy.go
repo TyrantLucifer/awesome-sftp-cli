@@ -133,6 +133,88 @@ func checkCINative(job workflowJob, add func(int, string, string)) {
 			add(job.line, "workflow.ci_native_command", fmt.Sprintf("native job is missing unconditional command %q", requirement.name))
 		}
 	}
+	if !nativeLifecycleIsExact(job) {
+		add(job.line, "workflow.ci_native_lifecycle", "native job must exercise the exact owner-private clean install, daemon, state-preserving uninstall lifecycle")
+	}
+}
+
+func nativeLifecycleIsExact(job workflowJob) bool {
+	offset := trustedPersistentTestRootOffset(job.steps)
+	index := 11 + offset
+	if len(job.steps) <= index || !jobHasApprovedExecutionShape(job) || !jobEnvironmentIsTrusted(job, "native-${{ matrix.os }}", "") {
+		return false
+	}
+	step := job.steps[index]
+	if step.name == nil || step.name.value != "Exercise native clean install and uninstall lifecycle" ||
+		step.run == nil || step.ifExpr != nil || !stepRunUsesBlockScalar(step) || !stepHasSafeRunContext(job, step) ||
+		!stepHasOnlyKeys(step, "name", "run") {
+		return false
+	}
+	script := step.run.value
+	ordered := []string{
+		`set -euo pipefail`,
+		`native_binary="${RUNNER_TEMP}/native/bin/amsftp"`,
+		`install_root="${RUNNER_TEMP}/native/install"`,
+		`prefix="${install_root}/prefix"`,
+		`installed="${prefix}/bin/amsftp"`,
+		`trusted_root="/var/lib/amsftp-tests/$(id -u)"`,
+		`trusted_root="${HOME}/.amsftp-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`,
+		`clean_home="${trusted_root}/clean-home"`,
+		`test ! -e "${install_root}"`,
+		`test ! -e "${clean_home}"`,
+		`mkdir -p`,
+		`"${prefix}/bin"`,
+		`"${prefix}/share/man/man1"`,
+		`"${prefix}/share/bash-completion/completions"`,
+		`"${prefix}/share/zsh/site-functions"`,
+		`"${prefix}/share/fish/vendor_completions.d"`,
+		`"${clean_home}/config"`,
+		`"${clean_home}/state"`,
+		`"${clean_home}/cache"`,
+		`"${clean_home}/runtime"`,
+		`chmod 0700 "${clean_home}" "${clean_home}/config" "${clean_home}/state" "${clean_home}/cache" "${clean_home}/runtime"`,
+		`install -m 0755 "${native_binary}" "${installed}"`,
+		`install -m 0644 docs/man/amsftp.1 "${prefix}/share/man/man1/amsftp.1"`,
+		`"${installed}" completion bash >"${prefix}/share/bash-completion/completions/amsftp"`,
+		`"${installed}" completion zsh >"${prefix}/share/zsh/site-functions/_amsftp"`,
+		`"${installed}" completion fish >"${prefix}/share/fish/vendor_completions.d/amsftp.fish"`,
+		`test "$("${native_binary}" --version)" = "$("${installed}" --version)"`,
+		`"HOME=${clean_home}"`,
+		`"XDG_CONFIG_HOME=${clean_home}/config"`,
+		`"XDG_STATE_HOME=${clean_home}/state"`,
+		`"XDG_CACHE_HOME=${clean_home}/cache"`,
+		`"XDG_RUNTIME_DIR=${clean_home}/runtime"`,
+		`"TMPDIR=${clean_home}/runtime"`,
+		`trap cleanup_daemon EXIT`,
+		`env "${clean_env[@]}" "${installed}" daemon start --format json | grep -F '"running":true'`,
+		`env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'`,
+		`env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":true'`,
+		`env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json | grep -F '"running":false'`,
+		`env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":false'`,
+		`database="${clean_home}/state/amsftp/amsftp.db"`,
+		`database="${clean_home}/Library/Application Support/io.github.tyrantlucifer.amsftp/state/amsftp.db"`,
+		`test -f "${database}"`,
+		`rm -f`,
+		`"${installed}"`,
+		`"${prefix}/share/man/man1/amsftp.1"`,
+		`"${prefix}/share/bash-completion/completions/amsftp"`,
+		`"${prefix}/share/zsh/site-functions/_amsftp"`,
+		`"${prefix}/share/fish/vendor_completions.d/amsftp.fish"`,
+		`test ! -e "${installed}"`,
+		`test -f "${database}"`,
+		`trap - EXIT`,
+	}
+	cursor := 0
+	for _, fragment := range ordered {
+		relative := strings.Index(script[cursor:], fragment)
+		if relative < 0 {
+			return false
+		}
+		cursor += relative + len(fragment)
+	}
+	return strings.Count(script, `test -f "${database}"`) == 2 &&
+		!strings.Contains(script, `clean_home="${RUNNER_TEMP}`) &&
+		!strings.Contains(script, "rm -rf") && !strings.Contains(script, "rm --recursive")
 }
 
 func checkCIOldstable(job workflowJob, add func(int, string, string)) {
