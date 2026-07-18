@@ -112,6 +112,8 @@
 - Helper 产物与主客户端发布同源、版本可追溯；仍需用户逐 Endpoint 明确批准安装。
 - 发布流程生成变更说明、校验和、SPDX SBOM 和构建 provenance/attestation；应用/包标识固定为 `io.github.tyrantlucifer.amsftp`，签名/公证按分发渠道要求执行。
 
+当前 M6.2 执行证据只完成了确定性 formula renderer：它要求显式审核过的单一 SPDX license 和 exact four canonical archives，按 macOS/Linux × ARM/Intel 绑定不可变 URL/hash，安装 binary/man/completion 并冻结 version smoke；不发布 formula、不创建 service，也不把 Homebrew 作为 Helper 信任根。真实项目 LICENSE、最终受保护 bytes、公开 Homebrew clean install/upgrade/uninstall 仍是发布门禁，不能由 renderer 测试替代。
+
 ### S6-D06 安全审查
 
 威胁模型至少覆盖：

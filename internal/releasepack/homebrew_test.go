@@ -3,6 +3,7 @@ package releasepack
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"os/exec"
 	"strings"
 	"testing"
 )
@@ -62,6 +63,22 @@ func TestHomebrewFormulaInstallsBinaryManCompletionsAndVersionSmoke(t *testing.T
 	}
 	if strings.Contains(rendered, "service do") || strings.Contains(rendered, "helper") {
 		t.Fatalf("formula must not create an unadmitted service or Helper trust path:\n%s", rendered)
+	}
+}
+
+func TestHomebrewFormulaHasValidRubySyntax(t *testing.T) {
+	ruby, err := exec.LookPath("ruby")
+	if err != nil {
+		t.Skip("Ruby is unavailable for the formula syntax smoke")
+	}
+	formula, err := BuildHomebrewFormula(homebrewFormulaFixture())
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command(ruby, "-c") //nolint:gosec // resolved Ruby interpreter, constant syntax-only argument, and generated stdin.
+	command.Stdin = strings.NewReader(string(formula))
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("Ruby formula syntax: %v: %s", err, output)
 	}
 }
 
