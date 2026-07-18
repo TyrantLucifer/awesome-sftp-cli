@@ -150,17 +150,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 			ExplicitMigrationResume: options.explicitMigrationResume,
 		})
 		if stateOpenErr == nil {
-			store, err := jobstore.New(ctx, stateDatabase)
-			if err == nil {
-				startupNow := time.Now()
-				_, err = store.RecoverInterrupted(ctx, generator, startupNow)
-				if err == nil {
-					_, err = store.ReconcileHistory(ctx, startupNow)
-				}
-			}
-			if err == nil {
-				err = store.CheckpointIdle(ctx)
-			}
+			store, err := initializeDurableJobStore(ctx, stateDatabase, generator, time.Now())
 			if err == nil {
 				var durableEdits *editstore.Store
 				durableEdits, err = editstore.New(ctx, stateDatabase)
@@ -358,6 +348,23 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return err
 	}
 	return daemon.Serve(serveCtx, listener, server)
+}
+
+func initializeDurableJobStore(ctx context.Context, database *sql.DB, generator domain.Generator, now time.Time) (*jobstore.Store, error) {
+	store, err := jobstore.New(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := store.RecoverInterrupted(ctx, generator, now); err != nil {
+		return nil, err
+	}
+	if _, err := store.ReconcileHistory(ctx, now); err != nil {
+		return nil, err
+	}
+	if err := store.CheckpointIdle(ctx); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func cacheDaemonID(sessionID domain.SessionID) string {

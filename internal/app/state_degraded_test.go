@@ -61,17 +61,6 @@ func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testi
 			}
 		}
 	}
-	claimedRequest := restartFixtureRequest(t, 10)
-	claimedJob, _, err := store.Create(ctx, claimedRequest)
-	if err != nil {
-		t.Fatalf("create claimed retention fixture: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, "UPDATE jobs SET state='completed', terminal_summary='done', updated_at_unix=2200 WHERE job_id=?", claimedJob.JobID); err != nil {
-		t.Fatalf("terminalize claimed retention fixture: %v", err)
-	}
-	if _, err := database.ExecContext(ctx, "INSERT INTO job_history_retention(singleton,job_id,policy_version,claimed_at_unix) VALUES(1,?,1,2)", claimedJob.JobID); err != nil {
-		t.Fatalf("claim restart retention fixture: %v", err)
-	}
 	if err := database.Close(); err != nil {
 		t.Fatalf("close restart fixture: %v", err)
 	}
@@ -119,16 +108,6 @@ func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testi
 		t.Fatalf("reopen recovered state: %v", err)
 	}
 	defer reopened.Close()
-	var retainedJobs, retainedClaims int
-	if err := reopened.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_id=?", claimedJob.JobID).Scan(&retainedJobs); err != nil {
-		t.Fatalf("read claimed retention fixture: %v", err)
-	}
-	if err := reopened.QueryRowContext(ctx, "SELECT count(*) FROM job_history_retention").Scan(&retainedClaims); err != nil {
-		t.Fatalf("read retention claims after restart: %v", err)
-	}
-	if retainedJobs != 0 || retainedClaims != 0 {
-		t.Fatalf("restart retention cleanup left jobs/claims = %d/%d, want 0/0", retainedJobs, retainedClaims)
-	}
 	for _, before := range states {
 		want := before
 		wantVersion := int64(1)
@@ -168,6 +147,49 @@ func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testi
 		if eventCount != wantEvents || recoveredCount != wantRecovered {
 			t.Fatalf("restart events for %q = (%d, %d recovered), want (%d, %d recovered)", before, eventCount, recoveredCount, wantEvents, wantRecovered)
 		}
+	}
+}
+
+func TestInitializeDurableJobStoreResumesRetentionClaimBeforeReturn(t *testing.T) {
+	paths, _ := degradedStatePaths(t)
+	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	database, _, err := statefs.Initialize(ctx, statefs.InitializeConfig{
+		Root: paths.StateDir, DatabasePath: paths.DatabaseFile, Now: time.Unix(2_200, 0),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	store, err := jobstore.New(ctx, database)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := restartFixtureRequest(t, 10)
+	claimedJob, _, err := store.Create(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "UPDATE jobs SET state='completed', terminal_summary='done', updated_at_unix=2200 WHERE job_id=?", claimedJob.JobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := database.ExecContext(ctx, "INSERT INTO job_history_retention(singleton,job_id,policy_version,claimed_at_unix) VALUES(1,?,1,2200)", claimedJob.JobID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initializeDurableJobStore(ctx, database, &domain.RandomGenerator{}, time.Unix(2_201, 0)); err != nil {
+		t.Fatal(err)
+	}
+	var retainedJobs, retainedClaims int
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM jobs WHERE job_id=?", claimedJob.JobID).Scan(&retainedJobs); err != nil {
+		t.Fatal(err)
+	}
+	if err := database.QueryRowContext(ctx, "SELECT count(*) FROM job_history_retention").Scan(&retainedClaims); err != nil {
+		t.Fatal(err)
+	}
+	if retainedJobs != 0 || retainedClaims != 0 {
+		t.Fatalf("startup retention left jobs/claims = %d/%d, want 0/0", retainedJobs, retainedClaims)
 	}
 }
 
