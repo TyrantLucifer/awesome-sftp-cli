@@ -211,15 +211,30 @@ export TERM=xterm-256color
 export AMSFTP_VENDOR_BINARY
 export AMSFTP_VENDOR_TUI_OUTPUT="${root}/vendor-tui.out"
 export AMSFTP_VENDOR_TUI_STDERR="${root}/vendor-tui.err"
+export AMSFTP_VENDOR_DAEMON_LOG="${root}/xdg-state/amsftp/log/daemon.jsonl"
 client_runtime_ready=1
 set +e
-expect <<'EXPECT'
+/usr/bin/env -i \
+  HOME="${client_home}" \
+  XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+  XDG_STATE_HOME="${XDG_STATE_HOME}" \
+  XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  TERM="${TERM}" \
+  AMSFTP_VENDOR_BINARY="${AMSFTP_VENDOR_BINARY}" \
+  AMSFTP_VENDOR_TUI_OUTPUT="${AMSFTP_VENDOR_TUI_OUTPUT}" \
+  AMSFTP_VENDOR_TUI_STDERR="${AMSFTP_VENDOR_TUI_STDERR}" \
+  AMSFTP_VENDOR_DAEMON_LOG="${AMSFTP_VENDOR_DAEMON_LOG}" \
+  AMSFTP_VENDOR_TUI_LOCATION=amsftp-proftpd:/ \
+  AMSFTP_VENDOR_TUI_LOCAL=/tmp \
+  /usr/bin/expect <<'EXPECT'
 set timeout 35
 match_max 200000
 log_user 0
 log_file -noappend $env(AMSFTP_VENDOR_TUI_OUTPUT)
 set stty_init "rows 30 columns 200"
-spawn -noecho /bin/sh -c {exec "$AMSFTP_VENDOR_BINARY" "amsftp-proftpd:/" 2>"$AMSFTP_VENDOR_TUI_STDERR"}
+spawn -noecho /bin/sh -c {exec "$AMSFTP_VENDOR_BINARY" "$AMSFTP_VENDOR_TUI_LOCATION" "$AMSFTP_VENDOR_TUI_LOCAL" 2>"$AMSFTP_VENDOR_TUI_STDERR"}
 expect {
   -exact "vendor-sftp-marker.txt" {}
   eof { exit 91 }
@@ -234,17 +249,21 @@ EXPECT
 expect_rc=$?
 set -e
 if test "${expect_rc}" -ne 0; then
+  printf 'vendor TUI expect exit: %s\n' "${expect_rc}" >&2
   for diagnostic in \
     "${AMSFTP_VENDOR_TUI_OUTPUT}" \
     "${AMSFTP_VENDOR_TUI_STDERR}" \
+    "${AMSFTP_VENDOR_DAEMON_LOG}" \
     "${root}/proftpd-console.log" \
     "${root}/proftpd-system.log" \
     "${root}/proftpd-sftp.log"; do
     if test -f "${diagnostic}"; then
       printf '%s\n' "--- ${diagnostic}" >&2
-      sed -n '1,240p' "${diagnostic}" >&2
+      sudo sed -n '1,240p' "${diagnostic}" >&2 || true
     fi
   done
+  "${AMSFTP_VENDOR_BINARY}" daemon status --format json >&2 || true
+  ps -o pid=,ppid=,stat=,args= -u "$(id -u)" | sed -n '1,120p' >&2 || true
   exit "${expect_rc}"
 fi
 "${AMSFTP_VENDOR_BINARY}" daemon stop --confirm stop --format json | grep -F '"status":"stopped"'

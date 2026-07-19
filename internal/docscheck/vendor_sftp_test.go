@@ -50,10 +50,17 @@ func TestHostedVendorSFTPRunsProviderAndPreviewBinary(t *testing.T) {
 	assertOpenSSHFloorOrder(t, harness, []string{
 		`TestRealProFTPDVendorSFTPLevel0AndDurableTransfers`,
 		`vendor SFTP provider browse and durable transfers passed`,
+		`export AMSFTP_VENDOR_DAEMON_LOG="${root}/xdg-state/amsftp/log/daemon.jsonl"`,
+		`/usr/bin/env -i \`,
+		`AMSFTP_VENDOR_TUI_LOCATION=amsftp-proftpd:/`,
+		`AMSFTP_VENDOR_TUI_LOCAL=/tmp`,
 		`set stty_init "rows 30 columns 200"`,
-		`spawn -noecho /bin/sh -c {exec "$AMSFTP_VENDOR_BINARY" "amsftp-proftpd:/" 2>"$AMSFTP_VENDOR_TUI_STDERR"}`,
+		`spawn -noecho /bin/sh -c {exec "$AMSFTP_VENDOR_BINARY" "$AMSFTP_VENDOR_TUI_LOCATION" "$AMSFTP_VENDOR_TUI_LOCAL" 2>"$AMSFTP_VENDOR_TUI_STDERR"}`,
 		`vendor-sftp-marker.txt`,
 		`if test "${expect_rc}" -ne 0; then`,
+		`vendor TUI expect exit: %s`,
+		`"${AMSFTP_VENDOR_DAEMON_LOG}"`,
+		`sudo sed -n '1,240p' "${diagnostic}" >&2 || true`,
 		`vendor SFTP preview-binary TUI browse passed`,
 	})
 }
