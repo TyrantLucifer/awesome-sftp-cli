@@ -203,6 +203,8 @@
 
 当前 daemon lifecycle 增量要求五个 native runner 从 exact Stage 5 安装态升级到 current，再回滚 Stage 5 并恢复 current。合同覆盖 live old daemon 下原子替换 binary、由 current 客户端识别旧 daemon、验证 PID 后停止、current Job API、SIGKILL 后残留 Socket 的 fail-closed 拒绝与同路径恢复、旧 daemon 面对 v4 state 时的稳定拒绝和数据库 byte identity。普通客户端 autostart 同时改为只有 `Lstat` 明确返回不存在才调用 starter；已有或无法检查的路径均保留连接失败且不删除 Socket，并用独立 Unix session 保证 daemon 不随客户端终端退出。SHA `5b72101` 的双 Go 本地门禁通过；PR `29681591589` 首轮 25/25，push `29681590469` 对两个既有时序失败最小重跑后 25/25，全部十个 native jobs 的新步骤通过。本批不完成 published rollback、Helper-too-new、最终 native Helper matrix 或 Production Helper/Level 2。
 
+Transition-hardening SHA `3bfbd174a7cf264847d8d3bf0ff6e0e5ad62aff0` closes the concrete stop/start race exposed by that lifecycle: an accepted shutdown is not success until the authenticated client is closed, the exact control Socket is absent, and the daemon instance lock can be acquired and released. The bounded waiter retries only a still-existing Socket or a still-held lock; an inspection error or path replaced by a non-Socket fails closed and never removes it. The same batch adds a real child-process Helper matrix for current v4, v5 minimum-client rejection, protocol-v2 rejection, exact v4-manifest versus compatible-v5-artifact rejection, and current-v4 recovery after each failure. Current `make ci` and exact oldstable `make check` pass locally; Hosted evidence is consolidated into the batch head. Public-channel rollback, protected release bytes, Production Helper and Level 2 remain open.
+
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 
 ### M6.4 — Release Candidate 与 1.0
