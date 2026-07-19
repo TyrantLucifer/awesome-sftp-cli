@@ -1,6 +1,6 @@
 # Project State
 
-- **Updated**: 2026-07-19
+- **Updated**: 2026-07-18
 - **Lifecycle**: Stage 6 In Progress
 - **Active stage**: Stage 6 — Hardening & 1.0 Release
 - **Current milestone**: M6.4 — independent release documentation and RC preparation; M6.3 external/protected gates remain open
@@ -8,10 +8,6 @@
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
-
-Owner-only internal preview `0.1.0-internal` is available from exact SHA `334b1c2f001048c9857008eb602bf3cb3ecf6479`; push workflow `29677392555` completed successfully, including deterministic four-target packaging, native macOS/Linux jobs, and real OpenSSH plus MIT Kerberos/GSSAPI against the packaged binary. It remains unsigned, non-redistributable, and keeps Production Helper and Level 2 CLOSED.
-
-The current REL-011/012 residual-Socket batch closes the public `daemon start` reachability gap without broadening cleanup authority. A failed control-Socket dial is treated as stopped only when the path is a validated private Unix Socket and the canonical instance lock is definitively absent or acquirable. `daemon status` does not create the lock or remove the path; the daemon must acquire the matching lock, revalidate the Socket, remove it, bind a new private Socket, and complete the protocol handshake before `started`. A held/uncertain lock, regular file, symbolic link, unsafe Socket, unhealthy live daemon, or incompatible protocol remains fail-closed. Focused current race and exact-oldstable affected suites pass. Exact oldstable `make check` passed once. Current `make ci` passed check/docs/NOTICE/tidy/verify, then lint found the introduced nil-error return; returning the validation error with context fixed it, scoped lint reported zero issues, and the not-yet-run full race, four fuzz smokes, zero-called-vulnerability scan, actionlint, and four builds all passed. No passed phase was repeated; Hosted evidence follows this implementation commit.
 
 The initial M6.4 timing-stability implementation was SHA `60255dc8dc5e4732ae0fe55ac11ca860390bc81c`, tree `27fe962f3c712eae16e061a06d8460542eaaedf5`, based on evidence-sync SHA `c81887a8fcfacd488ff88c23ead46f34f2f972e5`. Four related RED/GREEN slices replace asynchronous observation races with explicit terminal/readiness barriers: `ProcessSession.Wait` joins the Helper client reader, OpenSSH process, and stderr reader before diagnostic or heartbeat-failure assertions; the tail truncate/rotate fixture drives two deterministic polls while retaining its original 80 ms duration limit; and the Stage 2 delete PTY waits for the selected filename plus a loaded status row before sending `D`. Current race repetition passed 200 iterations, the unchanged-80-ms tail case passed a separate 200 iterations, and the real Stage 2 PTY passed 10 iterations. Focused oldstable, vet, scoped lint, docscheck, exact current Go 1.26.5 `make ci`, and exact oldstable Go 1.25.12 `make check` passed.
 
