@@ -85,6 +85,36 @@ func TestServeConnRequiresHelloAsFirstFrame(t *testing.T) {
 	}
 }
 
+func TestServeConnRejectsIncompatibleHelloBeforeSessionCreation(t *testing.T) {
+	sessions := 0
+	server := newTestServer(t, sessionFactory(func() Session {
+		sessions++
+		return &testSession{}
+	}))
+	serverConn, clientConn := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(context.Background(), serverConn) }()
+
+	writeEnvelope(t, clientConn, requestEnvelope(helloRequestID, RequestHello, ipc.HelloRequest{
+		ClientVersion:    "future-client",
+		ClientInstanceID: "future-client-test",
+		Protocols:        []ipc.VersionRange{{Major: ipc.ProtocolMajor + 1, MinMinor: 0, MaxMinor: 0}},
+	}))
+	response := readEnvelope(t, clientConn)
+	if response.Error == nil || response.Error.Code != domain.CodeProtocolIncompatible {
+		t.Fatalf("hello response error = %#v, want protocol_incompatible", response.Error)
+	}
+	_ = clientConn.Close()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeConn did not stop after incompatible hello")
+	}
+	if sessions != 0 {
+		t.Fatalf("session factory calls = %d, want 0 before protocol acceptance", sessions)
+	}
+}
+
 func TestServeConnUsesConfiguredFrameMaximum(t *testing.T) {
 	server, err := NewServer(ServerConfig{
 		BuildVersion:     "test",

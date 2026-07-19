@@ -17,6 +17,10 @@ This procedure applies to immutable archives. A package manager may automate exa
 4. Run `amsftp doctor --format json`, inspect database/migration/cache results, and exercise a representative read-only workspace before resuming mutation.
 5. Keep the previous extraction and recovery evidence until important Jobs and state health are confirmed.
 
+A probe error is not proof that no daemon exists. If `amsftp daemon start --format json` cannot authenticate, negotiate a shared protocol, or otherwise prove the Socket is absent, it must not invoke the starter. Preserve the failure output and never delete or replace the control socket to force startup. A rejected future-protocol client does not replace or terminate the running daemon; compatible clients already connected may finish their work.
+
+For a pre-migration compatibility failure, restore the matching CLI files only after identifying the process and binary that own the Socket. Use `amsftp daemon status --format json` from a compatible binary, stop the verified daemon explicitly, then start the selected rollback binary and re-run status and doctor. If ownership or state effects remain uncertain, stop mutation and escalate instead of deleting the Socket or starting a second daemon.
+
 A migration may create a verified backup and recovery hold. Do not remove it merely because startup returned. An older binary that encounters a newer database must not mutate it; use the current binary or the documented read-only diagnosis and restore path.
 
 ## Roll back

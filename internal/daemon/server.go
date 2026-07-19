@@ -132,36 +132,16 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 		}
 	}()
 	defer close(connectionDone)
-	session := s.sessions.NewSession()
-	if session == nil {
-		return errors.New("serve daemon connection: session factory returned nil")
-	}
 
 	reader, err := ipc.NewReader(conn, s.maxFrameBytes)
 	if err != nil {
-		_ = session.Close()
 		return err
 	}
 	frameWriter, err := ipc.NewWriter(conn, s.maxFrameBytes)
 	if err != nil {
-		_ = session.Close()
 		return err
 	}
 	writer := &connectionWriter{writer: frameWriter, conn: conn, cancel: cancelConnection}
-
-	active := make(map[domain.RequestID]context.CancelFunc)
-	var activeMu sync.Mutex
-	var requests sync.WaitGroup
-	defer func() {
-		cancelConnection()
-		activeMu.Lock()
-		for _, cancel := range active {
-			cancel()
-		}
-		activeMu.Unlock()
-		requests.Wait()
-		_ = session.Close()
-	}()
 
 	if err := conn.SetReadDeadline(time.Now().Add(s.handshakeTimeout)); err != nil {
 		return fmt.Errorf("serve daemon connection: set handshake deadline: %w", err)
@@ -180,6 +160,24 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 		}
 		return fmt.Errorf("serve daemon connection: clear handshake deadline: %w", err)
 	}
+	session := s.sessions.NewSession()
+	if session == nil {
+		return errors.New("serve daemon connection: session factory returned nil")
+	}
+
+	active := make(map[domain.RequestID]context.CancelFunc)
+	var activeMu sync.Mutex
+	var requests sync.WaitGroup
+	defer func() {
+		cancelConnection()
+		activeMu.Lock()
+		for _, cancel := range active {
+			cancel()
+		}
+		activeMu.Unlock()
+		requests.Wait()
+		_ = session.Close()
+	}()
 
 	semaphore := make(chan struct{}, s.maxInFlight)
 	for {

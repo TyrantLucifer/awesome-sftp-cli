@@ -17,6 +17,8 @@ This is the frozen AMSFTP 1.0 public version inventory. The owning package remai
 
 The SQLite `1-4` read range includes forward migration to head 4; it is not a promise that arbitrary historical or newer databases are writable. Cache catalog tables were introduced by SQLite schema 2, while cache filesystem manifests remain an independently validated format 1. Helper state v1 is atomically migrated to v2 before mutation; v2 retains parallel exact artifacts, one active selection, the monotonic high-water, and at most one durable removal claim. Helper release-manifest writes are release-only and production distribution remains CLOSED until the protected signing/notarization/byte-binding gates pass.
 
+Daemon negotiation is connection-scoped and precedes runtime state: a protocol-incompatible client fails before session allocation. Rejecting that client does not replace the daemon or its control socket, and compatible clients already connected continue on their negotiated protocol. CLI startup is fail-closed as well: only a successful probe proving the Socket absent may invoke the daemon starter; an unhealthy, unauthenticated, or incompatible existing Socket is preserved for explicit diagnosis and verified shutdown.
+
 ## Frozen historical source inventory
 
 This inventory freezes the complete set of persistent source formats before M6.2 migration code changes. Every row is captured as repository bytes pinned by SHA-256 and exercised by a current-owner reader test. Provenance names the commit that first wrote the source format, except the config sample which intentionally comes from the frozen exact-main baseline.

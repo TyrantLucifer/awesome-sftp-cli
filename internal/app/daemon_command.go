@@ -75,21 +75,24 @@ func executeDaemonCommand(ctx context.Context, options daemonCommandOptions, arg
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("daemon probe is not configured")))
 	}
 	client, found, probeErr := runtime.probe(ctx)
-	if probeErr == nil && found && client == nil {
+	if probeErr != nil {
+		if client != nil {
+			_ = client.Close()
+		}
+		return machineCommandError(args, classifyJobConnectionError(fmt.Errorf("probe daemon: %w", probeErr)))
+	}
+	if found && client == nil {
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("daemon probe reported a daemon without a client")))
 	}
 
 	switch options.command {
 	case "status":
-		if probeErr != nil {
-			return machineCommandError(args, classifyJobConnectionError(fmt.Errorf("probe daemon: %w", probeErr)))
-		}
 		if !found {
 			return writeDaemonResult(args, stdout, options, daemonStateOutput{State: "stopped"})
 		}
 		return finishDaemonResult(args, stdout, options, client, daemonState(client.Info(), "running"))
 	case "start":
-		if probeErr == nil && found {
+		if found {
 			return finishDaemonResult(args, stdout, options, client, daemonState(client.Info(), "already_running"))
 		}
 		if client != nil {
@@ -107,9 +110,6 @@ func executeDaemonCommand(ctx context.Context, options daemonCommandOptions, arg
 		}
 		return finishDaemonResult(args, stdout, options, started, daemonState(started.Info(), "started"))
 	case "stop":
-		if probeErr != nil {
-			return machineCommandError(args, classifyJobConnectionError(fmt.Errorf("probe daemon: %w", probeErr)))
-		}
 		if !found {
 			return machineCommandError(args, NewExitError(ExitConflict, errors.New("daemon is not running")))
 		}

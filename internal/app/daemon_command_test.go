@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
 )
 
@@ -171,6 +172,84 @@ func TestDaemonStartIsIdempotentAndStopUsesAuthenticatedRPC(t *testing.T) {
 			t.Fatalf("client = %#v, output = %q", client, stdout.String())
 		}
 	})
+}
+
+func TestDaemonStartRejectsProbeFailureBeforeStarter(t *testing.T) {
+	tests := []struct {
+		name       string
+		probeErr   error
+		found      bool
+		withClient bool
+		wantCode   domain.Code
+		wantRetry  domain.RetryKind
+		wantEffect domain.EffectStatus
+	}{
+		{
+			name:       "incompatible daemon",
+			found:      true,
+			withClient: true,
+			probeErr: &daemon.RemoteError{
+				RPC: ipc.RPCError{
+					Code:    domain.CodeProtocolIncompatible,
+					Message: "no shared daemon protocol",
+					Retry:   domain.RetryAdvice{Kind: domain.RetryNever},
+					Effect:  domain.EffectNone,
+				},
+			},
+			wantCode:   domain.CodeProtocolIncompatible,
+			wantRetry:  domain.RetryNever,
+			wantEffect: domain.EffectNone,
+		},
+		{name: "unhealthy socket", found: true, withClient: true, probeErr: errors.New("daemon socket is unhealthy")},
+		{name: "socket absence uncertain", probeErr: errors.New("inspect daemon socket: permission denied")},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var client *fakeDaemonControlClient
+			if tt.withClient {
+				client = &fakeDaemonControlClient{}
+			}
+			var probeClient daemonControlClient
+			if client != nil {
+				probeClient = client
+			}
+			starts := 0
+			runtime := daemonCommandRuntime{
+				probe: func(context.Context) (daemonControlClient, bool, error) {
+					return probeClient, tt.found, tt.probeErr
+				},
+				start: func(context.Context) (daemonControlClient, error) {
+					starts++
+					return &fakeDaemonControlClient{info: testDaemonInfo()}, nil
+				},
+			}
+			handler := func(ctx context.Context, args []string, stdout, _ io.Writer) error {
+				return runDaemonCommandWithRuntime(ctx, args, stdout, runtime)
+			}
+			var stdout bytes.Buffer
+			var stderr bytes.Buffer
+			code := Run(t.Context(), []string{"daemon", "start", "--format", "json"}, &stdout, &stderr, Handlers{Daemon: handler})
+			if code != int(ExitNetwork) || stdout.Len() != 0 {
+				t.Fatalf("exit = %d stdout = %q stderr = %q", code, stdout.String(), stderr.String())
+			}
+			if starts != 0 {
+				t.Fatalf("starter calls = %d, want 0", starts)
+			}
+			if client != nil && client.closed != 1 {
+				t.Fatalf("probe client close count = %d, want 1", client.closed)
+			}
+			var envelope cliErrorEnvelope
+			if err := json.Unmarshal(stderr.Bytes(), &envelope); err != nil {
+				t.Fatalf("stderr is not one JSON object: %q: %v", stderr.String(), err)
+			}
+			if envelope.OutputVersion != PublicCLIContractVersion || envelope.Error.ExitCode != int(ExitNetwork) || envelope.Error.Class != "network" {
+				t.Fatalf("machine error = %#v", envelope)
+			}
+			if envelope.Error.ErrorCode != tt.wantCode || envelope.Error.Retry != tt.wantRetry || envelope.Error.Effect != tt.wantEffect {
+				t.Fatalf("machine diagnostic = %#v, want code=%q retry=%q effect=%q", envelope.Error, tt.wantCode, tt.wantRetry, tt.wantEffect)
+			}
+		})
+	}
 }
 
 func TestDaemonJSONFailureUsesStableMachineErrorChannel(t *testing.T) {

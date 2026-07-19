@@ -184,6 +184,32 @@ func TestREL009ReleaseLifecycleDocumentsExactUpgradeRollbackAndUninstall(t *test
 	}
 }
 
+func TestREL011DaemonUpgradeCompatibilityIsFailClosed(t *testing.T) {
+	t.Parallel()
+	upgrade := readREL009Document(t, "../../docs/release/UPGRADE.md")
+	for _, required := range []string{
+		"A probe error is not proof that no daemon exists",
+		"must not invoke the starter",
+		"never delete or replace the control socket",
+		"stop the verified daemon explicitly",
+	} {
+		if !strings.Contains(upgrade, required) {
+			t.Errorf("upgrade guide missing daemon compatibility contract %q", required)
+		}
+	}
+
+	boundaries := readREL009Document(t, "../../docs/product/compatibility-boundaries.md")
+	for _, required := range []string{
+		"protocol-incompatible client fails before session allocation",
+		"compatible clients already connected continue",
+		"does not replace the daemon or its control socket",
+	} {
+		if !strings.Contains(boundaries, required) {
+			t.Errorf("compatibility boundaries missing daemon contract %q", required)
+		}
+	}
+}
+
 func readREL009Document(t *testing.T, path string) string {
 	t.Helper()
 	contents, err := os.ReadFile(path) //nolint:gosec // every caller passes one fixed repository documentation path from this test file.

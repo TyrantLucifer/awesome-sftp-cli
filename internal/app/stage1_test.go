@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -306,7 +307,7 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 		default:
 		}
 		attemptCtx, stop := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		client, err = connectExisting(attemptCtx, paths, purpose)
+		client, err = connectExistingAs(attemptCtx, paths, purpose, "0.9.0-stage5", "stage5-compatible-client")
 		stop()
 		if err == nil {
 			break
@@ -323,6 +324,28 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Kind != "local" {
 		t.Fatalf("endpoints = %#v", endpoints.Endpoints)
+	}
+	if client.Info().Protocol != (ipc.ProtocolVersion{Major: ipc.ProtocolMajor, Minor: ipc.ProtocolMinor}) {
+		t.Fatalf("prior-version client protocol = %#v", client.Info().Protocol)
+	}
+	socketBefore, err := os.Lstat(paths.ControlSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectFutureDaemonProtocol(t, paths, purpose)
+	var endpointsAfterRejectedUpgrade ipc.ProviderEndpointsResponse
+	if err := client.Call(context.Background(), daemon.ProviderEndpoints, struct{}{}, &endpointsAfterRejectedUpgrade); err != nil {
+		t.Fatalf("prior-version client after rejected future protocol: %v", err)
+	}
+	if len(endpointsAfterRejectedUpgrade.Endpoints) != 1 || endpointsAfterRejectedUpgrade.Endpoints[0].Kind != "local" {
+		t.Fatalf("endpoints after rejected future protocol = %#v", endpointsAfterRejectedUpgrade.Endpoints)
+	}
+	socketAfter, err := os.Lstat(paths.ControlSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(socketBefore, socketAfter) {
+		t.Fatal("daemon control socket was replaced after an incompatible hello")
 	}
 	for _, cachePath := range []string{paths.CacheDir, filepath.Join(paths.CacheDir, "content-v1", "blobs", "sha256")} {
 		metadata, statErr := os.Lstat(cachePath)
@@ -452,11 +475,66 @@ func TestParseDaemonArgsRequiresOneExactExplicitMigrationResumeFlag(t *testing.T
 }
 
 func connectExisting(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
+	return connectExistingAs(ctx, paths, purpose, "test", "test-client")
+}
+
+func connectExistingAs(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, clientVersion, instanceID string) (*daemon.Client, error) {
 	connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
 	if err != nil {
 		return nil, err
 	}
-	return daemon.NewClient(ctx, connection, "test", "test-client")
+	return daemon.NewClient(ctx, connection, clientVersion, instanceID)
+}
+
+func rejectFutureDaemonProtocol(t *testing.T, paths platform.Paths, purpose platform.ValidationPurpose) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	writer, err := ipc.NewWriter(connection, ipc.MaxFrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := ipc.NewReader(connection, ipc.MaxFrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(ipc.HelloRequest{
+		ClientVersion:    "2.0.0-future",
+		ClientInstanceID: "future-client",
+		Protocols:        []ipc.VersionRange{{Major: ipc.ProtocolMajor + 1, MinMinor: 0, MaxMinor: 0}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := ipc.EncodeEnvelope(ipc.Envelope{
+		Protocol:  ipc.ProtocolVersion{Major: ipc.ProtocolMajor, Minor: ipc.ProtocolMinor},
+		Kind:      ipc.KindRequest,
+		Name:      daemon.RequestHello,
+		RequestID: domain.RequestID("req_dddddddddddddddddddddddddd"),
+		Payload:   payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteFrame(request); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := ipc.DecodeEnvelope(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || response.Error.Code != domain.CodeProtocolIncompatible || response.Error.Retry.Kind != domain.RetryNever || response.Error.Effect != domain.EffectNone {
+		t.Fatalf("future protocol response = %#v", response.Error)
+	}
 }
 
 func TestStartLocationsParsesLocalAndRemote(t *testing.T) {
