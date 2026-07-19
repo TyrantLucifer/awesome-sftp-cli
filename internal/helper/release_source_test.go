@@ -21,9 +21,9 @@ func TestProductionReleaseAssetsFreezeImmutableFourTargetIdentity(t *testing.T) 
 		ArchiveName:   "amsftp_1.0.0_linux_amd64.tar.gz",
 		ManifestName:  "amsftp_1.0.0_linux_amd64.helper-manifest",
 		SignatureName: "amsftp_1.0.0_linux_amd64.helper-manifest.sig",
-		ArchiveURL:    "https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_amd64.tar.gz",
-		ManifestURL:   "https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_amd64.helper-manifest",
-		SignatureURL:  "https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_amd64.helper-manifest.sig",
+		ArchiveURL:    "https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_amd64.tar.gz",
+		ManifestURL:   "https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_amd64.helper-manifest",
+		SignatureURL:  "https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_amd64.helper-manifest.sig",
 	}
 	got, err := ProductionReleaseAssets("1.0.0", Target{OS: "linux", Arch: "amd64"})
 	if err != nil {
@@ -49,7 +49,7 @@ func TestProductionReleaseAssetsFreezeImmutableFourTargetIdentity(t *testing.T) 
 
 func TestProductionReleaseSourceAllowsOnlyExpectedHTTPSCDNRedirects(t *testing.T) {
 	source := NewProductionReleaseSource()
-	initialURL, err := url.Parse("https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/asset")
+	initialURL, err := url.Parse("https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/asset")
 	if err != nil {
 		t.Fatal(err)
 	}

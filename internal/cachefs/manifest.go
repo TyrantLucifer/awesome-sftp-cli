@@ -16,8 +16,8 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 )
 
 const (

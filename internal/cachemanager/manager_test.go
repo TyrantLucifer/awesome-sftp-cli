@@ -13,14 +13,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cacheprocess"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
-	_ "github.com/TyrantLucifer/awesome-mac-sftp/internal/state/sqlite"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cachefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cacheprocess"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/cachestore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
+	_ "github.com/TyrantLucifer/awesome-sftp-cli/internal/state/sqlite"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestPublishCompleteBindsLocationFingerprintAndDeduplicatedContent(t *testing.T) {

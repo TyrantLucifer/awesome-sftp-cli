@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
 )
 
 func TestResolutionPolicyFreezesSupportedAndUnsupportedLayers(t *testing.T) {

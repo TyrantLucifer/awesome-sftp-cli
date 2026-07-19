@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
 )
 
 const bindingProbeRemoteCommand = "exec /usr/bin/printf 'amsftp-helper-bind-v1\\000%s\\000%s\\000%s\\000%s\\000' \"$(/usr/bin/id -u)\" \"$(command -p pwd -P)\" \"$(/usr/bin/uname -s)\" \"$(/usr/bin/uname -m)\""

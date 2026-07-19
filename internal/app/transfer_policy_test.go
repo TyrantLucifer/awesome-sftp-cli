@@ -5,10 +5,10 @@ package app
 import (
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 )
 
 func TestRuntimeDirectPolicyAndConfiguredCopyIntentRemainProductionClosed(t *testing.T) {

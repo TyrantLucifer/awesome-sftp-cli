@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 func TestObservePostEditorChangeMatrixFailsClosed(t *testing.T) {

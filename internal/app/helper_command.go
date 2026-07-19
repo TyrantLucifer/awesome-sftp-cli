@@ -11,12 +11,12 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	helperruntime "github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 )
 
 const (

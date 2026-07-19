@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 )
 
 func TestDiagnosticSummaryContainsOnlySafeCorrelationFields(t *testing.T) {

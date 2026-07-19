@@ -12,9 +12,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/directprotocol"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/directprotocol"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 )
 
 type level2PreflightFixture struct {

@@ -6,7 +6,7 @@
 
 规范 module import 前缀为：
 
-    github.com/TyrantLucifer/awesome-mac-sftp
+    github.com/TyrantLucifer/awesome-sftp-cli
 
 ## 2. 版本策略
 

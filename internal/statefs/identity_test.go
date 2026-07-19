@@ -8,7 +8,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestPreflightIdentityRecognizesOnlyPristineOrExactProject(t *testing.T) {

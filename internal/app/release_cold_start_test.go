@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/keymap"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestReleaseColdStartDefaultConfigurationIsCompleteAndReadOnly(t *testing.T) {

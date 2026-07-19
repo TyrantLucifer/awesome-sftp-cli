@@ -6,10 +6,10 @@ import (
 	"testing"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 )
 
 func TestVisibleWindowUsesBoundedOverscan(t *testing.T) {

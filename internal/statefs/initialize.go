@@ -14,9 +14,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
-	_ "github.com/TyrantLucifer/awesome-mac-sftp/internal/state/sqlite"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
+	_ "github.com/TyrantLucifer/awesome-sftp-cli/internal/state/sqlite"
 )
 
 const (

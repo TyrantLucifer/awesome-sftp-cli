@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 type ArtifactID = domain.HelperArtifactID

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
 
 type clientInvocation struct {

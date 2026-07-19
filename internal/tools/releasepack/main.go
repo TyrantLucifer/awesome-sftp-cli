@@ -8,7 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/releasepack"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/releasepack"
 )
 
 const (

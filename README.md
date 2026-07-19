@@ -28,7 +28,7 @@ AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为
 
 ## 安装内部预览版
 
-内部预览版发布页：[`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awsome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1)。
+内部预览版发布页：[`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1)。
 
 1. 选择与本机 OS/架构匹配的归档并同时取得 `checksums.txt`。
 2. 使用 `sha256sum -c checksums.txt`（macOS 可使用 `shasum -a 256`）核对下载内容。
@@ -169,6 +169,8 @@ amsftp support-bundle preview --format json
 ## 从源码开发
 
 ```sh
+git clone git@github.com:TyrantLucifer/awesome-sftp-cli.git
+cd awesome-sftp-cli
 make fmt-check
 make vet
 make test

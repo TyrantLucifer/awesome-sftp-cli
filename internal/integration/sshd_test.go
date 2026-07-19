@@ -17,14 +17,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
-	sftpprovider "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/sftp"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/provider/localfs"
+	sftpprovider "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider/sftp"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
 )
 
 func TestRealOpenSSHSFTPHostAliasAndNonDefaultPort(t *testing.T) {

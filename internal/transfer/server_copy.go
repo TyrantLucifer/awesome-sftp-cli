@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"reflect"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 )
 
 var errServerCopySafeFallback = errors.New("server copy failed before target write")

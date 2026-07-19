@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
 
 func TestParseClientInvocation(t *testing.T) {

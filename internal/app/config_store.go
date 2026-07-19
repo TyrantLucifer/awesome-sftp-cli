@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 )
 
 func replaceApplicationConfig(path string, input config.Config) (resultErr error) {

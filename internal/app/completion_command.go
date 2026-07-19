@@ -7,8 +7,8 @@ import (
 	"io"
 	"path/filepath"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
 
 func runCompletion(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {

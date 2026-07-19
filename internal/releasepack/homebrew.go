@@ -30,7 +30,7 @@ type HomebrewPreviewFormulaRequest struct {
 // immutable GitHub Release. It does not publish the formula or admit any
 // archive as a production Helper trust root.
 func BuildHomebrewFormula(request HomebrewFormulaRequest) ([]byte, error) {
-	baseURL := fmt.Sprintf("https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v%s", request.Version)
+	baseURL := fmt.Sprintf("https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v%s", request.Version)
 	return buildHomebrewFormula(request, baseURL)
 }
 
@@ -53,7 +53,7 @@ func buildHomebrewFormula(request HomebrewFormulaRequest, baseURL string) ([]byt
 	var output strings.Builder
 	output.WriteString("class Amsftp < Formula\n")
 	output.WriteString("  desc \"Vim-first two-pane SFTP file manager\"\n")
-	output.WriteString("  homepage \"https://github.com/TyrantLucifer/awsome-sftp-cli\"\n")
+	output.WriteString("  homepage \"https://github.com/TyrantLucifer/awesome-sftp-cli\"\n")
 	fmt.Fprintf(&output, "  version %q\n", request.Version)
 	fmt.Fprintf(&output, "  license %q\n", request.License)
 	output.WriteByte('\n')

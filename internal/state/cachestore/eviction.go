@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 )
 
 var ErrEvictionProtected = errors.New("cache eviction target is protected or changed")

@@ -11,12 +11,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/provider/localfs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 )
 
 func TestFreezeSyncBackCreatesPlanV2WithOriginalDestinationPreconditionAndBinding(t *testing.T) {

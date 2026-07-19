@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
 )
 
 const (

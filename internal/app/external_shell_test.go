@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/terminalhandoff"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/terminalhandoff"
 )
 
 type fakeHandoffTCellScreen struct {

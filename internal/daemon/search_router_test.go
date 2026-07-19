@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/provider/localfs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
 )
 
 func TestProviderSessionStreamsBoundedLevel0FilenameSearchPages(t *testing.T) {

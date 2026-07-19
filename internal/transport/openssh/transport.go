@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 	pkgsftp "github.com/pkg/sftp"
 )
 

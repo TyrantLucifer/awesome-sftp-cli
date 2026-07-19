@@ -3,9 +3,9 @@ package tui
 import (
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/keymap"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 	"github.com/gdamore/tcell/v3"
 )
 

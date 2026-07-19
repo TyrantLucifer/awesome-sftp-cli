@@ -4,8 +4,8 @@ import (
 	"os"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/doctor"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/doctor"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 func TestEntriesCoverEveryDoctorAndDomainCodeExactlyOnce(t *testing.T) {

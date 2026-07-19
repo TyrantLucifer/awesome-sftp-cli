@@ -12,12 +12,12 @@ import (
 	"regexp"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/wal"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/wal"
 )
 
 const (

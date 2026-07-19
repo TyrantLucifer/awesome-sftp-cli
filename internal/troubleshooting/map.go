@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/doctor"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/doctor"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 type Kind string

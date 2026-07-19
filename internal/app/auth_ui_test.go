@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 )
 
 func TestRunAuthClaimLoopDeliversSequentialChallengesAndResolutions(t *testing.T) {

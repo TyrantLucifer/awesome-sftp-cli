@@ -8,13 +8,13 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/auth"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	helperruntime "github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
 )
 
 const helperLifecycleHandshakeTimeout = 10 * time.Second

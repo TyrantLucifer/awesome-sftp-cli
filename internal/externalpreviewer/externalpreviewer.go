@@ -23,7 +23,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/externalprocess"
 )
 
 const (

@@ -17,12 +17,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachemanager"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
-	_ "github.com/TyrantLucifer/awesome-mac-sftp/internal/state/sqlite"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cachefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cachemanager"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/cachestore"
+	_ "github.com/TyrantLucifer/awesome-sftp-cli/internal/state/sqlite"
 )
 
 const (

@@ -8,10 +8,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/externalpreviewer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestResolveExternalRuntimeConfigFreezesStructuredCommandsAndOrderedPreviewers(t *testing.T) {

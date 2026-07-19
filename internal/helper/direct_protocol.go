@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/directprotocol"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/directprotocol"
 )
 
 const (

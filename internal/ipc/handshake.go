@@ -3,7 +3,7 @@ package ipc
 import (
 	"sort"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 type VersionRange struct {

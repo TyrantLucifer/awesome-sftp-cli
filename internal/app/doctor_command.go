@@ -14,11 +14,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/doctor"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/doctor"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/statefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
 )
 
 const doctorLowDiskBytes = uint64(64 * 1024 * 1024)

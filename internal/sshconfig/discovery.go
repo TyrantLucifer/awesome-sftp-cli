@@ -10,7 +10,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
 )
 
 const (

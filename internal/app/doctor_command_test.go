@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/doctor"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/doctor"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/statefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
 )
 
 func TestDoctorCommandRunsFixedReadOnlyChecksAndRendersJSON(t *testing.T) {

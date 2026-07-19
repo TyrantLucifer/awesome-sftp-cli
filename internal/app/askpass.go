@@ -9,11 +9,11 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/auth"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 )
 
 const daemonAuthPromptName = daemon.AuthPrompt

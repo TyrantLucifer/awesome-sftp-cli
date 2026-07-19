@@ -5,6 +5,7 @@
 ## 当前状态
 
 - 主线已经包含内部预览实现；当前发布为 `v0.1.0-internal.20260719.1`。
+- 规范仓库名与 Go module 均为 `awesome-sftp-cli` / `github.com/TyrantLucifer/awesome-sftp-cli`。
 - 这是 unsigned、owner-only 的内部版本，不是公开 1.0。
 - Level 0 SFTP 可用；production Helper 和 production Level 2 保持 CLOSED。
 - 当前迭代入口是[项目状态](docs/development/status.md)与[路线图](docs/product/roadmap.md)，不是历史 Stage 文档。
@@ -61,6 +62,7 @@
 8. Helper 是可选增强；故障或不兼容时必须安全退化到 Level 0。
 9. production Helper/Level 2 的 CLOSED 状态不能由配置、测试 fixture 或文档措辞绕过。
 10. 人类和 JSON 错误只暴露稳定安全字段，不输出 raw cause、命令、路径或认证内容。
+11. 仓库 URL、Go module、构建元数据、发布链接和文档必须使用规范的 `awesome-sftp-cli` 身份。
 
 ## 开发与验证
 

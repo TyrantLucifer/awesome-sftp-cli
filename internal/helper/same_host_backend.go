@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 )
 
 // SameHostCopyBackend adapts the framed Helper capabilities to the transfer

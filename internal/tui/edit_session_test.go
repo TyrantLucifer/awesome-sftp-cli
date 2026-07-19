@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
 )
 
 func TestColdStartRecoveryChooserIsBoundedSelectableAndExplicit(t *testing.T) {

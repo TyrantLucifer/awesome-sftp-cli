@@ -5,8 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
 )
 
 func TestPreviewRejectsEveryFullIdentityMismatch(t *testing.T) {

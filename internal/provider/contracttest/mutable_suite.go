@@ -9,8 +9,8 @@ import (
 	"io"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 )
 
 // RunMutable applies the reusable mutation facet contract. The fixture is

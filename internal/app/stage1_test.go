@@ -11,14 +11,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
 
 func TestSSHConnectStageErrorPreservesSafeStageAndClassification(t *testing.T) {

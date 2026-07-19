@@ -13,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 )
 
 func TestWorkerPublishesOnlyAfterDestinationVerification(t *testing.T) {

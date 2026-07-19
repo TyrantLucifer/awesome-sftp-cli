@@ -1,9 +1,9 @@
 # Vim-first 双栏 SFTP Commander：产品愿景
 
-> - 产品名：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-mac-sftp`）
+> - 产品名：`AMSFTP`（公开命令 `amsftp`；仓库名 `awesome-sftp-cli`）
 > - 文档状态：1.0 产品愿景；内部预览已发布，公开发行尚未完成
 > - 目标版本：1.0
-> - 最后更新：2026-07-15
+> - 最后更新：2026-07-19
 
 ## 1. 为什么要做
 

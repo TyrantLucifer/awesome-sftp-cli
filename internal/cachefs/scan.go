@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 )
 
 type FindingKind string

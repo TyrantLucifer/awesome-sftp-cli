@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/statefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestSessionLifecycleSurvivesStoreRestart(t *testing.T) {

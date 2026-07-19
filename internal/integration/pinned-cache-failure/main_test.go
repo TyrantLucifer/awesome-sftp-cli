@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/statefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestPrepareFailedUpgradeRequiresExplicitResumeAndReusesVerifiedBackup(t *testing.T) {

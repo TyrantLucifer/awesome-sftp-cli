@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/provider/localfs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/provider/localfs"
 )
 
 func TestLevel0ContentSearchStreamsBoundedLiteralMatches(t *testing.T) {

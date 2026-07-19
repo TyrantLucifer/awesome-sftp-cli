@@ -10,9 +10,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 )
 
 type daemonControlClient interface {

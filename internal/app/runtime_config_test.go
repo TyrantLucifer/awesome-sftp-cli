@@ -8,16 +8,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 )
 
 type listingLimitCaptureRPC struct {

@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 )
 
 func TestHelperServiceStreamsCorrelatedResultsAndCancellationTerminal(t *testing.T) {

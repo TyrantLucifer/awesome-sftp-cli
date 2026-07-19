@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 )
 
 func TestPendingSearchIdentitiesUseConfiguredBudgets(t *testing.T) {

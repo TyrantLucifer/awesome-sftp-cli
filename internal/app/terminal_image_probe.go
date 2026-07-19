@@ -11,7 +11,7 @@ import (
 	"sync"
 	"time"
 
-	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
 	"golang.org/x/sys/unix"
 )
 

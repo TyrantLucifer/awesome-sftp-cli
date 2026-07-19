@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
-	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 	"github.com/gdamore/tcell/v3"
 )
 

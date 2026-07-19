@@ -9,10 +9,10 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	helperruntime "github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
 )
 
 func (s *providerSession) startFilenameEvents(ctx context.Context, implementation providerapi.Provider, identity search.Identity) (<-chan search.Event, error) {

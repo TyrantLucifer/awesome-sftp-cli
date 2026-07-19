@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/externalprocess"
 )
 
 func TestRunnerUsesFirstMatchingStructuredRuleAndCanonicalFinalArgument(t *testing.T) {

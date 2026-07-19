@@ -6,7 +6,7 @@ import (
 	"sync"
 	"testing"
 
-	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
 )
 
 func TestImageProbeCandidateUsesHintsOnlyToChooseAnActiveProbe(t *testing.T) {

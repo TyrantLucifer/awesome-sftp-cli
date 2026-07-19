@@ -6,7 +6,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/app"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/app"
 )
 
 func main() {

@@ -6,13 +6,13 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/app"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/app"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cachefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
 
 type Boundary struct {

@@ -13,8 +13,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 )
 
 func TestSameHostBackendUsesStructuredHelperRequestsAndStagesOnlyPlannerPart(t *testing.T) {

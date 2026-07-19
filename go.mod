@@ -1,4 +1,4 @@
-module github.com/TyrantLucifer/awesome-mac-sftp
+module github.com/TyrantLucifer/awesome-sftp-cli
 
 go 1.25.0
 

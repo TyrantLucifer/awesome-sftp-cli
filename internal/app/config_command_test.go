@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestRunConfigCommandValidatesDefaultOrExplicitPrivateConfig(t *testing.T) {

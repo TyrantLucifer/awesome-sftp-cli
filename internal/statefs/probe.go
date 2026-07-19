@@ -13,8 +13,8 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	_ "github.com/TyrantLucifer/awesome-mac-sftp/internal/state/sqlite"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	_ "github.com/TyrantLucifer/awesome-sftp-cli/internal/state/sqlite"
 )
 
 const (

@@ -17,14 +17,14 @@ func TestHomebrewFormulaBindsExactFourImmutableReleaseArchives(t *testing.T) {
 	rendered := string(formula)
 	for _, archive := range request.Archives {
 		digest := sha256.Sum256(archive.Bytes)
-		url := "https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/" + archive.Name
+		url := "https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/" + archive.Name
 		if strings.Count(rendered, url) != 1 || strings.Count(rendered, hex.EncodeToString(digest[:])) != 1 {
 			t.Fatalf("formula does not bind %s exactly once:\n%s", archive.Name, rendered)
 		}
 	}
 	for _, contract := range []string{
 		`class Amsftp < Formula`,
-		`homepage "https://github.com/TyrantLucifer/awsome-sftp-cli"`,
+		`homepage "https://github.com/TyrantLucifer/awesome-sftp-cli"`,
 		`version "1.0.0"`,
 		`license "BSD-3-Clause"`,
 		`on_macos do`, `on_linux do`, `on_arm do`, `on_intel do`,
@@ -34,10 +34,10 @@ func TestHomebrewFormulaBindsExactFourImmutableReleaseArchives(t *testing.T) {
 		}
 	}
 	for _, block := range []string{
-		"  on_macos do\n    on_arm do\n      url \"https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_darwin_arm64.tar.gz\"",
-		"    on_intel do\n      url \"https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_darwin_amd64.tar.gz\"",
-		"  on_linux do\n    on_arm do\n      url \"https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_arm64.tar.gz\"",
-		"    on_intel do\n      url \"https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_amd64.tar.gz\"",
+		"  on_macos do\n    on_arm do\n      url \"https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_darwin_arm64.tar.gz\"",
+		"    on_intel do\n      url \"https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_darwin_amd64.tar.gz\"",
+		"  on_linux do\n    on_arm do\n      url \"https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_arm64.tar.gz\"",
+		"    on_intel do\n      url \"https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0/amsftp_1.0.0_linux_amd64.tar.gz\"",
 	} {
 		if !strings.Contains(rendered, block) {
 			t.Fatalf("formula has an incorrect platform/architecture mapping:\n%s", rendered)
@@ -133,12 +133,12 @@ func TestHomebrewPreviewFormulaUsesOnlyExactLoopbackArchiveOrigin(t *testing.T) 
 			t.Fatalf("preview formula URL %q count != 1:\n%s", url, rendered)
 		}
 	}
-	if strings.Contains(rendered, "github.com/TyrantLucifer/awsome-sftp-cli/releases/download") {
+	if strings.Contains(rendered, "github.com/TyrantLucifer/awesome-sftp-cli/releases/download") {
 		t.Fatalf("preview formula leaked the production release origin:\n%s", rendered)
 	}
 
 	for name, baseURL := range map[string]string{
-		"production origin": "https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download/v1.0.0",
+		"production origin": "https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download/v1.0.0",
 		"localhost name":    "http://localhost:41731",
 		"non-loopback":      "http://192.0.2.10:41731",
 		"userinfo":          "http://preview@127.0.0.1:41731",

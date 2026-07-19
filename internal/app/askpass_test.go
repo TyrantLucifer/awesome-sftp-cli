@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/auth"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 )
 
 func TestRunAskpassWritesOnlyBrokerAnswer(t *testing.T) {

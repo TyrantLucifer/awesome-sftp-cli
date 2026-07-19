@@ -9,8 +9,8 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 )
 
 const (

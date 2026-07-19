@@ -8,8 +8,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 )
 
 // JobJournal stores the transfer checkpoint in the Version 1 Job schema. The

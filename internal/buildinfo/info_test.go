@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo"
 )
 
 func TestCurrentUsesDevelopmentAndRuntimeDefaults(t *testing.T) {

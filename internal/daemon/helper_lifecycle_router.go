@@ -7,9 +7,9 @@ import (
 	"errors"
 	"io"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transport/openssh"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	helperruntime "github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
 )
 
 const maxHelperLifecycleHostAliasBytes = 1024

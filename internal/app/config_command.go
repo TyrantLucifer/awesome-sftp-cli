@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/keymap"
 )
 
 func runConfig(_ context.Context, args []string, stdout io.Writer, _ io.Writer) error {

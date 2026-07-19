@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
 
 func TestProviderSessionsShareWorkspaceStoreAcrossClients(t *testing.T) {

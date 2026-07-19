@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 )
 
 func TestRunCommandIntentUsesFrozenLocalCWDAndBoundedDirectShellPlan(t *testing.T) {

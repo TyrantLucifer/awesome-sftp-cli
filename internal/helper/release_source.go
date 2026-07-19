@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	productionReleaseBaseURL          = "https://github.com/TyrantLucifer/awsome-sftp-cli/releases/download"
+	productionReleaseBaseURL          = "https://github.com/TyrantLucifer/awesome-sftp-cli/releases/download"
 	maxHelperReleaseArchiveBytes      = MaxHelperArtifactBytes + 8<<20
 	maxHelperReleaseExpandedBytes     = MaxHelperArtifactBytes + 8<<20
 	maxHelperReleaseMaterialBytes     = 1 << 20

@@ -13,9 +13,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 )
 
 func TestNewRejectsInvalidFaultScripts(t *testing.T) {

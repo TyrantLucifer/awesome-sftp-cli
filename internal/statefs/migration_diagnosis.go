@@ -8,7 +8,7 @@ import (
 	"net/url"
 	"path/filepath"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
 )
 
 type MigrationDisposition string

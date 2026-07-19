@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 )
 
 type BlobIdentity struct {

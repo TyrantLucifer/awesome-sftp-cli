@@ -11,16 +11,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/statefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
 
 func TestDaemonRestartRecoversEveryNonterminalJobStateDeterministically(t *testing.T) {

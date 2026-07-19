@@ -10,8 +10,8 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 )
 
 // DiscoveryBudget freezes the memory and traversal limits for one directory

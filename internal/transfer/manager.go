@@ -8,12 +8,12 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/foundation"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/retrypolicy"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/retrypolicy"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 )
 
 const defaultQueuedJobs = 128

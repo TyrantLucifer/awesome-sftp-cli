@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 // MutableProvider is an optional facet. Read-only consumers depend only on

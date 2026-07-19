@@ -11,15 +11,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalprocess"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/externalpreviewer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/externalprocess"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 )
 
 func TestPreviewMaterializerBindsAndReleasesExactPreviewLease(t *testing.T) {

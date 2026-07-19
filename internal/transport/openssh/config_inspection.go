@@ -9,7 +9,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 )
 
 const maxConfigInspectionBytes = 64 * 1024

@@ -1,6 +1,6 @@
 package provider
 
-import "github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+import "github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 
 // PageCursor is opaque. A non-empty cursor is valid only for the endpoint,
 // canonical path, exact sort hint, and listing generation that created it.

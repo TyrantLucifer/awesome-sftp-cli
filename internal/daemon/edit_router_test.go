@@ -5,8 +5,8 @@ import (
 	"testing"
 	"time"
 
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/editstore"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/editstore"
 )
 
 func TestProviderSessionExposesDurableEditLifecycleRoutes(t *testing.T) {

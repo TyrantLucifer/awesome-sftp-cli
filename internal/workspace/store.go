@@ -12,7 +12,7 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 )
 
 const (

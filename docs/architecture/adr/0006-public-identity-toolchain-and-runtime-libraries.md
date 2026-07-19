@@ -3,7 +3,7 @@
 - 状态：Accepted
 - 日期：2026-07-15
 - 影响范围：公开命令、模块路径、Go 兼容线、Stage 1 TUI/SFTP 依赖、结构化日志
-- 修订：本 ADR 的 `github.com/pkg/sftp v1.13.10` 初始 pin 已由 [ADR-0011](0011-pkg-sftp-streaming-directory-cursor.md) 精确取代；其余决策不变
+- 修订：本 ADR 的 `github.com/pkg/sftp v1.13.10` 初始 pin 已由 [ADR-0011](0011-pkg-sftp-streaming-directory-cursor.md) 精确取代；2026-07-19 将仓库与 Go module 规范身份统一为 `awesome-sftp-cli`
 
 ## 背景
 
@@ -21,9 +21,9 @@
     Public command: amsftp
     Filesystem/package slug: amsftp
     Application ID: io.github.tyrantlucifer.amsftp
-    Go module: github.com/TyrantLucifer/awesome-mac-sftp
+    Go module: github.com/TyrantLucifer/awesome-sftp-cli
 
-仓库名可以继续是 `awesome-mac-sftp`，但用户文档、帮助、发行物和包管理器不得再把它当作未决的产品名。一个二进制继续通过角色参数承担 client、daemon、askpass 和 helper；不创建独立 daemon/helper 产品名。
+仓库名固定为 `awesome-sftp-cli`。仓库 URL、Go module、构建元数据、用户文档、发行物和包管理器必须使用同一身份；产品显示名与公开命令仍分别为 `AMSFTP` 和 `amsftp`。一个二进制继续通过角色参数承担 client、daemon、askpass 和 helper；不创建独立 daemon/helper 产品名。
 
 ### Go 支持线
 

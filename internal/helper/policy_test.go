@@ -3,7 +3,7 @@ package helper
 import (
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 func TestCurrentPolicyRejectsRevokedDeniedIncompatibleAndBelowFloor(t *testing.T) {

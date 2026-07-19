@@ -1,6 +1,6 @@
 package tui
 
-import "github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
+import "github.com/TyrantLucifer/awesome-sftp-cli/internal/keymap"
 
 type Keymap struct {
 	mapping keymap.Map

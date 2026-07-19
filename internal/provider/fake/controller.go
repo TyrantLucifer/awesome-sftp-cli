@@ -6,7 +6,7 @@ import (
 	"reflect"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 // Controller applies deterministic state changes to one Provider instance.

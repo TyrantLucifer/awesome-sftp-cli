@@ -6,8 +6,8 @@ import (
 	"net"
 	"sync"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 type ConnectionListener interface {

@@ -15,17 +15,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/edit"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/editstore"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/jobstore"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/terminalhandoff"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/editstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/terminalhandoff"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 )
 
 func TestEditWorkflowPersistsDirtyObservationBeforeExplicitSyncBackJob(t *testing.T) {

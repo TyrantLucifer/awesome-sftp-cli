@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 )
 
 func TestUploadReferencesCannotAttachToClaimedJobHistory(t *testing.T) {

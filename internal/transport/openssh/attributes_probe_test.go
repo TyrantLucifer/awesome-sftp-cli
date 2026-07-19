@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 )
 
 func TestAttributeProbePacketsAreExactSFTPVersion3(t *testing.T) {

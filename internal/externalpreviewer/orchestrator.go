@@ -13,7 +13,7 @@ import (
 
 	"golang.org/x/sys/unix"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
 )
 
 // MaterializeFunc obtains one complete, verified cache materialization and an

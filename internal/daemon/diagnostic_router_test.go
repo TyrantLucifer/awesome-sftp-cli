@@ -5,9 +5,9 @@ import (
 	"log/slog"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 )
 
 func TestProviderSessionsExposeBoundedRedactedDiagnosticRecords(t *testing.T) {

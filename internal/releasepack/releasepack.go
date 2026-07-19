@@ -452,7 +452,7 @@ func validateBundleRequest(request BundleRequest, versionValid bool, expectedSta
 
 func validPublicBuildEvidence(platform PlatformBinary, commit string, modules []Module) bool {
 	return platform.Build != nil &&
-		platform.Build.MainPath == "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp" &&
+		platform.Build.MainPath == "github.com/TyrantLucifer/awesome-sftp-cli/cmd/amsftp" &&
 		platform.Build.GOOS == platform.Target.OS &&
 		platform.Build.GOARCH == platform.Target.Arch &&
 		!platform.Build.CGOEnabled &&
@@ -852,7 +852,7 @@ func buildSBOM(request BundleRequest, archives []Archive) ([]byte, error) {
 	}
 	document := SPDXDocument{
 		SPDXVersion: "SPDX-2.3", DataLicense: "CC0-1.0", SPDXID: "SPDXRef-DOCUMENT", Name: "AMSFTP " + request.Version,
-		DocumentNamespace: "https://github.com/TyrantLucifer/awesome-mac-sftp/releases/" + request.Version + "/sbom-" + request.Commit,
+		DocumentNamespace: "https://github.com/TyrantLucifer/awesome-sftp-cli/releases/" + request.Version + "/sbom-" + request.Commit,
 		CreationInfo:      SPDXCreationInfo{Created: time.Unix(request.SourceDateEpoch, 0).UTC().Format(time.RFC3339), Creators: []string{"Tool: amsftp-releasepack-v1"}},
 		Packages:          packages,
 	}

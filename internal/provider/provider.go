@@ -3,7 +3,7 @@ package provider
 import (
 	"context"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 // Provider is the minimum read-only endpoint contract. Descriptor must remain

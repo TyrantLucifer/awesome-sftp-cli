@@ -6,8 +6,8 @@ import (
 	"encoding/json"
 	"testing"
 
-	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	helperruntime "github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 )
 
 func TestRestrictedHelperServeRoleUsesOnlyFramedStdio(t *testing.T) {

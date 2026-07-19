@@ -6,7 +6,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/docscheck"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/docscheck"
 )
 
 func main() {

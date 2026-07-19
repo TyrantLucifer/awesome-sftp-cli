@@ -12,9 +12,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/job"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/wal"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/wal"
 )
 
 const (

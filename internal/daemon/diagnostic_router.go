@@ -3,8 +3,8 @@ package daemon
 import (
 	"encoding/json"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 type DiagnosticSource interface {

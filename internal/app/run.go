@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo"
 )
 
 type Handler func(context.Context, []string, io.Writer, io.Writer) error

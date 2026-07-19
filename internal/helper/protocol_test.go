@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 )
 
 func TestHelperHandshakeStartsAtByteZeroAndNegotiatesIndependentCapabilities(t *testing.T) {

@@ -6,13 +6,13 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cacheprocess"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/externalpreviewer"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cacheprocess"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/externalpreviewer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
 )
 
 type previewRPCCaller interface {

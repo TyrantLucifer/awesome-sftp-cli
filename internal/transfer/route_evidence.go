@@ -3,7 +3,7 @@ package transfer
 import (
 	"reflect"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 const RouteEvidenceVersion uint16 = 1

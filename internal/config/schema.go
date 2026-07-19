@@ -9,13 +9,13 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/diagnostic"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/retrypolicy"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/keymap"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/retrypolicy"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 )
 
 const (

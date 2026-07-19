@@ -10,7 +10,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 )
 
 func TestEntryManifestPublishesCanonicalRawPathAndRevalidatesBlob(t *testing.T) {

@@ -11,7 +11,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/redaction"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/redaction"
 )
 
 const (

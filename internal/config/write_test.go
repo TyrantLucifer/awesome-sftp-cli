@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/keymap"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/keymap"
 )
 
 func TestWriteProducesValidatedRoundTrippableUnredactedConfig(t *testing.T) {

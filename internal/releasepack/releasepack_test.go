@@ -409,7 +409,7 @@ func releaseFixture(t *testing.T) BundleRequest {
 	for _, target := range Targets {
 		platforms = append(platforms, PlatformBinary{
 			Target: target, Bytes: []byte(fmt.Sprintf("fixture binary %s/%s\n", target.OS, target.Arch)), State: BinaryPublicPreview,
-			Build: &GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target.OS, GOARCH: target.Arch, CGOEnabled: false, Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []GoModuleEvidence{{Path: modules[0].Path, Version: modules[0].Version, Sum: modules[0].Sum}}},
+			Build: &GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-sftp-cli/cmd/amsftp", GOOS: target.OS, GOARCH: target.Arch, CGOEnabled: false, Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []GoModuleEvidence{{Path: modules[0].Path, Version: modules[0].Version, Sum: modules[0].Sum}}},
 		})
 	}
 	return BundleRequest{

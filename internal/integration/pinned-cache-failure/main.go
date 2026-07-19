@@ -14,9 +14,9 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
-	_ "github.com/TyrantLucifer/awesome-mac-sftp/internal/state/sqlite"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/statefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/migration"
+	_ "github.com/TyrantLucifer/awesome-sftp-cli/internal/state/sqlite"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/statefs"
 )
 
 const failedAttemptID = "66666666666666666666666666666666"

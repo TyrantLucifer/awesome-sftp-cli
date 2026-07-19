@@ -11,7 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/releasepack"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/releasepack"
 )
 
 const maxPreviewArchiveBytes = 256 << 20

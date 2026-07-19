@@ -14,16 +14,16 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachemanager"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
-	helperruntime "github.com/TyrantLucifer/awesome-mac-sftp/internal/helper"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
-	providerapi "github.com/TyrantLucifer/awesome-mac-sftp/internal/provider"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/search"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/transfer"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/workspace"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/auth"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cachemanager"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	helperruntime "github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
 
 const (

@@ -3,7 +3,7 @@ package doctor
 import (
 	"context"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/redaction"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/redaction"
 )
 
 const OutputVersion = 1

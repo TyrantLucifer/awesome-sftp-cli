@@ -6,9 +6,9 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cache"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/cachefs"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/cachestore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cachefs"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/cachestore"
 )
 
 var ErrQuotaUnsatisfied = errors.New("cache quota cannot be satisfied without deleting protected content")

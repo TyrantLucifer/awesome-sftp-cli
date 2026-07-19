@@ -1,6 +1,6 @@
 package app
 
-import "github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
+import "github.com/TyrantLucifer/awesome-sftp-cli/internal/auth"
 
 type Role string
 

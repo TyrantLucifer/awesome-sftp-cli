@@ -9,8 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/app"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/app"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo"
 )
 
 func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {

@@ -4,8 +4,8 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/app"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/app"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/auth"
 )
 
 func TestParseInvocation(t *testing.T) {

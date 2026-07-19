@@ -10,7 +10,7 @@ import (
 	"os"
 	"testing"
 
-	builtinpreview "github.com/TyrantLucifer/awesome-mac-sftp/internal/preview"
+	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
 )
 
 // TestStage3RealKittyImageProtocol is an opt-in native gate. It must run as the

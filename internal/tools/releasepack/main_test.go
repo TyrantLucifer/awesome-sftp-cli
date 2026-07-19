@@ -10,7 +10,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/releasepack"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/releasepack"
 )
 
 func TestRunBuildsExactPublicReleaseFromConfinedManifestInputs(t *testing.T) {
@@ -41,7 +41,7 @@ func TestRunBuildsExactPublicReleaseFromConfinedManifestInputs(t *testing.T) {
 	inspect := func(raw []byte) (releasepack.GoBuildEvidence, error) {
 		parts := strings.Fields(string(raw))
 		target := strings.Split(parts[0], "/")
-		return releasepack.GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target[0], GOARCH: target[1], Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []releasepack.GoModuleEvidence{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}}, nil
+		return releasepack.GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-sftp-cli/cmd/amsftp", GOOS: target[0], GOARCH: target[1], Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []releasepack.GoModuleEvidence{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}}, nil
 	}
 	if err := runWithInspector([]string{manifestPath, output}, &stdout, inspect); err != nil {
 		t.Fatal(err)
@@ -102,7 +102,7 @@ func TestRunBuildsExactInternalPreviewFromConfinedManifestInputs(t *testing.T) {
 	inspect := func(raw []byte) (releasepack.GoBuildEvidence, error) {
 		parts := strings.Fields(string(raw))
 		target := strings.Split(parts[0], "/")
-		return releasepack.GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target[0], GOARCH: target[1], Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []releasepack.GoModuleEvidence{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}}, nil
+		return releasepack.GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-sftp-cli/cmd/amsftp", GOOS: target[0], GOARCH: target[1], Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []releasepack.GoModuleEvidence{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}}, nil
 	}
 	if err := runWithInspector([]string{manifestPath, output}, &bytes.Buffer{}, inspect); err != nil {
 		t.Fatal(err)

@@ -6,8 +6,8 @@ import (
 	"encoding/hex"
 	"reflect"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/directprotocol"
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/directprotocol"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 const level2DirectCapability = "direct_transfer"

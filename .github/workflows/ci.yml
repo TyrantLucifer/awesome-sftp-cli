@@ -61,7 +61,7 @@ jobs:
           tree="$(git rev-parse 'HEAD^{tree}')"
           source_epoch="$(git show -s --format=%ct HEAD)"
           modules_json="$(tr -d '\n' <docs/release/runtime-dependencies.json)"
-          ldflags="-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=0.1.0-internal -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=${head}"
+          ldflags="-X github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo.version=0.1.0-internal -X github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo.commit=${head}"
           mkdir -p "${input}/bin"
           for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
             goos="${target%/*}"
@@ -159,6 +159,7 @@ jobs:
           cp -R internal/integration/pinned-cache-lifecycle "${old_source}/internal/integration/"
           (
             cd "${old_source}"
+            # This frozen source predates the repository rename, so -X must match its historical module path.
             CGO_ENABLED=0 go build -buildvcs=false -trimpath \
               -ldflags='-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=stage5 -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=312bcccbcbd54246bbe5ff9babf4f14560449176' \
               -o "${old_binary}" ./cmd/amsftp
@@ -737,6 +738,7 @@ jobs:
           git archive 312bcccbcbd54246bbe5ff9babf4f14560449176 | tar -x -C "${old_source}"
           (
             cd "${old_source}"
+            # This frozen source predates the repository rename, so -X must match its historical module path.
             CGO_ENABLED=0 go build -buildvcs=false -trimpath \
               -ldflags='-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=stage5 -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=312bcccbcbd54246bbe5ff9babf4f14560449176' \
               -o "${old_binary}" ./cmd/amsftp
@@ -898,7 +900,7 @@ jobs:
             version="$1"
             input="$2"
             output="$3"
-            ldflags="-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=${version} -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=${head}"
+            ldflags="-X github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo.version=${version} -X github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo.commit=${head}"
             mkdir -p "${input}/bin"
             for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
               goos="${target%/*}"

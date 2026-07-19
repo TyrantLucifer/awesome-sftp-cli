@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/releasegate"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/releasegate"
 )
 
 func TestREL008CLIRejectsUnknownJSONAndValidatesRequestedPhase(t *testing.T) {

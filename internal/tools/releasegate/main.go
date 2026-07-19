@@ -7,7 +7,7 @@ import (
 	"io"
 	"os"
 
-	"github.com/TyrantLucifer/awesome-mac-sftp/internal/releasegate"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/releasegate"
 )
 
 const maxRecordBytes = 4 << 20
