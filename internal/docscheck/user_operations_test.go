@@ -191,6 +191,8 @@ func TestREL011DaemonUpgradeCompatibilityIsFailClosed(t *testing.T) {
 		"A probe error is not proof that no daemon exists",
 		"must not invoke the starter",
 		"never delete or replace the control socket",
+		"private Unix Socket has no live instance lock",
+		"acquires the matching instance lock",
 		"stop the verified daemon explicitly",
 	} {
 		if !strings.Contains(upgrade, required) {
@@ -203,6 +205,8 @@ func TestREL011DaemonUpgradeCompatibilityIsFailClosed(t *testing.T) {
 		"protocol-incompatible client fails before session allocation",
 		"compatible clients already connected continue",
 		"does not replace the daemon or its control socket",
+		"validated private Unix Socket has no live instance lock",
+		"regular file, symbolic link, unsafe Socket, or held lock",
 	} {
 		if !strings.Contains(boundaries, required) {
 			t.Errorf("compatibility boundaries missing daemon contract %q", required)

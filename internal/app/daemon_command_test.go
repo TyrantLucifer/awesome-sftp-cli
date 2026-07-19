@@ -6,12 +6,18 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 type fakeDaemonControlClient struct {
@@ -305,5 +311,162 @@ func TestDaemonCommandRejectsRuntimeWithoutClient(t *testing.T) {
 				t.Fatalf("error = %v, exit = %d", err, exitCode(err))
 			}
 		})
+	}
+}
+
+func TestProbeDaemonClassifiesOnlyUnlockedPrivateResidualSocketAsAbsent(t *testing.T) {
+	t.Run("unlocked residual socket", func(t *testing.T) {
+		paths := residualDaemonPaths(t)
+		leaveResidualControlSocket(t, paths.ControlSocket)
+
+		client, found, err := probeDaemon(t.Context(), paths, platform.ValidateRuntimeFallback)
+		if err != nil || found || client != nil {
+			t.Fatalf("probe = (%#v, %t, %v), want (nil, false, nil)", client, found, err)
+		}
+	})
+
+	t.Run("live instance lock", func(t *testing.T) {
+		paths := residualDaemonPaths(t)
+		leaveResidualControlSocket(t, paths.ControlSocket)
+		lock, err := platform.AcquireInstanceLock(paths.LockFile, platform.ValidateRuntimeFallback)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lock.Close()
+
+		client, found, err := probeDaemon(t.Context(), paths, platform.ValidateRuntimeFallback)
+		if err == nil || !found || client != nil {
+			t.Fatalf("probe = (%#v, %t, %v), want (nil, true, error)", client, found, err)
+		}
+	})
+
+	for _, kind := range []string{"regular", "symlink"} {
+		t.Run(kind, func(t *testing.T) {
+			paths := residualDaemonPaths(t)
+			switch kind {
+			case "regular":
+				if err := os.WriteFile(paths.ControlSocket, []byte("not a socket"), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			case "symlink":
+				target := filepath.Join(paths.RuntimeDir, "target.sock")
+				leaveResidualControlSocket(t, target)
+				if err := os.Symlink(target, paths.ControlSocket); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			client, found, err := probeDaemon(t.Context(), paths, platform.ValidateRuntimeFallback)
+			if err == nil || !found || client != nil {
+				t.Fatalf("probe = (%#v, %t, %v), want (nil, true, error)", client, found, err)
+			}
+		})
+	}
+}
+
+func TestDaemonStatusReportsResidualSocketStoppedWithoutMutation(t *testing.T) {
+	paths := residualDaemonPaths(t)
+	leaveResidualControlSocket(t, paths.ControlSocket)
+	runtime := daemonCommandRuntime{
+		probe: func(ctx context.Context) (daemonControlClient, bool, error) {
+			return probeDaemon(ctx, paths, platform.ValidateRuntimeFallback)
+		},
+		start: func(context.Context) (daemonControlClient, error) {
+			t.Fatal("status attempted to start daemon")
+			return nil, nil
+		},
+	}
+	var stdout bytes.Buffer
+	if err := runDaemonCommandWithRuntime(t.Context(), []string{"status", "--format", "json"}, &stdout, runtime); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"running":false`) || !strings.Contains(stdout.String(), `"state":"stopped"`) {
+		t.Fatalf("output = %q", stdout.String())
+	}
+	if err := platform.ValidatePrivateSocket(paths.ControlSocket, platform.ValidateRuntimeFallback); err != nil {
+		t.Fatalf("status changed residual socket: %v", err)
+	}
+	if _, err := os.Lstat(paths.LockFile); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("status created or changed instance lock: %v", err)
+	}
+}
+
+func TestDaemonStartRecoversUnlockedPrivateResidualSocket(t *testing.T) {
+	paths := residualDaemonPaths(t)
+	leaveResidualControlSocket(t, paths.ControlSocket)
+
+	daemonCtx, cancelDaemon := context.WithCancel(context.Background())
+	defer cancelDaemon()
+	done := make(chan error, 1)
+	runtime := daemonCommandRuntime{
+		probe: func(ctx context.Context) (daemonControlClient, bool, error) {
+			return probeDaemon(ctx, paths, platform.ValidateRuntimeFallback)
+		},
+		start: func(ctx context.Context) (daemonControlClient, error) {
+			go func() { done <- runDaemonWithPaths(daemonCtx, paths, platform.ValidateRuntimeFallback) }()
+			deadline := time.Now().Add(5 * time.Second)
+			var lastErr error
+			for time.Now().Before(deadline) {
+				client, connectErr := connectExisting(ctx, paths, platform.ValidateRuntimeFallback)
+				if connectErr == nil {
+					return client, nil
+				}
+				lastErr = connectErr
+				time.Sleep(10 * time.Millisecond)
+			}
+			return nil, lastErr
+		},
+	}
+	var stdout bytes.Buffer
+	if err := runDaemonCommandWithRuntime(t.Context(), []string{"start", "--format", "json"}, &stdout, runtime); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"state":"started"`) {
+		t.Fatalf("output = %q", stdout.String())
+	}
+	if err := platform.ValidatePrivateSocket(paths.ControlSocket, platform.ValidateRuntimeFallback); err != nil {
+		t.Fatalf("started daemon control socket: %v", err)
+	}
+
+	cancelDaemon()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("daemon shutdown: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("daemon did not stop")
+	}
+}
+
+func residualDaemonPaths(t *testing.T) platform.Paths {
+	t.Helper()
+	root := filepath.Join(testkit.PersistentTempDir(t), "runtime")
+	if err := platform.PreparePrivateDirectory(root, platform.ValidateRuntimeFallback); err != nil {
+		t.Fatal(err)
+	}
+	return platform.Paths{
+		StateDir:      filepath.Join(testkit.PersistentTempDir(t), "state"),
+		LogFile:       filepath.Join(testkit.PersistentTempDir(t), "log", "daemon.jsonl"),
+		CacheDir:      filepath.Join(testkit.PersistentTempDir(t), "cache"),
+		RuntimeDir:    root,
+		ControlSocket: filepath.Join(root, "control-v1.sock"),
+		LockFile:      filepath.Join(root, "daemon.lock"),
+	}
+}
+
+func leaveResidualControlSocket(t *testing.T, path string) {
+	t.Helper()
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(path, 0o600); err != nil {
+		_ = listener.Close()
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
 	}
 }

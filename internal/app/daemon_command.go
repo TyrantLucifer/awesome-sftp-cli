@@ -188,6 +188,13 @@ func probeDaemon(ctx context.Context, paths platform.Paths, purpose platform.Val
 	}
 	connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
 	if err != nil {
+		unlocked, lockErr := residualDaemonSocketIsUnlocked(paths, purpose)
+		if lockErr != nil {
+			return nil, true, lockErr
+		}
+		if unlocked {
+			return nil, false, nil
+		}
 		return nil, true, err
 	}
 	client, err := daemon.NewClient(ctx, connection, buildinfo.Current().String(), fmt.Sprintf("daemon-control-%d", os.Getpid()))
@@ -196,6 +203,31 @@ func probeDaemon(ctx context.Context, paths platform.Paths, purpose platform.Val
 		return nil, true, err
 	}
 	return client, true, nil
+}
+
+func residualDaemonSocketIsUnlocked(paths platform.Paths, purpose platform.ValidationPurpose) (bool, error) {
+	// Only the daemon that acquires the canonical instance lock may unlink the
+	// socket. The client merely proves that a private Unix socket has no live
+	// owner so the ordinary daemon start path can perform that locked cleanup.
+	if err := platform.ValidatePrivateSocket(paths.ControlSocket, purpose); err != nil {
+		return false, fmt.Errorf("validate residual daemon socket: %w", err)
+	}
+	if _, err := os.Lstat(paths.LockFile); errors.Is(err, os.ErrNotExist) {
+		return true, nil
+	} else if err != nil {
+		return false, fmt.Errorf("inspect daemon instance lock: %w", err)
+	}
+	lock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
+	if errors.Is(err, platform.ErrInstanceLocked) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("probe daemon instance lock: %w", err)
+	}
+	if err := lock.Close(); err != nil {
+		return false, fmt.Errorf("release daemon instance lock probe: %w", err)
+	}
+	return true, nil
 }
 
 func daemonState(info daemon.ClientInfo, state string) daemonStateOutput {
