@@ -1,6 +1,6 @@
 # Durable Transfers Guide
 
-Stage 2 routes every copy, move, rename, and delete through the daemon-owned `Intent → frozen Plan → durable Job → bounded Worker → verify → commit` pipeline. The TUI never writes a LocalFS or SFTP path directly. If the SQLite state store cannot be opened safely, mutation RPCs are unavailable while the Explorer baseline remains usable for read-only diagnosis.
+AMSFTP routes every copy, move, rename, and delete through the daemon-owned `Intent → frozen Plan → durable Job → bounded Worker → verify → commit` pipeline. The TUI never writes a LocalFS or SFTP path directly. If the SQLite state store cannot be opened safely, mutation RPCs are unavailable while the Explorer baseline remains usable for read-only diagnosis.
 
 ## Clipboard and selection
 
@@ -30,7 +30,7 @@ A move uses an atomic rename only when the same endpoint explicitly advertises t
 
 Remote A→remote B uses two independent OpenSSH/SFTP sessions and a daemon memory buffer. It does not stage the complete file in a local content cache.
 
-Stage 5 records why each fast/direct candidate was selected or rejected. Production Level 2 distribution remains closed, so ordinary builds show `production_distribution_closed` and use bounded relay; only non-release fixtures exercise the direct data plane. No route enables Agent forwarding, GSS credential delegation, secret copying, or relaxed host-key checking.
+Route evidence records why each fast/direct candidate was selected or rejected. Production Level 2 distribution remains closed, so ordinary builds show `production_distribution_closed` and use bounded relay; only non-release fixtures exercise the direct data plane. No route enables Agent forwarding, GSS credential delegation, secret copying, or relaxed host-key checking.
 
 ## Conflicts and controls
 

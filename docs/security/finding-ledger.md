@@ -1,6 +1,6 @@
-# Stage 6 Security Finding Ledger
+# Security Finding Ledger
 
-This ledger records concrete findings discovered during Stage 6 and their evidence-backed disposition. It is not a final security-review approval: unexecuted review areas are listed separately so absence of a finding row cannot be read as completed coverage.
+This ledger records concrete findings and their evidence-backed disposition. It is not a final security-review approval: unexecuted review areas are listed separately so absence of a finding row cannot be read as completed coverage.
 
 | ID | Severity | Status | Boundary | Finding | Disposition | Evidence | Owner |
 |---|---|---|---|---|---|---|---|

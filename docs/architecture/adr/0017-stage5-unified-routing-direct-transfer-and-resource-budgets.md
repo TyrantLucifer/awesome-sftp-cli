@@ -39,4 +39,4 @@ Stage 2–4 已分别交付 durable relay、同 Endpoint atomic rename 和 `help
 
 ## Evidence
 
-Active evidence is maintained in [Stage 5 verification](../../verification/stage-05.md). The completed Helper and same-host-copy handoff remains in [Stage 4 verification](../../verification/stage-04.md).
+Stable implementation evidence is maintained by the [route contract tests](../../../internal/transfer/route_contract_test.go), [scheduler tests](../../../internal/transfer/scheduler_test.go), [Level 2 tests](../../../internal/transfer/level2_direct_test.go), and the current [feature matrix](../../product/feature-matrix.md).

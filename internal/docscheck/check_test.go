@@ -24,6 +24,32 @@ func TestValidFixtureHasNoFindings(t *testing.T) {
 	}
 }
 
+func TestMissingRequiredDocumentationEntryPoint(t *testing.T) {
+	root := prepareFixture(t, "valid")
+	if err := os.Remove(filepath.Join(root, "README.md")); err != nil {
+		t.Fatalf("remove README fixture: %v", err)
+	}
+
+	assertExactCheckFindings(t, root, []Finding{{
+		Path: "README.md", Line: 1, Rule: "docs.required",
+		Message: "required documentation entry point is missing or is not a regular file",
+	}})
+}
+
+func TestFeatureMatrixAcceptsCurrentCapabilitySchema(t *testing.T) {
+	root := prepareFixture(t, "valid")
+	writePolicyFile(t, root, "docs/product/feature-matrix.md", `# Feature Matrix
+
+| ID | 能力 | 状态 | 用户契约 | 实现与测试依据 |
+|---|---|---|---|---|
+| CORE-001 | Foundation | Implemented | Works. | [guide](../guide.md) |
+| CORE-002 | Evidence | Verified | Verified. | [guide](../guide.md) |
+`)
+	if findings := checkFixture(root); len(findings) != 0 {
+		t.Fatalf("Check() returned unexpected findings:\n%s", formatFindings(findings))
+	}
+}
+
 func TestBrokenRelativeLink(t *testing.T) {
 	assertFixtureFindings(t, "broken-link", []expectedFinding{
 		{Path: "docs/guide.md", Line: 3, Rule: "link.missing"},
@@ -55,7 +81,7 @@ func TestRelativeLinkRejectsDirectorySymlinkEscape(t *testing.T) {
 	})
 }
 
-func TestVerificationRecordRejectsSymlinkEscape(t *testing.T) {
+func TestFeatureEvidenceRejectsSymlinkEscape(t *testing.T) {
 	root := prepareFixture(t, "verification-symlink-escape")
 	target := writeOutsideFixtureFile(t, "record.md")
 	if err := os.Symlink(filepath.Dir(target), filepath.Join(root, "docs", "verification", "outside")); err != nil {
@@ -64,43 +90,18 @@ func TestVerificationRecordRejectsSymlinkEscape(t *testing.T) {
 
 	assertCheckFindings(t, root, []expectedFinding{
 		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "link.escape"},
-		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "matrix.verification_record"},
 	})
 }
 
 func TestRepositoryTruthRejectsSymlinkEscapes(t *testing.T) {
-	t.Run("implementation plan final file", func(t *testing.T) {
+	t.Run("required README final file", func(t *testing.T) {
 		root := prepareFixture(t, "valid")
-		replaceFixtureFileWithOutsideSymlink(t, root, "IMPLEMENTATION_PLAN.md")
+		replaceFixtureFileWithOutsideSymlink(t, root, "README.md")
 
 		assertExactCheckFindings(t, root, []Finding{{
-			Path: "IMPLEMENTATION_PLAN.md", Line: 1, Rule: "plan.missing",
-			Message: `repository path "IMPLEMENTATION_PLAN.md" resolves outside the root`,
+			Path: "README.md", Line: 1, Rule: "docs.required",
+			Message: "required documentation entry point is missing or is not a regular file",
 		}})
-	})
-
-	t.Run("active stage final file", func(t *testing.T) {
-		root := prepareFixture(t, "valid")
-		replaceFixtureFileWithOutsideSymlink(t, root, "docs/stages/00-foundation.md")
-
-		assertExactCheckFindings(t, root, []Finding{{
-			Path: "docs/stages/00-foundation.md", Line: 1, Rule: "stage.missing",
-			Message: "required Stage 0–6 document is missing",
-		}})
-	})
-
-	t.Run("stage parent directory", func(t *testing.T) {
-		root := prepareFixture(t, "valid")
-		replaceFixtureDirectoryWithOutsideSymlink(t, root, "docs/stages")
-
-		want := make([]Finding, 0, 7)
-		for _, path := range requiredStageDocuments {
-			want = append(want, Finding{
-				Path: path, Line: 1, Rule: "stage.missing",
-				Message: "required Stage 0–6 document is missing",
-			})
-		}
-		assertExactCheckFindings(t, root, want)
 	})
 }
 
@@ -151,9 +152,8 @@ func TestMalformedFeatureID(t *testing.T) {
 	})
 }
 
-func TestInvalidStageOrStatus(t *testing.T) {
+func TestInvalidFeatureStatus(t *testing.T) {
 	assertFixtureFindings(t, "invalid-stage-status", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "matrix.stage"},
 		{Path: "docs/product/feature-matrix.md", Line: 6, Rule: "matrix.status"},
 	})
 }
@@ -167,12 +167,6 @@ func TestMissingFeatureEvidence(t *testing.T) {
 func TestNonPlannedFeatureRejectsStaleEvidence(t *testing.T) {
 	assertFixtureFindings(t, "stale-evidence", []expectedFinding{
 		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "matrix.evidence_stale"},
-	})
-}
-
-func TestVerifiedFeatureRequiresVerificationRecord(t *testing.T) {
-	assertFixtureFindings(t, "verified-no-record", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "matrix.verification_record"},
 	})
 }
 
@@ -205,191 +199,6 @@ func TestFeatureMatrixAllowsOneCanonicalTablePerSection(t *testing.T) {
 	if findings := checkFixture(root); len(findings) != 0 {
 		t.Fatalf("Check() returned unexpected findings:\n%s", formatFindings(findings))
 	}
-}
-
-func TestMissingStageDocument(t *testing.T) {
-	assertFixtureFindings(t, "missing-stage", []expectedFinding{
-		{Path: "docs/stages/06-hardening-release.md", Line: 1, Rule: "stage.missing"},
-	})
-}
-
-func TestStatePlanMismatch(t *testing.T) {
-	assertFixtureFindings(t, "state-plan-mismatch", []expectedFinding{
-		{Path: "PROJECT_STATE.md", Line: 3, Rule: "state.stage_mismatch"},
-	})
-}
-
-func TestPlanRejectsCompleteStageAfterInProgressStage(t *testing.T) {
-	assertExactCheckFindings(t, prepareFixture(t, "plan-stage-order"), []Finding{{
-		Path: "IMPLEMENTATION_PLAN.md", Line: 6, Rule: "plan.stage_order",
-		Message: `Stage 1 status "Complete" is invalid after Stage 0 status "In Progress"`,
-	}})
-}
-
-func TestCurrentPlanStageDetailsAcceptsOrderedStatuses(t *testing.T) {
-	tests := []struct {
-		name       string
-		statuses   []string
-		wantStage  int
-		wantStatus string
-		wantLine   int
-	}{
-		{
-			name:       "all not started",
-			statuses:   []string{"Not Started", "Not Started", "Not Started", "Not Started", "Not Started", "Not Started", "Not Started"},
-			wantStage:  0,
-			wantStatus: "Not Started",
-			wantLine:   4,
-		},
-		{
-			name:       "single in progress after complete prefix",
-			statuses:   []string{"Complete", "In Progress", "Not Started", "Not Started", "Not Started", "Not Started", "Not Started"},
-			wantStage:  1,
-			wantStatus: "In Progress",
-			wantLine:   6,
-		},
-		{
-			name:       "not started after complete prefix without in progress",
-			statuses:   []string{"Complete", "Complete", "Not Started", "Not Started", "Not Started", "Not Started", "Not Started"},
-			wantStage:  2,
-			wantStatus: "Not Started",
-			wantLine:   8,
-		},
-		{
-			name:       "all complete",
-			statuses:   []string{"Complete", "Complete", "Complete", "Complete", "Complete", "Complete", "Complete"},
-			wantStage:  6,
-			wantStatus: "Complete",
-			wantLine:   16,
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			stage, status, line, ok := currentPlanStageDetails(planLinesForStatuses(test.statuses))
-			if !ok || stage != test.wantStage || status != test.wantStatus || line != test.wantLine {
-				t.Fatalf("currentPlanStageDetails() = (%d, %q, %d, %t), want (%d, %q, %d, true)", stage, status, line, ok, test.wantStage, test.wantStatus, test.wantLine)
-			}
-		})
-	}
-}
-
-func TestPlanStageOrderRejectsInvalidTransitions(t *testing.T) {
-	tests := []struct {
-		name     string
-		statuses []string
-		want     Finding
-	}{
-		{
-			name:     "complete after in progress",
-			statuses: []string{"In Progress", "Complete", "Not Started", "Not Started", "Not Started", "Not Started", "Not Started"},
-			want: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 6, Rule: "plan.stage_order",
-				Message: `Stage 1 status "Complete" is invalid after Stage 0 status "In Progress"`},
-		},
-		{
-			name:     "in progress after not started",
-			statuses: []string{"Not Started", "In Progress", "Not Started", "Not Started", "Not Started", "Not Started", "Not Started"},
-			want: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 6, Rule: "plan.stage_order",
-				Message: `Stage 1 status "In Progress" is invalid after Stage 0 status "Not Started"`},
-		},
-		{
-			name:     "second in progress",
-			statuses: []string{"Complete", "In Progress", "In Progress", "Not Started", "Not Started", "Not Started", "Not Started"},
-			want: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 8, Rule: "plan.stage_order",
-				Message: `Stage 2 status "In Progress" is invalid after Stage 1 status "In Progress"`},
-		},
-		{
-			name:     "complete after not started",
-			statuses: []string{"Complete", "Not Started", "Complete", "Not Started", "Not Started", "Not Started", "Not Started"},
-			want: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 8, Rule: "plan.stage_order",
-				Message: `Stage 2 status "Complete" is invalid after Stage 1 status "Not Started"`},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			lines := planLinesForStatuses(test.statuses)
-			finding, invalid := planStageOrderFinding(lines)
-			if !invalid || finding != test.want {
-				t.Fatalf("planStageOrderFinding() = (%#v, %t), want (%#v, true)", finding, invalid, test.want)
-			}
-			if _, _, _, ok := currentPlanStageDetails(lines); ok {
-				t.Fatal("currentPlanStageDetails() accepted invalid Stage order")
-			}
-		})
-	}
-}
-
-func TestPlanStageSchemaRejectsMalformedSequence(t *testing.T) {
-	tests := []struct {
-		name    string
-		old     string
-		new     string
-		finding Finding
-	}{
-		{
-			name: "duplicate header",
-			old:  "**Status**: In Progress\n## Stage 1: Explorer",
-			new:  "**Status**: In Progress\n## Stage 0: Duplicate\n**Status**: In Progress\n## Stage 1: Explorer",
-			finding: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 5, Rule: "plan.stage_header",
-				Message: "Stage 0 header appears more than once"},
-		},
-		{
-			name: "duplicate status",
-			old:  "**Status**: In Progress\n## Stage 1: Explorer",
-			new:  "**Status**: In Progress\n**Status**: In Progress\n## Stage 1: Explorer",
-			finding: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 5, Rule: "plan.stage_status",
-				Message: "Stage 0 defines more than one Status"},
-		},
-		{
-			name: "missing status",
-			old:  "## Stage 1: Explorer\n**Status**: Not Started",
-			new:  "## Stage 1: Explorer",
-			finding: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 5, Rule: "plan.stage_status",
-				Message: "Stage 1 must define exactly one canonical Status"},
-		},
-		{
-			name: "missing header",
-			old:  "## Stage 1: Explorer\n**Status**: Not Started\n",
-			new:  "",
-			finding: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 1, Rule: "plan.stage_header",
-				Message: "Stage 1 header is missing"},
-		},
-		{
-			name: "noncanonical status",
-			old:  "## Stage 1: Explorer\n**Status**: Not Started",
-			new:  "## Stage 1: Explorer\n**Status**: Blocked",
-			finding: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 6, Rule: "plan.stage_status",
-				Message: `Stage 1 status "Blocked" must be one of "Not Started", "In Progress", or "Complete"`},
-		},
-		{
-			name: "headers out of physical order",
-			old:  "## Stage 1: Explorer\n**Status**: Not Started\n## Stage 2: Transfers\n**Status**: Not Started",
-			new:  "## Stage 2: Transfers\n**Status**: Not Started\n## Stage 1: Explorer\n**Status**: Not Started",
-			finding: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 5, Rule: "plan.stage_header",
-				Message: "Stage 2 header is out of order; expected Stage 1 at this position"},
-		},
-		{
-			name: "stage outside allowed range",
-			old:  "## Stage 6: Release\n**Status**: Not Started",
-			new:  "## Stage 6: Release\n**Status**: Not Started\n## Stage 7: Extra",
-			finding: Finding{Path: "IMPLEMENTATION_PLAN.md", Line: 17, Rule: "plan.stage_header",
-				Message: "Stage 7 header is outside the allowed Stage 0–6 range"},
-		},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := prepareFixture(t, "valid")
-			replacePolicyFile(t, root, "IMPLEMENTATION_PLAN.md", test.old, test.new)
-			assertExactCheckFindings(t, root, []Finding{test.finding})
-		})
-	}
-}
-
-func planLinesForStatuses(statuses []string) []string {
-	lines := []string{"# Implementation Plan", ""}
-	for stage, status := range statuses {
-		lines = append(lines, "## Stage "+strconv.Itoa(stage)+": Test", "**Status**: "+status)
-	}
-	return lines
 }
 
 func TestDurableDocumentMarker(t *testing.T) {

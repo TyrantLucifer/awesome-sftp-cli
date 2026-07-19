@@ -2,18 +2,18 @@
 
 ## 1. 产品依赖边界
 
-Stage 0 的产品代码只使用 Go 标准库。新增产品依赖必须有明确必要性说明，并完成许可证、安全性与 Go 1.25 兼容影响审查；若依赖改变架构边界、数据流或兼容策略，还必须新增 ADR。依赖更新不得作为无关任务中的顺手重构。
+当前产品依赖由根 `go.mod`/`go.sum` 锁定。新增或升级依赖必须有明确必要性说明，并完成许可证、安全性与 Go 1.25.12/1.26.5 兼容影响审查；若依赖改变架构边界、数据流或兼容策略，还必须新增 ADR。依赖更新不得作为无关任务中的顺手重构。
 
-已批准但尚未进入 Stage 0 module graph 的 owning-stage pin 为：
+当前关键产品 pin 为：
 
-| Stage | Module | 精确版本 | 约束来源 |
+| 领域 | Module | 精确版本 | 约束来源 |
 | --- | --- | --- | --- |
-| 1 | `github.com/gdamore/tcell/v3` | `v3.4.0` | [ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md) |
-| 1 | `github.com/pkg/sftp` | 上游 `v1.13.11`；replace `github.com/TyrantLucifer/sftp v1.13.12-0.20260715132526-f947b886400b` | [ADR-0011](../architecture/adr/0011-pkg-sftp-streaming-directory-cursor.md) |
-| 2 | `modernc.org/sqlite` | `v1.53.0` | [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md) |
-| 2 | `modernc.org/libc` | `v1.73.4`（上游解析 pin） | [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md) |
+| TUI | `github.com/gdamore/tcell/v3` | `v3.4.0` | [ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md) |
+| SFTP | `github.com/pkg/sftp` | 上游 `v1.13.11`；replace `github.com/TyrantLucifer/sftp v1.13.12-0.20260715132526-f947b886400b` | [ADR-0011](../architecture/adr/0011-pkg-sftp-streaming-directory-cursor.md) |
+| SQLite | `modernc.org/sqlite` | `v1.53.0` | [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md) |
+| SQLite runtime | `modernc.org/libc` | `v1.73.4`（上游解析 pin） | [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md) |
 
-第一次导入必须使用精确版本并提交 `go.sum`；审查完整 module graph、许可证、上游 changelog、撤回版本、已知漏洞、Go 1.25.12/1.26.5 兼容和四目标 `CGO_ENABLED=0` 构建。ADR pin 是已解决的选择，不授权预先把未使用依赖加入 Stage 0，也不能被 `latest` 或自动升级替换。
+变更必须使用精确版本并提交 `go.sum`；审查完整 module graph、许可证、上游 changelog、撤回版本、已知漏洞、Go 1.25.12/1.26.5 兼容和四目标 `CGO_ENABLED=0` 构建。ADR pin 是已解决的选择，不能被 `latest` 或自动升级替换。
 
 ## 2. 独立工具 module
 
@@ -48,4 +48,4 @@ Dependabot 每周检查根 gomod、`/tools` gomod 和 GitHub Actions；每个 ec
 
 每次更新审查必须运行 lint、全部测试、race、四个独立 fuzz smoke、govulncheck、actionlint、docscheck、Go 1.25.12 oldstable、四目标构建和独立缓存的可复现构建字节比较。审查者还要检查传递依赖图、许可证、上游 changelog 与兼容影响，并记录已发现漏洞的适用性、处置或接受原因。
 
-CI 的 Go 缓存依赖路径必须同时、精确使用已提交的根 `go.sum` 与 `tools/go.sum`；前者锁定 Stage 1 起的产品依赖图，后者锁定独立工具图。不得用只覆盖其中一份或会吸收未审查 module 的宽泛 glob 代替。
+CI 的 Go 缓存依赖路径必须同时、精确使用已提交的根 `go.sum` 与 `tools/go.sum`；前者锁定产品依赖图，后者锁定独立工具图。不得用只覆盖其中一份或会吸收未审查 module 的宽泛 glob 代替。

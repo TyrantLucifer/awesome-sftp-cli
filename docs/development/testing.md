@@ -33,7 +33,7 @@ make BUILD_DIR="$EXTERNAL_ROOT/build outputs" \
 
 `test` 的 profile 位于 `$(COVERAGE_DIR)/unit.out`；`test-contract` 的 profile 位于 `$(COVERAGE_DIR)/provider-contract.out`。
 
-普通 `docs-check` 适用于开发中的仓库。最终候选还必须显式运行 `GOTOOLCHAIN=local go run ./internal/tools/docscheck --release .`；该模式要求冻结的 23 个 Stage 6 行全部处于 `Verified` 或有 ADR 的 `Deferred`/`Removed`，并要求 12 个退出条件保持原文、原序且全部勾选。它在 Stage 6 仍进行时应当失败，不能用普通 docscheck 的成功代替。
+普通 `docs-check` 适用于开发中的仓库。公开最终候选还必须显式运行 `GOTOOLCHAIN=local go run ./internal/tools/docscheck --release .`；该模式在普通检查之上读取 `docs/release/RC-GATES.md`，任何未勾选门禁都会失败。内部预览不冒充公开候选，普通 docscheck 的成功也不能替代真实签名、平台和渠道证据。
 
 Make 契约的信任边界是仓库根目录中已提交的 canonical `Makefile`。可接受的本地/CI 证据必须从产品仓库根目录直接执行 `make <target>`；workflow policy 同时要求 `MAKEFLAGS`、`GNUMAKEFLAGS`、`MAKEFILES` 的有效值为空，并只认可精确、安全的 Make 命令。通过 wrapper Makefile、额外 `-f`、`MAKEFILES` preload、include 或其他外部 Make source 得到的结果不属于这条契约，也不能作为门禁证据；Make 自身不被描述为任意外部 source 的完整性边界。
 
@@ -63,7 +63,7 @@ go test -run='^$' -fuzz='^FuzzNormalizePath$' -fuzztime=1s ./internal/provider/f
 
 ## 4. 可执行程序的角色边界
 
-`cmd/amsftp` 是一个具有 `client`、`daemon`、`askpass`、`helper` 四种 dispatch 角色的二进制；无参数时默认角色为 `client`。只有完全匹配的内部 role token 与 `--help`/`--version` meta token 会被 dispatch 层消费；其他单/双 Location、`--workspace <name>` 或未来 client 参数均原样交给默认 client handler。Stage 1–2 已配置 client、daemon 与 askpass 角色，Helper 仍按 Stage 4 fail closed；可执行 smoke、PTY、真实 OpenSSH、daemon recovery 与 `internal/app` 测试共同证明角色分派和参数保留，不能用空 handler 的进程调用替代。
+`cmd/amsftp` 是一个具有 `client`、`daemon`、`askpass`、`helper` 四种 dispatch 角色的二进制；无参数时默认角色为 `client`。只有完全匹配的内部 role token 与 `--help`/`--version` meta token 会被 dispatch 层消费；其他单/双 Location、`--workspace <name>` 或未来 client 参数均原样交给默认 client handler。production Helper 仍按发行门禁 fail closed；可执行 smoke、PTY、真实 OpenSSH、daemon recovery 与 `internal/app` 测试共同证明角色分派和参数保留，不能用空 handler 的进程调用替代。
 
 ## 5. 并发重复门禁
 
@@ -90,7 +90,7 @@ go test -count=100 \
 
 CI 的四目标 build 与 CI/nightly 的独立缓存 reproducibility build 都必须使用精确的 `go build -trimpath -buildvcs=false`；native 可执行 smoke 保持 `go build -trimpath`，且不能冒充可复现发行物证据。每个 build/repro producer 都从实际二进制重新计算 SHA-256、与 sidecar 逐字节核对，并记录目标 `GOOS`/`GOARCH`、artifact 名与 64 位小写十六进制 hash。comparison job 从两份独立 artifact 计算每个平台唯一 accepted hash；最终 collector 必须下载这份 comparison evidence，并将 CI 的 build + repro A/B（nightly 为 repro A/B）全部绑定到 accepted hash 和目标元组。Nightly fuzz/concurrency producer 还必须逐 step 精确绑定 checkout、setup-go 与真实 workload，空操作、条件成功或命令漂移不能只靠 clean provenance 伪装成已执行门禁。workflow policy 对 shell block 先仅去除 YAML 公共基础缩进，再逐内容行精确比较；heredoc 结束符、普通内容、反斜杠续行的任何前后空白漂移都必须 fail closed。
 
-Linux arm64 必须在 Stage 6 生产支持声明前通过 `ubuntu-22.04-arm`/`ubuntu-24.04-arm` 或等价受控原生 runner 的安装与冒烟。若仓库可见性或计划不提供 hosted ARM label，必须配置自托管/受控 runner；四目标交叉构建不能替代该证据。完整支持与包装承诺见 [ADR-0009](../architecture/adr/0009-supported-platform-ci-and-packaging-baseline.md)。
+Linux arm64 在任何公开支持声明前必须通过 `ubuntu-22.04-arm`/`ubuntu-24.04-arm` 或等价受控原生 runner 的安装与冒烟。若仓库可见性或计划不提供 hosted ARM label，必须配置自托管/受控 runner；四目标交叉构建不能替代该证据。完整支持与包装承诺见 [ADR-0009](../architecture/adr/0009-supported-platform-ci-and-packaging-baseline.md)。
 
 ## 7. 精确工具链覆盖
 
@@ -109,4 +109,4 @@ GOTOOLCHAIN=local make GO="$GO126" \
 
 `test` 与 `test-contract` 的 profile 必须位于外部 `COVERAGE_DIR`；`build-all` 只能在外部 `BUILD_DIR` 顶层生成上表四个常规、非符号链接文件。完整接受门禁会在同一个 shell 中比较运行前后的非忽略 candidate tree、忽略输出 Git tree 与同次未压缩 tar 字节，并验证每个构建的 SHA-256 与 `go version -m` 元数据。
 
-[主计划 Task 10](../superpowers/plans/2026-07-14-stage-0-foundation.md#task-10-add-repeatable-quality-supply-chain-build-and-ci-entrypoints) 中冻结的单一 `/bin/bash` 3.2 验证块是完整 pre/post tree 捕获的权威入口。
+完整 pre/post tree 捕获以当前 `Makefile`、workflow policy 和 `internal/docscheck` 的可执行契约为准；历史计划不再是活动事实源。

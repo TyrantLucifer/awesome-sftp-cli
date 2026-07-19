@@ -35,4 +35,4 @@ SFTP v3 `SSH_FXP_RENAME` is also not a dependable no-replace primitive across se
 
 ## Evidence
 
-Focused evidence is maintained in [Stage 4 verification](../../verification/stage-04.md), with user-visible behavior in the [Search and Optional Helper guide](../../user/search-helper.md).
+Stable implementation evidence is maintained by the [search contracts](../../../internal/search/content_contract_test.go), [Helper protocol tests](../../../internal/helper/protocol_test.go), and the [Search and Optional Helper guide](../../user/search-helper.md).

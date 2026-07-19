@@ -1,6 +1,6 @@
 # Search and Optional Helper
 
-Stage 4 adds recursive search while keeping standard SFTP as the permanent baseline.
+AMSFTP provides recursive search while keeping standard SFTP as the permanent baseline.
 
 ## Search keys
 
@@ -14,9 +14,9 @@ Filename search does not follow directory symlinks. Content search skips binary 
 
 ## Capability levels
 
-- Level 0: standard SFTP search and all Stage 1–3 features. Always available when the SFTP endpoint is healthy.
+- Level 0: standard SFTP search and the complete baseline user workflow. Always available when the SFTP endpoint is healthy.
 - Level 1: an optional verified Helper can accelerate filename/content search and independently offer strong hash, disk stats, tail, watch, and same-host copy.
-- Level 2 belongs to Stage 5 and is not claimed by Stage 4.
+- Level 2 remains a separate production-gated capability and is not claimed by the Helper search path.
 
 The status line refreshes the active SSH pane's capability snapshot at most once per second and shows `helper:L0 <reason>` or `helper:L1 <version> [capabilities]`. Stale Endpoint/session/generation refreshes are discarded. The Jobs drawer shows the frozen route (`local`, `sftp_relay`, or `helper_same_host`). Helper presence never implies every capability. A crash or malformed frame marks only the current enhanced action partial; a new search uses Level 0, and the SFTP Provider and unrelated Jobs remain available.
 
@@ -28,7 +28,7 @@ The lifecycle requires two distinct approvals. Preliminary approval occurs befor
 
 After approval, installation uses a content-addressed path, exact owner-only modes, an unpredictable exclusive temporary file, client readback verification, and a target-exists-fails publication. Directory creation requires a separately reviewed SFTP MKDIR primitive that carries `0700` at creation time; create-then-chmod is rejected, and production installation remains unavailable until that raw primitive and release custody exist. Every enable repeats current signature/revocation/floor policy, pre/post-probe absolute-utility checks, and fresh remote identity/attributes/hash checks. Disable/remove retain the monotonic high-water so an older or same-version-different artifact cannot be replayed. Exact removal also takes the Job Store admission lease and scans frozen Endpoint plus artifact identity; a queued, paused, running, or restartable Job prevents its exact Helper artifact from being removed.
 
-Production Helper distribution is **CLOSED**. The shipped production verifier trusts no fixture key, and ordinary runtime/configuration cannot enable the repository's non-release test fixture. Consequently there is no supported production install command or production Helper download yet. `amsftp helper status <SSH-host>` is a read-only Stage 6 management surface that reports the negotiated Level 0/Level 1 state and the closed production gate; it does not mutate remote installation state. Lifecycle tests use explicit non-release test-only injection; they are not a production artifact or trust claim.
+Production Helper distribution is **CLOSED**. The shipped production verifier trusts no fixture key, and ordinary runtime/configuration cannot enable the repository's non-release test fixture. Consequently there is no supported production install command or production Helper download yet. `amsftp helper status <SSH-host>` is a read-only management surface that reports the negotiated Level 0/Level 1 state and the closed production gate; it does not mutate remote installation state. Lifecycle tests use explicit non-release test-only injection; they are not a production artifact or trust claim.
 
 ## Same-host copy
 

@@ -4,7 +4,7 @@ REL-008 uses a strict external JSON record to bind every release gate to one exa
 
 No release-candidate record exists yet. Production Helper and Level 2 remain **CLOSED**, no RC is frozen, and no current run may be presented as final REL-008 evidence.
 
-A successful pre-RC harness report exists outside the repository at `/data00/home/tianchao.thatcher/amsftp-release-evidence/physical-100gib-c57ba4f78e34ce3c30d0185fa9dfa11729ad682f.json`. It binds candidate `c57ba4f78e34ce3c30d0185fa9dfa11729ad682f` / tree `6402169170a002cb6dcb5a264b43686c4bb31473` and records a physically allocated 100 GiB cancel/resume upload plus a complete 100 GiB download with matching SHA-256. The report explicitly declares `pre-rc-harness-proof-not-final-rc-evidence`; it is retained only as harness proof and cannot populate the final `physical_100gib` row unless that same SHA/tree is later frozen and independently satisfies every RC requirement.
+Historical pre-RC harness reports are diagnostic inputs only. They cannot populate a final gate unless the same candidate commit and tree are frozen and independently satisfy every release-candidate requirement.
 
 ## Operator commands
 
@@ -18,7 +18,22 @@ GOTOOLCHAIN=local go run ./internal/tools/docscheck --release .
 
 `candidate` requires the complete gate catalog plus exact candidate push and PR runs. `final` requires the same evidence and an exact post-merge identity plus the successful `main` run for that merge commit. Input must be a non-empty, bounded, non-symlink regular file. Unknown fields, trailing JSON, invalid 40-character lowercase Git object IDs, duplicate/missing gates or runs, empty references, and file-identity changes while opening are rejected.
 
-The final-only documentation audit is separate from ordinary `docs-check`. It freezes the exact 23 Stage 6 feature IDs, rejects any final `Planned`, `In Progress`, or `Implemented` row, requires `Deferred`/`Removed` rows to link their ADR decision, and requires all 12 frozen Stage 6 exit criteria to remain exact and checked. It is expected to fail before the real release gates close; its current failure must not be presented as release evidence.
+The final-only documentation audit is separate from ordinary `docs-check`. It checks the current repository documentation and the public-release checklist below. It is expected to fail while any checklist item remains open; that failure is intentional and must not be presented as release evidence.
+
+## Public release checklist
+
+- [ ] One exact release-candidate commit and tree are frozen.
+- [ ] Current and oldstable quality gates pass for the exact candidate.
+- [ ] Race, fuzz, fault-injection, and bounded-scale gates pass for the exact candidate.
+- [ ] Supported native OS and architecture installation matrices pass.
+- [ ] OpenSSH, Kerberos, SFTP server, and terminal compatibility claims match real evidence.
+- [ ] Physical 100 GiB and process/network-isolated Level 2 evidence is bound to the exact candidate.
+- [ ] Final independent security reviews cover the exact candidate.
+- [ ] Darwin binaries are signed, timestamped, and notarized before manifest production.
+- [ ] Checksums, SBOM, provenance, manifests, and archives bind the same bytes.
+- [ ] Clean install, upgrade, rollback, uninstall, and withdrawal rehearsals pass.
+- [ ] README, user guides, feature matrix, compatibility claims, and release channels agree.
+- [ ] Candidate push/PR and post-merge `main` runs all complete successfully.
 
 ## Record v1
 
@@ -66,4 +81,4 @@ Candidate validation requires exactly one `candidate_push` and one `candidate_pr
 
 Final validation additionally requires exactly one `postmerge_main` row bound to the merge commit, with the same all-jobs-success rule. This preserves the required candidate → merge → exact-main ordering and prevents a failed, dependency-skipped, superseded, or unrelated run from opening release actions.
 
-The record intentionally contains no private key, credential, ticket, authentication answer, notarization secret, or artifact bytes. Protected evidence references may disclose only the non-sensitive identities and results allowed by the Stage 6 release policy.
+The record intentionally contains no private key, credential, ticket, authentication answer, notarization secret, or artifact bytes. Protected evidence references may disclose only the non-sensitive identities and results allowed by the release security policy.

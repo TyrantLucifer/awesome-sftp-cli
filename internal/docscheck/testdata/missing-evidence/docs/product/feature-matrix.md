@@ -1,5 +1,5 @@
 # Feature Matrix
 
-| ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
-|---|---|---:|---|---|---|
-| CORE-001 | Missing evidence | 0 | Planned | Works. | |
+| ID | 能力 | 状态 | 用户契约 | 实现与测试依据 |
+|---|---|---|---|---|
+| CORE-001 | Missing evidence | Planned | Works. | |

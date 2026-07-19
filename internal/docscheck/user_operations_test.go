@@ -10,21 +10,19 @@ func TestREL009DocumentationIndexCoversEveryUserAndOperationsDomain(t *testing.T
 	t.Parallel()
 	index := readREL009Document(t, "../../docs/README.md")
 	for _, required := range []string{
-		"## User and operations path",
-		"[Install](release/INSTALL.md)",
-		"[First run](user/getting-started.md)",
-		"[Upgrade and rollback](release/UPGRADE.md)",
-		"[Operations and recovery](operations/runbook.md)",
-		"[Uninstall](release/UNINSTALL.md)",
-		"SSH and Kerberos prerequisites",
-		"default keymap",
-		"workspaces",
-		"transfer safety",
+		"# AMSFTP 文档",
+		"## 用户",
+		"[首次使用](user/getting-started.md)",
+		"[Vim-first 键位](user/keymap.md)",
+		"[持久传输](user/durable-transfers.md)",
+		"[CLI 参考](user/cli.md)",
+		"## 运维、安全与发布",
+		"[运维与恢复手册](operations/runbook.md)",
+		"[安装](release/INSTALL.md)",
+		"[升级与回滚](release/UPGRADE.md)",
+		"[卸载](release/UNINSTALL.md)",
 		"Helper",
-		"direct transfer",
-		"recovery",
-		"doctor",
-		"troubleshooting",
+		"[公开发行门禁](release/RC-GATES.md)",
 	} {
 		if !strings.Contains(index, required) {
 			t.Errorf("documentation index missing %q", required)
@@ -35,12 +33,12 @@ func TestREL009DocumentationIndexCoversEveryUserAndOperationsDomain(t *testing.T
 func TestSFTPCompatibilityDocumentsVirtualV3AndRawFilenameEvidence(t *testing.T) {
 	matrix := readREL009Document(t, "../../docs/product/feature-matrix.md")
 	for _, required := range []string{
-		"| PLAT-005 |",
-		"separate-process virtual SFTP v3",
-		"unsafe no-replace publication",
-		"| PLAT-006 | Unicode 与原始文件名 | 1 | Verified |",
-		"invalid UTF-8 filename bytes",
-		"list→stat→read",
+		"| PLAT-005 | 标准 SFTP 基线 | Implemented |",
+		"扩展缺失时不伪造能力",
+		"standards_compatibility_test.go",
+		"| PLAT-006 | Unicode 与原始文件名 | Verified |",
+		"保持原始字节",
+		"list、stat 和 read",
 	} {
 		if !strings.Contains(matrix, required) {
 			t.Errorf("feature matrix missing SFTP compatibility evidence %q", required)

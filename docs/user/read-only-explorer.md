@@ -1,6 +1,6 @@
 # Explorer Baseline Guide
 
-This guide covers the Stage 1 `amsftp` browsing baseline, which remains available through Stage 3. Durable copy, move, rename, delete, conflict, and Jobs controls are documented in the [Durable Transfers guide](durable-transfers.md). Stage 3 drawers, range/image Preview, managed cache, external edit/open, recovery, and explicit shell surfaces are documented in the [Preview, Edit, Cache, and Shell guide](preview-edit-cache.md).
+This guide covers the read-only `amsftp` browsing baseline. Durable copy, move, rename, delete, conflict, and Jobs controls are documented in the [Durable Transfers guide](durable-transfers.md). Drawers, range/image Preview, managed cache, external edit/open, recovery, and explicit shell surfaces are documented in the [Preview, Edit, Cache, and Shell guide](preview-edit-cache.md).
 
 ## Prerequisites
 
@@ -36,12 +36,12 @@ With no arguments, the startup picker combines saved workspaces and selectable H
 | `c` | Switch only the active pane to `local` or an SSH Host alias. The old remote session is released after the replacement listing succeeds. |
 | `/` | Filter the entries already received for the active directory. |
 | `s`, `H`, `R` | Cycle sort, toggle hidden entries, or refresh. |
-| `v`, `V`, `Space` | Maintain visual or discrete selection state. Stage 2 transfer commands can consume this selection through a frozen Job plan. |
+| `v`, `V`, `Space` | Maintain visual or discrete selection state. Transfer commands can consume this selection through a frozen Job plan. |
 | `S` | Save the two-pane workspace under a validated name. |
 | `Esc` | Cancel the innermost prompt or in-flight preview. |
 | `q`, `Ctrl-C` | Exit the client and restore the terminal. |
 
-The browsing surface remains read-only: it never mutates a Provider directly. Stage 2/3 mutations are separate durable Job RPCs. A single Preview provider read is at most 64 KiB, marks partial/truncation state, sanitizes terminal control characters, and can be canceled without allowing an older result to replace a newer one; its Stage 3 retained/range/image limits are in the dedicated guide.
+The browsing surface remains read-only: it never mutates a Provider directly. Mutations are separate durable Job RPCs. A single Preview provider read is at most 64 KiB, marks partial/truncation state, sanitizes terminal control characters, and can be canceled without allowing an older result to replace a newer one; its retained/range/image limits are in the dedicated guide.
 
 ## Workspaces
 

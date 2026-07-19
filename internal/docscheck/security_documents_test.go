@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestStage6SecurityDocumentsFreezeThreatAndFindingContracts(t *testing.T) {
+func TestSecurityDocumentsFreezeThreatAndFindingContracts(t *testing.T) {
 	threat, err := os.ReadFile("../../docs/security/threat-model.md")
 	if err != nil {
 		t.Fatal(err)

@@ -2187,73 +2187,6 @@ func TestDockerActionsCannotMasqueradeAsCommitPinnedActions(t *testing.T) {
 	}
 }
 
-func TestStageStatusCoherence(t *testing.T) {
-	tests := []struct {
-		name    string
-		path    string
-		old     string
-		new     string
-		finding policyFinding
-	}{
-		{name: "lifecycle missing", path: "PROJECT_STATE.md", old: "- **Lifecycle**: Stage 0 foundation in progress\n", new: "", finding: policyFinding{Path: "PROJECT_STATE.md", Line: 1, Rule: "state.lifecycle", Message: "Lifecycle line is missing or malformed"}},
-		{name: "lifecycle malformed", path: "PROJECT_STATE.md", old: "- **Lifecycle**: Stage 0 foundation in progress", new: "- **Lifecycle**: Stage zero unknown", finding: policyFinding{Path: "PROJECT_STATE.md", Line: 4, Rule: "state.lifecycle", Message: "Lifecycle line is missing or malformed"}},
-		{name: "lifecycle active mismatch", path: "PROJECT_STATE.md", old: "- **Lifecycle**: Stage 0 foundation in progress", new: "- **Lifecycle**: Stage 1 explorer in progress", finding: policyFinding{Path: "PROJECT_STATE.md", Line: 4, Rule: "state.lifecycle_stage_mismatch", Message: "Lifecycle names Stage 1 but Active stage names Stage 0"}},
-		{name: "plan status mismatch", path: "IMPLEMENTATION_PLAN.md", old: "**Status**: In Progress", new: "**Status**: Not Started", finding: policyFinding{Path: "PROJECT_STATE.md", Line: 4, Rule: "state.status_mismatch", Message: "Lifecycle status \"In Progress\" does not match IMPLEMENTATION_PLAN.md Stage 0 status \"Not Started\""}},
-		{name: "stage status missing", path: "docs/stages/00-foundation.md", old: "- **状态**：In Progress\n", new: "", finding: policyFinding{Path: "docs/stages/00-foundation.md", Line: 1, Rule: "stage.status", Message: "active Stage document status line is missing or malformed"}},
-		{name: "stage status malformed", path: "docs/stages/00-foundation.md", old: "- **状态**：In Progress", new: "- **状态**：Started", finding: policyFinding{Path: "docs/stages/00-foundation.md", Line: 3, Rule: "stage.status", Message: "active Stage document status line is missing or malformed"}},
-		{name: "stage status mismatch", path: "docs/stages/00-foundation.md", old: "- **状态**：In Progress", new: "- **状态**：Not Started", finding: policyFinding{Path: "docs/stages/00-foundation.md", Line: 3, Rule: "stage.status_mismatch", Message: "active Stage 0 document status \"Not Started\" does not match IMPLEMENTATION_PLAN.md status \"In Progress\""}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := prepareFixture(t, "valid")
-			replacePolicyFile(t, root, test.path, test.old, test.new)
-			assertPolicyFinding(t, root, test.finding)
-		})
-	}
-}
-
-func TestStageOneCoherentStatus(t *testing.T) {
-	root := prepareFixture(t, "valid")
-	replacePolicyFile(t, root, "PROJECT_STATE.md", "Stage 0 — Foundation", "Stage 1 — Explorer")
-	replacePolicyFile(t, root, "PROJECT_STATE.md", "Stage 0 foundation", "Stage 1 explorer")
-	replacePolicyFile(t, root, "IMPLEMENTATION_PLAN.md", "## Stage 0: Foundation\n**Status**: In Progress\n## Stage 1: Explorer\n**Status**: Not Started", "## Stage 0: Foundation\n**Status**: Complete\n## Stage 1: Explorer\n**Status**: In Progress")
-	replacePolicyFile(t, root, "docs/stages/01-read-only-explorer.md", "# Stage 1\n", "# Stage 1\n\n- **状态**：In Progress\n")
-	assertNoPolicyFindings(t, root)
-}
-
-func TestVerifiedEvidenceRequiresExactSeparatePassCell(t *testing.T) {
-	tests := []struct {
-		name string
-		body string
-	}{
-		{name: "wrong id", body: "| Feature | Result |\n|---|---|\n| CORE-003 | PASS |\n"},
-		{name: "prefix id", body: "| Feature | Result |\n|---|---|\n| CORE-002-extra | PASS |\n"},
-		{name: "lowercase pass", body: "| Feature | Result |\n|---|---|\n| CORE-002 | pass |\n"},
-		{name: "passed", body: "| Feature | Result |\n|---|---|\n| CORE-002 | Passed |\n"},
-		{name: "bold pass", body: "| Feature | Result |\n|---|---|\n| CORE-002 | **PASS** |\n"},
-		{name: "same cell", body: "| Evidence | Result |\n|---|---|\n| CORE-002 PASS | |\n"},
-		{name: "split rows", body: "| Feature | Result |\n|---|---|\n| CORE-002 | FAIL |\n| CORE-003 | PASS |\n"},
-		{name: "prose", body: "CORE-002 passed with PASS.\n"},
-		{name: "fenced", body: "```text\n| CORE-002 | PASS |\n```\n"},
-		{name: "commented", body: "<!--\n| CORE-002 | PASS |\n-->\n"},
-		{name: "escaped pipe", body: "| Feature | Result |\n|---|---|\n| CORE-002 | details \\| PASS |\n"},
-		{name: "short backtick closing fence", body: "````text\n| Feature | Result |\n|---|---|\n```\n| Feature | Result |\n|---|---|\n| CORE-002 | PASS |\n````\n"},
-		{name: "short tilde closing fence", body: "~~~~text\n| Feature | Result |\n|---|---|\n~~~\n| Feature | Result |\n|---|---|\n| CORE-002 | PASS |\n~~~~\n"},
-		{name: "closing fence with info text", body: "```text\nignored\n```not-a-close\n| Feature | Result |\n|---|---|\n| CORE-002 | PASS |\n```\n"},
-		{name: "four-space closing fence", body: "```text\nignored\n    ```\n| Feature | Result |\n|---|---|\n| CORE-002 | PASS |\n```\n"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			root := prepareFixture(t, "valid")
-			writePolicyFile(t, root, "docs/verification/stage-00.md", "# Stage 0 Verification\n\n"+test.body)
-			assertPolicyFinding(t, root, policyFinding{
-				Path: "docs/product/feature-matrix.md", Line: 6, Rule: "matrix.verification_result",
-				Message: "verified feature \"CORE-002\" must link to a verification table row with the exact feature ID and a separate PASS cell",
-			})
-		})
-	}
-}
-
 func TestMarkdownTableCellsHonorsEscapedPipeParity(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2272,23 +2205,6 @@ func TestMarkdownTableCellsHonorsEscapedPipeParity(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestVerifiedEvidenceAcceptsLongerClosingFence(t *testing.T) {
-	for _, markers := range [][2]string{{"```text", "````"}, {"~~~text", "~~~~"}} {
-		root := prepareFixture(t, "valid")
-		body := markers[0] + "\nignored\n" + markers[1] + "\n| Feature | Result |\n|---|---|\n| CORE-002 | PASS |\n"
-		writePolicyFile(t, root, "docs/verification/stage-00.md", "# Stage 0 Verification\n\n"+body)
-		assertNoPolicyFindings(t, root)
-	}
-}
-
-func TestVerifiedEvidenceAcceptsSecondQualifyingLink(t *testing.T) {
-	root := prepareFixture(t, "valid")
-	writePolicyFile(t, root, "docs/verification/stage-00.md", "# First Record\n\n| Feature | Result |\n|---|---|\n| CORE-002 | FAIL |\n")
-	writePolicyFile(t, root, "docs/verification/stage-00-second.md", "# Second Record\n\n| Feature | Result |\n|---|---|\n| CORE-002 | PASS |\n")
-	replacePolicyFile(t, root, "docs/product/feature-matrix.md", "[record](../verification/stage-00.md)", "[first](../verification/stage-00.md) [second](../verification/stage-00-second.md)")
-	assertNoPolicyFindings(t, root)
 }
 
 func assertPolicyFinding(t *testing.T, root string, want policyFinding) {

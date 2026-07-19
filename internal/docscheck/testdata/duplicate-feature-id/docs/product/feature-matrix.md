@@ -1,6 +1,6 @@
 # Feature Matrix
 
-| ID | 能力 | Stage | 状态 | 验收标准 | 当前证据 |
-|---|---|---:|---|---|---|
-| CORE-001 | First | 0 | Planned | Works. | 未实施；预期证据：test. |
-| CORE-001 | Second | 0 | Planned | Works. | 未实施；预期证据：test. |
+| ID | 能力 | 状态 | 用户契约 | 实现与测试依据 |
+|---|---|---|---|---|
+| CORE-001 | First | Planned | Works. | 未实施；预期证据：test. |
+| CORE-001 | Second | Planned | Works. | 未实施；预期证据：test. |

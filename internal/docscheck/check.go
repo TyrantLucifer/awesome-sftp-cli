@@ -15,6 +15,14 @@ type Finding struct {
 	Message string
 }
 
+var requiredDocumentationEntryPoints = []string{
+	"README.md",
+	"AGENTS.md",
+	"docs/README.md",
+	"docs/development/status.md",
+	"docs/product/roadmap.md",
+}
+
 func Check(root string) []Finding {
 	absoluteRoot, err := filepath.Abs(root)
 	if err != nil {
@@ -30,13 +38,25 @@ func Check(root string) []Finding {
 	}
 
 	var findings []Finding
+	findings = append(findings, checkRequiredDocumentationEntryPoints(resolvedRoot)...)
 	findings = append(findings, checkDurableDocuments(resolvedRoot)...)
 	findings = append(findings, checkFeatureMatrix(resolvedRoot)...)
-	findings = append(findings, checkStageDocuments(resolvedRoot)...)
-	findings = append(findings, checkStateAndPlan(resolvedRoot)...)
 	findings = append(findings, checkWorkflows(resolvedRoot)...)
 
 	sortFindings(findings)
+	return findings
+}
+
+func checkRequiredDocumentationEntryPoints(root string) []Finding {
+	var findings []Finding
+	for _, path := range requiredDocumentationEntryPoints {
+		if _, err := readRepositoryFile(root, path); err != nil {
+			findings = append(findings, Finding{
+				Path: path, Line: 1, Rule: "docs.required",
+				Message: "required documentation entry point is missing or is not a regular file",
+			})
+		}
+	}
 	return findings
 }
 

@@ -55,14 +55,10 @@ func TestSecurityReviewCoverageKeepsIncompleteReleaseBoundariesOpen(t *testing.T
 	})
 
 	featureMatrix := readOpenSSHFloorContractFile(t, "../../docs/product/feature-matrix.md")
-	if !strings.Contains(featureMatrix, "| REL-007 | 安全与故障模型审查 | 6 | In Progress |") {
+	if !strings.Contains(featureMatrix, "| REL-007 | 最终安全审查 | In Progress |") {
 		t.Fatal("REL-007 must remain In Progress while final review boundaries are open")
 	}
-	verification := readOpenSSHFloorContractFile(t, "../../docs/verification/stage-06.md")
-	if !strings.Contains(verification, "| REL-007 | IN PROGRESS |") {
-		t.Fatal("Stage 6 verification must record REL-007 as IN PROGRESS")
-	}
-	if strings.Contains(verification, "| REL-007 | PASS |") {
-		t.Fatal("REL-007 must not be marked PASS before final independent review")
+	if strings.Contains(featureMatrix, "| REL-007 | 最终安全审查 | Verified |") {
+		t.Fatal("REL-007 must not be Verified before final independent review")
 	}
 }

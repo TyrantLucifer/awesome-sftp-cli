@@ -2,7 +2,7 @@
 
 ## 1. 目的
 
-本文冻结 Stage 0 的 Go module、语言基线、首选工具链和兼容验证方式，使 macOS 与 Linux 的本地开发、CI 和续接会话使用同一组版本事实。
+本文记录当前 Go module、语言基线、首选工具链和兼容验证方式，使 macOS 与 Linux 的本地开发、CI 和续接会话使用同一组版本事实。
 
 规范 module import 前缀为：
 
@@ -20,7 +20,7 @@ go.mod 中的 go 指令定义最低语言与 module 语义；toolchain 指令建
 
 Go 1.25.12 是 1.25 基线的受支持补丁版本。仅运行 go version 能证明该工具链可获得，不能代替兼容测试。兼容测试必须直接调用下载后的 Go 1.25.12 二进制，并用 GOTOOLCHAIN=local 禁止它根据 go.mod 自动切换到首选工具链。
 
-Stage 0 的生产代码只使用标准库。后续阶段的规范依赖 pin 已由 [ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md)、修订其 SFTP pin 的 [ADR-0011](../architecture/adr/0011-pkg-sftp-streaming-directory-cursor.md) 与 [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md) 冻结：Stage 1 使用 tcell v3.4.0，以及 upstream pkg/sftp v1.13.11 加精确 immutable cursor fork；Stage 2 使用 modernc SQLite v1.53.0 并保留 libc v1.73.4。它们在 owning stage 第一次导入时进入根 `go.mod`/`go.sum`，不改变 Stage 0 标准库-only 的实现边界。
+当前产品依赖由根 `go.mod`/`go.sum` 精确锁定。[ADR-0006](../architecture/adr/0006-public-identity-toolchain-and-runtime-libraries.md)、[ADR-0011](../architecture/adr/0011-pkg-sftp-streaming-directory-cursor.md) 与 [ADR-0008](../architecture/adr/0008-modernc-sqlite-and-forward-migrations.md) 分别冻结 tcell、SFTP cursor fork 和 pure-Go SQLite 的选择；任何升级都必须作为有意依赖变更审查，不能使用 `latest` 或宽松范围。
 
 ## 3. 获取与选择
 
