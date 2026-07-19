@@ -383,7 +383,7 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`tar -xzf "${archive}" -C "${install_root}"`,
 			`installed="${install_root}/amsftp_0.1.0-internal_linux_amd64/amsftp"`,
 			`test -x "${installed}"`,
-			`"${installed}" --version | grep -F "1.0.0 commit=${GITHUB_SHA} dirty=false"`,
+			`"${installed}" --version | grep -F "0.1.0-internal commit=${GITHUB_SHA} dirty=false"`,
 			`tar -xOf "${archive}" amsftp_0.1.0-internal_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
 		}) &&
 		canonicalRunStep(steps[7], "Run real OpenSSH authentication matrix", []string{

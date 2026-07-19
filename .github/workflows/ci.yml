@@ -243,7 +243,7 @@ jobs:
             sleep 0.05
           done
           test "${resumed_running}" = 1
-          grep -F "1.0.0 commit=${head}" "${RUNNER_TEMP}/resumed-upgrade-status.json"
+          grep -F "0.1.0-internal commit=${head}" "${RUNNER_TEMP}/resumed-upgrade-status.json"
           env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'
           kill -TERM "${resumed_pid}"
           wait "${resumed_pid}"
@@ -444,7 +444,7 @@ jobs:
           tar -xzf "${archive}" -C "${install_root}"
           installed="${install_root}/amsftp_0.1.0-internal_linux_amd64/amsftp"
           test -x "${installed}"
-          "${installed}" --version | grep -F "1.0.0 commit=${GITHUB_SHA} dirty=false"
+          "${installed}" --version | grep -F "0.1.0-internal commit=${GITHUB_SHA} dirty=false"
           tar -xOf "${archive}" amsftp_0.1.0-internal_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""
       - name: Run real OpenSSH authentication matrix
         run: |
