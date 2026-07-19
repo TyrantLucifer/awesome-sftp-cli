@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
@@ -21,9 +22,15 @@ type daemonControlClient interface {
 }
 
 type daemonCommandRuntime struct {
-	probe func(context.Context) (daemonControlClient, bool, error)
-	start func(context.Context) (daemonControlClient, error)
+	probe       func(context.Context) (daemonControlClient, bool, error)
+	start       func(context.Context) (daemonControlClient, error)
+	waitStopped func(context.Context) error
 }
+
+const (
+	daemonShutdownPollInterval = 10 * time.Millisecond
+	daemonShutdownTimeout      = 5 * time.Second
+)
 
 type daemonCommandOptions struct {
 	command string
@@ -57,6 +64,9 @@ func runDaemonCommand(ctx context.Context, args []string, stdout io.Writer) erro
 		},
 		start: func(ctx context.Context) (daemonControlClient, error) {
 			return connectDaemon(ctx, paths, purpose)
+		},
+		waitStopped: func(ctx context.Context) error {
+			return waitForDaemonShutdown(ctx, paths, purpose)
 		},
 	}
 	return executeDaemonCommand(ctx, options, args, stdout, runtime)
@@ -124,7 +134,16 @@ func executeDaemonCommand(ctx context.Context, options daemonCommandOptions, arg
 		}
 		state := daemonState(client.Info(), "stopped")
 		state.Running = false
-		return finishDaemonResult(args, stdout, options, client, state)
+		if err := client.Close(); err != nil {
+			return machineCommandError(args, NewExitError(ExitInternal, fmt.Errorf("close daemon control client before shutdown wait: %w", err)))
+		}
+		if runtime.waitStopped == nil {
+			return machineCommandError(args, NewExitError(ExitInternal, errors.New("daemon shutdown waiter is not configured")))
+		}
+		if err := runtime.waitStopped(ctx); err != nil {
+			return machineCommandError(args, NewExitError(ExitInternal, fmt.Errorf("wait for daemon shutdown: %w", err)))
+		}
+		return writeDaemonResult(args, stdout, options, state)
 	default:
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("unreachable daemon command")))
 	}
@@ -196,6 +215,54 @@ func probeDaemon(ctx context.Context, paths platform.Paths, purpose platform.Val
 		return nil, true, err
 	}
 	return client, true, nil
+}
+
+func waitForDaemonShutdown(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) error {
+	waitCtx, cancel := context.WithTimeout(ctx, daemonShutdownTimeout)
+	defer cancel()
+	ticker := time.NewTicker(daemonShutdownPollInterval)
+	defer ticker.Stop()
+	for {
+		if err := waitCtx.Err(); err != nil {
+			return err
+		}
+		ready, err := daemonShutdownReady(paths, purpose)
+		if err != nil {
+			return err
+		}
+		if ready {
+			return nil
+		}
+		select {
+		case <-waitCtx.Done():
+			return waitCtx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func daemonShutdownReady(paths platform.Paths, purpose platform.ValidationPurpose) (bool, error) {
+	info, err := os.Lstat(paths.ControlSocket)
+	switch {
+	case err == nil:
+		if info.Mode()&os.ModeSocket == 0 {
+			return false, fmt.Errorf("daemon control socket path changed type during shutdown: %s", paths.ControlSocket)
+		}
+		return false, nil
+	case !errors.Is(err, os.ErrNotExist):
+		return false, fmt.Errorf("inspect daemon control socket during shutdown: %w", err)
+	}
+	lock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
+	if errors.Is(err, platform.ErrInstanceLocked) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("prove daemon instance lock release: %w", err)
+	}
+	if err := lock.Close(); err != nil {
+		return false, fmt.Errorf("release daemon shutdown proof lock: %w", err)
+	}
+	return true, nil
 }
 
 func daemonState(info daemon.ClientInfo, state string) daemonStateOutput {

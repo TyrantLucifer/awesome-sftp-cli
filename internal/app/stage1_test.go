@@ -386,6 +386,9 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 		probe: func(probeCtx context.Context) (daemonControlClient, bool, error) {
 			return probeDaemon(probeCtx, paths, purpose)
 		},
+		waitStopped: func(waitCtx context.Context) error {
+			return waitForDaemonShutdown(waitCtx, paths, purpose)
+		},
 	}
 	var statusOutput strings.Builder
 	if err := runDaemonCommandWithRuntime(context.Background(), []string{"status", "--format", "json"}, &statusOutput, controlRuntime); err != nil {
@@ -404,6 +407,15 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	if !strings.Contains(stopOutput.String(), `"running":false`) || !strings.Contains(stopOutput.String(), `"state":"stopped"`) {
 		cancel()
 		t.Fatalf("daemon stop output = %q", stopOutput.String())
+	}
+	replacementLock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
+	if err != nil {
+		cancel()
+		t.Fatalf("daemon stop returned before instance lock release: %v", err)
+	}
+	if err := replacementLock.Close(); err != nil {
+		cancel()
+		t.Fatalf("release replacement instance lock: %v", err)
 	}
 	select {
 	case err := <-done:

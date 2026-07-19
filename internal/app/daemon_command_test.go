@@ -6,12 +6,16 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/ipc"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 )
 
 type fakeDaemonControlClient struct {
@@ -161,17 +165,113 @@ func TestDaemonStartIsIdempotentAndStopUsesAuthenticatedRPC(t *testing.T) {
 
 	t.Run("stop confirmed", func(t *testing.T) {
 		client := &fakeDaemonControlClient{info: testDaemonInfo()}
+		waits := 0
 		runtime := daemonCommandRuntime{
 			probe: func(context.Context) (daemonControlClient, bool, error) { return client, true, nil },
+			waitStopped: func(context.Context) error {
+				waits++
+				if client.closed != 1 {
+					return errors.New("control client was not closed before shutdown wait")
+				}
+				return nil
+			},
 		}
 		var stdout bytes.Buffer
 		if err := runDaemonCommandWithRuntime(t.Context(), []string{"stop", "--confirm", "stop"}, &stdout, runtime); err != nil {
 			t.Fatal(err)
 		}
-		if client.calls != 1 || client.callName != daemon.RequestShutdown || !strings.Contains(stdout.String(), "stopped") {
+		if client.calls != 1 || client.callName != daemon.RequestShutdown || client.closed != 1 || waits != 1 || !strings.Contains(stdout.String(), "stopped") {
 			t.Fatalf("client = %#v, output = %q", client, stdout.String())
 		}
 	})
+}
+
+func TestDaemonStopDoesNotPublishSuccessBeforeTeardownCompletes(t *testing.T) {
+	client := &fakeDaemonControlClient{info: testDaemonInfo()}
+	waitStarted := make(chan struct{})
+	releaseWait := make(chan struct{})
+	runtime := daemonCommandRuntime{
+		probe: func(context.Context) (daemonControlClient, bool, error) { return client, true, nil },
+		waitStopped: func(ctx context.Context) error {
+			close(waitStarted)
+			select {
+			case <-releaseWait:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		},
+	}
+	var stdout bytes.Buffer
+	done := make(chan error, 1)
+	go func() {
+		done <- runDaemonCommandWithRuntime(t.Context(), []string{"stop", "--confirm", "stop", "--format", "json"}, &stdout, runtime)
+	}()
+	<-waitStarted
+	if client.closed != 1 || stdout.Len() != 0 {
+		t.Fatalf("client closes = %d, output before teardown = %q", client.closed, stdout.String())
+	}
+	close(releaseWait)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(stdout.String(), `"state":"stopped"`) {
+		t.Fatalf("output after teardown = %q", stdout.String())
+	}
+}
+
+func TestDaemonStopTeardownFailureDoesNotClaimStopped(t *testing.T) {
+	client := &fakeDaemonControlClient{info: testDaemonInfo()}
+	runtime := daemonCommandRuntime{
+		probe: func(context.Context) (daemonControlClient, bool, error) { return client, true, nil },
+		waitStopped: func(context.Context) error {
+			return errors.New("daemon teardown remains unproven")
+		},
+	}
+	var stdout bytes.Buffer
+	err := runDaemonCommandWithRuntime(t.Context(), []string{"stop", "--confirm", "stop", "--format", "json"}, &stdout, runtime)
+	if err == nil || exitCode(err) != ExitInternal || !strings.Contains(err.Error(), "teardown remains unproven") {
+		t.Fatalf("error = %v, exit = %d", err, exitCode(err))
+	}
+	if client.closed != 1 || stdout.Len() != 0 {
+		t.Fatalf("client closes = %d, false success output = %q", client.closed, stdout.String())
+	}
+}
+
+func TestDaemonShutdownReadinessRequiresSocketAbsenceAndReleasedLock(t *testing.T) {
+	directory := testkit.PersistentTempDir(t)
+	paths := platform.Paths{
+		RuntimeDir:    directory,
+		ControlSocket: filepath.Join(directory, "control-v1.sock"),
+		LockFile:      filepath.Join(directory, "daemon.lock"),
+	}
+
+	if err := os.WriteFile(paths.ControlSocket, []byte("replacement"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := daemonShutdownReady(paths, platform.ValidateRuntimeFallback); err == nil || ready {
+		t.Fatalf("regular-file replacement readiness = %v, %v", ready, err)
+	}
+	if contents, err := os.ReadFile(paths.ControlSocket); err != nil || string(contents) != "replacement" {
+		t.Fatalf("replacement was modified: %q, %v", contents, err)
+	}
+	if err := os.Remove(paths.ControlSocket); err != nil {
+		t.Fatal(err)
+	}
+
+	held, err := platform.AcquireInstanceLock(paths.LockFile, platform.ValidateRuntimeFallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := daemonShutdownReady(paths, platform.ValidateRuntimeFallback); err != nil || ready {
+		t.Fatalf("held-lock readiness = %v, %v", ready, err)
+	}
+	if err := held.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if ready, err := daemonShutdownReady(paths, platform.ValidateRuntimeFallback); err != nil || !ready {
+		t.Fatalf("released-lock readiness = %v, %v", ready, err)
+	}
 }
 
 func TestDaemonStartRejectsProbeFailureBeforeStarter(t *testing.T) {
