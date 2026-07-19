@@ -199,6 +199,8 @@
 
 当前 SFTP compatibility 增量使用独立测试子进程运行纯内存 SFTP v3 server，并显式关闭全部 OpenSSH extensions。Level 0 list/stat/read/download、write capability 不误报、unsafe no-replace publication 以零 mutation 拒绝，以及 invalid UTF-8 filename bytes 的实际 wire list→stat→read 全部有聚焦合同。PLAT-006 据此转为 `Verified`；PLAT-005/REL-006 仍因 native third-party vendor、macOS Kerberos、Linux arm64 native 与 production Helper 边界保持 `In Progress`。
 
+当前 Linux arm64 平台增量把 `ubuntu-24.04-arm` 加入主 CI 原生矩阵，复用既有完整 install/daemon/Job/doctor/uninstall、ext4/XFS、kernel-security 与 PTY lifecycle；provenance aggregator 必须收到 `native-ubuntu-24.04-arm`，并精确验证 `runner_arch=ARM64`、`GOOS=linux`、`GOARCH=arm64`。缺腿、伪造架构字段、错误 manifest 数量或未下载 producer 文件都会失败。只有 exact-SHA Hosted push/PR 均通过后才接受该批；即使通过，PLAT-003/REL-006 仍因 final protected archives、公开渠道、macOS Kerberos、native vendor SFTP 与 production Helper 保持 `In Progress`。
+
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 
 ### M6.4 — Release Candidate 与 1.0

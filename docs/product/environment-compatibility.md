@@ -8,7 +8,7 @@ This matrix separates observed evidence from product behavior. `native-tested` m
 | platform | macOS 15 amd64 | native-tested | supported | Hosted native install, daemon, Job, uninstall, APFS and current/oldstable gates |
 | platform | Ubuntu 22.04 amd64 | native-tested | supported floor | Hosted /usr/bin/ssh reports OpenSSH_8.9p1; native doctor, full authentication/support scan, ext4/XFS and current/oldstable gates |
 | platform | Ubuntu 24.04 amd64 | native-tested | supported | Hosted /usr/bin/ssh reports OpenSSH_9.6p1 Ubuntu-3ubuntu13.18; version-bound doctor, full authentication/support scan, ext4/XFS and current/oldstable gates |
-| platform | Linux arm64 | build-only | release target pending native smoke | deterministic cross-build and reproducibility only |
+| platform | Linux arm64 | native-tested | release target pending final archive/channel evidence | Hosted ubuntu-24.04-arm complete native lifecycle and exact ARM64/linux/arm64 provenance; independent cross-build and reproducibility |
 | platform | Windows | unsupported | fail before runtime | outside the 1.0 product scope |
 | openssh | 8.9p1 | native-tested | supported floor, capability results win over version parsing | Ubuntu 22.04 real sshd/SFTP gates |
 | openssh | system current | native-tested | supported | Ubuntu 24.04 and macOS 15 real sshd/SFTP gates |

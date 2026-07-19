@@ -29,7 +29,7 @@ func TestWorkflowProvenanceProfilesPinLegAndFileCounts(t *testing.T) {
 		legCount  int
 		fileCount int
 	}{
-		{path: ".github/workflows/ci.yml", legCount: 23, fileCount: 46},
+		{path: ".github/workflows/ci.yml", legCount: 24, fileCount: 48},
 		{path: ".github/workflows/nightly.yml", legCount: 19, fileCount: 38},
 	}
 	for _, test := range tests {
@@ -52,6 +52,46 @@ func TestWorkflowProvenanceProfilesPinLegAndFileCounts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCIProvenanceRequiresNativeLinuxARM64Lifecycle(t *testing.T) {
+	content := readCanonicalWorkflow(t, ".github/workflows/ci.yml")
+	for _, required := range []string{
+		"          - ubuntu-24.04-arm\n",
+		"          native-ubuntu-24.04-arm\n",
+		"native-ubuntu-24.04-arm)",
+		`test "$(field_value runner_arch "${record}")" = ARM64`,
+		`test "$(field_value go_env_goarch "${record}")" = arm64`,
+	} {
+		if !strings.Contains(content, required) {
+			t.Fatalf("CI workflow is missing native Linux arm64 contract %q", required)
+		}
+	}
+}
+
+func TestCINativeLinuxARM64PolicyRejectsMissingOrForgedEvidence(t *testing.T) {
+	path := ".github/workflows/ci.yml"
+	original := readCanonicalWorkflow(t, path)
+
+	t.Run("matrix leg missing", func(t *testing.T) {
+		content := strings.Replace(original, "          - ubuntu-24.04-arm\n", "", 1)
+		assertWorkflowRule(t, path, content, "workflow.ci_native_matrix")
+		assertWorkflowRule(t, path, content, provenanceRecordRule)
+	})
+
+	t.Run("collector accepts wrong runner architecture", func(t *testing.T) {
+		content := replaceInWorkflowStep(t, original, "compare", "Verify prerequisite provenance",
+			`                test "$(field_value runner_arch "${record}")" = ARM64`,
+			`                test "$(field_value runner_arch "${record}")" = X64`)
+		assertWorkflowRule(t, path, content, provenanceVerificationRule)
+	})
+
+	t.Run("collector accepts cross build", func(t *testing.T) {
+		content := replaceInWorkflowStep(t, original, "compare", "Verify prerequisite provenance",
+			`                test "$(field_value go_env_goarch "${record}")" = arm64`,
+			`                test "$(field_value go_env_goarch "${record}")" = amd64`)
+		assertWorkflowRule(t, path, content, provenanceVerificationRule)
+	})
 }
 
 func TestWorkflowProvenancePolicyRejectsMissingWholeSteps(t *testing.T) {
@@ -559,7 +599,7 @@ func TestWorkflowProvenancePolicyRejectsLegMatrixManifestAndCountDrift(t *testin
 			name: "ci leg count drift",
 			path: ".github/workflows/ci.yml",
 			job:  "compare",
-			old:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 23\n",
+			old:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 24\n",
 			new:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 22\n",
 			rule: provenanceVerificationRule,
 		},

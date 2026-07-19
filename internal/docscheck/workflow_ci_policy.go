@@ -175,8 +175,8 @@ func qualityLifecycleProvesPinnedCacheUpgradeRecovery(job workflowJob) bool {
 }
 
 func checkCINative(job workflowJob, add func(int, string, string)) {
-	if !jobHasExactOSMatrix(job) {
-		add(job.line, "workflow.ci_native_matrix", "native job must run exactly the ubuntu-22.04, ubuntu-24.04, macos-15, and macos-15-intel matrix via matrix.os")
+	if !jobHasExactOSMatrix(job, true) {
+		add(job.line, "workflow.ci_native_matrix", "native job must run exactly the ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, and macos-15-intel matrix via matrix.os")
 	}
 	credit := trustedNativePrefixCredit(job)
 	requirements := []struct {
@@ -369,7 +369,7 @@ func nativeHomebrewPreviewLifecycleIsExact(job workflowJob) bool {
 }
 
 func checkCIOldstable(job workflowJob, add func(int, string, string)) {
-	if !jobHasExactOSMatrix(job) {
+	if !jobHasExactOSMatrix(job, false) {
 		add(job.line, "workflow.ci_oldstable_matrix", "oldstable job must run exactly the ubuntu-22.04, ubuntu-24.04, macos-15, and macos-15-intel matrix via matrix.os")
 	}
 	if !jobHasTrustedOldstablePrefix(job) {
@@ -698,7 +698,7 @@ func strategyHasApprovedShape(strategy *policyYAMLNode) bool {
 		failFast.scalar.style == policyYAMLPlainScalar && failFast.scalar.value == "false" && matrix != nil
 }
 
-func jobHasExactOSMatrix(job workflowJob) bool {
+func jobHasExactOSMatrix(job workflowJob, includeLinuxARM64 bool) bool {
 	if job.runsOn == nil || job.runsOn.style != policyYAMLPlainScalar || job.runsOn.value != "${{ matrix.os }}" ||
 		!strategyHasApprovedShape(job.strategy) {
 		return false
@@ -714,6 +714,9 @@ func jobHasExactOSMatrix(job workflowJob) bool {
 		"ubuntu-24.04":   {},
 		"macos-15":       {},
 		"macos-15-intel": {},
+	}
+	if includeLinuxARM64 {
+		want["ubuntu-24.04-arm"] = struct{}{}
 	}
 	if osValues == nil || osValues.kind != policyYAMLSequenceNode || len(osValues.items) != len(want) {
 		return false

@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始。M6.1 已完成；M6.2/M6.3/M6.4 的本地、Hosted、物理 100 GiB、内部预览与最终发行证据按 Stage 6 execution plan 继续累积。当前 M6.3 兼容批次以无 OpenSSH extensions 的独立进程虚拟 SFTP v3 server 验证 Level 0 read path、安全 publication 拒绝和 invalid UTF-8 filename list→stat→read 原始字节链；PLAT-006 转为 `Verified`，PLAT-005/REL-006 仍保留 native vendor 等明确开放边界。
+Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始。M6.1 已完成；M6.2/M6.3/M6.4 的本地、Hosted、物理 100 GiB、内部预览与最终发行证据按 Stage 6 execution plan 继续累积。当前 M6.3 平台批次把 `ubuntu-24.04-arm` 加入主 CI 的原生完整 lifecycle，并由 provenance 强制绑定真实 ARM64 runner 与 linux/arm64 Go identity；exact-SHA Hosted push/PR 仍是本批接受条件，PLAT-003/REL-006 不因新增矩阵腿提前完成。当前兼容批次同时以无 OpenSSH extensions 的独立进程虚拟 SFTP v3 server 验证 Level 0 read path、安全 publication 拒绝和 invalid UTF-8 filename list→stat→read 原始字节链；PLAT-006 转为 `Verified`，PLAT-005/REL-006 仍保留 native vendor、final protected bytes、public channel 等明确开放边界。
 
 ## Stage 0: Foundation & Knowledge
 

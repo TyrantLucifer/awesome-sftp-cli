@@ -1,6 +1,6 @@
 # Stage 6 Execution Plan
 
-- **Status**: In Progress — M6.1 complete; M6.2 independent migration/package/native/preview-channel evidence active; M6.3 shared redaction, doctor, support-bundle, and extension-free SFTP v3 compatibility evidence active
+- **Status**: In Progress — M6.1 complete; M6.2 independent migration/package/native/preview-channel evidence active; M6.3 shared redaction, doctor, support-bundle, extension-free SFTP v3, and required native Linux arm64 evidence active
 - **Updated**: 2026-07-19
 - **Sole baseline**: commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`
 - **Fixed branch**: `codex/stage6-hardening-release`
@@ -152,7 +152,7 @@ For each RED/GREEN cycle, append to [Stage 6 verification](../verification/stage
 | REL-003 | M6.2 | pending-attempt/WAL/backup/restore crash matrix | final upgrade and rollback rehearsal |
 | REL-004 | M6.2–M6.4 | deterministic archive/public packaging negatives | signed/notarized/quarantined final release evidence |
 | REL-005 | M6.2–M6.4 | clean first run and supported-version upgrade | channel install/upgrade/uninstall smoke |
-| REL-006 | M6.3–M6.4 | exact OpenSSH/Kerberos version-bound native matrix | remaining macOS Kerberos/vendor SFTP/Linux arm64/production Helper runs, exact-RC links and published limits |
+| REL-006 | M6.3–M6.4 | exact OpenSSH/Kerberos version-bound matrix plus required main-CI native Linux arm64 lifecycle/provenance | remaining macOS Kerberos/vendor SFTP/production Helper/final-artifact runs, exact-RC links and published limits |
 | REL-007 | M6.3–M6.4 | threat/finding ledger and negative tests | two final reviews, zero unresolved high risk |
 | REL-008 | M6.4 | exact-RC complete local/native matrices | exact push/PR/main Hosted success |
 | REL-009 | M6.1–M6.4 | executable docs examples and links | independent new-user path |

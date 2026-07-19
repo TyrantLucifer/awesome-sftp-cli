@@ -514,6 +514,7 @@ jobs:
         os:
           - ubuntu-22.04
           - ubuntu-24.04
+          - ubuntu-24.04-arm
           - macos-15
           - macos-15-intel
     env:
@@ -1349,6 +1350,7 @@ jobs:
           auth-integration
           native-ubuntu-22.04
           native-ubuntu-24.04
+          native-ubuntu-24.04-arm
           native-macos-15
           native-macos-15-intel
           oldstable-ubuntu-22.04
@@ -1369,13 +1371,13 @@ jobs:
           repro-amsftp-linux-amd64-b
           reproducibility-compare
           LEGS
-          test "$(wc -l <"${manifest}" | tr -d '[:space:]')" -eq 23
+          test "$(wc -l <"${manifest}" | tr -d '[:space:]')" -eq 24
           find "${root}" -mindepth 1 -maxdepth 1 -type f -name '*.env' -exec basename {} .env \; | LC_ALL=C sort >"${actual_env}"
           find "${root}" -mindepth 1 -maxdepth 1 -type f -name '*.porcelain' -exec basename {} .porcelain \; | LC_ALL=C sort >"${actual_porcelain}"
           LC_ALL=C sort -o "${manifest}" "${manifest}"
           cmp -s "${manifest}" "${actual_env}"
           cmp -s "${manifest}" "${actual_porcelain}"
-          test "$(find "${root}" -mindepth 1 -print | wc -l | tr -d '[:space:]')" -eq 46
+          test "$(find "${root}" -mindepth 1 -print | wc -l | tr -d '[:space:]')" -eq 48
           cat >"${bindings}" <<'BINDINGS'
           amsftp-darwin-arm64|darwin|arm64|build-amsftp-darwin-arm64|repro-amsftp-darwin-arm64-a|repro-amsftp-darwin-arm64-b
           amsftp-darwin-amd64|darwin|amd64|build-amsftp-darwin-amd64|repro-amsftp-darwin-amd64-a|repro-amsftp-darwin-amd64-b
@@ -1424,6 +1426,14 @@ jobs:
             test -n "$(field_value go_env_goos "${record}")"
             test -n "$(field_value go_env_goarch "${record}")"
             test "$(field_value status "${record}")" = clean
+            case "${leg}" in
+              native-ubuntu-24.04-arm)
+                test "$(field_value runner_os "${record}")" = Linux
+                test "$(field_value runner_arch "${record}")" = ARM64
+                test "$(field_value go_env_goos "${record}")" = linux
+                test "$(field_value go_env_goarch "${record}")" = arm64
+                ;;
+            esac
           done <"${manifest}"
           artifact_hash() {
             leg="$1"

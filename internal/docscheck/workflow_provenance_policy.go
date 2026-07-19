@@ -2,6 +2,7 @@ package docscheck
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -136,6 +137,7 @@ func canonicalProvenanceWorkflowProfile(path string) (provenanceWorkflowProfile,
 			"auth-integration",
 			"native-ubuntu-22.04",
 			"native-ubuntu-24.04",
+			"native-ubuntu-24.04-arm",
 			"native-macos-15",
 			"native-macos-15-intel",
 			"oldstable-ubuntu-22.04",
@@ -172,33 +174,33 @@ func canonicalProvenanceWorkflowProfile(path string) (provenanceWorkflowProfile,
 				{
 					jobID: "native", leg: "native-${{ matrix.os }}", runsOn: "${{ matrix.os }}", timeout: "45",
 					matrix: osProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[2:6], environment: map[string]string{"LEG": "native-${{ matrix.os }}"},
+					expectedLegs: legs[2:7], environment: map[string]string{"LEG": "native-${{ matrix.os }}"},
 				},
 				{
 					jobID: "oldstable", leg: "oldstable-${{ matrix.os }}", runsOn: "${{ matrix.os }}", timeout: "30",
 					matrix: osProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[6:10], environment: map[string]string{"GOTOOLCHAIN": "local", "LEG": "oldstable-${{ matrix.os }}"},
+					expectedLegs: legs[7:11], environment: map[string]string{"GOTOOLCHAIN": "local", "LEG": "oldstable-${{ matrix.os }}"},
 				},
 				{
 					jobID: "build", leg: "build-${{ matrix.artifact }}", runsOn: "ubuntu-24.04", timeout: "20",
 					matrix: buildProvenanceMatrix, record: buildArtifactProvenanceRecord,
-					expectedLegs: legs[10:14], environment: map[string]string{"LEG": "build-${{ matrix.artifact }}"},
+					expectedLegs: legs[11:15], environment: map[string]string{"LEG": "build-${{ matrix.artifact }}"},
 				},
 				{
 					jobID: "reproducibility", leg: "repro-${{ matrix.artifact }}-${{ matrix.replica }}", runsOn: "ubuntu-24.04", timeout: "20",
 					matrix: reproProvenanceMatrix, record: reproArtifactProvenanceRecord,
-					expectedLegs: legs[14:22], environment: map[string]string{"LEG": "repro-${{ matrix.artifact }}-${{ matrix.replica }}"},
+					expectedLegs: legs[15:23], environment: map[string]string{"LEG": "repro-${{ matrix.artifact }}-${{ matrix.replica }}"},
 				},
 				{
 					jobID: "reproducibility-compare", leg: "reproducibility-compare", runsOn: "ubuntu-24.04", timeout: "15",
 					needs: []string{"reproducibility"}, matrix: noProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[22:23], environment: map[string]string{"LEG": "reproducibility-compare"},
+					expectedLegs: legs[23:24], environment: map[string]string{"LEG": "reproducibility-compare"},
 					comparisonArtifact: "reproducibility-comparison",
 				},
 			},
 			compareNeeds:       []string{"quality", "auth-integration", "native", "oldstable", "build", "reproducibility", "reproducibility-compare"},
 			expectedLegs:       legs,
-			fileCount:          46,
+			fileCount:          48,
 			comparisonArtifact: "reproducibility-comparison",
 			artifactGroups: []provenanceArtifactGroup{
 				{artifact: "amsftp-darwin-arm64", goos: "darwin", goarch: "arm64", buildLeg: "build-amsftp-darwin-arm64", reproALeg: "repro-amsftp-darwin-arm64-a", reproBLeg: "repro-amsftp-darwin-arm64-b"},
@@ -655,6 +657,9 @@ func canonicalOSMatrix(job workflowJob) bool {
 	}
 	values := matrix.mappings[0].value
 	expected := []string{"ubuntu-22.04", "ubuntu-24.04", "macos-15", "macos-15-intel"}
+	if job.id == "native" {
+		expected = []string{"ubuntu-22.04", "ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel"}
+	}
 	if values == nil || values.kind != policyYAMLSequenceNode || len(values.items) != len(expected) {
 		return false
 	}
@@ -1078,6 +1083,20 @@ func canonicalVerificationLines(profile provenanceWorkflowProfile) []string {
 		`  test -n "$(field_value go_env_goos "${record}")"`,
 		`  test -n "$(field_value go_env_goarch "${record}")"`,
 		`  test "$(field_value status "${record}")" = clean`,
+	)
+	if slices.Contains(profile.expectedLegs, "native-ubuntu-24.04-arm") {
+		lines = append(lines,
+			`  case "${leg}" in`,
+			`    native-ubuntu-24.04-arm)`,
+			`      test "$(field_value runner_os "${record}")" = Linux`,
+			`      test "$(field_value runner_arch "${record}")" = ARM64`,
+			`      test "$(field_value go_env_goos "${record}")" = linux`,
+			`      test "$(field_value go_env_goarch "${record}")" = arm64`,
+			`      ;;`,
+			`  esac`,
+		)
+	}
+	lines = append(lines,
 		`done <"${manifest}"`,
 		`artifact_hash() {`,
 		`  leg="$1"`,

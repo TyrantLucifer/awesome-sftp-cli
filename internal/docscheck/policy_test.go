@@ -242,7 +242,7 @@ func TestCIRejectsBlockScalarsOutsideRun(t *testing.T) {
 		{name: "permissions", old: "  contents: read\n", new: "  contents: >\n    read\n", occurrence: 1, line: 5},
 		{name: "runs on", old: "    runs-on: ubuntu-24.04\n", new: "    runs-on: >\n      ubuntu-24.04\n", occurrence: 1, line: 8},
 		{name: "fail fast", old: "      fail-fast: false\n", new: "      fail-fast: >\n        false\n", occurrence: 1, line: 30},
-		{name: "matrix os", old: "        os: [ubuntu-22.04, ubuntu-24.04, macos-15, macos-15-intel]\n", new: "        os: |\n          ubuntu-22.04\n", occurrence: 1, line: 32},
+		{name: "matrix os", old: "        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]\n", new: "        os: |\n          ubuntu-22.04\n", occurrence: 1, line: 32},
 		{name: "persist credentials", old: "          persist-credentials: false\n", new: "          persist-credentials: >\n            false\n", occurrence: 1, line: 13},
 		{name: "setup go version", old: "          go-version: 1.25.12\n", new: "          go-version: >\n            1.25.12\n", occurrence: 1, line: 75},
 		{name: "cgo enabled", old: "          CGO_ENABLED: \"0\"\n", new: "          CGO_ENABLED: >\n            0\n", occurrence: 1, line: 113},
@@ -1231,22 +1231,23 @@ func TestCIMakeControlEnvironmentPrecedence(t *testing.T) {
 
 func TestCINativeMatrix(t *testing.T) {
 	const (
-		exactMatrix = "        os: [ubuntu-22.04, ubuntu-24.04, macos-15, macos-15-intel]"
-		message     = "native job must run exactly the ubuntu-22.04, ubuntu-24.04, macos-15, and macos-15-intel matrix via matrix.os"
+		exactMatrix = "        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]"
+		message     = "native job must run exactly the ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, and macos-15-intel matrix via matrix.os"
 	)
 	tests := []struct {
 		name string
 		old  string
 		new  string
 	}{
-		{name: "missing ubuntu 22", old: exactMatrix, new: "        os: [ubuntu-24.04, macos-15, macos-15-intel]"},
-		{name: "missing ubuntu 24", old: exactMatrix, new: "        os: [ubuntu-22.04, macos-15, macos-15-intel]"},
-		{name: "missing macos arm64", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, macos-15-intel]"},
-		{name: "missing macos intel", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, macos-15]"},
-		{name: "extra os", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, macos-15, macos-15-intel, ubuntu-26.04]"},
-		{name: "duplicate os", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, macos-15, macos-15]"},
-		{name: "quoted os", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, macos-15, 'macos-15-intel']"},
-		{name: "mapping instead of sequence", old: exactMatrix, new: "        os: {ubuntu-22.04: true, ubuntu-24.04: true, macos-15: true, macos-15-intel: true}"},
+		{name: "missing ubuntu 22", old: exactMatrix, new: "        os: [ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]"},
+		{name: "missing ubuntu 24", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04-arm, macos-15, macos-15-intel]"},
+		{name: "missing ubuntu arm64", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, macos-15, macos-15-intel]"},
+		{name: "missing macos arm64", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15-intel]"},
+		{name: "missing macos intel", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15]"},
+		{name: "extra os", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel, ubuntu-26.04]"},
+		{name: "duplicate os", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15]"},
+		{name: "quoted os", old: exactMatrix, new: "        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, 'macos-15-intel']"},
+		{name: "mapping instead of sequence", old: exactMatrix, new: "        os: {ubuntu-22.04: true, ubuntu-24.04: true, ubuntu-24.04-arm: true, macos-15: true, macos-15-intel: true}"},
 		{name: "quoted runs on", old: "    runs-on: ${{ matrix.os }}\n", new: "    runs-on: \"${{ matrix.os }}\"\n"},
 		{name: "wrong runs on", old: "    runs-on: ${{ matrix.os }}\n", new: "    runs-on: ubuntu-24.04\n"},
 	}
