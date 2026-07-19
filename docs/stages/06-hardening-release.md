@@ -197,6 +197,8 @@
 
 当前增量：foundation、doctor、support-bundle、semantic hardening、compatibility/troubleshooting、threat model 与 initial finding ledger 已交付。real-auth correction SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` 已有 push/PR 完整 OpenSSH/Askpass 与 externally-renewed Kerberos/GSSAPI support-bundle scan 证据。OpenSSH floor/current SHA `e7733ec23ec1903dbdc41a926db20fe6defcccc7`/`a7f3ddd8a99df973518140de7eae45e295ae6ea2` 与 Kerberos binding SHA `14e5ec4e63c70fb93ed93d15adbe7fdf7cce5d5e` 通过 dual-Go full local gates；双工作流精确记录 `OpenSSH_8.9p1 Ubuntu-3ubuntu0.16`、`OpenSSH_9.6p1 Ubuntu-3ubuntu13.18` 与 `Kerberos 5 version 1.20.1`，并在任何测试账户/服务变更前重检 retained version。REL-007 SHA `cc6559e41572aa21a7fc249fe0086fe4df50fe27` 的三条 coverage contract、完整双 Go 本地门禁和双工作流 quality/auth 均通过，八个强制审查域均绑定可执行负向证据。PLAT-009 已 `Verified`；REL-006、REL-007 已 `In Progress`。production Helper/Level 2、protected final artifacts 与 final independent review 仍开放。
 
+当前 SFTP compatibility 增量使用独立测试子进程运行纯内存 SFTP v3 server，并显式关闭全部 OpenSSH extensions。Level 0 list/stat/read/download、write capability 不误报、unsafe no-replace publication 以零 mutation 拒绝，以及 invalid UTF-8 filename bytes 的实际 wire list→stat→read 全部有聚焦合同。PLAT-006 据此转为 `Verified`；PLAT-005/REL-006 仍因 native third-party vendor、macOS Kerberos、Linux arm64 native 与 production Helper 边界保持 `In Progress`。
+
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 
 ### M6.4 — Release Candidate 与 1.0

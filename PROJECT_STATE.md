@@ -1,6 +1,6 @@
 # Project State
 
-- **Updated**: 2026-07-18
+- **Updated**: 2026-07-19
 - **Lifecycle**: Stage 6 In Progress
 - **Active stage**: Stage 6 — Hardening & 1.0 Release
 - **Current milestone**: M6.4 — independent release documentation and RC preparation; M6.3 external/protected gates remain open
@@ -8,6 +8,8 @@
 - **Repository name**: `awesome-mac-sftp`
 
 ## Current outcome
+
+The current M6.3 compatibility batch adds a separate-process, in-memory SFTP v3 server with every OpenSSH extension disabled. Three focused contracts prove that Level 0 list/stat/read/download stays available, mutation-safe `write` is not advertised, no-replace publication fails with `unsupported`/`EffectNone` while preserving source bytes and destination absence, and invalid UTF-8 filename bytes survive the real SFTP wire through list→stat→read. The generated environment matrix now records this as fixture-tested while keeping native third-party vendor certification open; PLAT-006 advances to `Verified`, PLAT-005 and REL-006 remain `In Progress`. Production Helper and Level 2 remain CLOSED.
 
 The initial M6.4 timing-stability implementation was SHA `60255dc8dc5e4732ae0fe55ac11ca860390bc81c`, tree `27fe962f3c712eae16e061a06d8460542eaaedf5`, based on evidence-sync SHA `c81887a8fcfacd488ff88c23ead46f34f2f972e5`. Four related RED/GREEN slices replace asynchronous observation races with explicit terminal/readiness barriers: `ProcessSession.Wait` joins the Helper client reader, OpenSSH process, and stderr reader before diagnostic or heartbeat-failure assertions; the tail truncate/rotate fixture drives two deterministic polls while retaining its original 80 ms duration limit; and the Stage 2 delete PTY waits for the selected filename plus a loaded status row before sending `D`. Current race repetition passed 200 iterations, the unchanged-80-ms tail case passed a separate 200 iterations, and the real Stage 2 PTY passed 10 iterations. Focused oldstable, vet, scoped lint, docscheck, exact current Go 1.26.5 `make ci`, and exact oldstable Go 1.25.12 `make check` passed.
 

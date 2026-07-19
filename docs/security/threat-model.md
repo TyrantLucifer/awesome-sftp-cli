@@ -41,7 +41,7 @@ This model records the security boundaries exercised by the 1.0 implementation a
 
 - Production Helper distribution is **CLOSED**: protected signing/notarization credentials, offline key ceremony, final-byte verification, and actual production artifact scanning have not run.
 - Production Level 2 is **CLOSED**: the real isolated-network identity, authentication, containment, integrity, cancellation, and fallback matrix remains open; bounded relay stays the default.
-- Real hardware security-key authentication, macOS Kerberos, non-OpenSSH SFTP vendor behavior, and a physical 100 GiB run do not yet have native evidence.
+- Real hardware security-key authentication, macOS Kerberos, and native third-party SFTP vendor behavior do not yet have native evidence. A separate-process extension-free virtual SFTP v3 server covers the protocol-level Level 0, safe-publication refusal, and invalid-name byte path; it is not vendor certification. The physical 100 GiB release-lab run is recorded separately.
 - Actual OpenSSH/Askpass and externally renewed Kerberos/GSSAPI authentication-artifact secret scans pass in both push and PR workflows. Production Helper artifact scans remain open because final protected bytes do not yet exist; fixture coverage is not evidence for those absent bytes.
 - Independent correctness/security review, release finding disposition, project LICENSE owner/legal choice, and final protected public-channel evidence remain release work.
 

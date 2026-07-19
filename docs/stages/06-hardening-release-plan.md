@@ -1,7 +1,7 @@
 # Stage 6 Execution Plan
 
-- **Status**: In Progress — M6.1 complete; M6.2 independent migration/package/native/preview-channel evidence active; M6.3 shared redaction, doctor-report, and bounded support-bundle foundations active
-- **Updated**: 2026-07-18
+- **Status**: In Progress — M6.1 complete; M6.2 independent migration/package/native/preview-channel evidence active; M6.3 shared redaction, doctor, support-bundle, and extension-free SFTP v3 compatibility evidence active
+- **Updated**: 2026-07-19
 - **Sole baseline**: commit `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`
 - **Fixed branch**: `codex/stage6-hardening-release`
 - **Delivery PR**: Draft PR [#6](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/6), title `feat: ship AMSFTP 1.0.0`, base `main`

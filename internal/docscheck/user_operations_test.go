@@ -32,6 +32,35 @@ func TestREL009DocumentationIndexCoversEveryUserAndOperationsDomain(t *testing.T
 	}
 }
 
+func TestSFTPCompatibilityDocumentsVirtualV3AndRawFilenameEvidence(t *testing.T) {
+	matrix := readREL009Document(t, "../../docs/product/feature-matrix.md")
+	for _, required := range []string{
+		"| PLAT-005 |",
+		"separate-process virtual SFTP v3",
+		"unsafe no-replace publication",
+		"| PLAT-006 | Unicode 与原始文件名 | 1 | Verified |",
+		"invalid UTF-8 filename bytes",
+		"list→stat→read",
+	} {
+		if !strings.Contains(matrix, required) {
+			t.Errorf("feature matrix missing SFTP compatibility evidence %q", required)
+		}
+	}
+
+	compatibility := readREL009Document(t, "../../docs/product/environment-compatibility.md")
+	for _, required := range []string{
+		"standards-compatible SFTP v3 without OpenSSH extensions",
+		"fixture-tested",
+		"separate-process virtual server browse, stat, read, raw-byte and no-extension gates",
+		"other vendor servers",
+		"native vendor matrix remains open",
+	} {
+		if !strings.Contains(compatibility, required) {
+			t.Errorf("environment compatibility matrix missing %q", required)
+		}
+	}
+}
+
 func TestREL002DocumentsBoundedReadOnlyInstalledWorkspaceCompletion(t *testing.T) {
 	cli := readREL009Document(t, "../../docs/user/cli.md")
 	for _, required := range []string{

@@ -2,7 +2,7 @@
 
 本计划是项目的阶段索引。它只描述阶段目标、可验证完成条件与测试入口；详细范围、里程碑、失败处理和交接要求见 `docs/stages/`。阶段必须按顺序通过退出门禁，不以“代码已写完”代替行为、测试与文档证据。
 
-Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始；M6.1 已在 closeout commit `cb267a3b4adabf6f43fae51f7ed0a8f432d0aa53` 通过 current/oldstable 本地门禁和 push/PR Hosted 门禁。M6.2 初始 11-file historical capture 已在 commit `6664273e78f1294371b1d403d12f48ed79926683` 通过双 Go 本地门禁与 first-attempt 24/24 push/PR Hosted 门禁；后续真实目录级升级 RED 发现 SQLite v2/v3 catalog 引用的两个 held backup 未随主库固定。13-source correction commit `9c2638ff12296008a72ee81d65955d2af03a2ba3` 的 v1/v2/v3 upgrade+retention、current Go 1.26.5 `make ci`、exact Go 1.25.12 `make check` 与 first-attempt 24/24 push/PR Hosted 门禁全部转绿；owner mutation 现可从真实 migration/restore/rollback RED matrix 开始。
+Stage 0–5 已完成；各阶段均由完整本地门禁、exact-SHA Hosted evidence、文档真相链和独立冷启动审计闭环。Stage 5 已合并，Stage 6 在固定分支 `codex/stage6-hardening-release` 从 verified exact-main `312bcccbcbd54246bbe5ff9babf4f14560449176` 开始。M6.1 已完成；M6.2/M6.3/M6.4 的本地、Hosted、物理 100 GiB、内部预览与最终发行证据按 Stage 6 execution plan 继续累积。当前 M6.3 兼容批次以无 OpenSSH extensions 的独立进程虚拟 SFTP v3 server 验证 Level 0 read path、安全 publication 拒绝和 invalid UTF-8 filename list→stat→read 原始字节链；PLAT-006 转为 `Verified`，PLAT-005/REL-006 仍保留 native vendor 等明确开放边界。
 
 ## Stage 0: Foundation & Knowledge
 

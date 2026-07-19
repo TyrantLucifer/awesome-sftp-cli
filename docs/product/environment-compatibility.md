@@ -17,7 +17,8 @@ This matrix separates observed evidence from product behavior. `native-tested` m
 | authentication | MIT Kerberos 5 1.20.1 GSSAPI on Ubuntu 24.04 amd64 | native-tested | supported without credential delegation | dual-workflow exact klist version binding, real KDC, GSSAPI-only sshd, expiry and recovery matrix |
 | authentication | Kerberos GSSAPI on macOS | untested | system OpenSSH path only; no native evidence yet | release matrix remains open |
 | sftp | OpenSSH internal-sftp | native-tested | supported baseline | real sshd browse, search, transfer and recovery gates |
-| sftp | other standards-compatible servers | best-effort | standard SFTP baseline; extensions are capability-gated | vendor matrix remains open |
+| sftp | standards-compatible SFTP v3 without OpenSSH extensions | fixture-tested | Level 0 browse and download remain available; unsafe publication fails without mutation | separate-process virtual server browse, stat, read, raw-byte and no-extension gates |
+| sftp | other vendor servers | best-effort | standard SFTP baseline; extensions are capability-gated | native vendor matrix remains open |
 | terminal | basic ANSI | native-tested | supported fallback | TUI native PTY and no-color/narrow fixtures |
 | terminal | Kitty 0.47.4 image protocol | native-tested | proof-gated PNG output | real macOS arm64 active probe |
 | terminal | iTerm2 image protocol | fixture-tested | proof-gated PNG output, otherwise fallback | controlled reply/output fixtures only |
