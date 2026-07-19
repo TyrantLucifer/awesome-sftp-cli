@@ -1344,6 +1344,16 @@ func TestCINativeRequiresCleanInstallDaemonAndExactUninstallLifecycle(t *testing
 			new:  `"${installed}" --version`,
 		},
 		{
+			name: "installed completions omit dynamic workspace query",
+			old:  `grep -F 'completion __workspaces' "${completion_file}"`,
+			new:  `test -f "${completion_file}"`,
+		},
+		{
+			name: "installed binary does not enumerate the saved workspace",
+			old:  `test "${native_workspace_completion}" = "release-smoke"`,
+			new:  `test -n "${native_workspace_completion}"`,
+		},
+		{
 			name: "daemon does not use isolated state",
 			old:  `"XDG_STATE_HOME=${clean_home}/state"`,
 			new:  `"XDG_STATE_HOME=${RUNNER_TEMP}/state"`,

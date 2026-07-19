@@ -18,7 +18,7 @@ amsftp support-bundle create --consent <sha256> --output <absolute-path> [--form
 amsftp completion <bash|zsh|fish>
 ```
 
-See the [configuration reference](configuration.md) and [keymap reference](keymap.md) for the configuration subcommands. Completion generation is static: it does not connect to a daemon or endpoint, prompt for authentication, or perform a remote write.
+See the [configuration reference](configuration.md) and [keymap reference](keymap.md) for the configuration subcommands. Completion generation is static except at the value immediately following `--workspace`: bash, zsh, and fish invoke the installed binary's hidden completion query to enumerate saved workspace names. That query reads at most 1,024 entries from the resolved owner-private workspace directory, returns at most 256 valid private-file names in lexical order, and treats an absent directory as an empty result without creating it. It does not read workspace contents, start or contact the daemon, connect to an endpoint, prompt for authentication, or perform a write. Shell scripts suppress a rejected unsafe-state query rather than exposing its diagnostic during interactive completion.
 
 ## Daemon lifecycle
 
@@ -114,4 +114,4 @@ Invalid command, format, digest, or output-path arguments are rejected before so
 
 ## Help, man page, and completion parity
 
-`amsftp --help`, [amsftp(1)](../man/amsftp.1), and bash/zsh/fish completion scripts are rendered from the same ordered command facts and checked for drift. Restricted `askpass` and `helper serve` roles are not public daily-use commands and are deliberately absent from completions.
+`amsftp --help`, [amsftp(1)](../man/amsftp.1), and bash/zsh/fish completion scripts are rendered from the same ordered command facts and checked for drift. All three scripts complete commands and arguments, and dynamically complete the value after `--workspace` through the bounded read-only query described above. The query itself, restricted `askpass`, and `helper serve` roles are not public daily-use commands and are deliberately absent from the public help/man command inventory.

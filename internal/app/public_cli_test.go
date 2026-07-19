@@ -84,3 +84,30 @@ func TestRunCompletionPrintsStaticScriptAndClassifiesUnknownShell(t *testing.T) 
 		t.Fatalf("unknown shell error = %v, exit = %d", err, exitCode(err))
 	}
 }
+
+func TestCompletionScriptsDynamicallyQueryHiddenSavedWorkspaces(t *testing.T) {
+	shellCondition := map[string]string{
+		"bash": `[[ "$previous" == "--workspace" ]]`,
+		"zsh":  `[[ "${words[CURRENT-1]}" == "--workspace" ]]`,
+		"fish": `test (count (commandline -opc)) -gt 0; and test (commandline -opc)[-1] = --workspace`,
+	}
+	for _, shell := range []string{"bash", "zsh", "fish"} {
+		script, err := RenderCompletion(shell)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, required := range []string{"--workspace", "completion __workspaces", "2>/dev/null"} {
+			if !strings.Contains(script, required) {
+				t.Fatalf("%s completion is missing %q:\n%s", shell, required, script)
+			}
+		}
+		if !strings.Contains(script, shellCondition[shell]) {
+			t.Fatalf("%s completion is missing guarded workspace position check %q:\n%s", shell, shellCondition[shell], script)
+		}
+	}
+	for _, publicSurface := range []string{Usage(), RenderManPage()} {
+		if strings.Contains(publicSurface, "__workspaces") {
+			t.Fatalf("hidden completion query leaked into public surface:\n%s", publicSurface)
+		}
+	}
+}

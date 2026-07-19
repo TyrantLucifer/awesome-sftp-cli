@@ -15,7 +15,11 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 )
 
-const maximumDocumentBytes int64 = 256 * 1024
+const (
+	maximumDocumentBytes              int64 = 256 * 1024
+	maximumCompletionDirectoryEntries       = 1024
+	maximumCompletionNames                  = 256
+)
 
 type Summary struct {
 	Name      string
@@ -210,6 +214,55 @@ func (s *Store) List() ([]Summary, error) {
 		return summaries[left].Name < summaries[right].Name
 	})
 	return summaries, nil
+}
+
+// CompletionNames returns a bounded, deterministic list of workspace names
+// without reading document contents or creating a missing workspace root.
+func CompletionNames(root string) ([]string, error) {
+	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root || strings.IndexByte(root, 0) >= 0 {
+		return nil, errors.New("complete workspaces: root must be canonical absolute")
+	}
+	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("complete workspaces: inspect root: %w", err)
+	}
+	if err := platform.ValidatePrivateDirectory(root, platform.ValidatePersistent); err != nil {
+		return nil, fmt.Errorf("complete workspaces: validate root: %w", err)
+	}
+	// #nosec G304 -- root is canonical, owner-private, and supplied by the platform path resolver.
+	directory, err := os.Open(root)
+	if err != nil {
+		return nil, fmt.Errorf("complete workspaces: open root: %w", err)
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(maximumCompletionDirectoryEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("complete workspaces: read root: %w", err)
+	}
+	if len(entries) > maximumCompletionDirectoryEntries {
+		return nil, fmt.Errorf("complete workspaces: directory exceeds %d entries", maximumCompletionDirectoryEntries)
+	}
+	names := make([]string, 0, min(len(entries), maximumCompletionNames))
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".json")
+		if ValidateName(name) != nil {
+			continue
+		}
+		workspacePath := filepath.Join(root, entry.Name())
+		if err := platform.ValidatePrivateFile(workspacePath, platform.ValidatePersistent); err != nil {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) > maximumCompletionNames {
+		names = names[:maximumCompletionNames]
+	}
+	return names, nil
 }
 
 func (s *Store) path(name string) string {

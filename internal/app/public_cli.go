@@ -26,7 +26,7 @@ var publicCLIContract = []cliCommandFact{
 	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
 	{name: "doctor", syntax: "amsftp doctor [--endpoint <SSH-host>] [--format human|json]", description: "Run bounded read-only local checks and optionally test one SSH endpoint without prompting for credentials.", arguments: []string{"--endpoint", "--format"}},
 	{name: "support-bundle", syntax: "amsftp support-bundle preview [--format human|json] | amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]", description: "Preview the exact reviewed diagnostic archive, then explicitly publish it to a private no-replace local file.", children: []string{"preview", "create"}, childArguments: map[string][]string{"preview": {"--format"}, "create": {"--consent", "--output", "--format"}}},
-	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a static shell completion script.", children: []string{"bash", "zsh", "fish"}},
+	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a shell completion script with saved-workspace completion.", children: []string{"bash", "zsh", "fish"}},
 	{syntax: "amsftp [client|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
 	{name: "--help", syntax: "amsftp --help", description: "Print command help."},
 	{name: "--version", syntax: "amsftp --version", description: "Print version and build information."},
@@ -96,6 +96,10 @@ func RenderCompletion(shell string) (string, error) {
   local current previous
   current="${COMP_WORDS[COMP_CWORD]}"
   previous="${COMP_WORDS[COMP_CWORD-1]}"
+  if [[ "$previous" == "--workspace" ]]; then
+    COMPREPLY=( $(compgen -W "$(command amsftp completion __workspaces 2>/dev/null)" -- "$current") )
+    return
+  fi
   case "$previous" in
     config) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     daemon) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
@@ -136,6 +140,12 @@ _amsftp() {
 	doctor_arguments=(%s)
 	support_bundle_commands=(%s)
   completion_commands=(%s)
+  if [[ "${words[CURRENT-1]}" == "--workspace" ]]; then
+    local -a workspace_names
+    workspace_names=("${(@f)$(command amsftp completion __workspaces 2>/dev/null)}")
+    _describe 'workspace' workspace_names
+    return
+  fi
   _arguments '1:command:($commands)' '2:subcommand or argument:($config_commands $daemon_commands $job_commands $helper_commands $doctor_arguments $support_bundle_commands $completion_commands)' '3:argument:(%s %s %s %s %s %s %s %s %s %s %s %s %s %s %s %s)' '*:location or path:_files'
 }
 _amsftp
@@ -189,6 +199,7 @@ _amsftp
 		for _, word := range childArgumentsFor("config", "reset-keymap") {
 			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from reset-keymap' -a %q\n", word)
 		}
+		builder.WriteString("complete -c amsftp -n 'test (count (commandline -opc)) -gt 0; and test (commandline -opc)[-1] = --workspace' -a '(command amsftp completion __workspaces 2>/dev/null)'\n")
 		return builder.String(), nil
 	default:
 		return "", fmt.Errorf("unsupported completion shell %q; want bash, zsh, or fish", shell)

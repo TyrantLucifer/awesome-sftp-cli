@@ -32,6 +32,35 @@ func TestREL009DocumentationIndexCoversEveryUserAndOperationsDomain(t *testing.T
 	}
 }
 
+func TestREL002DocumentsBoundedReadOnlyInstalledWorkspaceCompletion(t *testing.T) {
+	cli := readREL009Document(t, "../../docs/user/cli.md")
+	for _, required := range []string{
+		"bash, zsh, and fish",
+		"value immediately following `--workspace`",
+		"at most 1,024 entries",
+		"at most 256 valid private-file names",
+		"without creating it",
+		"does not read workspace contents",
+		"does not read workspace contents, start or contact the daemon",
+	} {
+		if !strings.Contains(cli, required) {
+			t.Errorf("CLI completion contract missing %q", required)
+		}
+	}
+	install := readREL009Document(t, "../../docs/release/INSTALL.md")
+	for _, required := range []string{
+		"`amsftp completion bash`",
+		"`amsftp completion zsh`",
+		"`amsftp completion fish`",
+		"completes saved names only after `--workspace`",
+		"does not start the daemon or create a missing state directory",
+	} {
+		if !strings.Contains(install, required) {
+			t.Errorf("install completion contract missing %q", required)
+		}
+	}
+}
+
 func TestREL009GettingStartedUsesExactSafeCLIAndAuthenticationPrerequisites(t *testing.T) {
 	t.Parallel()
 	guide := readREL009Document(t, "../../docs/user/getting-started.md")

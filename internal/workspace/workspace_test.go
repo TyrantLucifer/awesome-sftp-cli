@@ -3,6 +3,7 @@ package workspace
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -207,6 +208,81 @@ func TestStoreListsRecentWorkspacesDeterministically(t *testing.T) {
 		if err := store.Save(invalid, testDocument()); err == nil {
 			t.Fatalf("Save(%q) error = nil", invalid)
 		}
+	}
+}
+
+func TestCompletionNamesAreReadOnlyPrivateBoundedAndDeterministic(t *testing.T) {
+	parent := testkit.PersistentTempDir(t)
+	absent := filepath.Join(parent, "absent-workspaces")
+	names, err := CompletionNames(absent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 0 {
+		t.Fatalf("absent completion names = %#v, want empty", names)
+	}
+	if _, err := os.Lstat(absent); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("completion created absent root: %v", err)
+	}
+
+	root := filepath.Join(parent, "workspaces")
+	if err := os.Mkdir(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for index := 259; index >= 0; index-- {
+		name := fmt.Sprintf("workspace-%03d", index)
+		if err := os.WriteFile(filepath.Join(root, name+".json"), []byte("corrupt but name-completable"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, ".hidden.json"), []byte("ignored"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "not-a-workspace.txt"), []byte("ignored"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "unsafe.json"), []byte("ignored"), 0o644); err != nil { //nolint:gosec // negative test deliberately creates a non-private workspace file.
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(root, "directory.json"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "workspace-000.json"), filepath.Join(root, "linked.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	names, err = CompletionNames(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) != 256 {
+		t.Fatalf("completion name count = %d, want 256", len(names))
+	}
+	for index, name := range names {
+		want := fmt.Sprintf("workspace-%03d", index)
+		if name != want {
+			t.Fatalf("completion name %d = %q, want %q", index, name, want)
+		}
+	}
+	overflowRoot := filepath.Join(parent, "overflow-workspaces")
+	if err := os.Mkdir(overflowRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for index := 0; index <= 1024; index++ {
+		path := filepath.Join(overflowRoot, fmt.Sprintf("ignored-%04d.txt", index))
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := CompletionNames(overflowRoot); err == nil {
+		t.Fatal("CompletionNames() accepted more than 1,024 directory entries")
+	}
+
+	if err := os.Chmod(root, 0o755); err != nil { //nolint:gosec // negative test deliberately makes the workspace root non-private.
+		t.Fatal(err)
+	}
+	if _, err := CompletionNames(root); err == nil {
+		t.Fatal("CompletionNames() accepted a non-private root")
 	}
 }
 
