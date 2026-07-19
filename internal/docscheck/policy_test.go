@@ -1039,7 +1039,7 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
 }
 
 func TestCIQualityLifecycleRequiresPreparedOwnerPrivatePersistentRoot(t *testing.T) {
-	name := &policyYAMLScalar{value: "Exercise deterministic public packaging and clean-home lifecycle"}
+	name := &policyYAMLScalar{value: "Exercise deterministic internal preview packaging and clean-home lifecycle"}
 	tests := []struct {
 		name   string
 		script string
@@ -1073,7 +1073,7 @@ clean_home="${RUNNER_TEMP}/public-package-home"`,
 }
 
 func TestCIQualityLifecycleRequiresCommittedReviewedNotice(t *testing.T) {
-	name := &policyYAMLScalar{value: "Exercise deterministic public packaging and clean-home lifecycle"}
+	name := &policyYAMLScalar{value: "Exercise deterministic internal preview packaging and clean-home lifecycle"}
 	tests := []struct {
 		name   string
 		script string
@@ -1106,7 +1106,7 @@ go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json doc
 }
 
 func TestCIQualityLifecycleRequiresPinnedCacheUpgradeRecoveryProof(t *testing.T) {
-	name := &policyYAMLScalar{value: "Exercise deterministic public packaging and clean-home lifecycle"}
+	name := &policyYAMLScalar{value: "Exercise deterministic internal preview packaging and clean-home lifecycle"}
 	complete := `old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"
 current_cache_harness="${RUNNER_TEMP}/pinned-cache-current"
 failure_harness="${RUNNER_TEMP}/pinned-cache-failure"

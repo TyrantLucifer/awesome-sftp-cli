@@ -102,7 +102,7 @@ func checkCIQuality(job workflowJob, add func(int, string, string)) {
 
 func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
 	for _, step := range job.steps {
-		if step.name == nil || step.name.value != "Exercise deterministic public packaging and clean-home lifecycle" {
+		if step.name == nil || step.name.value != "Exercise deterministic internal preview packaging and clean-home lifecycle" {
 			continue
 		}
 		if step.run == nil {
@@ -118,7 +118,7 @@ func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
 
 func qualityLifecycleUsesReviewedNotice(job workflowJob) bool {
 	for _, step := range job.steps {
-		if step.name == nil || step.name.value != "Exercise deterministic public packaging and clean-home lifecycle" {
+		if step.name == nil || step.name.value != "Exercise deterministic internal preview packaging and clean-home lifecycle" {
 			continue
 		}
 		if step.run == nil {
@@ -134,7 +134,7 @@ func qualityLifecycleUsesReviewedNotice(job workflowJob) bool {
 
 func qualityLifecycleProvesPinnedCacheUpgradeRecovery(job workflowJob) bool {
 	for _, step := range job.steps {
-		if step.name == nil || step.name.value != "Exercise deterministic public packaging and clean-home lifecycle" {
+		if step.name == nil || step.name.value != "Exercise deterministic internal preview packaging and clean-home lifecycle" {
 			continue
 		}
 		if step.run == nil {

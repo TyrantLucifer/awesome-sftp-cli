@@ -68,6 +68,64 @@ func TestRunBuildsExactPublicReleaseFromConfinedManifestInputs(t *testing.T) {
 	}
 }
 
+func TestRunBuildsExactInternalPreviewFromConfinedManifestInputs(t *testing.T) {
+	root := t.TempDir()
+	writeFixtureFile(t, root, "LICENSE", "owner-only preview license notice\n")
+	writeFixtureFile(t, root, "NOTICE", "dependency notices\n")
+	writeFixtureFile(t, root, "INSTALL.md", "install\n")
+	writeFixtureFile(t, root, "UNINSTALL.md", "uninstall\n")
+	writeFixtureFile(t, root, "INTERNAL-PREVIEW.md", "AMSFTP INTERNAL PREVIEW\nOwner-only and not for redistribution.\nUnsigned. Production Helper: CLOSED. Level 2: CLOSED.\n")
+	writeFixtureFile(t, root, "amsftp.1", ".TH AMSFTP 1\n")
+	writeFixtureFile(t, root, "amsftp.bash", "complete -F _amsftp amsftp\n")
+	writeFixtureFile(t, root, "_amsftp", "#compdef amsftp\n")
+	writeFixtureFile(t, root, "amsftp.fish", "complete -c amsftp\n")
+	platforms := []manifestPlatform{
+		{OS: "darwin", Arch: "amd64", Path: "bin/darwin-amd64"},
+		{OS: "darwin", Arch: "arm64", Path: "bin/darwin-arm64"},
+		{OS: "linux", Arch: "amd64", Path: "bin/linux-amd64"},
+		{OS: "linux", Arch: "arm64", Path: "bin/linux-arm64"},
+	}
+	for _, platform := range platforms {
+		writeFixtureFile(t, root, platform.Path, platform.OS+"/"+platform.Arch+" binary\n")
+	}
+	manifestPath := writeManifest(t, root, inputManifest{
+		Schema: internalPreviewManifestSchema, Version: releasepack.InternalPreviewVersion,
+		Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), SourceDateEpoch: 1_700_000_000,
+		Materials: manifestMaterials{
+			License: "LICENSE", Notice: "NOTICE", Install: "INSTALL.md", Uninstall: "UNINSTALL.md", Man: "amsftp.1",
+			InternalPreview: "INTERNAL-PREVIEW.md", BashCompletion: "amsftp.bash", ZshCompletion: "_amsftp", FishCompletion: "amsftp.fish",
+		},
+		Platforms: platforms,
+		Modules:   []manifestModule{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=", License: "BSD-3-Clause", Targets: []manifestTarget{{OS: "darwin", Arch: "amd64"}, {OS: "darwin", Arch: "arm64"}, {OS: "linux", Arch: "amd64"}, {OS: "linux", Arch: "arm64"}}}},
+	})
+	output := filepath.Join(root, "internal-preview")
+	inspect := func(raw []byte) (releasepack.GoBuildEvidence, error) {
+		parts := strings.Fields(string(raw))
+		target := strings.Split(parts[0], "/")
+		return releasepack.GoBuildEvidence{MainPath: "github.com/TyrantLucifer/awesome-mac-sftp/cmd/amsftp", GOOS: target[0], GOARCH: target[1], Trimpath: true, VCSRevision: strings.Repeat("1", 40), Modules: []releasepack.GoModuleEvidence{{Path: "example.com/dependency", Version: "v1.2.3", Sum: "h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="}}}, nil
+	}
+	if err := runWithInspector([]string{manifestPath, output}, &bytes.Buffer{}, inspect); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := os.ReadDir(output)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		got = append(got, entry.Name())
+	}
+	sort.Strings(got)
+	want := []string{
+		"amsftp_0.1.0-internal_darwin_amd64.tar.gz", "amsftp_0.1.0-internal_darwin_arm64.tar.gz",
+		"amsftp_0.1.0-internal_linux_amd64.tar.gz", "amsftp_0.1.0-internal_linux_arm64.tar.gz",
+		"checksums.txt", "provenance.input.json", "sbom.spdx.json",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("internal preview output = %#v, want %#v", got, want)
+	}
+}
+
 func TestRunRejectsUnknownManifestFieldsAndInputsOutsideManifestDirectory(t *testing.T) {
 	t.Run("unknown field", func(t *testing.T) {
 		root := t.TempDir()

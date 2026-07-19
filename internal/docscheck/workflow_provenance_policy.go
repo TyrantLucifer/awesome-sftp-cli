@@ -370,26 +370,26 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`printf '%s\n' "${kerberos_version}" | tee "${RUNNER_TEMP}/auth-integration/kerberos-current-version"`,
 		}) &&
 		canonicalPreviewBundleDownload(steps[5]) &&
-		canonicalRunStep(steps[6], "Verify and extract public preview bundle", []string{
+		canonicalRunStep(steps[6], "Verify and extract internal preview bundle", []string{
 			`set -euo pipefail`,
 			`bundle="${RUNNER_TEMP}/auth-integration/bundle"`,
 			`test "$(find "${bundle}" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 7`,
 			`(cd "${bundle}" && sha256sum -c checksums.txt)`,
-			`archive="${bundle}/amsftp_1.0.0_linux_amd64.tar.gz"`,
+			`archive="${bundle}/amsftp_0.1.0-internal_linux_amd64.tar.gz"`,
 			`install_root="${RUNNER_TEMP}/auth-integration/install"`,
 			`test -f "${archive}"`,
 			`test ! -e "${install_root}"`,
 			`mkdir -p "${install_root}"`,
 			`tar -xzf "${archive}" -C "${install_root}"`,
-			`installed="${install_root}/amsftp_1.0.0_linux_amd64/amsftp"`,
+			`installed="${install_root}/amsftp_0.1.0-internal_linux_amd64/amsftp"`,
 			`test -x "${installed}"`,
 			`"${installed}" --version | grep -F "1.0.0 commit=${GITHUB_SHA} dirty=false"`,
-			`tar -xOf "${archive}" amsftp_1.0.0_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
+			`tar -xOf "${archive}" amsftp_0.1.0-internal_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
 		}) &&
 		canonicalRunStep(steps[7], "Run real OpenSSH authentication matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
-			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_1.0.0_linux_amd64/amsftp" \`,
+			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \`,
 			`  AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/openssh-current-version")" \`,
 			`  AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-auth.sh`,
@@ -397,7 +397,7 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 		canonicalRunStep(steps[8], "Run real MIT Kerberos/GSSAPI matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
-			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_1.0.0_linux_amd64/amsftp" \`,
+			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \`,
 			`  AMSFTP_KERBEROS_EXPECT_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/kerberos-current-version")" \`,
 			`  AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-kerberos.sh`,
@@ -407,7 +407,7 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 func canonicalQualityPreviewBundleHandoff(steps []workflowStep) bool {
 	packaging := -1
 	for index, step := range steps {
-		if step.name != nil && step.name.value == "Exercise deterministic public packaging and clean-home lifecycle" {
+		if step.name != nil && step.name.value == "Exercise deterministic internal preview packaging and clean-home lifecycle" {
 			if packaging != -1 {
 				return false
 			}
@@ -420,18 +420,18 @@ func canonicalQualityPreviewBundleHandoff(steps []workflowStep) bool {
 func canonicalPreviewBundleUpload(step workflowStep) bool {
 	return canonicalBuildArtifactUpload(
 		step,
-		"Upload public preview bundle",
-		"public-preview-bundle-${{ github.sha }}",
-		"${{ runner.temp }}/public-package-first",
+		"Upload internal preview bundle",
+		"amsftp-internal-preview-${{ github.sha }}",
+		"${{ runner.temp }}/internal-preview-first",
 	)
 }
 
 func canonicalPreviewBundleDownload(step workflowStep) bool {
-	return step.name != nil && step.name.value == "Download public preview bundle" && step.uses != nil &&
+	return step.name != nil && step.name.value == "Download internal preview bundle" && step.uses != nil &&
 		step.uses.value == "actions/download-artifact@"+approvedActionCommits["actions/download-artifact"] &&
 		nodeHasExactKeys(step.node, "name", "uses", "with") &&
 		mappingHasExactScalars(step.with, map[string]string{
-			"name": "public-preview-bundle-${{ github.sha }}", "path": "${{ runner.temp }}/auth-integration/bundle",
+			"name": "amsftp-internal-preview-${{ github.sha }}", "path": "${{ runner.temp }}/auth-integration/bundle",
 		})
 }
 

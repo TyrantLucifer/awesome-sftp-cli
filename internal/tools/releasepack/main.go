@@ -12,10 +12,11 @@ import (
 )
 
 const (
-	manifestSchema   = "amsftp-public-release-manifest-v1"
-	maxManifestBytes = 1 << 20
-	maxMaterialBytes = 1 << 20
-	maxBinaryBytes   = 256 << 20
+	manifestSchema                = "amsftp-public-release-manifest-v1"
+	internalPreviewManifestSchema = "amsftp-internal-preview-manifest-v1"
+	maxManifestBytes              = 1 << 20
+	maxMaterialBytes              = 1 << 20
+	maxBinaryBytes                = 256 << 20
 )
 
 type inputManifest struct {
@@ -30,11 +31,15 @@ type inputManifest struct {
 }
 
 type manifestMaterials struct {
-	License   string `json:"license"`
-	Notice    string `json:"notice"`
-	Install   string `json:"install"`
-	Uninstall string `json:"uninstall"`
-	Man       string `json:"man"`
+	License         string `json:"license"`
+	Notice          string `json:"notice"`
+	Install         string `json:"install"`
+	Uninstall       string `json:"uninstall"`
+	Man             string `json:"man"`
+	InternalPreview string `json:"internal_preview,omitempty"`
+	BashCompletion  string `json:"bash_completion,omitempty"`
+	ZshCompletion   string `json:"zsh_completion,omitempty"`
+	FishCompletion  string `json:"fish_completion,omitempty"`
 }
 
 type manifestPlatform struct {
@@ -88,7 +93,15 @@ func runWithInspector(args []string, stdout io.Writer, inspect binaryInspector) 
 	if err != nil {
 		return err
 	}
-	bundle, err := releasepack.BuildPublicBundle(request)
+	var bundle releasepack.Bundle
+	switch manifest.Schema {
+	case manifestSchema:
+		bundle, err = releasepack.BuildPublicBundle(request)
+	case internalPreviewManifestSchema:
+		bundle, err = releasepack.BuildInternalPreviewBundle(request)
+	default:
+		return errors.New("read release manifest: unsupported schema")
+	}
 	if err != nil {
 		return err
 	}
@@ -126,7 +139,7 @@ func readManifest(path string) (inputManifest, string, error) {
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
 		return inputManifest{}, "", errors.New("read release manifest: trailing JSON is forbidden")
 	}
-	if manifest.Schema != manifestSchema || len(manifest.Modules) == 0 {
+	if manifest.Schema != manifestSchema && manifest.Schema != internalPreviewManifestSchema || len(manifest.Modules) == 0 {
 		return inputManifest{}, "", errors.New("read release manifest: schema or dependency inventory is invalid")
 	}
 	absolute, err := filepath.Abs(path)
@@ -161,6 +174,25 @@ func loadBundleRequest(root string, manifest inputManifest, inspect binaryInspec
 	if err != nil {
 		return releasepack.BundleRequest{}, fmt.Errorf("load amsftp.1: %w", err)
 	}
+	var internalPreview, bashCompletion, zshCompletion, fishCompletion []byte
+	if manifest.Schema == internalPreviewManifestSchema {
+		internalPreview, err = readConfinedMaterial(root, manifest.Materials.InternalPreview)
+		if err != nil {
+			return releasepack.BundleRequest{}, fmt.Errorf("load INTERNAL-PREVIEW.md: %w", err)
+		}
+		bashCompletion, err = readConfinedMaterial(root, manifest.Materials.BashCompletion)
+		if err != nil {
+			return releasepack.BundleRequest{}, fmt.Errorf("load bash completion: %w", err)
+		}
+		zshCompletion, err = readConfinedMaterial(root, manifest.Materials.ZshCompletion)
+		if err != nil {
+			return releasepack.BundleRequest{}, fmt.Errorf("load zsh completion: %w", err)
+		}
+		fishCompletion, err = readConfinedMaterial(root, manifest.Materials.FishCompletion)
+		if err != nil {
+			return releasepack.BundleRequest{}, fmt.Errorf("load fish completion: %w", err)
+		}
+	}
 
 	platforms := make([]releasepack.PlatformBinary, 0, len(manifest.Platforms))
 	seenPaths := make(map[string]struct{}, len(manifest.Platforms))
@@ -177,9 +209,11 @@ func loadBundleRequest(root string, manifest inputManifest, inspect binaryInspec
 			return releasepack.BundleRequest{}, fmt.Errorf("inspect %s/%s binary: %w", platform.OS, platform.Arch, err)
 		}
 		seenPaths[resolved] = struct{}{}
-		platforms = append(platforms, releasepack.PlatformBinary{
-			Target: releasepack.Target{OS: platform.OS, Arch: platform.Arch}, Bytes: binary, State: releasepack.BinaryPublicPreview, Build: &build,
-		})
+		state := releasepack.BinaryPublicPreview
+		if manifest.Schema == internalPreviewManifestSchema {
+			state = releasepack.BinaryInternalPreview
+		}
+		platforms = append(platforms, releasepack.PlatformBinary{Target: releasepack.Target{OS: platform.OS, Arch: platform.Arch}, Bytes: binary, State: state, Build: &build})
 	}
 	modules := make([]releasepack.Module, 0, len(manifest.Modules))
 	for _, module := range manifest.Modules {
@@ -195,7 +229,10 @@ func loadBundleRequest(root string, manifest inputManifest, inspect binaryInspec
 	}
 	return releasepack.BundleRequest{
 		Version: manifest.Version, Commit: manifest.Commit, Tree: manifest.Tree, SourceDateEpoch: manifest.SourceDateEpoch,
-		Materials: releasepack.Materials{License: license, Notice: notice, Install: install, Uninstall: uninstall, Man: man},
+		Materials: releasepack.Materials{
+			License: license, Notice: notice, Install: install, Uninstall: uninstall, Man: man,
+			InternalPreview: internalPreview, BashCompletion: bashCompletion, ZshCompletion: zshCompletion, FishCompletion: fishCompletion,
+		},
 		Platforms: platforms, Modules: modules,
 	}, nil
 }

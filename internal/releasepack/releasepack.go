@@ -22,6 +22,8 @@ import (
 
 const maxReleaseInputBytes = 256 << 20
 
+const InternalPreviewVersion = "0.1.0-internal"
+
 type Target struct {
 	OS   string `json:"os"`
 	Arch string `json:"arch"`
@@ -37,6 +39,7 @@ var Targets = [...]Target{
 type BinaryState string
 
 const (
+	BinaryInternalPreview      BinaryState = "internal_preview"
 	BinaryPublicPreview        BinaryState = "public_preview"
 	BinaryLinuxFinalUnsigned   BinaryState = "linux_final_unsigned"
 	BinaryDarwinAcceptedSigned BinaryState = "darwin_accepted_signed"
@@ -83,11 +86,15 @@ type GoModuleEvidence struct {
 }
 
 type Materials struct {
-	License   []byte
-	Notice    []byte
-	Install   []byte
-	Uninstall []byte
-	Man       []byte
+	License         []byte
+	Notice          []byte
+	Install         []byte
+	Uninstall       []byte
+	Man             []byte
+	InternalPreview []byte
+	BashCompletion  []byte
+	ZshCompletion   []byte
+	FishCompletion  []byte
 }
 
 type Module struct {
@@ -136,6 +143,9 @@ type VersionMetadata struct {
 	Target                 Target `json:"target"`
 	ReleaseCandidate       bool   `json:"release_candidate"`
 	ProductionHelperClosed bool   `json:"production_helper_closed"`
+	ProductionLevel2Closed bool   `json:"production_level2_closed"`
+	Distribution           string `json:"distribution"`
+	NonRedistributable     bool   `json:"non_redistributable"`
 	ApplicationID          string `json:"application_id"`
 	LaunchdLabel           string `json:"launchd_label"`
 	SystemdUserUnit        string `json:"systemd_user_unit"`
@@ -197,6 +207,9 @@ type ProvenanceInput struct {
 	SourceDateEpoch        int64               `json:"source_date_epoch"`
 	ReleaseCandidate       bool                `json:"release_candidate"`
 	ProductionHelperClosed bool                `json:"production_helper_closed"`
+	ProductionLevel2Closed bool                `json:"production_level2_closed"`
+	Distribution           string              `json:"distribution"`
+	NonRedistributable     bool                `json:"non_redistributable"`
 	Archives               []ProvenanceArchive `json:"archives"`
 }
 
@@ -209,9 +222,20 @@ type FrozenBinary struct {
 }
 
 func BuildPublicBundle(request BundleRequest) (Bundle, error) {
-	if err := validateBundleRequest(request); err != nil {
+	if err := validatePublicBundleRequest(request); err != nil {
 		return Bundle{}, err
 	}
+	return buildBundle(request)
+}
+
+func BuildInternalPreviewBundle(request BundleRequest) (Bundle, error) {
+	if err := validateInternalPreviewBundleRequest(request); err != nil {
+		return Bundle{}, err
+	}
+	return buildBundle(request)
+}
+
+func buildBundle(request BundleRequest) (Bundle, error) {
 	archives := make([]Archive, 0, len(Targets))
 	for _, target := range Targets {
 		platform := findPlatform(request.Platforms, target)
@@ -314,7 +338,7 @@ func validateBundleForWrite(bundle Bundle) error {
 		return errors.New("write release bundle: archive identity is invalid")
 	}
 	version := strings.TrimSuffix(strings.TrimPrefix(firstName, "amsftp_"), firstSuffix)
-	if !validReleaseVersion(version) {
+	if !validBundleVersion(version) {
 		return errors.New("write release bundle: archive version is invalid")
 	}
 	for index, target := range Targets {
@@ -370,39 +394,56 @@ func AdmitProductionHelperBinary(platform PlatformBinary) (FrozenBinary, error) 
 	}
 }
 
-func validateBundleRequest(request BundleRequest) error {
-	if !validReleaseVersion(request.Version) || !isLowerHex(request.Commit, 40) || !isLowerHex(request.Tree, 40) || request.SourceDateEpoch < 0 {
-		return errors.New("build public release bundle: release identity is invalid")
+func validatePublicBundleRequest(request BundleRequest) error {
+	if hasInternalPreviewMaterials(request.Materials) {
+		return errors.New("build public release bundle: internal preview material is forbidden")
 	}
-	if err := validateMaterials(request.Materials); err != nil {
+	return validateBundleRequest(request, validReleaseVersion(request.Version), BinaryPublicPreview, "public release")
+}
+
+func validateInternalPreviewBundleRequest(request BundleRequest) error {
+	if request.Version != InternalPreviewVersion {
+		return errors.New("build internal preview bundle: preview identity is invalid")
+	}
+	if err := validateInternalPreviewMaterials(request.Materials); err != nil {
+		return err
+	}
+	return validateBundleRequest(request, true, BinaryInternalPreview, "internal preview")
+}
+
+func validateBundleRequest(request BundleRequest, versionValid bool, expectedState BinaryState, label string) error {
+	if !versionValid || !isLowerHex(request.Commit, 40) || !isLowerHex(request.Tree, 40) || request.SourceDateEpoch < 0 {
+		return fmt.Errorf("build %s bundle: release identity is invalid", label)
+	}
+	if err := validateMaterials(request.Materials, label); err != nil {
 		return err
 	}
 	if len(request.Platforms) != len(Targets) {
-		return errors.New("build public release bundle: exact four-target set is required")
+		return fmt.Errorf("build %s bundle: exact four-target set is required", label)
 	}
 	seen := make(map[Target]struct{}, len(Targets))
 	for _, platform := range request.Platforms {
-		if !validTarget(platform.Target) || platform.State != BinaryPublicPreview || platform.Darwin != nil || len(platform.Bytes) == 0 || len(platform.Bytes) > maxReleaseInputBytes || containsFixtureTrust(platform.Bytes) || !validPublicBuildEvidence(platform, request.Commit, request.Modules) {
-			return errors.New("build public release bundle: public platform input is invalid")
+		if !validTarget(platform.Target) || platform.State != expectedState || platform.Darwin != nil || len(platform.Bytes) == 0 || len(platform.Bytes) > maxReleaseInputBytes || containsFixtureTrust(platform.Bytes) || !validPublicBuildEvidence(platform, request.Commit, request.Modules) {
+			return fmt.Errorf("build %s bundle: platform input is invalid", label)
 		}
 		if _, duplicate := seen[platform.Target]; duplicate {
-			return errors.New("build public release bundle: duplicate target")
+			return fmt.Errorf("build %s bundle: duplicate target", label)
 		}
 		seen[platform.Target] = struct{}{}
 	}
 	for _, target := range Targets {
 		if _, exists := seen[target]; !exists {
-			return errors.New("build public release bundle: target set is incomplete")
+			return fmt.Errorf("build %s bundle: target set is incomplete", label)
 		}
 	}
 	moduleKeys := make(map[string]struct{}, len(request.Modules))
 	for _, module := range request.Modules {
 		key := module.Path + "@" + module.Version
 		if !validDeclaredModule(module) || strings.IndexByte(key, 0) >= 0 {
-			return errors.New("build public release bundle: module identity is invalid")
+			return fmt.Errorf("build %s bundle: module identity is invalid", label)
 		}
 		if _, duplicate := moduleKeys[key]; duplicate {
-			return errors.New("build public release bundle: duplicate module")
+			return fmt.Errorf("build %s bundle: duplicate module", label)
 		}
 		moduleKeys[key] = struct{}{}
 	}
@@ -622,7 +663,7 @@ func goModuleEvidenceKey(module GoModuleEvidence) string {
 	return key
 }
 
-func validateMaterials(materials Materials) error {
+func validateMaterials(materials Materials, label string) error {
 	for _, material := range []struct {
 		name string
 		raw  []byte
@@ -634,7 +675,34 @@ func validateMaterials(materials Materials) error {
 		{name: "share/man/man1/amsftp.1", raw: materials.Man},
 	} {
 		if len(material.raw) == 0 || len(material.raw) > 1<<20 || !utf8.Valid(material.raw) || material.raw[len(material.raw)-1] != '\n' || bytes.IndexByte(material.raw, 0) >= 0 || containsFixtureTrust(material.raw) {
-			return fmt.Errorf("build public release bundle: %s material is invalid", material.name)
+			return fmt.Errorf("build %s bundle: %s material is invalid", label, material.name)
+		}
+	}
+	return nil
+}
+
+func hasInternalPreviewMaterials(materials Materials) bool {
+	return len(materials.InternalPreview) != 0 || len(materials.BashCompletion) != 0 || len(materials.ZshCompletion) != 0 || len(materials.FishCompletion) != 0
+}
+
+func validateInternalPreviewMaterials(materials Materials) error {
+	for _, material := range []struct {
+		name string
+		raw  []byte
+	}{
+		{name: "INTERNAL-PREVIEW.md", raw: materials.InternalPreview},
+		{name: "share/bash-completion/completions/amsftp", raw: materials.BashCompletion},
+		{name: "share/zsh/site-functions/_amsftp", raw: materials.ZshCompletion},
+		{name: "share/fish/vendor_completions.d/amsftp.fish", raw: materials.FishCompletion},
+	} {
+		if len(material.raw) == 0 || len(material.raw) > 1<<20 || !utf8.Valid(material.raw) || material.raw[len(material.raw)-1] != '\n' || bytes.IndexByte(material.raw, 0) >= 0 || containsFixtureTrust(material.raw) {
+			return fmt.Errorf("build internal preview bundle: %s material is invalid", material.name)
+		}
+	}
+	notice := string(materials.InternalPreview)
+	for _, required := range []string{"AMSFTP INTERNAL PREVIEW", "not for redistribution", "Unsigned", "Production Helper: CLOSED", "Level 2: CLOSED"} {
+		if !strings.Contains(notice, required) {
+			return fmt.Errorf("build internal preview bundle: INTERNAL-PREVIEW.md is missing %q", required)
 		}
 	}
 	return nil
@@ -643,9 +711,15 @@ func validateMaterials(materials Materials) error {
 func buildArchive(request BundleRequest, platform PlatformBinary) (Archive, error) {
 	name := archiveName(request.Version, platform.Target)
 	root := strings.TrimSuffix(name, ".tar.gz")
+	internalPreview := request.Version == InternalPreviewVersion
+	distribution := "public_preview"
+	if internalPreview {
+		distribution = "internal_preview"
+	}
 	metadata := VersionMetadata{
 		Schema: "amsftp-release-version-v1", Version: request.Version, Commit: request.Commit, Tree: request.Tree, Target: platform.Target,
-		ReleaseCandidate: false, ProductionHelperClosed: true,
+		ReleaseCandidate: false, ProductionHelperClosed: true, ProductionLevel2Closed: true,
+		Distribution: distribution, NonRedistributable: internalPreview,
 		ApplicationID: "io.github.tyrantlucifer.amsftp", LaunchdLabel: "io.github.tyrantlucifer.amsftp.daemon",
 		SystemdUserUnit: "amsftp-daemon.service", HomebrewFormula: "amsftp",
 	}
@@ -660,6 +734,9 @@ func buildArchive(request BundleRequest, platform PlatformBinary) (Archive, erro
 		{name: "UNINSTALL.md", mode: 0o644, body: request.Materials.Uninstall},
 		{name: "VERSION.json", mode: 0o644, body: metadataBytes},
 		{name: "amsftp", mode: 0o755, body: platform.Bytes},
+	}
+	if internalPreview {
+		files = append(files, archiveFile{name: "INTERNAL-PREVIEW.md", mode: 0o644, body: request.Materials.InternalPreview})
 	}
 	var output bytes.Buffer
 	gzipWriter, err := gzip.NewWriterLevel(&output, gzip.BestCompression)
@@ -693,6 +770,26 @@ func buildArchive(request BundleRequest, platform PlatformBinary) (Archive, erro
 	}
 	if _, err := tarWriter.Write(request.Materials.Man); err != nil {
 		return Archive{}, closeArchiveWriters(tarWriter, gzipWriter, err)
+	}
+	if internalPreview {
+		for _, directory := range []string{"share/bash-completion/", "share/bash-completion/completions/", "share/zsh/", "share/zsh/site-functions/", "share/fish/", "share/fish/vendor_completions.d/"} {
+			if err := tarWriter.WriteHeader(canonicalTarHeader(root+"/"+directory, 0o755, 0, tar.TypeDir, modTime)); err != nil {
+				return Archive{}, closeArchiveWriters(tarWriter, gzipWriter, err)
+			}
+		}
+		for _, file := range []archiveFile{
+			{name: "share/bash-completion/completions/amsftp", mode: 0o644, body: request.Materials.BashCompletion},
+			{name: "share/zsh/site-functions/_amsftp", mode: 0o644, body: request.Materials.ZshCompletion},
+			{name: "share/fish/vendor_completions.d/amsftp.fish", mode: 0o644, body: request.Materials.FishCompletion},
+		} {
+			header := canonicalTarHeader(root+"/"+file.name, file.mode, int64(len(file.body)), tar.TypeReg, modTime)
+			if err := tarWriter.WriteHeader(header); err != nil {
+				return Archive{}, closeArchiveWriters(tarWriter, gzipWriter, err)
+			}
+			if _, err := tarWriter.Write(file.body); err != nil {
+				return Archive{}, closeArchiveWriters(tarWriter, gzipWriter, err)
+			}
+		}
 	}
 	if err := tarWriter.Close(); err != nil {
 		_ = gzipWriter.Close()
@@ -776,9 +873,15 @@ func buildProvenance(request BundleRequest, archives []Archive) ([]byte, error) 
 	for _, archive := range archives {
 		items = append(items, ProvenanceArchive{Name: archive.Name, Target: archive.Target, Size: uint64(len(archive.Bytes)), SHA256: digestBytes(archive.Bytes)})
 	}
+	internalPreview := request.Version == InternalPreviewVersion
+	distribution := "public_preview"
+	if internalPreview {
+		distribution = "internal_preview"
+	}
 	return marshalCanonicalJSON(ProvenanceInput{
 		Schema: "amsftp-release-provenance-input-v1", Version: request.Version, Commit: request.Commit, Tree: request.Tree, SourceDateEpoch: request.SourceDateEpoch,
-		ReleaseCandidate: false, ProductionHelperClosed: true, Archives: items,
+		ReleaseCandidate: false, ProductionHelperClosed: true, ProductionLevel2Closed: true,
+		Distribution: distribution, NonRedistributable: internalPreview, Archives: items,
 	})
 }
 
@@ -832,6 +935,10 @@ func validReleaseVersion(value string) bool {
 		}
 	}
 	return true
+}
+
+func validBundleVersion(value string) bool {
+	return value == InternalPreviewVersion || validReleaseVersion(value)
 }
 
 func validDarwinEvidence(evidence *DarwinEvidence, digest string) bool {
