@@ -4,6 +4,8 @@ REL-008 uses a strict external JSON record to bind every release gate to one exa
 
 No release-candidate record exists yet. Production Helper and Level 2 remain **CLOSED**, no RC is frozen, and no current run may be presented as final REL-008 evidence.
 
+A successful pre-RC harness report exists outside the repository at `/data00/home/tianchao.thatcher/amsftp-release-evidence/physical-100gib-c57ba4f78e34ce3c30d0185fa9dfa11729ad682f.json`. It binds candidate `c57ba4f78e34ce3c30d0185fa9dfa11729ad682f` / tree `6402169170a002cb6dcb5a264b43686c4bb31473` and records a physically allocated 100 GiB cancel/resume upload plus a complete 100 GiB download with matching SHA-256. The report explicitly declares `pre-rc-harness-proof-not-final-rc-evidence`; it is retained only as harness proof and cannot populate the final `physical_100gib` row unless that same SHA/tree is later frozen and independently satisfies every RC requirement.
+
 ## Operator commands
 
 Keep the real record outside the repository and run the validator with the exact current Go toolchain:
