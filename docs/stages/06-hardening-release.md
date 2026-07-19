@@ -201,7 +201,7 @@
 
 当前 Linux arm64 平台增量把 `ubuntu-24.04-arm` 加入主 CI 原生矩阵，复用既有完整 install/daemon/Job/doctor/uninstall、ext4/XFS、kernel-security 与 PTY lifecycle；provenance aggregator 必须收到 `native-ubuntu-24.04-arm`，并精确验证 `runner_arch=ARM64`、`GOOS=linux`、`GOARCH=arm64`。缺腿、伪造架构字段、错误 manifest 数量或未下载 producer 文件都会失败。只有 exact-SHA Hosted push/PR 均通过后才接受该批；即使通过，PLAT-003/REL-006 仍因 final protected archives、公开渠道、macOS Kerberos、native vendor SFTP 与 production Helper 保持 `In Progress`。
 
-当前 daemon lifecycle 增量要求五个 native runner 从 exact Stage 5 安装态升级到 current，再回滚 Stage 5 并恢复 current。合同覆盖 live old daemon 下原子替换 binary、由 current 客户端识别旧 daemon、验证 PID 后停止、current Job API、SIGKILL 后残留 Socket 的 fail-closed 拒绝与同路径恢复、旧 daemon 面对 v4 state 时的稳定拒绝和数据库 byte identity。普通客户端 autostart 同时改为只有 `Lstat` 明确返回不存在才调用 starter；已有或无法检查的路径均保留连接失败且不删除 Socket。精确 YAML block 已在 Linux 本地通过；本批仍需 exact-SHA Hosted push/PR，且不完成 published rollback、Helper-too-new、最终 native Helper matrix 或 Production Helper/Level 2。
+当前 daemon lifecycle 增量要求五个 native runner 从 exact Stage 5 安装态升级到 current，再回滚 Stage 5 并恢复 current。合同覆盖 live old daemon 下原子替换 binary、由 current 客户端识别旧 daemon、验证 PID 后停止、current Job API、SIGKILL 后残留 Socket 的 fail-closed 拒绝与同路径恢复、旧 daemon 面对 v4 state 时的稳定拒绝和数据库 byte identity。普通客户端 autostart 同时改为只有 `Lstat` 明确返回不存在才调用 starter；已有或无法检查的路径均保留连接失败且不删除 Socket，并用独立 Unix session 保证 daemon 不随客户端终端退出。SHA `5b72101` 的双 Go 本地门禁通过；PR `29681591589` 首轮 25/25，push `29681590469` 对两个既有时序失败最小重跑后 25/25，全部十个 native jobs 的新步骤通过。本批不完成 published rollback、Helper-too-new、最终 native Helper matrix 或 Production Helper/Level 2。
 
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 
