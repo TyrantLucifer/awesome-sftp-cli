@@ -571,6 +571,45 @@ jobs:
           env "${clean_env[@]}" "${installed}" daemon start --format json | grep -F '"running":true'
           env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'
           env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":true'
+          doctor_report="${RUNNER_TEMP}/native/doctor.json"
+          env "${clean_env[@]}" "${installed}" doctor --format json >"${doctor_report}"
+          python3 - "${doctor_report}" <<'PY'
+          import json
+          import sys
+
+          with open(sys.argv[1], encoding="utf-8") as stream:
+              report = json.load(stream)
+          expected_codes = [
+              "config", "runtime_directory", "socket", "daemon", "openssh",
+              "known_hosts", "database", "cache", "helper", "disk_space",
+          ]
+          expected_results = {
+              "config": ("pass", "info", "config_defaults"),
+              "runtime_directory": ("pass", "info", "runtime_private"),
+              "socket": ("pass", "info", "socket_private"),
+              "daemon": ("pass", "info", "daemon_reachable"),
+              "openssh": ("pass", "info", "openssh_validated"),
+              "known_hosts": ("skipped", "info", "endpoint_not_requested"),
+              "database": ("warn", "warning", "database_active"),
+              "cache": ("pass", "info", "cache_private"),
+              "helper": ("pass", "info", "helper_disabled"),
+              "disk_space": ("pass", "info", "disk_space_available"),
+          }
+          assert report["output_version"] == 1
+          results = report["results"]
+          assert [result["code"] for result in results] == expected_codes
+          assert all(result["detail_code"] != "probe_failed" for result in results)
+          for result in results:
+              status, severity, detail = expected_results[result["code"]]
+              assert result == {
+                  "code": result["code"],
+                  "status": status,
+                  "severity": severity,
+                  "detail_code": detail,
+                  "remediation": "troubleshooting/" + result["code"],
+              }
+          print("native installed doctor checks passed")
+          PY
           env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json | grep -F '"running":false'
           env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":false'
           if test "${RUNNER_OS}" = Linux; then

@@ -95,6 +95,62 @@ func TestDoctorCommandNeverExportsRawProbeCausesOrEndpointMetadata(t *testing.T)
 	}
 }
 
+func TestDoctorCommandRendersEveryProbeFailureAsStableBoundedOutput(t *testing.T) {
+	t.Parallel()
+
+	const rawMarker = "stage6-doctor-private-raw-marker"
+	probeError := func() error { return errors.New(rawMarker) }
+	runtime := passingDoctorRuntime()
+	runtime.loadConfig = func(string) (config.Config, error) { return config.Config{}, probeError() }
+	runtime.validateDirectory = func(string, platform.ValidationPurpose) error { return probeError() }
+	runtime.validateSocket = func(string, platform.ValidationPurpose) error { return probeError() }
+	runtime.dialDaemon = func(context.Context, string, platform.ValidationPurpose) error { return probeError() }
+	runtime.validateExecutable = func(string) error { return probeError() }
+	runtime.inspectDatabase = func(context.Context, string) (uint64, error) { return 0, probeError() }
+	runtime.availableBytes = func(string) (uint64, error) { return 0, probeError() }
+	runtime.inspectOpenSSH = func(context.Context, string) (openssh.ConfigInspection, error) {
+		return openssh.ConfigInspection{}, probeError()
+	}
+
+	var jsonOutput bytes.Buffer
+	if err := runDoctorWithRuntime(t.Context(), []string{"--format", "json", "--endpoint", "private-endpoint"}, &jsonOutput, runtime); err != nil {
+		t.Fatalf("runDoctorWithRuntime(json): %v", err)
+	}
+	for _, forbidden := range []string{rawMarker, "private-endpoint", runtime.paths.ConfigFile, runtime.paths.StateDir} {
+		if strings.Contains(jsonOutput.String(), forbidden) {
+			t.Fatalf("doctor JSON exposed %q: %s", forbidden, jsonOutput.String())
+		}
+	}
+	var report doctor.Report
+	if err := json.Unmarshal(jsonOutput.Bytes(), &report); err != nil {
+		t.Fatalf("decode doctor JSON: %v", err)
+	}
+	wantCodes := append(doctor.RequiredCodes(), doctor.CheckEndpoint)
+	if len(report.Results) != len(wantCodes) {
+		t.Fatalf("result count = %d, want %d", len(report.Results), len(wantCodes))
+	}
+	for index, result := range report.Results {
+		if result.Code != wantCodes[index] || result.Status != doctor.Fail || result.Severity != doctor.Error || result.DetailCode != "probe_failed" {
+			t.Fatalf("result[%d] = %#v", index, result)
+		}
+		if result.Remediation != "troubleshooting/"+string(result.Code) {
+			t.Fatalf("result[%d] remediation = %q", index, result.Remediation)
+		}
+	}
+
+	var humanOutput bytes.Buffer
+	if err := runDoctorWithRuntime(t.Context(), []string{"--format", "human", "--endpoint", "private-endpoint"}, &humanOutput, runtime); err != nil {
+		t.Fatalf("runDoctorWithRuntime(human): %v", err)
+	}
+	wantHuman := ""
+	for _, code := range wantCodes {
+		wantHuman += string(code) + "\tfail\tprobe_failed\ttroubleshooting/" + string(code) + "\n"
+	}
+	if humanOutput.String() != wantHuman {
+		t.Fatalf("human output = %q, want %q", humanOutput.String(), wantHuman)
+	}
+}
+
 func TestDoctorCommandRejectsUnsafeArgumentsBeforeProbing(t *testing.T) {
 	t.Parallel()
 

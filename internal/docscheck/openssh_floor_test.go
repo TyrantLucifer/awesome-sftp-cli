@@ -37,6 +37,27 @@ func TestHostedAuthenticationMatrixRunsDoctorAgainstSystemOpenSSH(t *testing.T) 
 	})
 }
 
+func TestEveryNativePlatformRunsDoctorDuringHealthyInstalledLifecycle(t *testing.T) {
+	t.Parallel()
+	workflow := readOpenSSHFloorContractFile(t, "../../.github/workflows/ci.yml")
+	assertOpenSSHFloorOrder(t, workflow, []string{
+		`- name: Exercise native clean install and uninstall lifecycle`,
+		`daemon start --format json`,
+		`doctor --format json`,
+		`expected_codes = [`,
+		`"config", "runtime_directory", "socket", "daemon", "openssh",`,
+		`"known_hosts", "database", "cache", "helper", "disk_space",`,
+		`"known_hosts": ("skipped", "info", "endpoint_not_requested")`,
+		`"database": ("warn", "warning", "database_active")`,
+		`assert report["output_version"] == 1`,
+		`assert [result["code"] for result in results] == expected_codes`,
+		`assert all(result["detail_code"] != "probe_failed" for result in results)`,
+		`"remediation": "troubleshooting/" + result["code"]`,
+		`native installed doctor checks passed`,
+		`daemon stop --confirm stop --format json`,
+	})
+}
+
 func TestUbuntu2404CapturesExactCurrentOpenSSHVersion(t *testing.T) {
 	t.Parallel()
 	workflow := readOpenSSHFloorContractFile(t, "../../.github/workflows/ci.yml")
