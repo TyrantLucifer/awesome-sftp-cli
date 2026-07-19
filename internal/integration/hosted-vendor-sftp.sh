@@ -46,12 +46,16 @@ server_wrapper_pid=
 user_created=0
 ssh_config_created=0
 ssh_directory_created=0
+client_runtime_ready=0
 client_home="${HOME}"
 ssh_directory="${client_home}/.ssh"
 ssh_config="${ssh_directory}/config"
 ssh_config_backup="${root}/client-ssh-config"
 
 cleanup() {
+  if test "${client_runtime_ready}" = 1; then
+    "${AMSFTP_VENDOR_BINARY}" daemon stop --confirm stop --format json >/dev/null 2>&1 || true
+  fi
   if test -n "${server_pid}"; then
     sudo kill -TERM "${server_pid}" 2>/dev/null || true
     for _ in $(seq 1 100); do
@@ -205,10 +209,17 @@ export XDG_CACHE_HOME="${root}/xdg-cache"
 export XDG_RUNTIME_DIR="${root}/xdg-runtime"
 export TERM=xterm-256color
 export AMSFTP_VENDOR_BINARY
+export AMSFTP_VENDOR_TUI_OUTPUT="${root}/vendor-tui.out"
+export AMSFTP_VENDOR_TUI_STDERR="${root}/vendor-tui.err"
+client_runtime_ready=1
+set +e
 expect <<'EXPECT'
 set timeout 35
+match_max 200000
 log_user 0
-spawn -noecho $env(AMSFTP_VENDOR_BINARY) "amsftp-proftpd:/"
+log_file -noappend $env(AMSFTP_VENDOR_TUI_OUTPUT)
+set stty_init "rows 30 columns 200"
+spawn -noecho /bin/sh -c {exec "$AMSFTP_VENDOR_BINARY" "amsftp-proftpd:/" 2>"$AMSFTP_VENDOR_TUI_STDERR"}
 expect {
   -exact "vendor-sftp-marker.txt" {}
   eof { exit 91 }
@@ -220,5 +231,21 @@ expect {
   timeout { exit 93 }
 }
 EXPECT
+expect_rc=$?
+set -e
+if test "${expect_rc}" -ne 0; then
+  for diagnostic in \
+    "${AMSFTP_VENDOR_TUI_OUTPUT}" \
+    "${AMSFTP_VENDOR_TUI_STDERR}" \
+    "${root}/proftpd-console.log" \
+    "${root}/proftpd-system.log" \
+    "${root}/proftpd-sftp.log"; do
+    if test -f "${diagnostic}"; then
+      printf '%s\n' "--- ${diagnostic}" >&2
+      sed -n '1,240p' "${diagnostic}" >&2
+    fi
+  done
+  exit "${expect_rc}"
+fi
 "${AMSFTP_VENDOR_BINARY}" daemon stop --confirm stop --format json | grep -F '"status":"stopped"'
 printf 'vendor SFTP preview-binary TUI browse passed\n'

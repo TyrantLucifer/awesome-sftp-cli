@@ -50,8 +50,10 @@ func TestHostedVendorSFTPRunsProviderAndPreviewBinary(t *testing.T) {
 	assertOpenSSHFloorOrder(t, harness, []string{
 		`TestRealProFTPDVendorSFTPLevel0AndDurableTransfers`,
 		`vendor SFTP provider browse and durable transfers passed`,
-		`spawn -noecho $env(AMSFTP_VENDOR_BINARY) "amsftp-proftpd:/"`,
+		`set stty_init "rows 30 columns 200"`,
+		`spawn -noecho /bin/sh -c {exec "$AMSFTP_VENDOR_BINARY" "amsftp-proftpd:/" 2>"$AMSFTP_VENDOR_TUI_STDERR"}`,
 		`vendor-sftp-marker.txt`,
+		`if test "${expect_rc}" -ne 0; then`,
 		`vendor SFTP preview-binary TUI browse passed`,
 	})
 }
