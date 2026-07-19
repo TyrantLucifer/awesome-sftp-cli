@@ -420,6 +420,35 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 }
 
+func TestDaemonAutostartRequiresProvenSocketAbsence(t *testing.T) {
+	root := testkit.PersistentTempDir(t)
+	existing := filepath.Join(root, "existing-control.sock")
+	if err := os.WriteFile(existing, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	connectErr := errors.New("existing daemon handshake failed")
+	if err := requireAbsentControlSocketForAutostart(existing, connectErr); !errors.Is(err, connectErr) {
+		t.Fatalf("existing socket error = %v, want wrapped connect failure", err)
+	}
+	content, err := os.ReadFile(existing) //nolint:gosec // exact test-owned path proves failed autostart preserves bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "preserve" {
+		t.Fatalf("existing socket stand-in changed to %q", content)
+	}
+
+	absent := filepath.Join(root, "absent-control.sock")
+	if err := requireAbsentControlSocketForAutostart(absent, connectErr); err != nil {
+		t.Fatalf("proven-absent socket rejected: %v", err)
+	}
+
+	uninspectable := filepath.Join(root, strings.Repeat("x", 5000))
+	if err := requireAbsentControlSocketForAutostart(uninspectable, connectErr); err == nil || errors.Is(err, connectErr) {
+		t.Fatalf("uninspectable socket error = %v, want independent inspection failure", err)
+	}
+}
+
 func TestDaemonRejectsInvalidConfigurationBeforePersistentStateMutation(t *testing.T) {
 	runtimeRoot := t.TempDir()
 	persistent := testkit.PersistentTempDir(t)

@@ -200,9 +200,61 @@ func checkCINative(job workflowJob, add func(int, string, string)) {
 	if !nativeLifecycleIsExact(job) {
 		add(job.line, "workflow.ci_native_lifecycle", "native job must exercise the exact owner-private clean install, daemon, state-preserving uninstall lifecycle")
 	}
+	if !nativeLifecycleProvesInstalledUpgradeRollbackAndStaleSocket(job) {
+		add(job.line, "workflow.ci_native_upgrade_rollback", "native job must exercise frozen Stage 5 to current upgrade, read-only rollback, and stale-socket replacement")
+	}
 	if !nativeHomebrewPreviewLifecycleIsExact(job) {
 		add(job.line, "workflow.ci_native_homebrew_preview", "native macOS jobs must exercise the loopback-only Homebrew tap clean install, upgrade, version, and uninstall lifecycle")
 	}
+}
+
+func nativeLifecycleProvesInstalledUpgradeRollbackAndStaleSocket(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil || step.name.value != "Exercise native installed upgrade, rollback, and stale-socket recovery" {
+			continue
+		}
+		if step.run == nil {
+			return false
+		}
+		ordered := []string{
+			`old_source="${RUNNER_TEMP}/native/stage5-source"`,
+			`old_binary="${RUNNER_TEMP}/native/bin/amsftp-stage5"`,
+			`git archive 312bcccbcbd54246bbe5ff9babf4f14560449176`,
+			`-o "${old_binary}" ./cmd/amsftp`,
+			`install_atomically "${old_binary}"`,
+			`"${installed}" daemon`,
+			`install_atomically "${native_binary}"`,
+			`"${installed}" daemon status --format json`,
+			`kill -TERM "${daemon_pid}"`,
+			`"${installed}" daemon`,
+			`kill -KILL "${daemon_pid}"`,
+			`test -S "${control_socket}"`,
+			`stale_socket_probe_rc=`,
+			`test "${stale_socket_probe_rc}" -ne 0`,
+			`"${installed}" daemon`,
+			`test -S "${control_socket}"`,
+			`install_atomically "${old_binary}"`,
+			`database_before=`,
+			`"${installed}" daemon`,
+			`"${native_binary}" job list --format json`,
+			`grep -F 'durable transfer service is unavailable'`,
+			`database_after=`,
+			`test "${database_before}" = "${database_after}"`,
+			`install_atomically "${native_binary}"`,
+			`"${installed}" daemon`,
+			`"${installed}" job list --format json`,
+		}
+		cursor := 0
+		for _, fragment := range ordered {
+			relative := strings.Index(step.run.value[cursor:], fragment)
+			if relative < 0 {
+				return false
+			}
+			cursor += relative + len(fragment)
+		}
+		return true
+	}
+	return false
 }
 
 func nativeLifecycleIsExact(job workflowJob) bool {

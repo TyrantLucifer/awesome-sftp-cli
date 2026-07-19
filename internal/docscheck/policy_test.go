@@ -154,11 +154,11 @@ func TestCISetupGoRequiresBothModuleLocks(t *testing.T) {
 		},
 		{
 			name: "oldstable root only", replacement: "          cache-dependency-path: go.sum\n", occurrence: 3,
-			finding: policyFinding{Path: path, Line: 60, Rule: "workflow.ci_oldstable_toolchain", Message: "oldstable job must select Go 1.25.12 with actions/setup-go"},
+			finding: policyFinding{Path: path, Line: 88, Rule: "workflow.ci_oldstable_toolchain", Message: "oldstable job must select Go 1.25.12 with actions/setup-go"},
 		},
 		{
 			name: "oldstable tools only", replacement: "          cache-dependency-path: tools/go.sum\n", occurrence: 3,
-			finding: policyFinding{Path: path, Line: 60, Rule: "workflow.ci_oldstable_toolchain", Message: "oldstable job must select Go 1.25.12 with actions/setup-go"},
+			finding: policyFinding{Path: path, Line: 88, Rule: "workflow.ci_oldstable_toolchain", Message: "oldstable job must select Go 1.25.12 with actions/setup-go"},
 		},
 	}
 	for _, test := range tests {
@@ -244,9 +244,9 @@ func TestCIRejectsBlockScalarsOutsideRun(t *testing.T) {
 		{name: "fail fast", old: "      fail-fast: false\n", new: "      fail-fast: >\n        false\n", occurrence: 1, line: 30},
 		{name: "matrix os", old: "        os: [ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, macos-15-intel]\n", new: "        os: |\n          ubuntu-22.04\n", occurrence: 1, line: 32},
 		{name: "persist credentials", old: "          persist-credentials: false\n", new: "          persist-credentials: >\n            false\n", occurrence: 1, line: 13},
-		{name: "setup go version", old: "          go-version: 1.25.12\n", new: "          go-version: >\n            1.25.12\n", occurrence: 1, line: 75},
-		{name: "cgo enabled", old: "          CGO_ENABLED: \"0\"\n", new: "          CGO_ENABLED: >\n            0\n", occurrence: 1, line: 113},
-		{name: "matrix artifact", old: "            artifact: amsftp-darwin-arm64\n", new: "            artifact: >\n              amsftp-darwin-arm64\n", occurrence: 1, line: 91},
+		{name: "setup go version", old: "          go-version: 1.25.12\n", new: "          go-version: >\n            1.25.12\n", occurrence: 1, line: 103},
+		{name: "cgo enabled", old: "          CGO_ENABLED: \"0\"\n", new: "          CGO_ENABLED: >\n            0\n", occurrence: 1, line: 141},
+		{name: "matrix artifact", old: "            artifact: amsftp-darwin-arm64\n", new: "            artifact: >\n              amsftp-darwin-arm64\n", occurrence: 1, line: 119},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -314,8 +314,8 @@ func TestCIRequiredJobsCannotBeConditional(t *testing.T) {
 	}{
 		{name: "quality false", job: "quality", line: 7, condition: "false", occurrence: 1},
 		{name: "native false", job: "native", line: 26, condition: "false", occurrence: 2},
-		{name: "oldstable false", job: "oldstable", line: 60, condition: "false", occurrence: 3},
-		{name: "build false", job: "build", line: 82, condition: "false", occurrence: 4},
+		{name: "oldstable false", job: "oldstable", line: 88, condition: "false", occurrence: 3},
+		{name: "build false", job: "build", line: 110, condition: "false", occurrence: 4},
 		{name: "empty key", job: "quality", line: 7, condition: "", occurrence: 1},
 		{name: "expression", job: "native", line: 26, condition: "${{ always() }}", occurrence: 2},
 	}
@@ -367,8 +367,8 @@ func TestCIRequiredJobsCannotDependOnSkippedJobs(t *testing.T) {
 	}{
 		{job: "quality", line: 13},
 		{job: "native", line: 32},
-		{job: "oldstable", line: 66},
-		{job: "build", line: 88},
+		{job: "oldstable", line: 94},
+		{job: "build", line: 116},
 	}
 	for _, test := range tests {
 		t.Run(test.job, func(t *testing.T) {
@@ -422,11 +422,11 @@ func TestCIRequiredJobsRejectUnapprovedExecutionContexts(t *testing.T) {
 			content: "    container:\n      image: ubuntu:24.04\n      env:\n        PATH: /tmp/ci-shims\n",
 		},
 		{
-			name: "oldstable services", job: "oldstable", line: 60, occurrence: 2,
+			name: "oldstable services", job: "oldstable", line: 88, occurrence: 2,
 			content: "    services:\n      helper:\n        image: alpine:3.20\n",
 		},
 		{
-			name: "build environment", job: "build", line: 82, occurrence: 3,
+			name: "build environment", job: "build", line: 110, occurrence: 3,
 			content: "    environment: production\n",
 		},
 		{
@@ -476,8 +476,8 @@ func TestCIRequiredJobsRejectGitHubEnvironmentMutation(t *testing.T) {
 	}{
 		{job: "quality", line: 7, occurrence: 1},
 		{job: "native", line: 26, occurrence: 2},
-		{job: "oldstable", line: 60, occurrence: 3},
-		{job: "build", line: 82, occurrence: 4},
+		{job: "oldstable", line: 88, occurrence: 3},
+		{job: "build", line: 110, occurrence: 4},
 	}
 	for _, test := range tests {
 		for _, variable := range []string{"GITHUB_ENV", "GITHUB_PATH"} {
@@ -539,12 +539,12 @@ func TestCIRequiredCommandCreditRejectsUntrustedPredecessors(t *testing.T) {
 		{
 			name: "oldstable", anchor: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n      - run: make check\n",
 			prefix: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n", suffix: "      - run: make check\n",
-			line: 60, occurrence: 2, rule: "workflow.ci_oldstable_check", message: "oldstable job must execute unconditional make check",
+			line: 88, occurrence: 2, rule: "workflow.ci_oldstable_check", message: "oldstable job must execute unconditional make check",
 		},
 		{
 			name: "build", anchor: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n      - run: mkdir -p \"${{ runner.temp }}/build/${{ matrix.artifact }}\"\n",
 			prefix: "          cache-dependency-path: \"go.sum\\ntools/go.sum\"\n", suffix: "      - run: mkdir -p \"${{ runner.temp }}/build/${{ matrix.artifact }}\"\n",
-			line: 82, occurrence: 1, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
+			line: 110, occurrence: 1, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 		},
 	}
 	for _, job := range jobs {
@@ -650,7 +650,7 @@ func TestCIRequiredMakeOutputPathsMustBeExplicitAndExact(t *testing.T) {
 				"        env:\n" +
 				"          BUILD_DIR: ${{ runner.temp }}/oldstable/build\n" +
 				"          COVERAGE_DIR: ${{ runner.temp }}/oldstable/coverage\n",
-			jobLine: 60, blockCoverageLine: 81, rule: "workflow.ci_oldstable_check",
+			jobLine: 88, blockCoverageLine: 109, rule: "workflow.ci_oldstable_check",
 			message: "oldstable job must execute unconditional make check",
 		},
 	}
@@ -831,7 +831,7 @@ func TestMakeTargetCreditRejectsWorkflowBypasses(t *testing.T) {
 		},
 		{
 			name: "oldstable alternate makefile", old: "      - run: make check\n", new: "      - run: make --file=other.mk check\n", occurrence: 2,
-			finding: policyFinding{Path: ".github/workflows/ci.yml", Line: 60, Rule: "workflow.ci_oldstable_check", Message: "oldstable job must execute unconditional make check"},
+			finding: policyFinding{Path: ".github/workflows/ci.yml", Line: 88, Rule: "workflow.ci_oldstable_check", Message: "oldstable job must execute unconditional make check"},
 		},
 		{
 			name: "quality job makeflags", old: "    timeout-minutes: 20\n", new: "    timeout-minutes: 20\n    env:\n      MAKEFLAGS: -n\n", occurrence: 1,
@@ -1396,6 +1396,58 @@ func TestCINativeRequiresCleanInstallDaemonAndExactUninstallLifecycle(t *testing
 	}
 }
 
+func TestCINativeRequiresInstalledUpgradeRollbackAndStaleSocketProof(t *testing.T) {
+	name := &policyYAMLScalar{value: "Exercise native installed upgrade, rollback, and stale-socket recovery"}
+	complete := `old_source="${RUNNER_TEMP}/native/stage5-source"
+old_binary="${RUNNER_TEMP}/native/bin/amsftp-stage5"
+git archive 312bcccbcbd54246bbe5ff9babf4f14560449176
+-o "${old_binary}" ./cmd/amsftp
+install_atomically "${old_binary}"
+"${installed}" daemon
+install_atomically "${native_binary}"
+"${installed}" daemon status --format json
+kill -TERM "${daemon_pid}"
+"${installed}" daemon
+kill -KILL "${daemon_pid}"
+test -S "${control_socket}"
+stale_socket_probe_rc=
+test "${stale_socket_probe_rc}" -ne 0
+"${installed}" daemon
+test -S "${control_socket}"
+install_atomically "${old_binary}"
+database_before=
+"${installed}" daemon
+"${native_binary}" job list --format json
+grep -F 'durable transfer service is unavailable'
+database_after=
+test "${database_before}" = "${database_after}"
+install_atomically "${native_binary}"
+"${installed}" daemon
+"${installed}" job list --format json`
+	tests := []struct {
+		name   string
+		script string
+		want   bool
+	}{
+		{name: "complete composition", script: complete, want: true},
+		{name: "missing frozen Stage 5 build", script: strings.Replace(complete, "git archive 312bcccbcbd54246bbe5ff9babf4f14560449176\n", "", 1)},
+		{name: "missing live upgrade", script: strings.Replace(complete, `install_atomically "${native_binary}"`, "", 1)},
+		{name: "missing stale socket refusal", script: strings.Replace(complete, `test "${stale_socket_probe_rc}" -ne 0`, "", 1)},
+		{name: "missing rollback byte preservation", script: strings.Replace(complete, `test "${database_before}" = "${database_after}"`, "", 1)},
+		{name: "missing current recovery", script: strings.TrimSuffix(complete, `
+"${installed}" job list --format json`)},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			run := &policyYAMLScalar{value: test.script}
+			job := workflowJob{steps: []workflowStep{{name: name, run: run}}}
+			if got := nativeLifecycleProvesInstalledUpgradeRollbackAndStaleSocket(job); got != test.want {
+				t.Fatalf("nativeLifecycleProvesInstalledUpgradeRollbackAndStaleSocket() = %v, want %v", got, test.want)
+			}
+		})
+	}
+}
+
 func TestCINativeRequiresLoopbackHomebrewPreviewLifecycle(t *testing.T) {
 	root := prepareFixture(t, "valid")
 	replacePolicyFile(t, root, ".github/workflows/ci.yml",
@@ -1469,7 +1521,7 @@ func TestCIOldstableContract(t *testing.T) {
 			} else {
 				replacePolicyFile(t, root, ".github/workflows/ci.yml", test.old, test.new)
 			}
-			assertPolicyFinding(t, root, policyFinding{Path: ".github/workflows/ci.yml", Line: 60, Rule: test.rule, Message: test.message})
+			assertPolicyFinding(t, root, policyFinding{Path: ".github/workflows/ci.yml", Line: 88, Rule: test.rule, Message: test.message})
 		})
 	}
 }
@@ -1505,7 +1557,7 @@ func TestCIOldstableSetupMustBeUnconditionalAndPrecedeCheck(t *testing.T) {
 			root := prepareFixture(t, "valid")
 			replacePolicyFile(t, root, ".github/workflows/ci.yml", setup+check, test.replacement)
 			want := policyFinding{
-				Path: ".github/workflows/ci.yml", Line: 60, Rule: "workflow.ci_oldstable_toolchain",
+				Path: ".github/workflows/ci.yml", Line: 88, Rule: "workflow.ci_oldstable_toolchain",
 				Message: "oldstable job must select Go 1.25.12 with actions/setup-go",
 			}
 			assertPolicyFinding(t, root, want)
@@ -1531,7 +1583,7 @@ func TestCIOldstableTrustedPrefixAllowsOnlySuffixExtensions(t *testing.T) {
 			root := prepareFixture(t, "valid")
 			replacePolicyFile(t, root, ".github/workflows/ci.yml", setup+check, test.replacement)
 			want := policyFinding{
-				Path: ".github/workflows/ci.yml", Line: 60, Rule: "workflow.ci_oldstable_toolchain",
+				Path: ".github/workflows/ci.yml", Line: 88, Rule: "workflow.ci_oldstable_toolchain",
 				Message: "oldstable job must select Go 1.25.12 with actions/setup-go",
 			}
 			if test.wantFinding {
@@ -1562,7 +1614,7 @@ func TestCIOldstableCheckRequiresEffectiveLocalToolchain(t *testing.T) {
 			newRun := strings.Replace(oldRun, "        env:\n", "        env:\n          GOTOOLCHAIN: "+test.value+"\n", 1)
 			replacePolicyFile(t, root, path, oldRun, newRun)
 			assertPolicyFinding(t, root, policyFinding{
-				Path: path, Line: 60, Rule: "workflow.ci_oldstable_check", Message: message,
+				Path: path, Line: 88, Rule: "workflow.ci_oldstable_check", Message: message,
 			})
 		})
 	}
@@ -1593,7 +1645,7 @@ func TestCIBuildMatrix(t *testing.T) {
 			root := prepareFixture(t, "valid")
 			replacePolicyFile(t, root, ".github/workflows/ci.yml", test.old, test.new)
 			assertPolicyFinding(t, root, policyFinding{
-				Path: ".github/workflows/ci.yml", Line: 82, Rule: "workflow.ci_build_matrix",
+				Path: ".github/workflows/ci.yml", Line: 110, Rule: "workflow.ci_build_matrix",
 				Message: "build job matrix must contain exactly the four approved GOOS/GOARCH/artifact tuples",
 			})
 		})
@@ -1622,7 +1674,7 @@ func TestCIBuildCommand(t *testing.T) {
 			root := prepareFixture(t, "valid")
 			replacePolicyFile(t, root, ".github/workflows/ci.yml", test.old, test.new)
 			assertPolicyFinding(t, root, policyFinding{
-				Path: ".github/workflows/ci.yml", Line: 82, Rule: "workflow.ci_build_command",
+				Path: ".github/workflows/ci.yml", Line: 110, Rule: "workflow.ci_build_command",
 				Message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 			})
 		})
@@ -1659,7 +1711,7 @@ func TestCINativeAndBuildCommandsRejectUnsafeExecution(t *testing.T) {
 			name: "cross build masks failure",
 			old:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
 			new:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp || true\n",
-			line: 82, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
+			line: 110, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 		},
 		{
 			name: "native build custom shell",
@@ -1677,7 +1729,7 @@ func TestCINativeAndBuildCommandsRejectUnsafeExecution(t *testing.T) {
 			name: "cross build custom shell",
 			old:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
 			new:  "      - shell: /bin/true {0}\n        run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
-			line: 82, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
+			line: 110, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 		},
 		{
 			name: "native build pipeline masks failure",
@@ -1731,25 +1783,25 @@ func TestCINativeAndBuildCommandsRejectUnsafeExecution(t *testing.T) {
 			name: "cross build dry run short flag",
 			old:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
 			new:  "      - run: go build -n -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
-			line: 82, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
+			line: 110, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 		},
 		{
 			name: "cross build dry run equals flag",
 			old:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
 			new:  "      - run: go build -n=true -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
-			line: 82, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
+			line: 110, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 		},
 		{
 			name: "cross build rejects duplicate output",
 			old:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
 			new:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/first\" -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
-			line: 82, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
+			line: 110, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 		},
 		{
 			name: "cross build rejects extra target",
 			old:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp\n",
 			new:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/${{ matrix.artifact }}\" ./cmd/amsftp ./cmd/other\n",
-			line: 82, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
+			line: 110, rule: "workflow.ci_build_command", message: "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp",
 		},
 		{
 			name: "combined smoke cannot receive duplicate credit",
@@ -1860,7 +1912,7 @@ func TestCIGoFlagsEnvironmentPrecedence(t *testing.T) {
 		root := prepareFixture(t, "valid")
 		replacePolicyFile(t, root, path, topAnchor, topAnchor+"env:\n  GOFLAGS: -n\n")
 		assertPolicyFinding(t, root, policyFinding{Path: path, Line: 28, Rule: nativeRule, Message: nativeMessage})
-		assertPolicyFinding(t, root, policyFinding{Path: path, Line: 84, Rule: buildRule, Message: buildMessage})
+		assertPolicyFinding(t, root, policyFinding{Path: path, Line: 112, Rule: buildRule, Message: buildMessage})
 	})
 
 	t.Run("native job value is rejected", func(t *testing.T) {
@@ -1896,7 +1948,7 @@ func TestCIGoFlagsEnvironmentPrecedence(t *testing.T) {
 		root := prepareFixture(t, "valid")
 		replacement := "    timeout-minutes: 30\n    env:\n      GOFLAGS: -n\n"
 		replacePolicyFileOccurrence(t, root, path, "    timeout-minutes: 30\n", replacement, 3)
-		assertPolicyFinding(t, root, policyFinding{Path: path, Line: 82, Rule: buildRule, Message: buildMessage})
+		assertPolicyFinding(t, root, policyFinding{Path: path, Line: 110, Rule: buildRule, Message: buildMessage})
 	})
 
 	t.Run("cross job empty overrides workflow value", func(t *testing.T) {
@@ -1910,7 +1962,7 @@ func TestCIGoFlagsEnvironmentPrecedence(t *testing.T) {
 	t.Run("cross step value is rejected", func(t *testing.T) {
 		root := prepareFixture(t, "valid")
 		replacePolicyFile(t, root, path, crossBuild+"        env:\n", crossBuild+"        env:\n          GOFLAGS: -n\n")
-		assertPolicyFinding(t, root, policyFinding{Path: path, Line: 82, Rule: buildRule, Message: buildMessage})
+		assertPolicyFinding(t, root, policyFinding{Path: path, Line: 110, Rule: buildRule, Message: buildMessage})
 	})
 
 	t.Run("cross step empty overrides job value", func(t *testing.T) {
@@ -2018,7 +2070,7 @@ func TestCIBuildRequiresExactRunnerTempPaths(t *testing.T) {
 			}
 			writePolicyFile(t, root, path, strings.ReplaceAll(content, oldDirectory, test.newDirectory))
 			assertPolicyFinding(t, root, policyFinding{
-				Path: path, Line: 82, Rule: "workflow.ci_build_command", Message: message,
+				Path: path, Line: 110, Rule: "workflow.ci_build_command", Message: message,
 			})
 		})
 	}
@@ -2059,7 +2111,7 @@ func TestCIBuildOutputBasenameMustEqualArtifact(t *testing.T) {
 			root := prepareFixture(t, "valid")
 			replacePolicyFile(t, root, path, oldPath, test.newPath)
 			assertPolicyFinding(t, root, policyFinding{
-				Path: path, Line: 82, Rule: "workflow.ci_build_command", Message: message,
+				Path: path, Line: 110, Rule: "workflow.ci_build_command", Message: message,
 			})
 		})
 	}

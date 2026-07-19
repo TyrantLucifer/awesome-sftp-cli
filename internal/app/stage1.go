@@ -469,8 +469,12 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 		}
 		return daemon.NewClient(ctx, connection, buildinfo.Current().String(), fmt.Sprintf("client-%d", os.Getpid()))
 	}
-	if client, err := connect(); err == nil {
+	client, connectErr := connect()
+	if connectErr == nil {
 		return client, nil
+	}
+	if err := requireAbsentControlSocketForAutostart(paths.ControlSocket, connectErr); err != nil {
+		return nil, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -478,6 +482,7 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 	}
 	// #nosec G204 -- os.Executable returns this already-running, trusted binary; no user command is accepted.
 	command := exec.Command(executable, "daemon")
+	configureDaemonAutostart(command)
 	command.Stdin, command.Stdout, command.Stderr = nil, nil, nil
 	if err := command.Start(); err != nil {
 		return nil, fmt.Errorf("start daemon: %w", err)
@@ -498,6 +503,17 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 		}
 	}
 	return nil, fmt.Errorf("daemon did not become ready: %w", lastErr)
+}
+
+func requireAbsentControlSocketForAutostart(path string, connectErr error) error {
+	_, inspectErr := os.Lstat(path)
+	if errors.Is(inspectErr, os.ErrNotExist) {
+		return nil
+	}
+	if inspectErr != nil {
+		return fmt.Errorf("inspect control socket after connection failure: %w", inspectErr)
+	}
+	return fmt.Errorf("control socket still exists after connection failure: %w", connectErr)
 }
 
 func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {

@@ -279,7 +279,7 @@ def main():
         if not os.path.isabs(persistent_root) or not os.path.isdir(persistent_root):
             raise SystemExit("AMSFTP_TEST_PERSISTENT_ROOT must be an existing absolute directory")
     root = tempfile.mkdtemp(prefix="amsftp-stage2-mvp-", dir=persistent_root)
-    daemon_group = None
+    environment = None
     try:
         if sys.platform.startswith("linux"):
             installed_binary = os.path.join(root, "amsftp")
@@ -307,7 +307,7 @@ def main():
             payload = b"stage2-local-user-visible-mvp\n"
             with open(os.path.join(source, "payload.txt"), "wb") as handle:
                 handle.write(payload)
-            daemon_group = run_copy(binary, observer, source, destination, environment, "payload.txt", os.path.join(destination, "payload.txt"))
+            run_copy(binary, observer, source, destination, environment, "payload.txt", os.path.join(destination, "payload.txt"))
             with open(os.path.join(destination, "payload.txt"), "rb") as handle:
                 copied = handle.read()
             if copied != payload:
@@ -335,7 +335,7 @@ def main():
             upload_payload = b"stage2-user-visible-upload\n"
             with open(os.path.join(source, "upload.txt"), "wb") as handle:
                 handle.write(upload_payload)
-            daemon_group = run_copy(binary, observer, source, alias + ":" + upload_directory, environment, "upload.txt", os.path.join(upload_directory, "upload.txt"))
+            run_copy(binary, observer, source, alias + ":" + upload_directory, environment, "upload.txt", os.path.join(upload_directory, "upload.txt"))
             with open(os.path.join(upload_directory, "upload.txt"), "rb") as handle:
                 uploaded = handle.read()
             if uploaded != upload_payload:
@@ -351,11 +351,15 @@ def main():
             prove_reattach(binary, observer, source, destination, environment)
             print("Stage 2 temporary-sshd PTY upload, download, and durable Jobs MVP passed")
     finally:
-        if daemon_group is not None:
-            try:
-                os.killpg(daemon_group, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        if environment is not None:
+            subprocess.run(
+                [binary, "daemon", "stop", "--format", "json"],
+                env=environment,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+            )
         shutil.rmtree(root, ignore_errors=True)
 
 

@@ -522,6 +522,7 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          fetch-depth: 0
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
@@ -677,6 +678,157 @@ jobs:
             "${prefix}/share/fish/vendor_completions.d/amsftp.fish"
           test ! -e "${installed}"
           test -f "${database}"
+          trap - EXIT
+      - name: Exercise native installed upgrade, rollback, and stale-socket recovery
+        run: |
+          set -euo pipefail
+          native_binary="${RUNNER_TEMP}/native/bin/amsftp"
+          old_source="${RUNNER_TEMP}/native/stage5-source"
+          old_binary="${RUNNER_TEMP}/native/bin/amsftp-stage5"
+          install_root="${RUNNER_TEMP}/native/upgrade-install"
+          prefix="${install_root}/prefix"
+          installed="${prefix}/bin/amsftp"
+          if test "${RUNNER_OS}" = Linux; then
+            trusted_root="/var/lib/amsftp-tests/$(id -u)"
+          else
+            trusted_root="${HOME}/.amsftp-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          fi
+          upgrade_home="${trusted_root}/upgrade-home"
+          test ! -e "${old_source}"
+          test ! -e "${install_root}"
+          test ! -e "${upgrade_home}"
+          mkdir -p \
+            "${old_source}" \
+            "${prefix}/bin" \
+            "${upgrade_home}/config" \
+            "${upgrade_home}/state" \
+            "${upgrade_home}/cache" \
+            "${upgrade_home}/runtime"
+          chmod 0700 \
+            "${upgrade_home}" \
+            "${upgrade_home}/config" \
+            "${upgrade_home}/state" \
+            "${upgrade_home}/cache" \
+            "${upgrade_home}/runtime"
+          git archive 312bcccbcbd54246bbe5ff9babf4f14560449176 | tar -x -C "${old_source}"
+          (
+            cd "${old_source}"
+            CGO_ENABLED=0 go build -buildvcs=false -trimpath \
+              -ldflags='-X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.version=stage5 -X github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo.commit=312bcccbcbd54246bbe5ff9babf4f14560449176' \
+              -o "${old_binary}" ./cmd/amsftp
+          )
+          clean_env=(
+            "HOME=${upgrade_home}"
+            "XDG_CONFIG_HOME=${upgrade_home}/config"
+            "XDG_STATE_HOME=${upgrade_home}/state"
+            "XDG_CACHE_HOME=${upgrade_home}/cache"
+            "XDG_RUNTIME_DIR=${upgrade_home}/runtime"
+            "TMPDIR=${upgrade_home}/runtime"
+          )
+          install_atomically() {
+            source_binary="$1"
+            install -m 0755 "${source_binary}" "${installed}.next"
+            mv -f "${installed}.next" "${installed}"
+          }
+          wait_for_running() {
+            expected_version="$1"
+            for ((attempt = 0; attempt < 200; attempt++)); do
+              env "${clean_env[@]}" "${native_binary}" daemon status --format json >"${RUNNER_TEMP}/native/upgrade-status.json" 2>/dev/null || true
+              if grep -qF '"running":true' "${RUNNER_TEMP}/native/upgrade-status.json" && \
+                 grep -qF "${expected_version}" "${RUNNER_TEMP}/native/upgrade-status.json"; then
+                return 0
+              fi
+              sleep 0.05
+            done
+            return 1
+          }
+          daemon_pid=""
+          cleanup_upgrade_daemon() {
+            env "${clean_env[@]}" "${native_binary}" daemon stop --confirm stop --format json >/dev/null 2>&1 || true
+            if test -n "${daemon_pid}" && kill -0 "${daemon_pid}" 2>/dev/null; then
+              kill -KILL "${daemon_pid}" 2>/dev/null || true
+              wait "${daemon_pid}" 2>/dev/null || true
+            fi
+          }
+          trap cleanup_upgrade_daemon EXIT
+
+          install_atomically "${old_binary}"
+          env "${clean_env[@]}" "${installed}" daemon >"${RUNNER_TEMP}/native/stage5-installed-daemon.log" 2>&1 &
+          daemon_pid=$!
+          wait_for_running 'stage5 commit=312bcccbcbd54246bbe5ff9babf4f14560449176'
+          install_atomically "${native_binary}"
+          env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F 'stage5 commit=312bcccbcbd54246bbe5ff9babf4f14560449176'
+          kill -TERM "${daemon_pid}"
+          wait "${daemon_pid}"
+
+          env "${clean_env[@]}" "${installed}" daemon >"${RUNNER_TEMP}/native/current-installed-daemon.log" 2>&1 &
+          daemon_pid=$!
+          wait_for_running 'commit='
+          env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'
+          control_socket="$(find "${upgrade_home}/runtime" -type s -name control-v1.sock -print -quit)"
+          test -n "${control_socket}"
+          kill -KILL "${daemon_pid}"
+          set +e
+          wait "${daemon_pid}"
+          killed_rc=$?
+          set -e
+          test "${killed_rc}" -ne 0
+          daemon_pid=""
+          test -S "${control_socket}"
+          set +e
+          env "${clean_env[@]}" "${native_binary}" daemon status --format json >"${RUNNER_TEMP}/native/stale-socket-status.json" 2>/dev/null
+          stale_socket_probe_rc=$?
+          set -e
+          test "${stale_socket_probe_rc}" -ne 0
+          env "${clean_env[@]}" "${installed}" daemon >"${RUNNER_TEMP}/native/stale-socket-recovery.log" 2>&1 &
+          daemon_pid=$!
+          wait_for_running 'commit='
+          test -S "${control_socket}"
+          env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json | grep -F '"running":false'
+          wait "${daemon_pid}"
+
+          if test "${RUNNER_OS}" = Linux; then
+            database="${upgrade_home}/state/amsftp/amsftp.db"
+          else
+            database="${upgrade_home}/Library/Application Support/io.github.tyrantlucifer.amsftp/state/amsftp.db"
+          fi
+          test -f "${database}"
+          install_atomically "${old_binary}"
+          database_before="$(python3 - "${database}" <<'PY'
+          import hashlib
+          import sys
+          with open(sys.argv[1], "rb") as stream:
+              print(hashlib.sha256(stream.read()).hexdigest())
+          PY
+          )"
+          env "${clean_env[@]}" "${installed}" daemon >"${RUNNER_TEMP}/native/stage5-rollback-daemon.log" 2>&1 &
+          daemon_pid=$!
+          wait_for_running 'stage5 commit=312bcccbcbd54246bbe5ff9babf4f14560449176'
+          set +e
+          env "${clean_env[@]}" "${native_binary}" job list --format json >"${RUNNER_TEMP}/native/stage5-rollback-job.out" 2>"${RUNNER_TEMP}/native/stage5-rollback-job.err"
+          rollback_rc=$?
+          set -e
+          test "${rollback_rc}" -ne 0
+          grep -F 'durable transfer service is unavailable' "${RUNNER_TEMP}/native/stage5-rollback-job.err"
+          kill -TERM "${daemon_pid}"
+          wait "${daemon_pid}"
+          database_after="$(python3 - "${database}" <<'PY'
+          import hashlib
+          import sys
+          with open(sys.argv[1], "rb") as stream:
+              print(hashlib.sha256(stream.read()).hexdigest())
+          PY
+          )"
+          test "${database_before}" = "${database_after}"
+
+          install_atomically "${native_binary}"
+          env "${clean_env[@]}" "${installed}" daemon >"${RUNNER_TEMP}/native/current-restored-daemon.log" 2>&1 &
+          daemon_pid=$!
+          wait_for_running 'commit='
+          env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'
+          env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json | grep -F '"running":false'
+          wait "${daemon_pid}"
+          daemon_pid=""
           trap - EXIT
       - name: Run OpenSSH 8.9p1 compatibility floor
         if: matrix.os == 'ubuntu-22.04'
