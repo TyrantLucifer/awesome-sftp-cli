@@ -90,6 +90,31 @@ func TestREL009OperationsRunbookKeepsDiagnosticsAndFallbacksBounded(t *testing.T
 	}
 }
 
+func TestWORK006RunbookDocumentsNonDestructiveWorkspaceExportAndRepair(t *testing.T) {
+	t.Parallel()
+	runbook := readREL009Document(t, "../../docs/operations/runbook.md")
+	assertREL009Order(t, runbook, []string{
+		"## Workspace migration recovery",
+		"`amsftp daemon stop --confirm stop --format json`",
+		"`~/Library/Application Support/io.github.tyrantlucifer.amsftp/state/workspaces/`",
+		"`${XDG_STATE_HOME:-~/.local/state}/amsftp/workspaces/`",
+		"`<name>.json`",
+		"`<name>.schema-v1.backup`",
+		"mode `0600`",
+		"new workspace name",
+	})
+	for _, required := range []string{
+		"invalid source is never overwritten",
+		"migration backup is never overwritten",
+		"Never edit the original or migration backup in place",
+		"copy the exact bytes to a separate owner-private location",
+	} {
+		if !strings.Contains(runbook, required) {
+			t.Errorf("workspace recovery guide missing %q", required)
+		}
+	}
+}
+
 func TestREL009ReleaseLifecycleDocumentsExactUpgradeRollbackAndUninstall(t *testing.T) {
 	t.Parallel()
 	upgrade := readREL009Document(t, "../../docs/release/UPGRADE.md")

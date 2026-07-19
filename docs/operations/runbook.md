@@ -20,6 +20,16 @@ Do not paste raw paths, commands, credentials, tickets, file contents, or unrevi
 
 After an uncertain commit, move, delete, daemon crash, or migration failure, do not delete the database, cache, socket, part file, or recovery record. Stop new mutation, preserve the exact release identity and state directory, and use the recorded Job/recovery status. AMSFTP revalidates source, part, final, and checkpoint identities before continuing; it does not blindly replay an uncertain destructive effect.
 
+## Workspace migration recovery
+
+1. Stop workspace mutation with `amsftp daemon stop --confirm stop --format json` before inspecting or copying a workspace document.
+2. Locate the owner-private workspace root. On macOS it is `~/Library/Application Support/io.github.tyrantlucifer.amsftp/state/workspaces/`; on Linux it is `${XDG_STATE_HOME:-~/.local/state}/amsftp/workspaces/`.
+3. Preserve `<name>.json`. A successful schema-v1 migration also preserves the exact original as `<name>.schema-v1.backup` before publishing schema v2. An invalid source is never overwritten, and the migration backup is never overwritten.
+4. Never edit the original or migration backup in place. To export evidence or begin repair, copy the exact bytes to a separate owner-private location and keep the copy at mode `0600`.
+5. Repair only the separate copy against the strict workspace schema and retain the original evidence. With the daemon still stopped, install the repaired document under a new workspace name (ASCII letter or digit first; then only letters, digits, `.`, `_`, or `-`) and mode `0600`; do not replace either preserved file. Restart the daemon and select the new name only after it appears without a problem in the workspace picker.
+
+If the original and `<name>.schema-v1.backup` differ, or a migration reports a backup conflict, stop. Preserve both files and escalate with the stable error and reviewed evidence rather than choosing one automatically.
+
 ## Helper and direct-transfer fallback
 
 Use `amsftp helper status work --format json` to inspect the negotiated capability snapshot. Level 0 standard SFTP remains safe and supported when Helper is absent, disabled, incompatible, or rejected. Same-host optimizations degrade to normal SFTP behavior; a direct-transfer candidate degrades to the bounded local relay when its frozen identity, authentication, capability, or policy checks do not pass.

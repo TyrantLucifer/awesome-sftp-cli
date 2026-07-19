@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -276,6 +277,9 @@ func TestStoreDoesNotOverwriteV1FixtureWhenMigrationDecodeFails(t *testing.T) {
 	if !reflect.DeepEqual(after, before) {
 		t.Fatalf("invalid v1 workspace changed: got %q, want %q", after, before)
 	}
+	if _, err := os.Lstat(store.legacyBackupPath("legacy")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("invalid v1 migration backup exists or is unreadable: %v", err)
+	}
 }
 
 func TestStoreLoadsV1AndNextSaveWritesOnlyV2(t *testing.T) {
@@ -312,5 +316,194 @@ func TestStoreLoadsV1AndNextSaveWritesOnlyV2(t *testing.T) {
 		if !strings.Contains(string(saved), want) {
 			t.Fatalf("saved migration missing %s: %s", want, saved)
 		}
+	}
+}
+
+func TestStoreMigrationPublishesExactPrivateV1BackupBeforeV2(t *testing.T) {
+	store, err := NewStore(filepath.Join(testkit.PersistentTempDir(t), "workspaces"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	historicalPath := filepath.Join("..", "compatibility", "testdata", "historical", "workspace-v1-stage1.json")
+	historical, err := os.ReadFile(historicalPath) //nolint:gosec // fixed repository fixture path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspacePath := store.path("legacy")
+	//nolint:gosec // workspacePath is store-derived beneath this test's owner-private persistent root.
+	if err := os.WriteFile(workspacePath, historical, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	document, err := store.Load("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return document.UpdatedAt }
+	store.beforeRename = func() error {
+		backup, readErr := os.ReadFile(store.legacyBackupPath("legacy")) //nolint:gosec // store-derived test path.
+		if readErr != nil {
+			return readErr
+		}
+		if !reflect.DeepEqual(backup, historical) {
+			t.Fatalf("backup bytes changed before publication")
+		}
+		info, statErr := os.Stat(store.legacyBackupPath("legacy"))
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode().Perm() != 0o600 {
+			t.Fatalf("backup mode = %04o, want 0600", info.Mode().Perm())
+		}
+		current, readErr := os.ReadFile(workspacePath) //nolint:gosec // store-derived test path.
+		if readErr != nil {
+			return readErr
+		}
+		if !reflect.DeepEqual(current, historical) {
+			t.Fatalf("source changed before v2 publication")
+		}
+		return nil
+	}
+	if err := store.Save("legacy", document); err != nil {
+		t.Fatal(err)
+	}
+	backup, err := os.ReadFile(store.legacyBackupPath("legacy")) //nolint:gosec // store-derived test path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(backup, historical) {
+		t.Fatalf("published backup bytes changed")
+	}
+}
+
+func TestStoreMigrationBackupIsIdempotentAcrossInterruptedRetry(t *testing.T) {
+	store, err := NewStore(filepath.Join(testkit.PersistentTempDir(t), "workspaces"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspacePath := store.path("legacy")
+	legacy := []byte(v1WorkspaceFixture)
+	if err := os.WriteFile(workspacePath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	document, err := store.Load("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.now = func() time.Time { return document.UpdatedAt }
+	interrupted := errors.New("interrupt after backup")
+	store.beforeRename = func() error { return interrupted }
+	if err := store.Save("legacy", document); !errors.Is(err, interrupted) {
+		t.Fatalf("first Save() error = %v, want interruption", err)
+	}
+	beforeRetry, err := os.ReadFile(store.legacyBackupPath("legacy")) //nolint:gosec // store-derived test path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(beforeRetry, legacy) {
+		t.Fatalf("interrupted backup bytes changed")
+	}
+	current, err := os.ReadFile(workspacePath) //nolint:gosec // store-derived test path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(current, legacy) {
+		t.Fatalf("interrupted migration changed source")
+	}
+	store.beforeRename = nil
+	if err := store.Save("legacy", document); err != nil {
+		t.Fatal(err)
+	}
+	afterRetry, err := os.ReadFile(store.legacyBackupPath("legacy")) //nolint:gosec // store-derived test path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(afterRetry, beforeRetry) {
+		t.Fatalf("retry replaced migration backup")
+	}
+}
+
+func TestStoreMigrationBackupRemainsExactWhenSourceChangesBeforePublication(t *testing.T) {
+	store, err := NewStore(filepath.Join(testkit.PersistentTempDir(t), "workspaces"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(v1WorkspaceFixture)
+	workspacePath := store.path("legacy")
+	if err := os.WriteFile(workspacePath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	document, err := store.Load("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.beforeRename = func() error {
+		return os.WriteFile(workspacePath, []byte(v2WorkspaceFixture), 0o600)
+	}
+	if err := store.Save("legacy", document); err == nil || !strings.Contains(err.Error(), "existing document changed before replace") {
+		t.Fatalf("Save() error = %v, want changed-source refusal", err)
+	}
+	backup, err := os.ReadFile(store.legacyBackupPath("legacy")) //nolint:gosec // store-derived test path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(backup, legacy) {
+		t.Fatalf("backup followed in-place source change")
+	}
+	current, err := os.ReadFile(workspacePath) //nolint:gosec // store-derived test path.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(current, []byte(v2WorkspaceFixture)) {
+		t.Fatalf("Save() replaced concurrently changed source")
+	}
+}
+
+func TestStoreMigrationRefusesConflictingBackupWithoutReplacingEitherFile(t *testing.T) {
+	store, err := NewStore(filepath.Join(testkit.PersistentTempDir(t), "workspaces"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy := []byte(v1WorkspaceFixture)
+	workspacePath := store.path("legacy")
+	if err := os.WriteFile(workspacePath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	conflict := []byte("conflicting preserved bytes")
+	backupPath := store.legacyBackupPath("legacy")
+	if err := os.WriteFile(backupPath, conflict, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	document, err := store.Load("legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("legacy", document); err == nil || !strings.Contains(err.Error(), "migration backup conflicts") {
+		t.Fatalf("Save() error = %v, want migration backup conflict", err)
+	}
+	for path, want := range map[string][]byte{workspacePath: legacy, backupPath: conflict} {
+		got, readErr := os.ReadFile(path) //nolint:gosec // store-derived test path.
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s changed: got %q, want %q", path, got, want)
+		}
+	}
+}
+
+func TestStoreV2SaveDoesNotCreateLegacyBackup(t *testing.T) {
+	store, err := NewStore(filepath.Join(testkit.PersistentTempDir(t), "workspaces"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	document := testDocument()
+	if err := store.Save("current", document); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save("current", document); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(store.legacyBackupPath("current")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("v2 legacy backup exists or is unreadable: %v", err)
 	}
 }
