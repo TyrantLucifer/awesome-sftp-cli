@@ -203,6 +203,18 @@ func TestWorkflowProvenancePolicyRejectsKerberosWorkloadDrift(t *testing.T) {
 	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
 }
 
+func TestWorkflowProvenancePolicyRejectsVendorSFTPWorkloadDrift(t *testing.T) {
+	content := replaceInWorkflowStep(
+		t,
+		readCanonicalWorkflow(t, ".github/workflows/ci.yml"),
+		"auth-integration",
+		"Run real ProFTPD vendor SFTP matrix",
+		`bash ./internal/integration/hosted-vendor-sftp.sh`,
+		`":"`,
+	)
+	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
+}
+
 func TestWorkflowProvenancePolicyRequiresInternalPreviewBundleSSHDataflow(t *testing.T) {
 	tests := []struct {
 		name string

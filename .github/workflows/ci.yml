@@ -398,7 +398,9 @@ jobs:
             krb5-kdc \
             krb5-user \
             netcat-openbsd \
-            openssh-server
+            openssh-server \
+            proftpd-core \
+            proftpd-mod-crypto
       - name: Capture current OpenSSH version
         run: |
           set -euo pipefail
@@ -425,6 +427,21 @@ jobs:
           esac
           mkdir -p "${RUNNER_TEMP}/auth-integration"
           printf '%s\n' "${kerberos_version}" | tee "${RUNNER_TEMP}/auth-integration/kerberos-current-version"
+      - name: Capture current ProFTPD vendor SFTP version
+        run: |
+          set -euo pipefail
+          proftpd_version="$(/usr/sbin/proftpd -v 2>&1)"
+          case "${proftpd_version}" in
+            ProFTPD\ Version\ *) ;;
+            *)
+              printf 'system proftpd did not report a ProFTPD version\n' >&2
+              exit 1
+              ;;
+          esac
+          {
+            printf '%s\n' "${proftpd_version}"
+            dpkg-query -W -f='${Package}=${Version}\n' proftpd-core proftpd-mod-crypto | LC_ALL=C sort
+          } | tee "${RUNNER_TEMP}/auth-integration/proftpd-current-version"
       - name: Download internal preview bundle
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -462,6 +479,13 @@ jobs:
             AMSFTP_KERBEROS_EXPECT_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/kerberos-current-version")" \
             AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             bash ./internal/integration/hosted-kerberos.sh
+      - name: Run real ProFTPD vendor SFTP matrix
+        run: |
+          set -euo pipefail
+          AMSFTP_VENDOR_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \
+            AMSFTP_VENDOR_SFTP_EXPECT_VERSION_FILE="${RUNNER_TEMP}/auth-integration/proftpd-current-version" \
+            AMSFTP_VENDOR_SFTP_ROOT="/tmp/amsftp-vendor-sftp-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            bash ./internal/integration/hosted-vendor-sftp.sh
       - name: Record provenance
         run: |
           set -euo pipefail

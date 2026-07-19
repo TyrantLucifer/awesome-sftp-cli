@@ -313,7 +313,7 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 	case "quality":
 		return canonicalQualityPreviewBundleHandoff(job.steps[:recordIndex])
 	case "auth-integration":
-		return len(job.steps) == 11 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
+		return len(job.steps) == 13 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
 	case "build":
 		return len(job.steps) == 8 && canonicalBuildProducerPrefix(job.steps[:recordIndex])
 	case "fuzz":
@@ -330,7 +330,7 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 }
 
 func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
-	if len(steps) != 9 {
+	if len(steps) != 11 {
 		return false
 	}
 	return stepIsExactCheckout(steps[0]) && stepIsExactCurrentSetupGo(steps[1]) &&
@@ -343,7 +343,9 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`  krb5-kdc \`,
 			`  krb5-user \`,
 			`  netcat-openbsd \`,
-			`  openssh-server`,
+			`  openssh-server \`,
+			`  proftpd-core \`,
+			`  proftpd-mod-crypto`,
 		}) &&
 		canonicalRunStep(steps[3], "Capture current OpenSSH version", []string{
 			`set -euo pipefail`,
@@ -371,8 +373,23 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`mkdir -p "${RUNNER_TEMP}/auth-integration"`,
 			`printf '%s\n' "${kerberos_version}" | tee "${RUNNER_TEMP}/auth-integration/kerberos-current-version"`,
 		}) &&
-		canonicalPreviewBundleDownload(steps[5]) &&
-		canonicalRunStep(steps[6], "Verify and extract internal preview bundle", []string{
+		canonicalRunStep(steps[5], "Capture current ProFTPD vendor SFTP version", []string{
+			`set -euo pipefail`,
+			`proftpd_version="$(/usr/sbin/proftpd -v 2>&1)"`,
+			`case "${proftpd_version}" in`,
+			`  ProFTPD\ Version\ *) ;;`,
+			`  *)`,
+			`    printf 'system proftpd did not report a ProFTPD version\n' >&2`,
+			`    exit 1`,
+			`    ;;`,
+			`esac`,
+			`{`,
+			`  printf '%s\n' "${proftpd_version}"`,
+			`  dpkg-query -W -f='${Package}=${Version}\n' proftpd-core proftpd-mod-crypto | LC_ALL=C sort`,
+			`} | tee "${RUNNER_TEMP}/auth-integration/proftpd-current-version"`,
+		}) &&
+		canonicalPreviewBundleDownload(steps[6]) &&
+		canonicalRunStep(steps[7], "Verify and extract internal preview bundle", []string{
 			`set -euo pipefail`,
 			`bundle="${RUNNER_TEMP}/auth-integration/bundle"`,
 			`test "$(find "${bundle}" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 7`,
@@ -388,7 +405,7 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`"${installed}" --version | grep -F "0.1.0-internal commit=${GITHUB_SHA} dirty=false"`,
 			`tar -xOf "${archive}" amsftp_0.1.0-internal_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
 		}) &&
-		canonicalRunStep(steps[7], "Run real OpenSSH authentication matrix", []string{
+		canonicalRunStep(steps[8], "Run real OpenSSH authentication matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
 			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \`,
@@ -396,13 +413,20 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`  AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-auth.sh`,
 		}) &&
-		canonicalRunStep(steps[8], "Run real MIT Kerberos/GSSAPI matrix", []string{
+		canonicalRunStep(steps[9], "Run real MIT Kerberos/GSSAPI matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
 			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \`,
 			`  AMSFTP_KERBEROS_EXPECT_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/kerberos-current-version")" \`,
 			`  AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-kerberos.sh`,
+		}) &&
+		canonicalRunStep(steps[10], "Run real ProFTPD vendor SFTP matrix", []string{
+			`set -euo pipefail`,
+			`AMSFTP_VENDOR_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \`,
+			`  AMSFTP_VENDOR_SFTP_EXPECT_VERSION_FILE="${RUNNER_TEMP}/auth-integration/proftpd-current-version" \`,
+			`  AMSFTP_VENDOR_SFTP_ROOT="/tmp/amsftp-vendor-sftp-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
+			`  bash ./internal/integration/hosted-vendor-sftp.sh`,
 		})
 }
 

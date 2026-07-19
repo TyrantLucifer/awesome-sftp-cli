@@ -35,6 +35,24 @@ func TestRealSSHDLevel0Search(t *testing.T) {
 	runRealOpenSSHSFTP(t, true)
 }
 
+func TestRealProFTPDVendorSFTPLevel0AndDurableTransfers(t *testing.T) {
+	if os.Getenv("AMSFTP_REAL_VENDOR_SFTP") != "1" {
+		t.Skip("set AMSFTP_REAL_VENDOR_SFTP=1 with an isolated ProFTPD mod_sftp server")
+	}
+	alias := os.Getenv("AMSFTP_VENDOR_SFTP_ALIAS")
+	root := os.Getenv("AMSFTP_VENDOR_SFTP_ROOT")
+	if alias == "" || root == "" {
+		t.Fatal("AMSFTP_VENDOR_SFTP_ALIAS and AMSFTP_VENDOR_SFTP_ROOT are required")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	implementation, transport := connectSFTP(t, ctx, alias, root, "ep_vvvvvvvvvvvvvvvvvvvvvvvvvv")
+	defer implementation.Close()
+	defer transport.Close()
+	assertContainsEntry(t, ctx, implementation, "vendor-sftp-marker.txt")
+	assertVendorSFTPDurableTransfers(t, ctx, implementation)
+}
+
 func runRealOpenSSHSFTP(t *testing.T, searchOnly bool) {
 	t.Helper()
 	if os.Getenv("AMSFTP_REAL_SSHD") != "1" {
@@ -360,6 +378,73 @@ func assertBidirectionalDurableTransfer(t *testing.T, ctx context.Context, remot
 	downloaded, err := os.ReadFile(filepath.Join(downloadRoot, "downloaded.txt"))
 	if err != nil || string(downloaded) != "local-to-remote" {
 		t.Fatalf("local download = %q, %v", downloaded, err)
+	}
+}
+
+func assertVendorSFTPDurableTransfers(t *testing.T, ctx context.Context, remote *sftpprovider.Provider) {
+	t.Helper()
+	snapshot, err := remote.Snapshot(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := snapshot.Capabilities.Lookup("write"); !ok {
+		t.Fatalf("vendor SFTP capability snapshot = %#v, want extension-gated write", snapshot.Capabilities)
+	}
+
+	uploadRoot := t.TempDir()
+	if err := os.WriteFile(filepath.Join(uploadRoot, "vendor-upload-source.txt"), []byte("vendor-local-to-remote"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	uploadSource, err := localfs.New(localfs.Config{
+		Endpoint:  domain.Endpoint{ID: "ep_wwwwwwwwwwwwwwwwwwwwwwwwww", Kind: domain.EndpointLocal, DisplayName: "vendor-upload-source"},
+		SessionID: "sess_wwwwwwwwwwwwwwwwwwwwwwwwww",
+		Root:      uploadRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer uploadSource.Close()
+	resolver := transfer.MapResolver{uploadSource.Descriptor().ID: uploadSource, remote.Descriptor().ID: remote}
+	uploadPlanner := transfer.NewPlanner(resolver)
+	uploadReference, err := uploadPlanner.Capture(ctx, normalizeIntegration(t, ctx, uploadSource, "/vendor-upload-source.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadPlan, _, err := uploadPlanner.FreezeCopy(ctx, integrationFreezeRequest(t, 'v', uploadReference, normalizeIntegration(t, ctx, remote, "/"), "vendor-uploaded.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := transfer.NewWorker(resolver, newIntegrationJournal()).Execute(ctx, uploadPlan, nil); err != nil || result.Outcome != transfer.OutcomeCompleted {
+		t.Fatalf("local -> vendor SFTP transfer = (%#v, %v)", result, err)
+	}
+
+	downloadRoot := t.TempDir()
+	downloadDestination, err := localfs.New(localfs.Config{
+		Endpoint:  domain.Endpoint{ID: "ep_xxxxxxxxxxxxxxxxxxxxxxxxxx", Kind: domain.EndpointLocal, DisplayName: "vendor-download-destination"},
+		SessionID: "sess_xxxxxxxxxxxxxxxxxxxxxxxxxx",
+		Root:      downloadRoot,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer downloadDestination.Close()
+	resolver = transfer.MapResolver{remote.Descriptor().ID: remote, downloadDestination.Descriptor().ID: downloadDestination}
+	downloadPlanner := transfer.NewPlanner(resolver)
+	downloadReference, err := downloadPlanner.Capture(ctx, normalizeIntegration(t, ctx, remote, "/vendor-uploaded.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	downloadPlan, _, err := downloadPlanner.FreezeCopy(ctx, integrationFreezeRequest(t, 'w', downloadReference, normalizeIntegration(t, ctx, downloadDestination, "/"), "vendor-downloaded.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := transfer.NewWorker(resolver, newIntegrationJournal()).Execute(ctx, downloadPlan, nil); err != nil || result.Outcome != transfer.OutcomeCompleted {
+		t.Fatalf("vendor SFTP -> local transfer = (%#v, %v)", result, err)
+	}
+	// #nosec G304 -- downloadRoot is the private local destination created by this integration test.
+	downloaded, err := os.ReadFile(filepath.Join(downloadRoot, "vendor-downloaded.txt"))
+	if err != nil || string(downloaded) != "vendor-local-to-remote" {
+		t.Fatalf("vendor SFTP download = %q, %v", downloaded, err)
 	}
 }
 
