@@ -22,10 +22,10 @@ import (
 
 const (
 	ManifestFilename  = "manifest-v1.json"
+	ManifestFormat    = 1
 	maxManifestBytes  = 2 << 20
 	maxEndpointBytes  = 255
 	maxEntryPathBytes = 4096
-	manifestFormat    = 1
 	entryKind         = "entry"
 	materialKind      = "materialization"
 )
@@ -227,7 +227,7 @@ func (store *Store) CreateMaterialization(ctx context.Context, id cache.Material
 	}
 	contentClosed = true
 
-	manifest := MaterializationManifest{Format: manifestFormat, Kind: materialKind, MaterializationID: id, EntryID: entryID, BaselineBlobID: baseline.ID, ContentSHA256: computed.ID, ContentSize: computed.Size}
+	manifest := MaterializationManifest{Format: ManifestFormat, Kind: materialKind, MaterializationID: id, EntryID: entryID, BaselineBlobID: baseline.ID, ContentSHA256: computed.ID, ContentSize: computed.Size}
 	manifestBytes, err := encodeCanonicalManifest(manifest)
 	if err != nil {
 		cleanupContent()
@@ -328,7 +328,7 @@ func (store *Store) ReadMaterializationManifest(id cache.MaterializationID) (Mat
 	if err := readCanonicalManifest(manifestPath, &manifest); err != nil {
 		return MaterializationManifest{}, fmt.Errorf("read cache materialization manifest %q: %w", id, err)
 	}
-	if manifest.Format != manifestFormat || manifest.Kind != materialKind || manifest.MaterializationID != id {
+	if manifest.Format != ManifestFormat || manifest.Kind != materialKind || manifest.MaterializationID != id {
 		return MaterializationManifest{}, fmt.Errorf("%w: materialization manifest identity", ErrIdentityMismatch)
 	}
 	if _, err := cache.ParseEntryID(string(manifest.EntryID)); err != nil {
@@ -404,11 +404,11 @@ func buildEntryManifest(entryID cache.EntryID, endpointID string, canonicalPath 
 	if derived != entryID {
 		return EntryManifest{}, fmt.Errorf("%w: entry basename=%s derived=%s", ErrIdentityMismatch, entryID, derived)
 	}
-	return EntryManifest{Format: manifestFormat, Kind: entryKind, EntryID: entryID, EndpointID: endpointID, Path: ipc.EncodeWireBytes(canonicalPath), FingerprintStrength: fingerprint.Strength, Fingerprint: ipc.EncodeWireBytes(fingerprint.Canonical), BlobID: blob.ID, BlobSize: blob.Size}, nil
+	return EntryManifest{Format: ManifestFormat, Kind: entryKind, EntryID: entryID, EndpointID: endpointID, Path: ipc.EncodeWireBytes(canonicalPath), FingerprintStrength: fingerprint.Strength, Fingerprint: ipc.EncodeWireBytes(fingerprint.Canonical), BlobID: blob.ID, BlobSize: blob.Size}, nil
 }
 
 func validateEntryManifest(manifest EntryManifest, expected cache.EntryID) ([]byte, cache.Fingerprint, error) {
-	if manifest.Format != manifestFormat || manifest.Kind != entryKind || manifest.EntryID != expected {
+	if manifest.Format != ManifestFormat || manifest.Kind != entryKind || manifest.EntryID != expected {
 		return nil, cache.Fingerprint{}, fmt.Errorf("%w: cache entry manifest identity", ErrIdentityMismatch)
 	}
 	canonicalPath, err := manifest.Path.Decode()

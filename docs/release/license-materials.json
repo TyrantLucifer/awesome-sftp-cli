@@ -1,0 +1,277 @@
+{
+  "schema": "amsftp-third-party-materials-v1",
+  "modules": [
+    {
+      "path": "github.com/clipperhouse/displaywidth",
+      "version": "v0.11.0",
+      "resolved_path": "github.com/clipperhouse/displaywidth",
+      "resolved_version": "v0.11.0",
+      "license": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "fcdcc889a11c39c73d36019b838af41b418eb7811af12b746ace40c3074bb96c"
+        }
+      ]
+    },
+    {
+      "path": "github.com/clipperhouse/uax29/v2",
+      "version": "v2.7.0",
+      "resolved_path": "github.com/clipperhouse/uax29/v2",
+      "resolved_version": "v2.7.0",
+      "license": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "07e9e3daaccc707c9b7d535ed1405a65d37919fdd42197fe55e68820e974688c"
+        }
+      ]
+    },
+    {
+      "path": "github.com/dustin/go-humanize",
+      "version": "v1.0.1",
+      "resolved_path": "github.com/dustin/go-humanize",
+      "resolved_version": "v1.0.1",
+      "license": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "a973b4498c13eb74baa2a8e5c351426a6826f2fcdd909916dbe53ee2e755fd71"
+        }
+      ]
+    },
+    {
+      "path": "github.com/gdamore/encoding",
+      "version": "v1.0.1",
+      "resolved_path": "github.com/gdamore/encoding",
+      "resolved_version": "v1.0.1",
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "path": "github.com/gdamore/tcell/v3",
+      "version": "v3.4.0",
+      "resolved_path": "github.com/gdamore/tcell/v3",
+      "resolved_version": "v3.4.0",
+      "license": "Apache-2.0",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+        }
+      ]
+    },
+    {
+      "path": "github.com/google/uuid",
+      "version": "v1.6.0",
+      "resolved_path": "github.com/google/uuid",
+      "resolved_version": "v1.6.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "0a8d61ed3cbfd5312326e8126c31ce9c627a283adc99131b56896d29ada04b2d"
+        }
+      ]
+    },
+    {
+      "path": "github.com/kr/fs",
+      "version": "v0.1.0",
+      "resolved_path": "github.com/kr/fs",
+      "resolved_version": "v0.1.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"
+        }
+      ]
+    },
+    {
+      "path": "github.com/lucasb-eyer/go-colorful",
+      "version": "v1.4.0",
+      "resolved_path": "github.com/lucasb-eyer/go-colorful",
+      "resolved_version": "v1.4.0",
+      "license": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "1e4cf2a117516ec1b54041d68ed4f5d331878b04de3386f4790e7b5b9c04e1ec"
+        }
+      ]
+    },
+    {
+      "path": "github.com/mattn/go-isatty",
+      "version": "v0.0.20",
+      "resolved_path": "github.com/mattn/go-isatty",
+      "resolved_version": "v0.0.20",
+      "license": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "08eab1118c80885fa1fa6a6dd7303f65a379fcb3733e063d20d1bbc2c76e6fa1"
+        }
+      ]
+    },
+    {
+      "path": "github.com/ncruces/go-strftime",
+      "version": "v1.0.0",
+      "resolved_path": "github.com/ncruces/go-strftime",
+      "resolved_version": "v1.0.0",
+      "license": "MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "38ae43959daf953a393a585b2988672cb65a5a541aca0d0be5e72595a0a16883"
+        }
+      ]
+    },
+    {
+      "path": "github.com/pkg/sftp",
+      "version": "v1.13.11",
+      "resolved_path": "github.com/TyrantLucifer/sftp",
+      "resolved_version": "v1.13.12-0.20260715132526-f947b886400b",
+      "license": "BSD-2-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "f5b5087b8e596d015cfea7db26527fe67a196c18ca37415c288dd2534ff74c37"
+        }
+      ]
+    },
+    {
+      "path": "github.com/remyoudompheng/bigfft",
+      "version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "resolved_path": "github.com/remyoudompheng/bigfft",
+      "resolved_version": "v0.0.0-20230129092748-24d4a6f8daec",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "dd26a7abddd02e2d0aba97805b31f248ef7835d9e10da289b22e3b8ab78b324d"
+        }
+      ]
+    },
+    {
+      "path": "golang.org/x/crypto",
+      "version": "v0.54.0",
+      "resolved_path": "golang.org/x/crypto",
+      "resolved_version": "v0.54.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    },
+    {
+      "path": "golang.org/x/sys",
+      "version": "v0.47.0",
+      "resolved_path": "golang.org/x/sys",
+      "resolved_version": "v0.47.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    },
+    {
+      "path": "golang.org/x/term",
+      "version": "v0.45.0",
+      "resolved_path": "golang.org/x/term",
+      "resolved_version": "v0.45.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    },
+    {
+      "path": "golang.org/x/text",
+      "version": "v0.40.0",
+      "resolved_path": "golang.org/x/text",
+      "resolved_version": "v0.40.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "911f8f5782931320f5b8d1160a76365b83aea6447ee6c04fa6d5591467db9dad"
+        }
+      ]
+    },
+    {
+      "path": "modernc.org/libc",
+      "version": "v1.73.4",
+      "resolved_path": "modernc.org/libc",
+      "resolved_version": "v1.73.4",
+      "license": "BSD-3-Clause AND MIT",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "95ff867eb55a56935fa7492406cfa953fb7c13ca73f4c0a86ae05756b4605600"
+        },
+        {
+          "name": "LICENSE-3RD-PARTY.md",
+          "sha256": "f597097efe3d97021f89170746bd3a0fb9a8b6fb26b82043ed68a4e0283bee6c"
+        }
+      ]
+    },
+    {
+      "path": "modernc.org/mathutil",
+      "version": "v1.7.1",
+      "resolved_path": "modernc.org/mathutil",
+      "resolved_version": "v1.7.1",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "bfa9bf72a72ca009fd62a8f84fca3dca67e51d93af96352723646599898b6cf5"
+        }
+      ]
+    },
+    {
+      "path": "modernc.org/memory",
+      "version": "v1.11.0",
+      "resolved_path": "modernc.org/memory",
+      "resolved_version": "v1.11.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "59895e669f48f168b6b858358f6005779cdf40a265f7828813061b56af67b496"
+        },
+        {
+          "name": "LICENSE-GO",
+          "sha256": "2d36597f7117c38b006835ae7f537487207d8ec407aa9d9980794b2030cbc067"
+        },
+        {
+          "name": "LICENSE-MMAP-GO",
+          "sha256": "c2eba69f20d05414538c3a5df7694dde392e065ff70882e1625e90f5d6659fff"
+        }
+      ]
+    },
+    {
+      "path": "modernc.org/sqlite",
+      "version": "v1.53.0",
+      "resolved_path": "modernc.org/sqlite",
+      "resolved_version": "v1.53.0",
+      "license": "BSD-3-Clause",
+      "files": [
+        {
+          "name": "LICENSE",
+          "sha256": "c6fe05491a60ae13bcd223088d2705e36dede24e5587226231d2459ada5c4822"
+        }
+      ]
+    }
+  ]
+}

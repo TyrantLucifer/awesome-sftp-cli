@@ -116,14 +116,22 @@ func TestLevel2PolicyAndProductionClosureNeverInvokeDirectFixture(t *testing.T) 
 	})
 
 	t.Run("ordinary runtime is production closed", func(t *testing.T) {
-		fixturePlanner, request, destination := newLevel2PreflightPlanFixture(t, &level2PreflightFixture{result: passingLevel2PreflightResult})
-		planner := NewPlanner(fixturePlanner.resolver)
-		plan, _, err := planner.FreezeCopy(context.Background(), request)
-		if err != nil {
-			t.Fatal(err)
+		policies := []DirectPolicy{
+			{Integrity: IntegrityStrong},
+			{Integrity: IntegrityRequireStrong},
+			{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: IntegrityStrong},
 		}
-		if plan.Route != RouteSFTPRelay || plan.Level2Preflight != nil || plan.RouteEvidence.Candidates[0].Reason != ReasonProductionDistributionClosed {
-			t.Fatalf("production-closed Plan for %q = %#v", destination.Descriptor().SSHHostAlias, plan)
+		for _, policy := range policies {
+			fixturePlanner, request, destination := newLevel2PreflightPlanFixture(t, &level2PreflightFixture{result: passingLevel2PreflightResult})
+			request.Intent.DirectPolicy = policy
+			planner := NewPlanner(fixturePlanner.resolver)
+			plan, _, err := planner.FreezeCopy(context.Background(), request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if plan.Route != RouteSFTPRelay || plan.Level2Preflight != nil || plan.RouteEvidence.Candidates[0].Reason != ReasonProductionDistributionClosed {
+				t.Fatalf("production-closed Plan for %q and policy %#v = %#v", destination.Descriptor().SSHHostAlias, policy, plan)
+			}
 		}
 	})
 }

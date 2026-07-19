@@ -11,8 +11,20 @@ This repository treats documentation as part of the product contract. A feature 
 5. [Implementation plan](../IMPLEMENTATION_PLAN.md) tracks stage-level execution.
 6. [Stage specifications](stages/) define scope, tests, exit criteria, and handoff requirements for each stage.
 7. [Testing strategy](testing/strategy.md) defines the validation ladder and required fixtures.
-8. [Stage verification](verification/stage-05.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 0–4 ledgers remain immutable historical evidence.
+8. [Stage verification](verification/stage-06.md) records the active stage's exact evidence, candidate identity, and handoff gates; the Stage 0–5 ledgers remain immutable historical evidence.
 9. [Project state](../PROJECT_STATE.md) is the short, current handoff for the next work session.
+
+## User and operations path
+
+Follow this order for a first installation or a recovery rehearsal:
+
+1. [Install](release/INSTALL.md) the exact platform archive and verify its published identity.
+2. Complete the [First run](user/getting-started.md), including SSH and Kerberos prerequisites, configuration validation, daemon health, workspaces, and the default keymap.
+3. Use the [Durable Transfers guide](user/durable-transfers.md) for transfer safety, conflict decisions, Helper and direct transfer boundaries, and durable Job recovery.
+4. Keep the [Operations and recovery](operations/runbook.md) runbook with the [troubleshooting](user/troubleshooting.md) code map for read-only doctor triage and bounded recovery.
+5. Use [Upgrade and rollback](release/UPGRADE.md) for a version change or release withdrawal, and [Uninstall](release/UNINSTALL.md) for exact binary/service removal without implicit data deletion.
+
+These documents describe the current public surface. Production Helper and direct-transfer Level 2 remain closed until their separately listed release-trust gates pass.
 
 ## Engineering gates
 
@@ -22,6 +34,14 @@ This repository treats documentation as part of the product contract. A feature 
 - [Durable Transfers guide](user/durable-transfers.md) documents Stage 2 clipboard, move, rename, delete, conflict, Jobs, part, and recovery behavior.
 - [Preview, Edit, Cache, and Shell guide](user/preview-edit-cache.md) documents Stage 3 `K/J/L`, bounded preview/image behavior, cache policies and safe cleanup, `e`/`o` conflict and recovery, structured external commands, `!`/`gs`, privacy, and current limitations.
 - [Search and Optional Helper guide](user/search-helper.md) documents Stage 4 `f`/`g/`, budgets/partial results, Level 0/1 status, fixture-only consent/lifecycle, degradation, same-host copy, and the production distribution CLOSED boundary.
+- [Configuration reference](user/configuration.md) documents the versioned strict JSON schema, current precedence, validation/effective-output commands, redaction, and stable public exit codes while M6.1 expands the remaining sections.
+- [Command-line interface](user/cli.md) documents launch/configuration commands, bounded durable Job query/control, exact cancellation confirmation, and versioned human/JSON success and error contracts.
+- [Vim-first keymap reference](user/keymap.md) documents the exact default action map, Normal/Visual remapping, reserved dangerous and sequence actions, count/repeat boundaries, and the 1.0 macro/named-register exclusion.
+- [Compatibility boundaries](product/compatibility-boundaries.md) freezes the current/read/write/unsupported behavior for config, workspace, SQLite, cache, IPC, Helper, CLI, and machine-output versions before migration work begins.
+- [Environment compatibility matrix](product/environment-compatibility.md) separates native, build-only, fixture, best-effort, unsupported, and untested claims across platforms, OpenSSH, authentication, SFTP, terminals, filesystems, Helper, and direct transfer.
+- [Troubleshooting code map](user/troubleshooting.md) covers every stable doctor and domain error code with a bounded, non-destructive action.
+- [Threat model](security/threat-model.md) records assets, trust boundaries, controls, residual scope, and verification ownership; the [finding ledger](security/finding-ledger.md) records concrete dispositions without implying unexecuted review coverage.
+- [amsftp(1)](man/amsftp.1) is the committed man page checked against the same ordered command facts that render `--help` and bash/zsh/fish completions.
 
 ## Required reading order for a new session
 
@@ -31,7 +51,7 @@ Read only as far as needed, in this order:
 2. the active stage in `IMPLEMENTATION_PLAN.md`
 3. `docs/product/feature-matrix.md`
 4. the active `docs/stages/NN-*.md`
-5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 5)
+5. the latest completed or active `docs/verification/stage-NN.md` (currently Stage 6)
 6. ADRs and interfaces linked by that stage
 7. the complete worktree status/manifest plus the last green validation commands recorded in the verification record and `PROJECT_STATE.md`
 
@@ -61,13 +81,13 @@ Before marking a stage complete:
 
 The temporary `.superpowers/` visual workspace is intentionally ignored and cannot be the only source of implementation evidence. Durable decisions and final task verdicts must be copied into the approved design, active verification record, and linked documents.
 
-## Stage 5 cold-start capsule
+## Stage 6 cold-start capsule
 
-Stage 5 is active on fixed branch `codex/stage5-direct-transfer-scale` from the sole verified baseline `06415e1e9fe5ffa93999f112b64aee0bd35e5c75`. Its authoritative live ledger is [Stage 5 verification](verification/stage-05.md); Draft PR [#5](https://github.com/TyrantLucifer/awsome-sftp-cli/pull/5) stays unmerged until the exact final push and PR matrices are green. A commit cannot contain its own SHA, so the final identity is bound by Git/PR/Hosted metadata after the last documentation commit, never inferred from a predecessor checkpoint.
+Stage 6 is active on fixed branch `codex/stage6-hardening-release` from the sole verified baseline `312bcccbcbd54246bbe5ff9babf4f14560449176`, tree `e0316c286ce11512cb0b92c917fa29b80f9e3305`. Exact-main Hosted run [29579514879](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29579514879) passed 24/24 jobs and the untouched local baseline passed CI-equivalent `make ci`. The authoritative live ledger is [Stage 6 verification](verification/stage-06.md) and the strict M6.1→M6.4 work breakdown is the [Stage 6 execution plan](stages/06-hardening-release-plan.md).
 
-- M5.1–M5.4 are locally implemented: unified frozen route evidence, declared server copy, fixture-only Level 2 direct, safe downgrade/fault equivalence, 50k/million/100 GiB scale contracts, bounded BFS, shared bandwidth/resource scheduling, Endpoint lease reuse, bounded events/logs and reproducible trends.
-- Production Helper distribution and production Level 2 remain **CLOSED**. Ordinary runtime has no fixture backend/config switch and records `production_distribution_closed`; no Agent forwarding, Kerberos delegation, key/ticket/known-host copying or relaxed host-key policy is introduced.
-- ADR-0017 explicitly decomposes Stage 5's 100 GiB evidence: actual/synthetic 100 GiB executions prove 64-bit and fixed-resource/cancel boundaries, while the same Worker/Journal/Scheduler lifecycle proves pause/checksum/restart resume/rate/SHA-256/commit on sparse-shaped multi-quantum content. A complete physical 100 GiB LocalFS/SFTP run remains a Stage 6 nightly/release gate and is not claimed by the fast gate.
-- Stage 0–4 evidence remains immutable history. Stage 6 packaging, signing, notarization and release readiness have not started, so Stage 5 completion is not a 1.0 release claim.
+- M6.1 is complete. M6.2 and M6.3 have the independently classified migration, packaging, native, diagnostics, compatibility, OpenSSH/Kerberos, and security-review evidence recorded in the live ledger. M6.4 REL-008/REL-009/REL-010 are `In Progress`: the user/operations path, exact-candidate gate-record contract, and final-only zero-gap audit exist, while no RC record or protected final-release evidence exists and all 12 stage exit criteria remain open.
+- Production Helper distribution and production Level 2 remain **CLOSED**. The repository has no real production offline signing key/custody ceremony or final Developer ID/notary evidence; none may be fabricated.
+- Stage 5's same-process Level 2 data fixture does not satisfy the required Stage 6 process/network-isolated data plane. Its 100 GiB decomposition does not satisfy the complete physical 100 GiB LocalFS/SFTP release run.
+- The fixed delivery PR remains Draft until the same exact RC passes complete local/native/Hosted, security, compatibility, clean-machine, signed-byte, final-review, rollback, and truth-chain gates. The strict [release-candidate gate record](release/RC-GATES.md) binds those results to candidate and post-merge identities and rejects partial or synthetic substitutes. A commit cannot contain its own SHA, so final identity is bound by Git/PR/Hosted/tag/release/channel metadata after the last documentation commit.
 
-A new session must not infer final green status from this capsule. It must reconcile `PROJECT_STATE.md`, `IMPLEMENTATION_PLAN.md`, the feature matrix and the Stage 5 ledger, then require the listed CI-equivalent current/oldstable/race/scale/native/reproducibility/pollution gates, two fresh independent reviews, exact final push/PR Hosted success and a Ready-but-unmerged PR.
+A new session must not infer release readiness from this capsule. It must reconcile `PROJECT_STATE.md`, `IMPLEMENTATION_PLAN.md`, the feature matrix, Stage 6 specification, execution plan, and ledger, then resume the first incomplete milestone without bypassing protected release boundaries.

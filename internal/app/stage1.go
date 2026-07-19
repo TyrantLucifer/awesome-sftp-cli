@@ -55,10 +55,13 @@ const authenticationTimeout = 2 * time.Minute
 const durableLocalEndpointID domain.EndpointID = "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func DefaultHandlers() Handlers {
-	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: runHelper}
+	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: runHelper, Job: runJob, Config: runConfig, Doctor: runDoctor, SupportBundle: runSupportBundle, Completion: runCompletion}
 }
 
 func runHelper(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+	if len(args) == 0 || args[0] != "serve" {
+		return runHelperManagement(ctx, args, stdout)
+	}
 	return runHelperWithIdentity(ctx, args, os.Stdin, stdout, os.Geteuid())
 }
 
@@ -98,7 +101,10 @@ func parseDaemonArgs(args []string) (daemonOptions, error) {
 	return daemonOptions{}, fmt.Errorf("daemon accepts only the optional --resume-migration flag")
 }
 
-func runDaemon(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
+func runDaemon(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
+		return runDaemonCommand(ctx, args, stdout)
+	}
 	options, err := parseDaemonArgs(args)
 	if err != nil {
 		return err
@@ -123,6 +129,10 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return err
 	}
 	defer lock.Close()
+	applicationConfig, err := loadApplicationConfig(paths.ConfigFile)
+	if err != nil {
+		return fmt.Errorf("load daemon configuration: %w", err)
+	}
 	generator := &domain.RandomGenerator{}
 	var stateDatabase *sql.DB
 	var jobStore *jobstore.Store
@@ -140,13 +150,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 			ExplicitMigrationResume: options.explicitMigrationResume,
 		})
 		if stateOpenErr == nil {
-			store, err := jobstore.New(ctx, stateDatabase)
-			if err == nil {
-				_, err = store.RecoverInterrupted(ctx, generator, time.Now())
-			}
-			if err == nil {
-				err = store.CheckpointIdle(ctx)
-			}
+			store, err := initializeDurableJobStore(ctx, stateDatabase, generator, time.Now())
 			if err == nil {
 				var durableEdits *editstore.Store
 				durableEdits, err = editstore.New(ctx, stateDatabase)
@@ -172,8 +176,9 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	}
 	var logger *slog.Logger
 	var diagnosticRecords *diagnostic.Ring
+	diagnosticConfig := runtimeDiagnosticConfig(applicationConfig.Diagnostic)
 	if stateOpenErr == nil {
-		daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnostic.Config{})
+		daemonLog, err := diagnostic.OpenDaemon(paths.LogFile, diagnosticConfig)
 		if err != nil {
 			return err
 		}
@@ -186,7 +191,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		// A rejected/corrupt/newer state database must not trigger any further
 		// persistent writes. Stage 1 browsing remains available with an
 		// in-memory diagnostic logger and no mutation store.
-		diagnosticRecords = diagnostic.NewRing(0)
+		diagnosticRecords = diagnostic.NewRing(diagnosticConfig.RingCapacity)
 		logger = slog.New(diagnostic.NewRingHandler(diagnosticRecords, nil))
 		logger.Error("persistent state unavailable; mutation disabled", diagnostic.Component("state"), diagnostic.Event("read_only_degraded"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
 	}
@@ -242,7 +247,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		}
 		var cacheManager *cachemanager.Manager
 		if cacheErr == nil {
-			cacheManager, cacheErr = cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), cache.DefaultLimits())
+			cacheManager, cacheErr = cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), runtimeCacheLimits(applicationConfig.Cache))
 		}
 		var lifecycle cachemanager.StartupLifecycleResult
 		if cacheErr == nil {
@@ -268,6 +273,11 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return err
 	}
 	sessions.SetAuthBroker(authBroker)
+	if jobStore != nil {
+		if err := configureDaemonHelperLifecycle(ctx, paths, sessions, jobStore, authBroker); err != nil {
+			logger.Error("Helper lifecycle unavailable; Level 0 remains enabled", diagnostic.Component("helper"), diagnostic.Event("helper_lifecycle_unavailable"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
+		}
+	}
 	connectEndpoint := func(connectCtx context.Context, endpoint domain.Endpoint) (provider.Provider, error) {
 		if endpoint.Kind != domain.EndpointSSH || endpoint.ID == "" || endpoint.SSHHostAlias == "" {
 			return nil, sshConnectStageError("invalid frozen SSH endpoint", domain.CodeInvalidArgument, domain.RetryNever, nil)
@@ -314,8 +324,11 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	})
 	sessions.SetEndpointConnector(connectEndpoint)
 	if jobStore != nil {
+		maxConcurrent, maxQueued, schedulerPolicy := runtimeTransferLimits(applicationConfig.Transfer)
+		_, jobRetryDelay := runtimeRetrySettings(applicationConfig.Retry)
 		manager, err := transfer.NewManager(transfer.ManagerConfig{
-			Store: jobStore, Resolver: sessions, Generator: generator, MaxConcurrent: 4, MaxQueued: 128,
+			Store: jobStore, Resolver: sessions, Generator: generator, MaxConcurrent: maxConcurrent, MaxQueued: maxQueued,
+			SchedulerPolicy: schedulerPolicy, RetryDelay: jobRetryDelay,
 		})
 		if err != nil {
 			return err
@@ -327,7 +340,9 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		defer manager.Close()
 		sessions.SetTransferService(manager)
 	}
-	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, HandshakeTimeout: 2 * time.Second, Logger: logger, VerifyPeer: func(conn net.Conn) error {
+	serveCtx, requestShutdown := context.WithCancel(ctx)
+	defer requestShutdown()
+	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, MaxFrameBytes: applicationConfig.IPC.MaxFrameBytes, HandshakeTimeout: 2 * time.Second, Logger: logger, Shutdown: requestShutdown, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {
 			return fmt.Errorf("unexpected peer connection %T", conn)
@@ -337,7 +352,24 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	if err != nil {
 		return err
 	}
-	return daemon.Serve(ctx, listener, server)
+	return daemon.Serve(serveCtx, listener, server)
+}
+
+func initializeDurableJobStore(ctx context.Context, database *sql.DB, generator domain.Generator, now time.Time) (*jobstore.Store, error) {
+	store, err := jobstore.New(ctx, database)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := store.RecoverInterrupted(ctx, generator, now); err != nil {
+		return nil, err
+	}
+	if _, err := store.ReconcileHistory(ctx, now); err != nil {
+		return nil, err
+	}
+	if err := store.CheckpointIdle(ctx); err != nil {
+		return nil, err
+	}
+	return store, nil
 }
 
 func cacheDaemonID(sessionID domain.SessionID) string {
@@ -437,8 +469,12 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 		}
 		return daemon.NewClient(ctx, connection, buildinfo.Current().String(), fmt.Sprintf("client-%d", os.Getpid()))
 	}
-	if client, err := connect(); err == nil {
+	client, connectErr := connect()
+	if connectErr == nil {
 		return client, nil
+	}
+	if err := requireAbsentControlSocketForAutostart(paths.ControlSocket, connectErr); err != nil {
+		return nil, err
 	}
 	executable, err := os.Executable()
 	if err != nil {
@@ -446,6 +482,7 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 	}
 	// #nosec G204 -- os.Executable returns this already-running, trusted binary; no user command is accepted.
 	command := exec.Command(executable, "daemon")
+	configureDaemonAutostart(command)
 	command.Stdin, command.Stdout, command.Stderr = nil, nil, nil
 	if err := command.Start(); err != nil {
 		return nil, fmt.Errorf("start daemon: %w", err)
@@ -468,6 +505,17 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 	return nil, fmt.Errorf("daemon did not become ready: %w", lastErr)
 }
 
+func requireAbsentControlSocketForAutostart(path string, connectErr error) error {
+	_, inspectErr := os.Lstat(path)
+	if errors.Is(inspectErr, os.ErrNotExist) {
+		return nil
+	}
+	if inspectErr != nil {
+		return fmt.Errorf("inspect control socket after connection failure: %w", inspectErr)
+	}
+	return fmt.Errorf("control socket still exists after connection failure: %w", connectErr)
+}
+
 func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
 	invocation, err := parseClientInvocation(args)
 	if err != nil {
@@ -481,11 +529,19 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
+	userKeymap, err := tui.NewKeymap(applicationConfig.Keymap.Bindings)
+	if err != nil {
+		return fmt.Errorf("resolve keymap: %w", err)
+	}
 	environment := append([]string(nil), os.Environ()...)
 	externalRuntime, err := resolveExternalRuntimeConfig(applicationConfig.External, environment)
 	if err != nil {
 		return err
 	}
+	previewRenderLimits, previewImageLimits := runtimePreviewLimits(applicationConfig.Preview)
+	filenameSearchBudget, contentSearchBudget := runtimeSearchBudgets(applicationConfig.Search)
+	clientReconnectPolicy, _ := runtimeRetrySettings(applicationConfig.Retry)
+	directPolicy := runtimeDirectPolicy(applicationConfig.Integrity, applicationConfig.DirectTransfer)
 	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
 	reprobeTerminalImages := func() {
 		terminalImageCapability.Reprobe(append([]string(nil), os.Environ()...))
@@ -792,10 +848,9 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			activeClient := client
 			go func() {
 				var response daemon.JobSnapshotResponse
-				createErr := activeClient.Call(runCtx, daemon.JobCreateCopy, daemon.JobCreateCopyRequest{Intent: transfer.Intent{
-					Clipboard: intent.Clipboard, Source: intent.Source, DestinationDirectory: intent.Location,
-					Name: intent.Name, ConflictPolicy: transfer.ConflictAsk,
-				}}, &response)
+				createErr := activeClient.Call(runCtx, daemon.JobCreateCopy, daemon.JobCreateCopyRequest{
+					Intent: configuredCopyIntent(intent, directPolicy),
+				}, &response)
 				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
 				if createErr != nil {
 					result.Message = "create Job failed: " + clientErrorMessage(createErr)
@@ -896,7 +951,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			go func() {
 				defer cancel()
-				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability.Current(), actions)
+				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability.Current(), previewRenderLimits, previewImageLimits, actions)
 			}()
 			return
 		case tui.IntentPreviewCancel:
@@ -920,7 +975,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			activeClient := client
 			frozenIntent := intent
-			pendingIdentity := pendingFilenameSearchIdentity(requestID, generation, frozenIntent)
+			pendingIdentity := pendingFilenameSearchIdentity(requestID, generation, frozenIntent, filenameSearchBudget)
 			go func() {
 				defer cancel()
 				select {
@@ -957,7 +1012,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				return
 			}
 			activeClient := client
-			pendingIdentity := pendingContentSearchIdentity(requestID, generation, intent)
+			pendingIdentity := pendingContentSearchIdentity(requestID, generation, intent, contentSearchBudget)
 			go func() {
 				defer cancel()
 				select {
@@ -1065,7 +1120,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		go func() {
 			defer cancel()
-			listLocation(requestCtx, activeClient, pane, generation, intent.Location, actions)
+			listLocation(requestCtx, activeClient, pane, generation, intent.Location, applicationConfig.Listing.DefaultPageSize, actions)
 		}()
 	}
 	type connectionResult struct {
@@ -1094,7 +1149,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		connectionCtx, epoch := connectionAttempts.Begin(runCtx, pane)
 		go func() {
 			result := connectionResult{pane: pane, epoch: epoch, host: start.host, recovery: recovery, switching: switching}
-			result.err = runReconnect(connectionCtx, defaultReconnectPolicy(), func() error {
+			result.err = runReconnect(connectionCtx, clientReconnectPolicy, func() error {
 				var connectErr error
 				result.endpoint, result.location, result.state, result.capabilities, connectErr = resolveStartLocation(connectionCtx, activeClient, activeLocal, start)
 				result.capabilityGeneration = result.capabilities.Revision.Generation
@@ -1142,7 +1197,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		go func() {
 			result := daemonRecoveryResult{}
-			result.client, result.err = connectDaemonAfterLoss(runCtx, defaultReconnectPolicy(), func(ctx context.Context) (*daemon.Client, error) {
+			result.client, result.err = connectDaemonAfterLoss(runCtx, clientReconnectPolicy, func(ctx context.Context) (*daemon.Client, error) {
 				return connectDaemon(ctx, paths, purpose)
 			})
 			if result.err == nil {
@@ -1372,7 +1427,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			if _, ok := event.(*tcell.EventResize); ok {
 				screen.Sync()
 			}
-			action, ok := tui.TranslateTCellEvent(event, model.Mode)
+			action, ok := tui.TranslateTCellEventWithKeymap(event, model.Mode, userKeymap)
 			if !ok {
 				continue
 			}
@@ -1382,6 +1437,13 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 				startIntent(intent)
 			}
 		}
+	}
+}
+
+func configuredCopyIntent(intent tui.Intent, directPolicy transfer.DirectPolicy) transfer.Intent {
+	return transfer.Intent{
+		Clipboard: intent.Clipboard, Source: intent.Source, DestinationDirectory: intent.Location,
+		Name: intent.Name, ConflictPolicy: transfer.ConflictAsk, DirectPolicy: directPolicy,
 	}
 }
 
@@ -1712,11 +1774,15 @@ func capabilitySnapshotFromWire(response ipc.ProviderSnapshotResponse) (domain.C
 	return snapshot, nil
 }
 
-func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, generation uint64, location domain.Location, actions chan<- tui.Action) {
+type providerListRPC interface {
+	Call(context.Context, string, any, any) error
+}
+
+func listLocation(ctx context.Context, client providerListRPC, pane tui.PaneID, generation uint64, location domain.Location, pageSize uint32, actions chan<- tui.Action) {
 	cursor := provider.PageCursor("")
 	for {
 		var response ipc.ProviderListResponse
-		err := client.Call(ctx, daemon.ProviderList, ipc.ProviderListRequest{Location: ipc.EncodeLocation(location), Cursor: cursor, Limit: 256}, &response)
+		err := client.Call(ctx, daemon.ProviderList, ipc.ProviderListRequest{Location: ipc.EncodeLocation(location), Cursor: cursor, Limit: pageSize}, &response)
 		if err != nil {
 			if ctx.Err() == nil {
 				code, retry, daemonLost := providerCallFailure(err)
@@ -1741,7 +1807,7 @@ func listLocation(ctx context.Context, client *daemon.Client, pane tui.PaneID, g
 	}
 }
 
-func pendingFilenameSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent) search.Identity {
+func pendingFilenameSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent, budget search.Budget) search.Identity {
 	return search.Identity{
 		RequestID:    requestID,
 		EndpointID:   intent.Location.EndpointID,
@@ -1752,11 +1818,7 @@ func pendingFilenameSearchIdentity(requestID domain.RequestID, generation uint64
 			IncludeHidden: false, Symlinks: search.SymlinkNever, Ignore: search.IgnoreNone,
 			Types: search.TypeFilter{Files: true, Directories: true, Symlinks: true},
 		},
-		Budget: search.Budget{
-			PageItems: 256, EventBuffer: 64, ConcurrentLists: 1, MaxDepth: 128,
-			MaxEntries: 1_000_000, MaxResults: tui.SearchResultLimit,
-			MaxOutputBytes: 8 << 20, MaxDuration: 5 * time.Minute,
-		},
+		Budget: budget,
 	}
 }
 
@@ -1830,15 +1892,11 @@ func streamFilenameSearch(ctx context.Context, client *daemon.Client, identity s
 	}
 }
 
-func pendingContentSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent) search.ContentIdentity {
+func pendingContentSearchIdentity(requestID domain.RequestID, generation uint64, intent tui.Intent, budget search.ContentBudget) search.ContentIdentity {
 	return search.ContentIdentity{
 		RequestID: requestID, EndpointID: intent.Location.EndpointID, UIGeneration: generation, Scope: intent.Location,
 		Options: search.ContentOptions{Pattern: intent.SearchPattern, PatternType: search.PatternLiteral, CaseSensitive: false, Binary: search.BinarySkip},
-		Budget: search.ContentBudget{
-			PageItems: 128, EventBuffer: 32, MaxDepth: 32, MaxEntries: 10_000, MaxFiles: 1_000,
-			MaxResults: 5_000, MaxMatchesPerFile: 100, MaxFileBytes: 1 << 20,
-			MaxReadBytes: 32 << 20, MaxSnippetBytes: 512, MaxOutputBytes: 8 << 20, MaxDuration: 2 * time.Minute,
-		},
+		Budget:  budget,
 	}
 }
 
@@ -1997,7 +2055,7 @@ func writeTerminalImage(data []byte) error {
 	return nil
 }
 
-func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.PreviewRequestIdentity, view builtinpreview.ViewMode, location domain.Location, workspaceID cache.WorkspaceID, policy cache.Policy, runner *externalpreviewer.Runner, capability builtinpreview.ImageCapabilityProof, actions chan<- tui.Action) {
+func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.PreviewRequestIdentity, view builtinpreview.ViewMode, location domain.Location, workspaceID cache.WorkspaceID, policy cache.Policy, runner *externalpreviewer.Runner, capability builtinpreview.ImageCapabilityProof, renderLimits builtinpreview.Limits, imageLimits builtinpreview.ImageOutputLimits, actions chan<- tui.Action) {
 	generation := identity.UIGeneration
 	var statResponse ipc.ProviderStatResponse
 	if err := client.Call(ctx, daemon.ProviderStat, ipc.ProviderStatRequest{Location: ipc.EncodeLocation(location)}, &statResponse); err != nil {
@@ -2026,7 +2084,7 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 		actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
 		result := builtinpreview.Render(builtinpreview.Request{
 			Path: string(location.Path), View: view, Object: previewObjectMetadata(entry), Complete: true,
-		}, builtinpreview.DefaultLimits())
+		}, renderLimits)
 		actions <- tui.PreviewChunk{
 			Generation: generation, Identity: identity, Data: []byte(result.Text), Done: true,
 			Truncated: result.Truncated, Rendered: true, Kind: string(result.Kind), Summary: result.Summary,
@@ -2090,11 +2148,11 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 	result := builtinpreview.Render(builtinpreview.Request{
 		Path: string(location.Path), Data: window.Data, View: view, Offset: window.Offset, Complete: window.Complete,
 		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
-	}, builtinpreview.DefaultLimits())
+	}, renderLimits)
 	outcome := externalpreviewer.Orchestrate(ctx, runner, externalpreviewer.OrchestrationRequest{
 		Path: string(location.Path), BuiltIn: result, RequestedView: view,
 		HasFileSize: entry.Metadata.Size != nil, FileSize: fileSize,
-		Capability: capability, ImageLimits: builtinpreview.DefaultImageOutputLimits(),
+		Capability: capability, ImageLimits: imageLimits,
 		Materialize: previewMaterializer(client, location, source, entry.Metadata.Size != nil, fileSize, workspaceID, policy, string(identity.RequestID)),
 	})
 	summary := result.Summary

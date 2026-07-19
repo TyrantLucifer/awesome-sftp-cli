@@ -14,7 +14,7 @@ Helper 是同一 `amsftp` 代码库的受限远端角色，但它会被客户端
 
 ### 产物与角色
 
-- Helper 仍由同一 module、同一版本的 `amsftp` 构建，受限入口为 `amsftp helper serve`；不建立独立仓库、常驻服务或公开日常 CLI。
+- Helper 仍由同一 module、同一版本的 `amsftp` 构建，远端受限入口为 `amsftp helper serve`；不建立独立仓库或常驻服务，且该 `serve` 入口不作为公开日常 CLI。Stage 6 的公开 Helper 管理命令只能编排本 ADR 的状态/安装/升级/禁用/移除边界，不得把 `serve`、任意 remote command 或 fixture trust 暴露给用户。
 - 远端产物按 OS/arch/version/hash 不可变命名，只覆盖明确支持的远端矩阵；安装必须由用户显式批准。v1 唯一安装根是 SFTP `RealPath(".")` 所代表登录 home/cwd 下的 `.local/lib/amsftp/helpers/`，不接受用户自定义绝对安装路径、`TMPDIR` 或 remote sticky directory。
 - 标准 SFTP 是永久 Level 0。缺失、拒绝、验签失败、版本不兼容或撤销都只禁用 Helper，不破坏浏览与基础传输。
 
@@ -113,6 +113,15 @@ helper stdout 的 byte 0 必须开始精确协议 preface `amsftp-helper-wire-v1
 - 每个 Endpoint 与 `protocol_major/os/arch` 已成功安装/启用的 `(version, sha256)` 单调 high-water mark。低于记录 version 的普通安装拒绝；相同 version/相同 hash 且现有不可变文件仍通过 hash/mode 检查时返回 no-op，文件缺失/损坏时只能经显式批准重装同一 hash；相同 version/不同 hash 一律视为 same-version republish 并拒绝。更高 version 只有在安装、握手成功后才原子更新记录。显式 break-glass 只允许一次性运行不低于客户端 release floor、未在 denylist 且仍通过验签的旧版本，并且不得降低或改写持久 high-water mark。
 
 安装顺序固定为：current-policy canonical parse/signature/revoke/denylist/protocol/`min_client`/floor → preliminary mapping+probe consent → read-only utility/fresh binding得到uid/home/OS/arch → target match+Endpoint high-water → local artifact expected+1/size/hash → derived path+read-only ancestor/final plan → final actual-plan consent → create/temp/upload/client-readback/no-replace/final/handshake。任何字段改变回到相应前置并重新final consent；创建前拒绝保持app install tree零create/零content。每次exec无需重复安装确认，但仍按“每次启用与执行”重跑current policy→fresh binding/target/high-water→ancestor/final/hash→handshake。恢复模式也不可绕过revoke/deny/floor。
+
+### 安全升级、冻结 Job 与卸载恢复
+
+- 本机 Helper state v2 按 `Endpoint + protocol + target + version + SHA-256` 保留多个精确产物；每个 `Endpoint + protocol + target` 最多一个 active selection。读取 v1 时必须在任何 mutation 前以 owner-private atomic replace 升级到 v2，未知/更新 schema fail closed。
+- 更高版本的 signed metadata 可先 stage，远端不可变产物也可并行存在；只有该 candidate 完成 fresh binding、full remote validation 和 wire handshake 后，才在一个 state-index replace 中把旧 active 切到新 exact artifact。握手或 index replace 失败保留旧 active 与 high-water；已发布但未 commit 的 candidate 不得冒充 installed/enabled。
+- high-water 是全部历史精确记录的最大版本，不随 disable、切换或卸载降低。普通 activate 只能选择当前 high-water 的已安装 exact artifact；旧版本 break-glass 仍服从前述一次性运行边界，不能改写 active selection 或 high-water。
+- durable Job 的 same-host binding 冻结 exact Helper artifact。active 切换只影响后续 Plan；Worker 必须用冻结的 `Endpoint + ArtifactID` 解析旧 backend。旧 backend 在任何 nonterminal Job/session 引用存在时不得注销或删除。
+- 显式移除先取得禁止新引用并证明无旧引用的 exact lease，再 atomically disable exact artifact 并写入至多一个 durable removal claim；之后才执行 exact remote path 删除。只有观察到 remove 成功或 fresh `lstat` 为 absent，才把该记录标记 uninstalled 并清 claim。response loss、进程退出或 state 写失败保留 claim，重启按相同 exact identity 与 absent postcondition 续接；不得递归、模糊或跨版本清理。
+- metadata reconciliation 每次最多处理 64 个由 state 明确标记为已完成卸载的 metadata；active、其他 installed 版本和仅 staged/尚未 commit 的 candidate 一律保留。Level 0 SFTP 不依赖 registry、claim 或 cleanup 成功。
 
 ### 轮换、撤销与分发
 

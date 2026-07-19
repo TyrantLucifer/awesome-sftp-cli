@@ -6,8 +6,51 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
+
+func TestStage2PTYActionsWaitForReadySelection(t *testing.T) {
+	script, err := os.ReadFile("hosted-stage2-mvp.py")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(script)
+	for _, check := range []struct {
+		function string
+		filename string
+		action   string
+	}{
+		{function: "run_copy", filename: "filename", action: "y"},
+		{function: "run_move", filename: "filename", action: "d"},
+		{function: "run_rename", filename: "old_name", action: "r"},
+		{function: "run_delete", filename: "filename", action: "D"},
+	} {
+		start := strings.Index(text, "def "+check.function+"(")
+		if start < 0 {
+			t.Fatalf("%s function is missing", check.function)
+		}
+		end := strings.Index(text[start:], "\ndef ")
+		if end < 0 {
+			t.Fatalf("%s function is malformed", check.function)
+		}
+		body := text[start : start+end]
+		ready := strings.Index(body, "read_ready_selection(fd, observer, output, "+check.filename+")")
+		action := strings.Index(body, "os.write(fd, b\""+check.action+"\")")
+		if ready < 0 || action < 0 || ready > action {
+			t.Fatalf("%s must observe a ready selected target before sending %s", check.function, check.action)
+		}
+	}
+	if !strings.Contains(text, "if selection_ready(observer, output, wanted):") {
+		t.Fatal("ready-selection barrier must observe the target after the loading state clears")
+	}
+	if !strings.Contains(text, "wanted = (\"> \" + filename).encode(\"utf-8\")") {
+		t.Fatal("ready-selection barrier must require the cursor-selected target")
+	}
+	if !strings.Contains(text, "\"-final\", \"-absent\", \"READ-ONLY | loading\"") {
+		t.Fatal("ready-selection barrier must reject loading on the final screen")
+	}
+}
 
 func TestStage2LocalPTYCopyAndDurableJobsReattachMVP(t *testing.T) {
 	binary, observer := buildStage2MVPFixtures(t)

@@ -1,0 +1,46 @@
+.TH AMSFTP 1
+.SH NAME
+amsftp \- Vim-first two-pane SFTP commander
+.SH SYNOPSIS
+.TP
+\fBamsftp [<location> [<location>]]\fR
+Open the two-pane client with zero, one, or two locations.
+.TP
+\fBamsftp --workspace <name>\fR
+Open a saved workspace.
+.TP
+\fBamsftp daemon <start|status> [--format human|json] | amsftp daemon stop --confirm stop [--format human|json]\fR
+Start, inspect, or explicitly stop the local daemon.
+.TP
+\fBamsftp job <list|events|pause|resume|cancel> [arguments]\fR
+Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.
+.TP
+\fBamsftp helper <status|disable> <SSH-host> [--format human|json] | amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]\fR
+Inspect or disable Helper state, or request release-admitted install/upgrade/exact removal; lifecycle remains fail-closed until protected composition exists.
+.TP
+\fBamsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]\fR
+Validate configuration, print versioned effective output, or explicitly reset keymap overrides.
+.TP
+\fBamsftp doctor [--endpoint <SSH-host>] [--format human|json]\fR
+Run bounded read-only local checks and optionally test one SSH endpoint without prompting for credentials.
+.TP
+\fBamsftp support-bundle preview [--format human|json] | amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]\fR
+Preview the exact reviewed diagnostic archive, then explicitly publish it to a private no-replace local file.
+.TP
+\fBamsftp completion <bash|zsh|fish>\fR
+Print a shell completion script with saved-workspace completion.
+.TP
+\fBamsftp [client|askpass|helper] [arguments...]\fR
+Run an explicit client or restricted internal role.
+.TP
+\fBamsftp --help\fR
+Print command help.
+.TP
+\fBamsftp --version\fR
+Print version and build information.
+.SH DESCRIPTION
+AMSFTP delegates SSH authentication and host policy to the validated system OpenSSH, keeps standard SFTP as the baseline, and requires explicit confirmation for destructive operations.
+.SH EXIT STATUS
+0 success; 1 internal; 2 usage; 3 configuration; 4 authentication; 5 network; 6 conflict; 7 partial completion; 8 user cancellation.
+.SH FILES
+See the AMSFTP configuration reference for platform paths, schema version, precedence, and redaction.

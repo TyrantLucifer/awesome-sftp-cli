@@ -85,6 +85,71 @@ func TestServeConnRequiresHelloAsFirstFrame(t *testing.T) {
 	}
 }
 
+func TestServeConnRejectsIncompatibleHelloBeforeSessionCreation(t *testing.T) {
+	sessions := 0
+	server := newTestServer(t, sessionFactory(func() Session {
+		sessions++
+		return &testSession{}
+	}))
+	serverConn, clientConn := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(context.Background(), serverConn) }()
+
+	writeEnvelope(t, clientConn, requestEnvelope(helloRequestID, RequestHello, ipc.HelloRequest{
+		ClientVersion:    "future-client",
+		ClientInstanceID: "future-client-test",
+		Protocols:        []ipc.VersionRange{{Major: ipc.ProtocolMajor + 1, MinMinor: 0, MaxMinor: 0}},
+	}))
+	response := readEnvelope(t, clientConn)
+	if response.Error == nil || response.Error.Code != domain.CodeProtocolIncompatible {
+		t.Fatalf("hello response error = %#v, want protocol_incompatible", response.Error)
+	}
+	_ = clientConn.Close()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeConn did not stop after incompatible hello")
+	}
+	if sessions != 0 {
+		t.Fatalf("session factory calls = %d, want 0 before protocol acceptance", sessions)
+	}
+}
+
+func TestServeConnUsesConfiguredFrameMaximum(t *testing.T) {
+	server, err := NewServer(ServerConfig{
+		BuildVersion:     "test",
+		Epoch:            "epoch-test",
+		Sessions:         sessionFactory(func() Session { return &testSession{} }),
+		MaxInFlight:      4,
+		MaxFrameBytes:    64,
+		HandshakeTimeout: time.Second,
+		VerifyPeer:       func(net.Conn) error { return nil },
+		Logger:           slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	serverConn, clientConn := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(context.Background(), serverConn) }()
+	writer, err := ipc.NewWriter(clientConn, ipc.MaxFrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	writeDone := make(chan error, 1)
+	go func() { writeDone <- writer.WriteFrame(bytes.Repeat([]byte{'x'}, 65)) }()
+	select {
+	case serveErr := <-done:
+		if serveErr == nil || !strings.Contains(serveErr.Error(), "payload exceeds configured limit") {
+			t.Fatalf("ServeConn() error = %v", serveErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ServeConn did not reject an oversized configured frame")
+	}
+	_ = clientConn.Close()
+	<-writeDone
+}
+
 func TestServeConnNegotiatesAndRoutesRequest(t *testing.T) {
 	server := newTestServer(t, sessionFactory(func() Session { return &testSession{} }))
 	serverConn, clientConn := net.Pipe()
@@ -204,6 +269,44 @@ func TestServeConnContextCancellationClosesIdleConnection(t *testing.T) {
 		t.Fatal("ServeConn did not stop after context cancellation")
 	}
 	_ = clientConn.Close()
+}
+
+func TestServeConnAcknowledgesShutdownBeforeRequestingItOnce(t *testing.T) {
+	shutdown := make(chan struct{})
+	server := newTestServer(t, sessionFactory(func() Session { return &testSession{} }))
+	server.shutdown = func() { close(shutdown) }
+
+	serverConn, clientConn := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(context.Background(), serverConn) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := NewClient(ctx, clientConn, "test-client", "client-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response ShutdownResponse
+	if err := client.Call(ctx, RequestShutdown, ShutdownRequest{}, &response); err != nil {
+		t.Fatalf("shutdown call was not acknowledged: %v", err)
+	}
+	if !response.Accepted {
+		t.Fatalf("shutdown response = %#v", response)
+	}
+	select {
+	case <-shutdown:
+	case <-ctx.Done():
+		t.Fatal("server did not request shutdown after acknowledging it")
+	}
+
+	var repeated ShutdownResponse
+	if err := client.Call(ctx, RequestShutdown, ShutdownRequest{}, &repeated); err != nil {
+		t.Fatal(err)
+	}
+	if !repeated.Accepted {
+		t.Fatalf("repeated shutdown response = %#v", repeated)
+	}
+	_ = client.Close()
+	<-done
 }
 
 func newTestServer(t *testing.T, factory SessionFactory) *Server {

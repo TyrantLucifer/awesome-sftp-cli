@@ -5,10 +5,15 @@ import "github.com/TyrantLucifer/awesome-mac-sftp/internal/auth"
 type Role string
 
 const (
-	RoleClient  Role = "client"
-	RoleDaemon  Role = "daemon"
-	RoleAskpass Role = "askpass"
-	RoleHelper  Role = "helper"
+	RoleClient        Role = "client"
+	RoleDaemon        Role = "daemon"
+	RoleAskpass       Role = "askpass"
+	RoleHelper        Role = "helper"
+	RoleJob           Role = "job"
+	RoleConfig        Role = "config"
+	RoleDoctor        Role = "doctor"
+	RoleSupportBundle Role = "support-bundle"
+	RoleCompletion    Role = "completion"
 )
 
 type Invocation struct {
@@ -38,6 +43,16 @@ func ParseInvocation(args []string) (Invocation, error) {
 		return Invocation{Role: RoleAskpass}, nil
 	case string(RoleHelper):
 		return Invocation{Role: RoleHelper}, nil
+	case string(RoleJob):
+		return Invocation{Role: RoleJob}, nil
+	case string(RoleConfig):
+		return Invocation{Role: RoleConfig}, nil
+	case string(RoleDoctor):
+		return Invocation{Role: RoleDoctor}, nil
+	case string(RoleSupportBundle):
+		return Invocation{Role: RoleSupportBundle}, nil
+	case string(RoleCompletion):
+		return Invocation{Role: RoleCompletion}, nil
 	case "--help":
 		return Invocation{Role: RoleClient, ShowHelp: true}, nil
 	case "--version":

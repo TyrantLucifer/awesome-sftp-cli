@@ -188,6 +188,50 @@ func TestInstallerPersistsExactMetadataBeforeProbeAndEnabledHighWaterAfterHandsh
 	}
 }
 
+func TestInstallerFailedCandidateHandshakePreservesPreviousEnabledArtifact(t *testing.T) {
+	fixture := newInstallerFixture(t)
+	root := filepath.Join(testkit.PersistentTempDir(t), "helper-state")
+	store, err := NewStateStore(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.request.State = store
+	fixture.request.HighWater = nil
+	if _, err := fixture.installer.Install(context.Background(), fixture.request); err != nil {
+		t.Fatal(err)
+	}
+	oldArtifact := fixture.manifest.ArtifactID()
+	newArtifactBytes := []byte("amsftp Stage 6 candidate fixture only\n")
+	newRaw := []byte(strings.Replace(string(manifestForArtifact(t, newArtifactBytes)), "version=4.0.0", "version=5.0.0", 1))
+	newManifest, err := ParseManifestV1(newRaw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.remote.probeResults = append(fixture.remote.probeResults,
+		Observation{UID: 1001, Home: "/home/alice", Target: newManifest.Target()},
+		Observation{UID: 1001, Home: "/home/alice", Target: newManifest.Target()},
+	)
+	request := fixture.request
+	request.RawManifest = newRaw
+	request.RawSignature = fixtureSignature(t, newRaw)
+	request.Policy = fixturePolicyForManifest(t, newManifest)
+	request.Artifact = ReopenBytes(newArtifactBytes)
+	request.Handshake = func(context.Context, string, Manifest) error {
+		return errors.New("candidate handshake failed")
+	}
+	installer := Installer{entropy: strings.NewReader("fedcba9876543210")}
+	if _, err := installer.Install(context.Background(), request); err == nil {
+		t.Fatal("candidate handshake failure was reported successful")
+	}
+	enabled, err := store.LoadEnabled(request.EndpointID, oldArtifact.ProtocolMajor, Target{OS: oldArtifact.OS, Arch: oldArtifact.Arch})
+	if err != nil || enabled.ArtifactID != oldArtifact {
+		t.Fatalf("failed candidate changed enabled artifact: %#v, %v", enabled, err)
+	}
+	if _, err := store.LoadArtifact(request.EndpointID, newManifest.ArtifactID()); err == nil {
+		t.Fatal("failed candidate handshake advanced installed state")
+	}
+}
+
 type installerFixture struct {
 	installer Installer
 	request   InstallRequest
@@ -305,6 +349,7 @@ type fakeInstallRemote struct {
 	removed        string
 	publishReplace bool
 	failHandleStat bool
+	removeErr      error
 }
 
 func (r *fakeInstallRemote) Probe(context.Context) (Observation, error) {
@@ -383,7 +428,7 @@ func (r *fakeInstallRemote) RemoveExact(_ context.Context, path string) error {
 	r.removed = path
 	delete(r.attrs, path)
 	delete(r.files, path)
-	return nil
+	return r.removeErr
 }
 
 type fakeInstallHandle struct {

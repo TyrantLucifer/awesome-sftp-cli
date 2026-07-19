@@ -155,6 +155,50 @@ func TestWorkerAdoptsExactDurableSameHostPartAfterRestartWithoutRestaging(t *tes
 	}
 }
 
+func TestWorkerResolvesFrozenOldHelperArtifactAfterRegistrySwitch(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "destination"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte("old durable Job survives Helper activation switch")
+	if err := os.WriteFile(filepath.Join(root, "source"), payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	implementation := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, domain.EndpointSSH)
+	resolver := MapResolver{implementation.Descriptor().ID: implementation}
+	oldArtifact := domain.HelperArtifactID{ProtocolMajor: 1, Version: "4.0.0", OS: "linux", Arch: "amd64", SHA256: strings.Repeat("a", 64)}
+	newArtifact := domain.HelperArtifactID{ProtocolMajor: 1, Version: "5.0.0", OS: "linux", Arch: "amd64", SHA256: strings.Repeat("b", 64)}
+	oldBackend := &recordingSameHostBackend{root: root, payload: payload, artifactID: oldArtifact}
+	newBackend := &recordingSameHostBackend{root: root, payload: payload, artifactID: newArtifact}
+	registry := &versionedSameHostRegistry{
+		current:  oldBackend,
+		backends: map[domain.HelperArtifactID]SameHostCopyBackend{oldArtifact: oldBackend, newArtifact: newBackend},
+	}
+	var _ SameHostCopyResolver = registry
+	planner := NewPlannerWithSameHost(resolver, registry)
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, implementation, "/source"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination"))
+	request.Intent.Name = "copied"
+	plan, _, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.SameHostCopy == nil || plan.SameHostCopy.ArtifactID != oldArtifact {
+		t.Fatalf("frozen artifact = %#v", plan.SameHostCopy)
+	}
+	registry.current = newBackend
+	result, err := NewWorkerWithSameHost(resolver, newMemoryJournal(), registry).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Outcome != OutcomeCompleted || oldBackend.stageCalls != 1 || newBackend.stageCalls != 0 {
+		t.Fatalf("result=%#v old/new stage calls=%d/%d", result, oldBackend.stageCalls, newBackend.stageCalls)
+	}
+}
+
 func TestSameHostRouteKeepsExistingConflictAndOverwriteCommitSemantics(t *testing.T) {
 	root := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(root, "destination"), 0o700); err != nil {
@@ -404,6 +448,28 @@ type recordingSameHostBackend struct {
 	prepareCalls   int
 	stageCalls     int
 	modifiedOffset time.Duration
+	artifactID     domain.HelperArtifactID
+}
+
+type versionedSameHostRegistry struct {
+	current  SameHostCopyBackend
+	backends map[domain.HelperArtifactID]SameHostCopyBackend
+}
+
+func (registry *versionedSameHostRegistry) PrepareCopy(ctx context.Context, request SameHostCopyPrepareRequest) (SameHostCopyBinding, error) {
+	return registry.current.PrepareCopy(ctx, request)
+}
+
+func (registry *versionedSameHostRegistry) StageCopy(ctx context.Context, request SameHostCopyStageRequest) (SameHostCopyStageResult, error) {
+	return registry.current.StageCopy(ctx, request)
+}
+
+func (registry *versionedSameHostRegistry) ResolveSameHostCopy(_ context.Context, _ domain.EndpointID, artifact domain.HelperArtifactID) (SameHostCopyBackend, error) {
+	backend := registry.backends[artifact]
+	if backend == nil {
+		return nil, errors.New("exact Helper artifact is unavailable")
+	}
+	return backend, nil
 }
 
 type blockingSameHostBackend struct {
@@ -449,10 +515,14 @@ func (backend *recordingSameHostBackend) PrepareCopy(_ context.Context, request 
 	if request.ExpectedFingerprint.FileID != nil {
 		fileID = *request.ExpectedFingerprint.FileID
 	}
+	artifactID := backend.artifactID
+	if artifactID == (domain.HelperArtifactID{}) {
+		artifactID = domain.HelperArtifactID{ProtocolMajor: 1, Version: "4.0.0", OS: "linux", Arch: "amd64", SHA256: strings.Repeat("a", 64)}
+	}
 	return SameHostCopyBinding{
 		EndpointID: request.Source.EndpointID,
-		ArtifactID: domain.HelperArtifactID{ProtocolMajor: 1, Version: "4.0.0", OS: "linux", Arch: "amd64", SHA256: strings.Repeat("a", 64)},
-		Protocol:   1, HelperVersion: "4.0.0", CapabilityVersion: 1,
+		ArtifactID: artifactID,
+		Protocol:   artifactID.ProtocolMajor, HelperVersion: artifactID.Version, CapabilityVersion: 1,
 		SourceSHA256: hex.EncodeToString(digest[:]), SourceSize: uint64(len(backend.payload)),
 		SourceIdentity: SameHostSourceIdentity{Size: uint64(len(backend.payload)), Mode: 0o600, ModifiedUnixNS: modified, FileID: fileID},
 	}, nil

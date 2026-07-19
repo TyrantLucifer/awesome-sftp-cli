@@ -9,6 +9,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/daemon"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/domain"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/retrypolicy"
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/tui"
 )
 
@@ -87,8 +88,12 @@ type reconnectPolicy struct {
 }
 
 func defaultReconnectPolicy() reconnectPolicy {
+	return newReconnectPolicy(retrypolicy.DefaultReconnectDelays())
+}
+
+func newReconnectPolicy(delays []time.Duration) reconnectPolicy {
 	return reconnectPolicy{
-		Delays: []time.Duration{100 * time.Millisecond, 250 * time.Millisecond, 500 * time.Millisecond},
+		Delays: append([]time.Duration(nil), delays...),
 		Sleep: func(ctx context.Context, delay time.Duration) error {
 			timer := time.NewTimer(delay)
 			defer timer.Stop()

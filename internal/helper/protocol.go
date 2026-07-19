@@ -13,12 +13,13 @@ import (
 )
 
 const (
-	HelperPreface         = "amsftp-helper-wire-v1\n"
-	MaxHelperFrameBytes   = 1 * 1024 * 1024
-	MaxHelperJSONDepth    = 8
-	MaxHelperStringBytes  = 4096
-	MaxHelperConcurrent   = 4
-	MaxHelperCapabilities = 16
+	EnvelopeVersion       uint16 = 1
+	HelperPreface                = "amsftp-helper-wire-v1\n"
+	MaxHelperFrameBytes          = 1 * 1024 * 1024
+	MaxHelperJSONDepth           = 8
+	MaxHelperStringBytes         = 4096
+	MaxHelperConcurrent          = 4
+	MaxHelperCapabilities        = 16
 )
 
 type FrameType string
@@ -83,7 +84,7 @@ func EncodeHelperEnvelope(envelope Envelope) ([]byte, error) {
 }
 
 func validateEnvelope(envelope Envelope) error {
-	if envelope.Version != 1 {
+	if envelope.Version != EnvelopeVersion {
 		return errors.New("helper envelope: unsupported envelope version")
 	}
 	if !validFrameType(envelope.Type) {
@@ -345,7 +346,7 @@ func ServeHandshake(reader io.Reader, writer io.Writer, config ServerConfig) (Ne
 	if err != nil {
 		return Negotiated{}, err
 	}
-	response, err := EncodeHelperEnvelope(Envelope{Version: 1, Type: FrameServerHello, Payload: payload})
+	response, err := EncodeHelperEnvelope(Envelope{Version: EnvelopeVersion, Type: FrameServerHello, Payload: payload})
 	if err != nil {
 		return Negotiated{}, err
 	}

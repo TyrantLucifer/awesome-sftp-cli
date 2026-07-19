@@ -16,23 +16,23 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/state/migration"
 )
 
-func TestResolveCompiledStateDefaultsToFrozenVersion3Head(t *testing.T) {
+func TestResolveCompiledStateDefaultsToFrozenVersion4Head(t *testing.T) {
 	t.Parallel()
 
 	migrations, contracts, err := resolveCompiledState(nil, nil)
 	if err != nil {
 		t.Fatalf("resolveCompiledState(default): %v", err)
 	}
-	wantMigrations := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
+	wantMigrations, wantContracts := migration.CompiledSet()
 	if !reflect.DeepEqual(migrations, wantMigrations) {
-		t.Fatalf("default migrations = %#v, want Version 1 through Version 3", migrations)
+		t.Fatalf("default migrations = %#v, want Version 1 through Version 4", migrations)
 	}
-	if len(contracts) != 3 || !bytes.Equal(contracts[1], migration.Version1SchemaContract()) || !bytes.Equal(contracts[2], migration.Version2SchemaContract()) || !bytes.Equal(contracts[3], migration.Version3SchemaContract()) {
-		t.Fatalf("default schema contracts do not exactly match the three frozen contracts")
+	if !reflect.DeepEqual(contracts, wantContracts) || !bytes.Equal(contracts[4], migration.Version4SchemaContract()) {
+		t.Fatalf("default schema contracts do not exactly match the four frozen contracts")
 	}
 }
 
-func TestInitializePristineStateMigratesToVersion3WithRandomAttemptAndOneBackup(t *testing.T) {
+func TestInitializePristineStateMigratesToVersion4WithRandomAttemptAndOneBackup(t *testing.T) {
 	t.Parallel()
 
 	ctx := context.Background()
@@ -48,17 +48,16 @@ func TestInitializePristineStateMigratesToVersion3WithRandomAttemptAndOneBackup(
 	if err != nil {
 		t.Fatalf("Initialize(pristine default): %v", err)
 	}
-	if !report.Bootstrapped || report.SchemaHead != 3 {
-		t.Fatalf("initialize report = %#v, want bootstrapped Version 3", report)
+	if !report.Bootstrapped || report.SchemaHead != 4 {
+		t.Fatalf("initialize report = %#v, want bootstrapped Version 4", report)
 	}
 	connection, err := database.Conn(ctx)
 	if err != nil {
 		t.Fatalf("reserve Version 2 connection: %v", err)
 	}
-	migrations := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
-	contracts := map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract(), 3: migration.Version3SchemaContract()}
-	if err := migration.ValidateHead(ctx, connection, migrations, contracts, 3); err != nil {
-		t.Fatalf("validate default Version 3 head: %v", err)
+	migrations, contracts := migration.CompiledSet()
+	if err := migration.ValidateHead(ctx, connection, migrations, contracts, 4); err != nil {
+		t.Fatalf("validate default Version 4 head: %v", err)
 	}
 	var attemptID, backupBasename, journalMode string
 	if err := connection.QueryRowContext(ctx, "SELECT attempt_id, backup_basename FROM migration_backups WHERE status='verified'").Scan(&attemptID, &backupBasename); err != nil {
@@ -99,7 +98,7 @@ func TestInitializePristineStateMigratesToVersion3WithRandomAttemptAndOneBackup(
 	if err != nil {
 		t.Fatalf("Initialize(reopen Version 2): %v", err)
 	}
-	if reopenReport.Bootstrapped || reopenReport.SchemaHead != 3 {
+	if reopenReport.Bootstrapped || reopenReport.SchemaHead != 4 {
 		t.Fatalf("reopen report = %#v", reopenReport)
 	}
 	var backups int
@@ -118,7 +117,7 @@ func TestInitializePristineStateMigratesToVersion3WithRandomAttemptAndOneBackup(
 	}
 }
 
-func TestInitializeUpgradesFrozenVersion2HeadToVersion3WithSeparateRollbackBackup(t *testing.T) {
+func TestInitializeUpgradesFrozenVersion2HeadToVersion4WithSeparateRollbackBackup(t *testing.T) {
 	ctx := context.Background()
 	root := privateTempDir(t)
 	path := filepath.Join(root, "amsftp.db")
@@ -131,10 +130,10 @@ func TestInitializeUpgradesFrozenVersion2HeadToVersion3WithSeparateRollbackBacku
 		Now: time.Unix(1_151, 0), MigrationAttemptID: strings.Repeat("3", 32),
 	})
 	if err != nil {
-		t.Fatalf("upgrade Version 2 to Version 3: %v", err)
+		t.Fatalf("upgrade Version 2 to Version 4: %v", err)
 	}
 	defer database.Close()
-	if report.SchemaHead != 3 {
+	if report.SchemaHead != 4 {
 		t.Fatalf("upgrade report = %#v", report)
 	}
 	var backups int
@@ -146,10 +145,9 @@ func TestInitializeUpgradesFrozenVersion2HeadToVersion3WithSeparateRollbackBacku
 		t.Fatal(err)
 	}
 	defer connection.Close()
-	if err := migration.ValidateHead(ctx, connection,
-		[]migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()},
-		map[uint64][]byte{1: migration.Version1SchemaContract(), 2: migration.Version2SchemaContract(), 3: migration.Version3SchemaContract()}, 3); err != nil {
-		t.Fatalf("validate upgraded Version 3 head: %v", err)
+	migrations, contracts := migration.CompiledSet()
+	if err := migration.ValidateHead(ctx, connection, migrations, contracts, 4); err != nil {
+		t.Fatalf("validate upgraded Version 4 head: %v", err)
 	}
 }
 
@@ -368,9 +366,11 @@ func TestInitializeCompiledStateValidationFailsClosed(t *testing.T) {
 			t.Fatalf("close Version 3 fixture: %v", err)
 		}
 		before := directoryEntries(t, root)
+		version2Migrations, version2Contracts := compiledVersion2State()
 		_, _, err = Initialize(ctx, InitializeConfig{
 			Root: root, DatabasePath: path,
 			Random: strings.NewReader(""), Now: time.Unix(1_502, 0),
+			Migrations: version2Migrations, SchemaContracts: version2Contracts,
 		})
 		if err == nil {
 			t.Fatal("Initialize(default Version 2 binary on Version 3 head) error = nil")

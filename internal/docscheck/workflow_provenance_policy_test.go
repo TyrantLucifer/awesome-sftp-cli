@@ -29,7 +29,7 @@ func TestWorkflowProvenanceProfilesPinLegAndFileCounts(t *testing.T) {
 		legCount  int
 		fileCount int
 	}{
-		{path: ".github/workflows/ci.yml", legCount: 23, fileCount: 46},
+		{path: ".github/workflows/ci.yml", legCount: 24, fileCount: 48},
 		{path: ".github/workflows/nightly.yml", legCount: 19, fileCount: 38},
 	}
 	for _, test := range tests {
@@ -52,6 +52,46 @@ func TestWorkflowProvenanceProfilesPinLegAndFileCounts(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestCIProvenanceRequiresNativeLinuxARM64Lifecycle(t *testing.T) {
+	content := readCanonicalWorkflow(t, ".github/workflows/ci.yml")
+	for _, required := range []string{
+		"          - ubuntu-24.04-arm\n",
+		"          native-ubuntu-24.04-arm\n",
+		"native-ubuntu-24.04-arm)",
+		`test "$(field_value runner_arch "${record}")" = ARM64`,
+		`test "$(field_value go_env_goarch "${record}")" = arm64`,
+	} {
+		if !strings.Contains(content, required) {
+			t.Fatalf("CI workflow is missing native Linux arm64 contract %q", required)
+		}
+	}
+}
+
+func TestCINativeLinuxARM64PolicyRejectsMissingOrForgedEvidence(t *testing.T) {
+	path := ".github/workflows/ci.yml"
+	original := readCanonicalWorkflow(t, path)
+
+	t.Run("matrix leg missing", func(t *testing.T) {
+		content := strings.Replace(original, "          - ubuntu-24.04-arm\n", "", 1)
+		assertWorkflowRule(t, path, content, "workflow.ci_native_matrix")
+		assertWorkflowRule(t, path, content, provenanceRecordRule)
+	})
+
+	t.Run("collector accepts wrong runner architecture", func(t *testing.T) {
+		content := replaceInWorkflowStep(t, original, "compare", "Verify prerequisite provenance",
+			`                test "$(field_value runner_arch "${record}")" = ARM64`,
+			`                test "$(field_value runner_arch "${record}")" = X64`)
+		assertWorkflowRule(t, path, content, provenanceVerificationRule)
+	})
+
+	t.Run("collector accepts cross build", func(t *testing.T) {
+		content := replaceInWorkflowStep(t, original, "compare", "Verify prerequisite provenance",
+			`                test "$(field_value go_env_goarch "${record}")" = arm64`,
+			`                test "$(field_value go_env_goarch "${record}")" = amd64`)
+		assertWorkflowRule(t, path, content, provenanceVerificationRule)
+	})
 }
 
 func TestWorkflowProvenancePolicyRejectsMissingWholeSteps(t *testing.T) {
@@ -159,6 +199,88 @@ func TestWorkflowProvenancePolicyRejectsKerberosWorkloadDrift(t *testing.T) {
 		"Run real MIT Kerberos/GSSAPI matrix",
 		`bash ./internal/integration/hosted-kerberos.sh`,
 		`":"`,
+	)
+	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
+}
+
+func TestWorkflowProvenancePolicyRejectsVendorSFTPWorkloadDrift(t *testing.T) {
+	content := replaceInWorkflowStep(
+		t,
+		readCanonicalWorkflow(t, ".github/workflows/ci.yml"),
+		"auth-integration",
+		"Run real ProFTPD vendor SFTP matrix",
+		`bash ./internal/integration/hosted-vendor-sftp.sh`,
+		`":"`,
+	)
+	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
+}
+
+func TestWorkflowProvenancePolicyRequiresInternalPreviewBundleSSHDataflow(t *testing.T) {
+	tests := []struct {
+		name string
+		job  string
+		step string
+		old  string
+		new  string
+	}{
+		{
+			name: "quality upload action SHA",
+			job:  "quality",
+			step: "Upload internal preview bundle",
+			old:  approvedActionCommits["actions/upload-artifact"],
+			new:  "1111111111111111111111111111111111111111",
+		},
+		{
+			name: "quality upload artifact identity",
+			job:  "quality",
+			step: "Upload internal preview bundle",
+			old:  "amsftp-internal-preview-${{ github.sha }}",
+			new:  "amsftp-internal-preview-unbound",
+		},
+		{
+			name: "auth download action SHA",
+			job:  "auth-integration",
+			step: "Download internal preview bundle",
+			old:  approvedActionCommits["actions/download-artifact"],
+			new:  "2222222222222222222222222222222222222222",
+		},
+		{
+			name: "checksum verification removed",
+			job:  "auth-integration",
+			step: "Verify and extract internal preview bundle",
+			old:  `(cd "${bundle}" && sha256sum -c checksums.txt)`,
+			new:  `:`,
+		},
+		{
+			name: "archive identity smoke removed",
+			job:  "auth-integration",
+			step: "Verify and extract internal preview bundle",
+			old:  `tar -xOf "${archive}" amsftp_0.1.0-internal_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
+			new:  `:`,
+		},
+		{
+			name: "OpenSSH falls back to loose binary",
+			job:  "auth-integration",
+			step: "Run real OpenSSH authentication matrix",
+			old:  `AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp"`,
+			new:  `AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/amsftp"`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			content := replaceInWorkflowStep(t, readCanonicalWorkflow(t, ".github/workflows/ci.yml"), test.job, test.step, test.old, test.new)
+			assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
+		})
+	}
+}
+
+func TestWorkflowProvenancePolicyRequiresQualityBeforePreviewBundleAuth(t *testing.T) {
+	content := replaceInWorkflowJob(
+		t,
+		readCanonicalWorkflow(t, ".github/workflows/ci.yml"),
+		"auth-integration",
+		"    needs: quality\n",
+		"",
 	)
 	assertWorkflowRule(t, ".github/workflows/ci.yml", content, provenanceRecordRule)
 }
@@ -489,7 +611,7 @@ func TestWorkflowProvenancePolicyRejectsLegMatrixManifestAndCountDrift(t *testin
 			name: "ci leg count drift",
 			path: ".github/workflows/ci.yml",
 			job:  "compare",
-			old:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 23\n",
+			old:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 24\n",
 			new:  "          test \"$(wc -l <\"${manifest}\" | tr -d '[:space:]')\" -eq 22\n",
 			rule: provenanceVerificationRule,
 		},

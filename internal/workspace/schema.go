@@ -238,14 +238,12 @@ func Decode(r io.Reader) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
-	var envelope struct {
-		SchemaVersion int `json:"schema_version"`
-	}
-	if err := json.Unmarshal(raw, &envelope); err != nil {
-		return Document{}, fmt.Errorf("decode workspace: %w", err)
+	sourceVersion, err := decodeSchemaVersion(raw)
+	if err != nil {
+		return Document{}, err
 	}
 	var document Document
-	switch envelope.SchemaVersion {
+	switch sourceVersion {
 	case legacySchemaVersion:
 		var wire wireDocumentV1
 		if err := decodeStrictDocument(raw, &wire); err != nil {
@@ -258,8 +256,6 @@ func Decode(r io.Reader) (Document, error) {
 			return Document{}, err
 		}
 		document, err = documentFromWireV2(wire)
-	default:
-		return Document{}, fmt.Errorf("decode workspace: workspace schema_version %d is unsupported; want %d or %d", envelope.SchemaVersion, legacySchemaVersion, SchemaVersion)
 	}
 	if err != nil {
 		return Document{}, fmt.Errorf("decode workspace: %w", err)
@@ -268,6 +264,21 @@ func Decode(r io.Reader) (Document, error) {
 		return Document{}, fmt.Errorf("decode workspace: %w", err)
 	}
 	return document, nil
+}
+
+func decodeSchemaVersion(raw []byte) (int, error) {
+	var envelope struct {
+		SchemaVersion int `json:"schema_version"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
+		return 0, fmt.Errorf("decode workspace: %w", err)
+	}
+	switch envelope.SchemaVersion {
+	case legacySchemaVersion, SchemaVersion:
+		return envelope.SchemaVersion, nil
+	default:
+		return 0, fmt.Errorf("decode workspace: workspace schema_version %d is unsupported; want %d or %d", envelope.SchemaVersion, legacySchemaVersion, SchemaVersion)
+	}
 }
 
 func decodeRawDocument(r io.Reader) (json.RawMessage, error) {

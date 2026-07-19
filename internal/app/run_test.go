@@ -30,6 +30,11 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 		{name: "daemon", args: []string{"daemon", "--socket", "test.sock"}, wantRole: app.RoleDaemon, wantArgs: []string{"--socket", "test.sock"}},
 		{name: "askpass", args: []string{"askpass", "Password:"}, wantRole: app.RoleAskpass, wantArgs: []string{"Password:"}},
 		{name: "helper", args: []string{"helper", "serve"}, wantRole: app.RoleHelper, wantArgs: []string{"serve"}},
+		{name: "job", args: []string{"job", "list", "--limit", "5"}, wantRole: app.RoleJob, wantArgs: []string{"list", "--limit", "5"}},
+		{name: "config", args: []string{"config", "validate"}, wantRole: app.RoleConfig, wantArgs: []string{"validate"}},
+		{name: "doctor", args: []string{"doctor", "--format", "json"}, wantRole: app.RoleDoctor, wantArgs: []string{"--format", "json"}},
+		{name: "support bundle", args: []string{"support-bundle", "preview", "--format", "json"}, wantRole: app.RoleSupportBundle, wantArgs: []string{"preview", "--format", "json"}},
+		{name: "completion", args: []string{"completion", "zsh"}, wantRole: app.RoleCompletion, wantArgs: []string{"zsh"}},
 	}
 
 	for _, tt := range tests {
@@ -51,10 +56,15 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 				}
 			}
 			handlers := app.Handlers{
-				Client:  record(app.RoleClient),
-				Daemon:  record(app.RoleDaemon),
-				Askpass: record(app.RoleAskpass),
-				Helper:  record(app.RoleHelper),
+				Client:        record(app.RoleClient),
+				Daemon:        record(app.RoleDaemon),
+				Askpass:       record(app.RoleAskpass),
+				Helper:        record(app.RoleHelper),
+				Job:           record(app.RoleJob),
+				Config:        record(app.RoleConfig),
+				Doctor:        record(app.RoleDoctor),
+				SupportBundle: record(app.RoleSupportBundle),
+				Completion:    record(app.RoleCompletion),
 			}
 
 			var stdout bytes.Buffer
@@ -72,6 +82,23 @@ func TestRunDispatchesOnlyTheSelectedRole(t *testing.T) {
 				t.Fatalf("unexpected stderr: %q", stderr.String())
 			}
 		})
+	}
+}
+
+func TestRunReturnsStableTypedExitCode(t *testing.T) {
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	handlers := app.Handlers{
+		Config: func(context.Context, []string, io.Writer, io.Writer) error {
+			return app.NewExitError(app.ExitConfig, errors.New("invalid configuration"))
+		},
+	}
+
+	if got := app.Run(context.Background(), []string{"config", "validate"}, &stdout, &stderr, handlers); got != int(app.ExitConfig) {
+		t.Fatalf("exit code = %d, want %d", got, app.ExitConfig)
+	}
+	if !strings.Contains(stderr.String(), "invalid configuration") {
+		t.Fatalf("stderr = %q", stderr.String())
 	}
 }
 

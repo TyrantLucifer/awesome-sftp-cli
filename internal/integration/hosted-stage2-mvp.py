@@ -34,7 +34,24 @@ def screen_observed(observer, output, wanted):
     raise RuntimeError("VT observer failed with exit %d: %s" % (result.returncode, result.stderr.decode(errors="replace")))
 
 
+def selection_ready(observer, output, wanted):
+    result = subprocess.run(
+        [observer, "-final", "-absent", "READ-ONLY | loading", "-columns", "120", "-rows", "24", wanted.decode("utf-8")],
+        input=output,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        check=False,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    raise RuntimeError("VT observer failed with exit %d: %s" % (result.returncode, result.stderr.decode(errors="replace")))
+
+
 def read_until(fd, observer, output, wanted, timeout=15):
+    if screen_observed(observer, output, wanted):
+        return bytes(output)
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         ready, _, _ = select.select([fd], [], [], 0.1)
@@ -50,6 +67,25 @@ def read_until(fd, observer, output, wanted, timeout=15):
         if screen_observed(observer, output, wanted):
             return bytes(output)
     raise RuntimeError("PTY output did not contain %r; tail=%r" % (wanted, bytes(output[-3000:])))
+
+
+def read_ready_selection(fd, observer, output, filename, timeout=15):
+    wanted = ("> " + filename).encode("utf-8")
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if selection_ready(observer, output, wanted):
+            return bytes(output)
+        ready, _, _ = select.select([fd], [], [], 0.1)
+        if not ready:
+            continue
+        try:
+            chunk = os.read(fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        output.extend(chunk)
+    raise RuntimeError("PTY selection did not become ready for %r; tail=%r" % (wanted, bytes(output[-3000:])))
 
 
 def wait_child(pid, fd, timeout=10):
@@ -102,7 +138,7 @@ def run_copy(binary, observer, source, destination, environment, filename, expec
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
     try:
-        read_until(fd, observer, output, filename.encode("utf-8"))
+        read_ready_selection(fd, observer, output, filename)
         os.write(fd, b"y")
         read_until(fd, observer, output, b"source captured")
         os.write(fd, b"\t")
@@ -130,7 +166,7 @@ def run_move(binary, observer, source, destination, environment, filename):
     source_path = os.path.join(source, filename)
     destination_path = os.path.join(destination, filename)
     try:
-        read_until(fd, observer, output, filename.encode("utf-8"))
+        read_ready_selection(fd, observer, output, filename)
         os.write(fd, b"d")
         read_until(fd, observer, output, b"cut source captured")
         os.write(fd, b"\t")
@@ -177,7 +213,7 @@ def run_rename(binary, observer, source, destination, environment, old_name, new
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
     try:
-        read_until(fd, observer, output, old_name.encode("utf-8"))
+        read_ready_selection(fd, observer, output, old_name)
         os.write(fd, b"r")
         read_until(fd, observer, output, b"Rename through durable Job")
         os.write(fd, new_name.encode("utf-8") + b"\r")
@@ -202,7 +238,7 @@ def run_delete(binary, observer, source, destination, environment, filename):
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
     try:
-        read_until(fd, observer, output, filename.encode("utf-8"))
+        read_ready_selection(fd, observer, output, filename)
         os.write(fd, b"D")
         read_until(fd, observer, output, b"Delete frozen selection")
         os.write(fd, b"\r")
@@ -243,7 +279,7 @@ def main():
         if not os.path.isabs(persistent_root) or not os.path.isdir(persistent_root):
             raise SystemExit("AMSFTP_TEST_PERSISTENT_ROOT must be an existing absolute directory")
     root = tempfile.mkdtemp(prefix="amsftp-stage2-mvp-", dir=persistent_root)
-    daemon_group = None
+    environment = None
     try:
         if sys.platform.startswith("linux"):
             installed_binary = os.path.join(root, "amsftp")
@@ -271,7 +307,7 @@ def main():
             payload = b"stage2-local-user-visible-mvp\n"
             with open(os.path.join(source, "payload.txt"), "wb") as handle:
                 handle.write(payload)
-            daemon_group = run_copy(binary, observer, source, destination, environment, "payload.txt", os.path.join(destination, "payload.txt"))
+            run_copy(binary, observer, source, destination, environment, "payload.txt", os.path.join(destination, "payload.txt"))
             with open(os.path.join(destination, "payload.txt"), "rb") as handle:
                 copied = handle.read()
             if copied != payload:
@@ -299,7 +335,7 @@ def main():
             upload_payload = b"stage2-user-visible-upload\n"
             with open(os.path.join(source, "upload.txt"), "wb") as handle:
                 handle.write(upload_payload)
-            daemon_group = run_copy(binary, observer, source, alias + ":" + upload_directory, environment, "upload.txt", os.path.join(upload_directory, "upload.txt"))
+            run_copy(binary, observer, source, alias + ":" + upload_directory, environment, "upload.txt", os.path.join(upload_directory, "upload.txt"))
             with open(os.path.join(upload_directory, "upload.txt"), "rb") as handle:
                 uploaded = handle.read()
             if uploaded != upload_payload:
@@ -315,11 +351,15 @@ def main():
             prove_reattach(binary, observer, source, destination, environment)
             print("Stage 2 temporary-sshd PTY upload, download, and durable Jobs MVP passed")
     finally:
-        if daemon_group is not None:
-            try:
-                os.killpg(daemon_group, signal.SIGTERM)
-            except ProcessLookupError:
-                pass
+        if environment is not None:
+            subprocess.run(
+                [binary, "daemon", "stop", "--format", "json"],
+                env=environment,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+                timeout=10,
+            )
         shutil.rmtree(root, ignore_errors=True)
 
 

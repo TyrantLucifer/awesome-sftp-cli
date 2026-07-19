@@ -14,6 +14,7 @@ import (
 type SFTPInstallRemoteConfig struct {
 	Client         *pkgsftp.Client
 	BindingProbe   func(context.Context) ([]byte, error)
+	Probe          func(context.Context) (Observation, error)
 	LinkAttributes func(context.Context, string) (openssh.SFTPAttributes, error)
 	MkdirExact     func(context.Context, string, uint32) error
 }
@@ -21,20 +22,24 @@ type SFTPInstallRemoteConfig struct {
 type SFTPInstallRemote struct {
 	client         *pkgsftp.Client
 	bindingProbe   func(context.Context) ([]byte, error)
+	probe          func(context.Context) (Observation, error)
 	linkAttributes func(context.Context, string) (openssh.SFTPAttributes, error)
 	mkdirExact     func(context.Context, string, uint32) error
 }
 
 func NewSFTPInstallRemote(config SFTPInstallRemoteConfig) (*SFTPInstallRemote, error) {
-	if config.Client == nil || config.BindingProbe == nil || config.LinkAttributes == nil || config.MkdirExact == nil {
+	if config.Client == nil || (config.BindingProbe == nil) == (config.Probe == nil) || config.LinkAttributes == nil || config.MkdirExact == nil {
 		return nil, errors.New("create helper SFTP install remote: client and fresh probes are required")
 	}
-	return &SFTPInstallRemote{client: config.Client, bindingProbe: config.BindingProbe, linkAttributes: config.LinkAttributes, mkdirExact: config.MkdirExact}, nil
+	return &SFTPInstallRemote{client: config.Client, bindingProbe: config.BindingProbe, probe: config.Probe, linkAttributes: config.LinkAttributes, mkdirExact: config.MkdirExact}, nil
 }
 
 func (r *SFTPInstallRemote) Probe(ctx context.Context) (Observation, error) {
 	if err := requireRemoteContext(ctx); err != nil {
 		return Observation{}, err
+	}
+	if r.probe != nil {
+		return r.probe(ctx)
 	}
 	raw, err := r.bindingProbe(ctx)
 	if err != nil {

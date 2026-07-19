@@ -24,6 +24,11 @@ func TestParseInvocation(t *testing.T) {
 		{name: "daemon", args: []string{"daemon"}, want: app.Invocation{Role: app.RoleDaemon}},
 		{name: "askpass", args: []string{"askpass"}, want: app.Invocation{Role: app.RoleAskpass}},
 		{name: "helper", args: []string{"helper"}, want: app.Invocation{Role: app.RoleHelper}},
+		{name: "job", args: []string{"job", "list"}, want: app.Invocation{Role: app.RoleJob}},
+		{name: "config", args: []string{"config", "validate"}, want: app.Invocation{Role: app.RoleConfig}},
+		{name: "doctor", args: []string{"doctor", "--format", "json"}, want: app.Invocation{Role: app.RoleDoctor}},
+		{name: "support bundle", args: []string{"support-bundle", "preview"}, want: app.Invocation{Role: app.RoleSupportBundle}},
+		{name: "completion", args: []string{"completion", "zsh"}, want: app.Invocation{Role: app.RoleCompletion}},
 		{name: "help", args: []string{"--help"}, want: app.Invocation{Role: app.RoleClient, ShowHelp: true}},
 		{name: "version", args: []string{"--version"}, want: app.Invocation{Role: app.RoleClient, ShowVersion: true}},
 	}

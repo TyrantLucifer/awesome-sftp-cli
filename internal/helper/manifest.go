@@ -11,6 +11,8 @@ import (
 )
 
 const (
+	ManifestFormatVersion  = 1
+	ManifestHeader         = "amsftp-helper-manifest-v1"
 	MaxManifestBytes       = 512
 	MaxHelperArtifactBytes = 128 << 20
 	detachedSignatureBytes = 89
@@ -78,7 +80,7 @@ func ParseManifestV1(raw []byte) (Manifest, error) {
 		return Manifest{}, errors.New("parse helper manifest: exactly one final LF is required")
 	}
 	lines := strings.Split(string(raw), "\n")
-	if len(lines) != 10 || lines[9] != "" || lines[0] != "amsftp-helper-manifest-v1" {
+	if len(lines) != 10 || lines[9] != "" || lines[0] != ManifestHeader {
 		return Manifest{}, errors.New("parse helper manifest: line count or header is invalid")
 	}
 	values := make([]string, 8)
@@ -193,6 +195,8 @@ type Verifier struct{ keys map[string]ed25519.PublicKey }
 // NewProductionVerifier is deliberately empty while production distribution
 // is CLOSED. Test fixture trust is injected only by same-package test code.
 func NewProductionVerifier() Verifier { return Verifier{} }
+
+func (v Verifier) configured() bool { return len(v.keys) != 0 }
 
 func (v Verifier) Verify(rawManifest, rawSignature []byte) error {
 	manifest, err := ParseManifestV1(rawManifest)

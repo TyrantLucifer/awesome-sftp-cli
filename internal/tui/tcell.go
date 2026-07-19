@@ -44,6 +44,10 @@ func (s *TCellSurface) PutClipped(x, y, width int, text string, style CellStyle)
 }
 
 func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
+	return TranslateTCellEventWithKeymap(event, mode, DefaultKeymap())
+}
+
+func TranslateTCellEventWithKeymap(event tcell.Event, mode Mode, keymap Keymap) (Action, bool) {
 	switch event := event.(type) {
 	case *tcell.EventResize:
 		width, height := event.Size()
@@ -79,84 +83,10 @@ func TranslateTCellEvent(event tcell.Event, mode Mode) (Action, bool) {
 			if value := event.Str(); len(value) == 1 && value[0] >= '0' && value[0] <= '9' {
 				return CountDigit{Digit: value[0] - '0'}, true
 			}
-			switch event.Str() {
-			case "h":
-				return KeyPress{Key: KeyParent}, true
-			case "j":
-				return KeyPress{Key: KeyDown}, true
-			case "k":
-				return KeyPress{Key: KeyUp}, true
-			case "l":
-				return KeyPress{Key: KeyOpen}, true
-			case "v":
-				return KeyPress{Key: KeyVisual}, true
-			case "V":
-				return KeyPress{Key: KeyVisualLine}, true
-			case " ":
-				return KeyPress{Key: KeyMark}, true
-			case "/":
-				return KeyPress{Key: KeyFilter}, true
-			case "f":
-				return KeyPress{Key: KeyFilenameSearch}, true
-			case "S":
-				return KeyPress{Key: KeySave}, true
-			case "s":
-				return KeyPress{Key: KeySort}, true
-			case "H":
-				return KeyPress{Key: KeyToggleHidden}, true
-			case "R":
-				return KeyPress{Key: KeyRefresh}, true
-			case "g":
-				return KeyPress{Key: KeyPath}, true
-			case "c":
-				return KeyPress{Key: KeyEndpoint}, true
-			case "y":
-				return KeyPress{Key: KeyCopy}, true
-			case "d":
-				return KeyPress{Key: KeyCut}, true
-			case "D":
-				return KeyPress{Key: KeyDelete}, true
-			case "r":
-				return KeyPress{Key: KeyRename}, true
-			case ".":
-				return KeyPress{Key: KeyRepeat}, true
-			case "p":
-				return KeyPress{Key: KeyPaste}, true
-			case "e":
-				return KeyPress{Key: KeyEdit}, true
-			case "o":
-				return KeyPress{Key: KeyOpenExternal}, true
-			case "E":
-				return KeyPress{Key: KeyEditRecovery}, true
-			case "!":
-				return KeyPress{Key: KeyCommand}, true
-			case "K":
-				return KeyPress{Key: KeyPreviewDrawer}, true
-			case "J":
-				return KeyPress{Key: KeyJobs}, true
-			case "L":
-				return KeyPress{Key: KeyLogDrawer}, true
-			case "P":
-				return KeyPress{Key: KeyJobPause}, true
-			case "U":
-				return KeyPress{Key: KeyJobResume}, true
-			case "C":
-				return KeyPress{Key: KeyJobCancel}, true
-			case "w":
-				return KeyPress{Key: KeyConflictOverwrite}, true
-			case "x":
-				return KeyPress{Key: KeyConflictSkip}, true
-			case "a":
-				return KeyPress{Key: KeyConflictAutoRename}, true
-			case "W":
-				return KeyPress{Key: KeyConflictOverwriteAll}, true
-			case "X":
-				return KeyPress{Key: KeyConflictSkipAll}, true
-			case "A":
-				return KeyPress{Key: KeyConflictAutoRenameAll}, true
-			default:
-				return TextInput{Text: event.Str()}, true
+			if key, ok := keymap.lookup(mode, event.Str()); ok {
+				return KeyPress{Key: key}, true
 			}
+			return TextInput{Text: event.Str()}, true
 		}
 	}
 	return nil, false

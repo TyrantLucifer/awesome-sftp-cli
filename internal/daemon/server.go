@@ -19,9 +19,16 @@ import (
 )
 
 const (
-	RequestHello  = "hello"
-	RequestCancel = "cancel"
+	RequestHello    = "hello"
+	RequestCancel   = "cancel"
+	RequestShutdown = "daemon.shutdown"
 )
+
+type ShutdownRequest struct{}
+
+type ShutdownResponse struct {
+	Accepted bool `json:"accepted"`
+}
 
 type Session interface {
 	Handle(context.Context, string, json.RawMessage) (any, error)
@@ -39,9 +46,11 @@ type ServerConfig struct {
 	EventTypes       []string
 	Sessions         SessionFactory
 	MaxInFlight      int
+	MaxFrameBytes    uint32
 	HandshakeTimeout time.Duration
 	VerifyPeer       func(net.Conn) error
 	Logger           *slog.Logger
+	Shutdown         func()
 }
 
 type Server struct {
@@ -51,9 +60,12 @@ type Server struct {
 	eventTypes       []string
 	sessions         SessionFactory
 	maxInFlight      int
+	maxFrameBytes    uint32
 	handshakeTimeout time.Duration
 	verifyPeer       func(net.Conn) error
 	logger           *slog.Logger
+	shutdown         func()
+	shutdownOnce     sync.Once
 }
 
 func NewServer(config ServerConfig) (*Server, error) {
@@ -68,6 +80,13 @@ func NewServer(config ServerConfig) (*Server, error) {
 	}
 	if config.MaxInFlight <= 0 {
 		return nil, errors.New("create daemon server: maximum in-flight requests must be positive")
+	}
+	maxFrameBytes := config.MaxFrameBytes
+	if maxFrameBytes == 0 {
+		maxFrameBytes = ipc.MaxFrameBytes
+	}
+	if maxFrameBytes > ipc.MaxFrameBytes {
+		return nil, fmt.Errorf("create daemon server: maximum frame bytes %d exceeds protocol maximum %d", maxFrameBytes, ipc.MaxFrameBytes)
 	}
 	if config.HandshakeTimeout <= 0 {
 		return nil, errors.New("create daemon server: handshake timeout must be positive")
@@ -85,9 +104,11 @@ func NewServer(config ServerConfig) (*Server, error) {
 		eventTypes:       append([]string(nil), config.EventTypes...),
 		sessions:         config.Sessions,
 		maxInFlight:      config.MaxInFlight,
+		maxFrameBytes:    maxFrameBytes,
 		handshakeTimeout: config.HandshakeTimeout,
 		verifyPeer:       config.VerifyPeer,
 		logger:           config.Logger,
+		shutdown:         config.Shutdown,
 	}, nil
 }
 
@@ -111,36 +132,16 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 		}
 	}()
 	defer close(connectionDone)
-	session := s.sessions.NewSession()
-	if session == nil {
-		return errors.New("serve daemon connection: session factory returned nil")
-	}
 
-	reader, err := ipc.NewReader(conn, ipc.MaxFrameBytes)
+	reader, err := ipc.NewReader(conn, s.maxFrameBytes)
 	if err != nil {
-		_ = session.Close()
 		return err
 	}
-	frameWriter, err := ipc.NewWriter(conn, ipc.MaxFrameBytes)
+	frameWriter, err := ipc.NewWriter(conn, s.maxFrameBytes)
 	if err != nil {
-		_ = session.Close()
 		return err
 	}
 	writer := &connectionWriter{writer: frameWriter, conn: conn, cancel: cancelConnection}
-
-	active := make(map[domain.RequestID]context.CancelFunc)
-	var activeMu sync.Mutex
-	var requests sync.WaitGroup
-	defer func() {
-		cancelConnection()
-		activeMu.Lock()
-		for _, cancel := range active {
-			cancel()
-		}
-		activeMu.Unlock()
-		requests.Wait()
-		_ = session.Close()
-	}()
 
 	if err := conn.SetReadDeadline(time.Now().Add(s.handshakeTimeout)); err != nil {
 		return fmt.Errorf("serve daemon connection: set handshake deadline: %w", err)
@@ -159,6 +160,24 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 		}
 		return fmt.Errorf("serve daemon connection: clear handshake deadline: %w", err)
 	}
+	session := s.sessions.NewSession()
+	if session == nil {
+		return errors.New("serve daemon connection: session factory returned nil")
+	}
+
+	active := make(map[domain.RequestID]context.CancelFunc)
+	var activeMu sync.Mutex
+	var requests sync.WaitGroup
+	defer func() {
+		cancelConnection()
+		activeMu.Lock()
+		for _, cancel := range active {
+			cancel()
+		}
+		activeMu.Unlock()
+		requests.Wait()
+		_ = session.Close()
+	}()
 
 	semaphore := make(chan struct{}, s.maxInFlight)
 	for {
@@ -192,6 +211,27 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 			}
 			activeMu.Unlock()
 			_ = writer.writePayload(selected, request, result)
+			continue
+		}
+		if request.Name == RequestShutdown {
+			if s.shutdown == nil {
+				_ = writer.writeError(selected, request, &domain.OpError{
+					Code:    domain.CodeUnsupported,
+					Message: "daemon shutdown is not available",
+					Retry:   domain.RetryAdvice{Kind: domain.RetryNever},
+					Effect:  domain.EffectNone,
+				})
+				continue
+			}
+			var shutdownRequest ShutdownRequest
+			if err := decodePayload(request.Payload, &shutdownRequest); err != nil {
+				_ = writer.writeError(selected, request, invalidArgument("decode daemon shutdown request", err))
+				continue
+			}
+			if err := writer.writePayload(selected, request, ShutdownResponse{Accepted: true}); err != nil {
+				return fmt.Errorf("serve daemon connection: acknowledge shutdown: %w", err)
+			}
+			s.shutdownOnce.Do(s.shutdown)
 			continue
 		}
 

@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +15,11 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
 )
 
-const maximumDocumentBytes int64 = 256 * 1024
+const (
+	maximumDocumentBytes              int64 = 256 * 1024
+	maximumCompletionDirectoryEntries       = 1024
+	maximumCompletionNames                  = 256
+)
 
 type Summary struct {
 	Name      string
@@ -26,6 +31,12 @@ type Store struct {
 	root         string
 	beforeRename func() error
 	now          func() time.Time
+}
+
+type storedDocument struct {
+	document      Document
+	sourceVersion int
+	raw           []byte
 }
 
 func NewStore(root string) (*Store, error) {
@@ -47,10 +58,13 @@ func (s *Store) Save(name string, document Document) (resultErr error) {
 		return fmt.Errorf("save workspace %q: %w", name, err)
 	}
 	finalPath := s.path(name)
+	var existing *storedDocument
 	if _, err := os.Lstat(finalPath); err == nil {
-		if _, loadErr := s.Load(name); loadErr != nil {
+		loaded, loadErr := s.loadStored(name)
+		if loadErr != nil {
 			return fmt.Errorf("save workspace %q: preserve invalid existing document: %w", name, loadErr)
 		}
+		existing = &loaded
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("save workspace %q: inspect existing document: %w", name, err)
 	}
@@ -81,9 +95,23 @@ func (s *Store) Save(name string, document Document) (resultErr error) {
 	if err := platform.ValidatePrivateFile(temporaryPath, platform.ValidatePersistent); err != nil {
 		return fmt.Errorf("save workspace %q: validate temporary file: %w", name, err)
 	}
+	if existing != nil && existing.sourceVersion == legacySchemaVersion {
+		if err := s.preserveLegacyBackup(name, existing.raw); err != nil {
+			return fmt.Errorf("save workspace %q: %w", name, err)
+		}
+	}
 	if s.beforeRename != nil {
 		if err := s.beforeRename(); err != nil {
 			return fmt.Errorf("save workspace %q before replace: %w", name, err)
+		}
+	}
+	if existing != nil {
+		current, err := s.loadStored(name)
+		if err != nil {
+			return fmt.Errorf("save workspace %q: revalidate existing document: %w", name, err)
+		}
+		if !bytes.Equal(current.raw, existing.raw) {
+			return fmt.Errorf("save workspace %q: existing document changed before replace", name)
 		}
 	}
 	if err := os.Rename(temporaryPath, finalPath); err != nil {
@@ -99,31 +127,58 @@ func (s *Store) Save(name string, document Document) (resultErr error) {
 }
 
 func (s *Store) Load(name string) (Document, error) {
-	if err := ValidateName(name); err != nil {
+	stored, err := s.loadStored(name)
+	if err != nil {
 		return Document{}, err
 	}
-	workspacePath := s.path(name)
-	if err := platform.ValidatePrivateFile(workspacePath, platform.ValidatePersistent); err != nil {
-		return Document{}, fmt.Errorf("load workspace %q: %w", name, err)
+	return stored.document, nil
+}
+
+func (s *Store) loadStored(name string) (storedDocument, error) {
+	if err := ValidateName(name); err != nil {
+		return storedDocument{}, err
 	}
-	// #nosec G304 -- ValidateName confines workspacePath to the private store root, validated above.
-	file, err := os.Open(workspacePath)
+	workspacePath := s.path(name)
+	raw, err := readPrivateWorkspaceFile(workspacePath)
 	if err != nil {
-		return Document{}, fmt.Errorf("load workspace %q: %w", name, err)
+		return storedDocument{}, fmt.Errorf("load workspace %q: %w", name, err)
+	}
+	document, err := Decode(bytes.NewReader(raw))
+	if err != nil {
+		return storedDocument{}, fmt.Errorf("load workspace %q: %w", name, err)
+	}
+	sourceVersion, err := decodeSchemaVersion(raw)
+	if err != nil {
+		return storedDocument{}, fmt.Errorf("load workspace %q: %w", name, err)
+	}
+	return storedDocument{document: document, sourceVersion: sourceVersion, raw: raw}, nil
+}
+
+func readPrivateWorkspaceFile(path string) ([]byte, error) {
+	if err := platform.ValidatePrivateFile(path, platform.ValidatePersistent); err != nil {
+		return nil, err
+	}
+	// #nosec G304 -- callers pass only store-derived paths beneath an owner-private root.
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
 	}
 	defer file.Close()
 	info, err := file.Stat()
 	if err != nil {
-		return Document{}, fmt.Errorf("load workspace %q: inspect file: %w", name, err)
+		return nil, fmt.Errorf("inspect file: %w", err)
 	}
 	if info.Size() > maximumDocumentBytes {
-		return Document{}, fmt.Errorf("load workspace %q: file exceeds %d bytes", name, maximumDocumentBytes)
+		return nil, fmt.Errorf("file exceeds %d bytes", maximumDocumentBytes)
 	}
-	document, err := Decode(io.LimitReader(file, maximumDocumentBytes+1))
+	raw, err := io.ReadAll(io.LimitReader(file, maximumDocumentBytes+1))
 	if err != nil {
-		return Document{}, fmt.Errorf("load workspace %q: %w", name, err)
+		return nil, fmt.Errorf("read file: %w", err)
 	}
-	return document, nil
+	if int64(len(raw)) > maximumDocumentBytes {
+		return nil, fmt.Errorf("file exceeds %d bytes", maximumDocumentBytes)
+	}
+	return raw, nil
 }
 
 func (s *Store) List() ([]Summary, error) {
@@ -161,8 +216,136 @@ func (s *Store) List() ([]Summary, error) {
 	return summaries, nil
 }
 
+// CompletionNames returns a bounded, deterministic list of workspace names
+// without reading document contents or creating a missing workspace root.
+func CompletionNames(root string) ([]string, error) {
+	if root == "" || !filepath.IsAbs(root) || filepath.Clean(root) != root || strings.IndexByte(root, 0) >= 0 {
+		return nil, errors.New("complete workspaces: root must be canonical absolute")
+	}
+	if _, err := os.Lstat(root); errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	} else if err != nil {
+		return nil, fmt.Errorf("complete workspaces: inspect root: %w", err)
+	}
+	if err := platform.ValidatePrivateDirectory(root, platform.ValidatePersistent); err != nil {
+		return nil, fmt.Errorf("complete workspaces: validate root: %w", err)
+	}
+	// #nosec G304 -- root is canonical, owner-private, and supplied by the platform path resolver.
+	directory, err := os.Open(root)
+	if err != nil {
+		return nil, fmt.Errorf("complete workspaces: open root: %w", err)
+	}
+	defer directory.Close()
+	entries, err := directory.ReadDir(maximumCompletionDirectoryEntries + 1)
+	if err != nil && !errors.Is(err, io.EOF) {
+		return nil, fmt.Errorf("complete workspaces: read root: %w", err)
+	}
+	if len(entries) > maximumCompletionDirectoryEntries {
+		return nil, fmt.Errorf("complete workspaces: directory exceeds %d entries", maximumCompletionDirectoryEntries)
+	}
+	names := make([]string, 0, min(len(entries), maximumCompletionNames))
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 || !strings.HasSuffix(entry.Name(), ".json") {
+			continue
+		}
+		name := strings.TrimSuffix(entry.Name(), ".json")
+		if ValidateName(name) != nil {
+			continue
+		}
+		workspacePath := filepath.Join(root, entry.Name())
+		if err := platform.ValidatePrivateFile(workspacePath, platform.ValidatePersistent); err != nil {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) > maximumCompletionNames {
+		names = names[:maximumCompletionNames]
+	}
+	return names, nil
+}
+
 func (s *Store) path(name string) string {
 	return filepath.Join(s.root, name+".json")
+}
+
+func (s *Store) legacyBackupPath(name string) string {
+	return filepath.Join(s.root, name+".schema-v1.backup")
+}
+
+func (s *Store) preserveLegacyBackup(name string, source []byte) error {
+	backupPath := s.legacyBackupPath(name)
+	if _, err := os.Lstat(backupPath); err == nil {
+		return s.validateLegacyBackup(backupPath, source)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("inspect migration backup: %w", err)
+	}
+	current, err := readPrivateWorkspaceFile(s.path(name))
+	if err != nil {
+		return fmt.Errorf("revalidate migration source: %w", err)
+	}
+	if !bytes.Equal(current, source) {
+		return errors.New("existing document changed before migration backup")
+	}
+	temporary, err := os.CreateTemp(s.root, ".workspace-migration-backup-*.tmp")
+	if err != nil {
+		return fmt.Errorf("create migration backup temporary file: %w", err)
+	}
+	temporaryPath := temporary.Name()
+	defer func() {
+		_ = temporary.Close()
+		if temporaryPath != "" {
+			_ = os.Remove(temporaryPath)
+		}
+	}()
+	// #nosec G302 -- migration backups are owner-private state with exact mode 0600.
+	if err := temporary.Chmod(0o600); err != nil {
+		return fmt.Errorf("set migration backup temporary mode: %w", err)
+	}
+	written, err := io.Copy(temporary, bytes.NewReader(source))
+	if err != nil {
+		return fmt.Errorf("write migration backup temporary file: %w", err)
+	}
+	if written != int64(len(source)) {
+		return fmt.Errorf("write migration backup temporary file: wrote %d bytes, want %d", written, len(source))
+	}
+	if err := temporary.Sync(); err != nil {
+		return fmt.Errorf("sync migration backup temporary file: %w", err)
+	}
+	if err := temporary.Close(); err != nil {
+		return fmt.Errorf("close migration backup temporary file: %w", err)
+	}
+	if err := platform.ValidatePrivateFile(temporaryPath, platform.ValidatePersistent); err != nil {
+		return fmt.Errorf("validate migration backup temporary file: %w", err)
+	}
+	if err := os.Link(temporaryPath, backupPath); err != nil && !errors.Is(err, os.ErrExist) {
+		return fmt.Errorf("publish migration backup: %w", err)
+	}
+	if err := s.validateLegacyBackup(backupPath, source); err != nil {
+		return err
+	}
+	if err := os.Remove(temporaryPath); err != nil {
+		return fmt.Errorf("remove migration backup temporary file: %w", err)
+	}
+	temporaryPath = ""
+	if err := syncDirectory(s.root); err != nil {
+		return fmt.Errorf("sync migration backup: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) validateLegacyBackup(backupPath string, source []byte) error {
+	preserved, err := readPrivateWorkspaceFile(backupPath)
+	if err != nil {
+		return fmt.Errorf("validate migration backup: %w", err)
+	}
+	if !bytes.Equal(preserved, source) {
+		return errors.New("migration backup conflicts with existing preserved bytes")
+	}
+	if err := syncDirectory(s.root); err != nil {
+		return fmt.Errorf("sync migration backup: %w", err)
+	}
+	return nil
 }
 
 func ValidateName(name string) error {

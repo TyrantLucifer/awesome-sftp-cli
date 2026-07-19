@@ -46,6 +46,60 @@ func TestAttemptStoreCreatesOneFrozenAttemptAndReusesExactMatch(t *testing.T) {
 	}
 }
 
+func TestBeginAttemptFromRestoreHoldAtomicallyReplacesExactHold(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	connection := version1Connection(t, ctx)
+	heldAttemptID := strings.Repeat("2", 32)
+	if _, err := connection.ExecContext(ctx, "UPDATE migration_control SET upgrade_hold=1, hold_reason='restored_backup', hold_attempt_id=? WHERE singleton=1", heldAttemptID); err != nil {
+		t.Fatal(err)
+	}
+	request := AttemptRequest{
+		AttemptID: strings.Repeat("4", 32), OriginalHead: 1, TargetHead: 3,
+		MigrationSetDigest: sha256.Sum256([]byte("restored set")),
+	}
+	attempt, err := BeginAttemptFromRestoreHold(ctx, connection, heldAttemptID, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if attempt.AttemptID != request.AttemptID || attempt.Status != AttemptPreparing || attempt.CurrentHead != 1 || attempt.BackupSHA256 != nil {
+		t.Fatalf("attempt = %#v", attempt)
+	}
+	var clearRows int
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_control WHERE singleton=1 AND upgrade_hold=0 AND hold_reason IS NULL AND hold_attempt_id IS NULL").Scan(&clearRows); err != nil || clearRows != 1 {
+		t.Fatalf("clear control rows = %d, error=%v", clearRows, err)
+	}
+}
+
+func TestBeginAttemptFromRestoreHoldMismatchPreservesHoldAndCreatesNothing(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	connection := version1Connection(t, ctx)
+	heldAttemptID := strings.Repeat("2", 32)
+	if _, err := connection.ExecContext(ctx, "UPDATE migration_control SET upgrade_hold=1, hold_reason='restored_backup', hold_attempt_id=? WHERE singleton=1", heldAttemptID); err != nil {
+		t.Fatal(err)
+	}
+	request := AttemptRequest{
+		AttemptID: strings.Repeat("4", 32), OriginalHead: 1, TargetHead: 3,
+		MigrationSetDigest: sha256.Sum256([]byte("restored set")),
+	}
+	if _, err := BeginAttemptFromRestoreHold(ctx, connection, strings.Repeat("3", 32), request); err == nil {
+		t.Fatal("BeginAttemptFromRestoreHold(mismatch) error = nil")
+	}
+	var heldRows, attempts int
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_control WHERE singleton=1 AND upgrade_hold=1 AND hold_reason='restored_backup' AND hold_attempt_id=?", heldAttemptID).Scan(&heldRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := connection.QueryRowContext(ctx, "SELECT count(*) FROM migration_attempts").Scan(&attempts); err != nil {
+		t.Fatal(err)
+	}
+	if heldRows != 1 || attempts != 0 {
+		t.Fatalf("held rows/attempts = %d/%d, want 1/0", heldRows, attempts)
+	}
+}
+
 func TestAttemptBackupCatalogAndRestartDecisions(t *testing.T) {
 	t.Parallel()
 

@@ -89,11 +89,94 @@ func checkCIQuality(job workflowJob, add func(int, string, string)) {
 	if !valid {
 		add(job.line, "workflow.ci_quality", "quality job must run on ubuntu-24.04 and execute make check and make supply-chain")
 	}
+	if !qualityLifecycleUsesTrustedPersistentRoot(job) {
+		add(job.line, "workflow.ci_quality_lifecycle_root", "quality installed lifecycle must place persistent HOME beneath the prepared owner-private test root")
+	}
+	if !qualityLifecycleProvesPinnedCacheUpgradeRecovery(job) {
+		add(job.line, "workflow.ci_quality_pinned_cache", "quality installed lifecycle must preserve one frozen Stage 5 pinned cache identity across failed-upgrade recovery and rollback")
+	}
+	if !qualityLifecycleUsesReviewedNotice(job) {
+		add(job.line, "workflow.ci_quality_notice", "quality packaging must regenerate and package the committed reviewed third-party NOTICE")
+	}
+}
+
+func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil || step.name.value != "Exercise deterministic internal preview packaging and clean-home lifecycle" {
+			continue
+		}
+		if step.run == nil {
+			return false
+		}
+		script := step.run.value
+		return strings.Contains(script, `trusted_root="/var/lib/amsftp-tests/$(id -u)"`) &&
+			strings.Contains(script, `clean_home="${trusted_root}/public-package-home"`) &&
+			!strings.Contains(script, `clean_home="${RUNNER_TEMP}`)
+	}
+	return true
+}
+
+func qualityLifecycleUsesReviewedNotice(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil || step.name.value != "Exercise deterministic internal preview packaging and clean-home lifecycle" {
+			continue
+		}
+		if step.run == nil {
+			return false
+		}
+		script := step.run.value
+		return strings.Contains(script, `go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json`) &&
+			strings.Contains(script, `cp docs/release/NOTICE "${input}/NOTICE"`) &&
+			!strings.Contains(script, "CI-only dependency notice")
+	}
+	return true
+}
+
+func qualityLifecycleProvesPinnedCacheUpgradeRecovery(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil || step.name.value != "Exercise deterministic internal preview packaging and clean-home lifecycle" {
+			continue
+		}
+		if step.run == nil {
+			return false
+		}
+		script := step.run.value
+		ordered := []string{
+			`old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"`,
+			`current_cache_harness="${RUNNER_TEMP}/pinned-cache-current"`,
+			`failure_harness="${RUNNER_TEMP}/pinned-cache-failure"`,
+			`cp -R internal/integration/pinned-cache-lifecycle "${old_source}/internal/integration/"`,
+			`-o "${old_cache_harness}" ./internal/integration/pinned-cache-lifecycle`,
+			`-o "${current_cache_harness}" ./internal/integration/pinned-cache-lifecycle`,
+			`-o "${failure_harness}" ./internal/integration/pinned-cache-failure`,
+			`"${old_cache_harness}" seed`,
+			`"${old_cache_harness}" verify`,
+			`"${current_cache_harness}" verify`,
+			`"${failure_harness}" prepare`,
+			`"${current_cache_harness}" verify`,
+			`"${installed}" daemon`,
+			`grep -F 'durable transfer service is unavailable'`,
+			`"${installed}" daemon --resume-migration`,
+			`"${current_cache_harness}" verify`,
+			`"${old_binary}" daemon`,
+			`"${current_cache_harness}" verify`,
+		}
+		cursor := 0
+		for _, fragment := range ordered {
+			relative := strings.Index(script[cursor:], fragment)
+			if relative < 0 {
+				return false
+			}
+			cursor += relative + len(fragment)
+		}
+		return true
+	}
+	return true
 }
 
 func checkCINative(job workflowJob, add func(int, string, string)) {
-	if !jobHasExactOSMatrix(job) {
-		add(job.line, "workflow.ci_native_matrix", "native job must run exactly the ubuntu-22.04, ubuntu-24.04, macos-15, and macos-15-intel matrix via matrix.os")
+	if !jobHasExactOSMatrix(job, true) {
+		add(job.line, "workflow.ci_native_matrix", "native job must run exactly the ubuntu-22.04, ubuntu-24.04, ubuntu-24.04-arm, macos-15, and macos-15-intel matrix via matrix.os")
 	}
 	credit := trustedNativePrefixCredit(job)
 	requirements := []struct {
@@ -114,10 +197,231 @@ func checkCINative(job workflowJob, add func(int, string, string)) {
 			add(job.line, "workflow.ci_native_command", fmt.Sprintf("native job is missing unconditional command %q", requirement.name))
 		}
 	}
+	if !nativeLifecycleIsExact(job) {
+		add(job.line, "workflow.ci_native_lifecycle", "native job must exercise the exact owner-private clean install, daemon, state-preserving uninstall lifecycle")
+	}
+	if !nativeLifecycleProvesInstalledUpgradeRollbackAndStaleSocket(job) {
+		add(job.line, "workflow.ci_native_upgrade_rollback", "native job must exercise frozen Stage 5 to current upgrade, read-only rollback, and stale-socket replacement")
+	}
+	if !nativeHomebrewPreviewLifecycleIsExact(job) {
+		add(job.line, "workflow.ci_native_homebrew_preview", "native macOS jobs must exercise the loopback-only Homebrew tap clean install, upgrade, version, and uninstall lifecycle")
+	}
+}
+
+func nativeLifecycleProvesInstalledUpgradeRollbackAndStaleSocket(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil || step.name.value != "Exercise native installed upgrade, rollback, and stale-socket recovery" {
+			continue
+		}
+		if step.run == nil {
+			return false
+		}
+		ordered := []string{
+			`old_source="${RUNNER_TEMP}/native/stage5-source"`,
+			`old_binary="${RUNNER_TEMP}/native/bin/amsftp-stage5"`,
+			`git archive 312bcccbcbd54246bbe5ff9babf4f14560449176`,
+			`-o "${old_binary}" ./cmd/amsftp`,
+			`install_atomically "${old_binary}"`,
+			`"${installed}" daemon`,
+			`install_atomically "${native_binary}"`,
+			`"${installed}" daemon status --format json`,
+			`kill -TERM "${daemon_pid}"`,
+			`"${installed}" daemon`,
+			`kill -KILL "${daemon_pid}"`,
+			`test -S "${control_socket}"`,
+			`stale_socket_probe_rc=`,
+			`test "${stale_socket_probe_rc}" -ne 0`,
+			`"${installed}" daemon`,
+			`test -S "${control_socket}"`,
+			`install_atomically "${old_binary}"`,
+			`database_before=`,
+			`"${installed}" daemon`,
+			`"${native_binary}" job list --format json`,
+			`grep -F 'durable transfer service is unavailable'`,
+			`database_after=`,
+			`test "${database_before}" = "${database_after}"`,
+			`install_atomically "${native_binary}"`,
+			`"${installed}" daemon`,
+			`"${installed}" job list --format json`,
+		}
+		cursor := 0
+		for _, fragment := range ordered {
+			relative := strings.Index(step.run.value[cursor:], fragment)
+			if relative < 0 {
+				return false
+			}
+			cursor += relative + len(fragment)
+		}
+		return true
+	}
+	return false
+}
+
+func nativeLifecycleIsExact(job workflowJob) bool {
+	offset := trustedPersistentTestRootOffset(job.steps)
+	index := 11 + offset
+	if len(job.steps) <= index || !jobHasApprovedExecutionShape(job) || !jobEnvironmentIsTrusted(job, "native-${{ matrix.os }}", "") {
+		return false
+	}
+	step := job.steps[index]
+	if step.name == nil || step.name.value != "Exercise native clean install and uninstall lifecycle" ||
+		step.run == nil || step.ifExpr != nil || !stepRunUsesBlockScalar(step) || !stepHasSafeRunContext(job, step) ||
+		!stepHasOnlyKeys(step, "name", "run") {
+		return false
+	}
+	script := step.run.value
+	ordered := []string{
+		`set -euo pipefail`,
+		`native_binary="${RUNNER_TEMP}/native/bin/amsftp"`,
+		`install_root="${RUNNER_TEMP}/native/install"`,
+		`prefix="${install_root}/prefix"`,
+		`installed="${prefix}/bin/amsftp"`,
+		`trusted_root="/var/lib/amsftp-tests/$(id -u)"`,
+		`trusted_root="${HOME}/.amsftp-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`,
+		`clean_home="${trusted_root}/clean-home"`,
+		`test ! -e "${install_root}"`,
+		`test ! -e "${clean_home}"`,
+		`mkdir -p`,
+		`"${prefix}/bin"`,
+		`"${prefix}/share/man/man1"`,
+		`"${prefix}/share/bash-completion/completions"`,
+		`"${prefix}/share/zsh/site-functions"`,
+		`"${prefix}/share/fish/vendor_completions.d"`,
+		`"${clean_home}/config"`,
+		`"${clean_home}/state"`,
+		`"${clean_home}/cache"`,
+		`"${clean_home}/runtime"`,
+		`chmod 0700 "${clean_home}" "${clean_home}/config" "${clean_home}/state" "${clean_home}/cache" "${clean_home}/runtime"`,
+		`install -m 0755 "${native_binary}" "${installed}"`,
+		`install -m 0644 docs/man/amsftp.1 "${prefix}/share/man/man1/amsftp.1"`,
+		`"${installed}" completion bash >"${prefix}/share/bash-completion/completions/amsftp"`,
+		`"${installed}" completion zsh >"${prefix}/share/zsh/site-functions/_amsftp"`,
+		`"${installed}" completion fish >"${prefix}/share/fish/vendor_completions.d/amsftp.fish"`,
+		`test "$("${native_binary}" --version)" = "$("${installed}" --version)"`,
+		`"HOME=${clean_home}"`,
+		`"XDG_CONFIG_HOME=${clean_home}/config"`,
+		`"XDG_STATE_HOME=${clean_home}/state"`,
+		`"XDG_CACHE_HOME=${clean_home}/cache"`,
+		`"XDG_RUNTIME_DIR=${clean_home}/runtime"`,
+		`"TMPDIR=${clean_home}/runtime"`,
+		`grep -F 'completion __workspaces' "${completion_file}"`,
+		`completion_state="${clean_home}/state/amsftp"`,
+		`completion_state="${clean_home}/Library/Application Support/io.github.tyrantlucifer.amsftp/state"`,
+		`completion_root="${completion_state}/workspaces"`,
+		`test -z "$(env "${clean_env[@]}" "${installed}" completion __workspaces)"`,
+		`test ! -e "${completion_root}"`,
+		`install -m 0600 internal/compatibility/testdata/historical/workspace-v2-stage3.json`,
+		`"${completion_root}/release-smoke.json"`,
+		`native_workspace_completion="$(env "${clean_env[@]}" "${installed}" completion __workspaces)"`,
+		`test "${native_workspace_completion}" = "release-smoke"`,
+		`test ! -e "${completion_state}/amsftp.db"`,
+		`trap cleanup_daemon EXIT`,
+		`env "${clean_env[@]}" "${installed}" daemon start --format json | grep -F '"running":true'`,
+		`env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'`,
+		`env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":true'`,
+		`doctor_report="${RUNNER_TEMP}/native/doctor.json"`,
+		`env "${clean_env[@]}" "${installed}" doctor --format json >"${doctor_report}"`,
+		`expected_codes = [`,
+		`"config", "runtime_directory", "socket", "daemon", "openssh",`,
+		`"known_hosts", "database", "cache", "helper", "disk_space",`,
+		`"known_hosts": ("skipped", "info", "endpoint_not_requested")`,
+		`"database": ("warn", "warning", "database_active")`,
+		`assert report["output_version"] == 1`,
+		`assert [result["code"] for result in results] == expected_codes`,
+		`assert all(result["detail_code"] != "probe_failed" for result in results)`,
+		`"remediation": "troubleshooting/" + result["code"]`,
+		`native installed doctor checks passed`,
+		`env "${clean_env[@]}" "${installed}" daemon stop --confirm stop --format json | grep -F '"running":false'`,
+		`env "${clean_env[@]}" "${installed}" daemon status --format json | grep -F '"running":false'`,
+		`database="${clean_home}/state/amsftp/amsftp.db"`,
+		`database="${clean_home}/Library/Application Support/io.github.tyrantlucifer.amsftp/state/amsftp.db"`,
+		`test -f "${database}"`,
+		`rm -f`,
+		`"${installed}"`,
+		`"${prefix}/share/man/man1/amsftp.1"`,
+		`"${prefix}/share/bash-completion/completions/amsftp"`,
+		`"${prefix}/share/zsh/site-functions/_amsftp"`,
+		`"${prefix}/share/fish/vendor_completions.d/amsftp.fish"`,
+		`test ! -e "${installed}"`,
+		`test -f "${database}"`,
+		`trap - EXIT`,
+	}
+	cursor := 0
+	for _, fragment := range ordered {
+		relative := strings.Index(script[cursor:], fragment)
+		if relative < 0 {
+			return false
+		}
+		cursor += relative + len(fragment)
+	}
+	return strings.Count(script, `test -f "${database}"`) == 2 &&
+		!strings.Contains(script, `clean_home="${RUNNER_TEMP}`) &&
+		!strings.Contains(script, "rm -rf") && !strings.Contains(script, "rm --recursive")
+}
+
+func nativeHomebrewPreviewLifecycleIsExact(job workflowJob) bool {
+	for _, step := range job.steps {
+		if step.name == nil {
+			continue
+		}
+		dedicated := step.name.value == "Exercise loopback Homebrew tap lifecycle"
+		embedded := step.name.value == "Exercise native clean install and uninstall lifecycle"
+		if !dedicated && !embedded {
+			continue
+		}
+		validShape := dedicated && step.ifExpr != nil && step.ifExpr.value == "runner.os == 'macOS'" && stepHasOnlyKeys(step, "name", "if", "run")
+		validShape = validShape || embedded && step.ifExpr == nil && stepHasOnlyKeys(step, "name", "run")
+		if step.run == nil || !validShape || !stepRunUsesBlockScalar(step) || !stepHasSafeRunContext(job, step) {
+			continue
+		}
+		script := step.run.value
+		ordered := []string{
+			`preview_license="BSD-3-Clause"`,
+			`CI-only Homebrew preview license; this is not the project license.`,
+			`go run ./internal/tools/homebrewpreview --serve "${asset_root}" "${port_file}"`,
+			`asset_origin="http://127.0.0.1:${asset_port}"`,
+			`go run ./internal/tools/homebrewpreview 0.9.0 "${preview_license}"`,
+			`brew tap amsftp-ci/preview`,
+			`brew install --build-from-source amsftp-ci/preview/amsftp`,
+			`0.9.0 commit=`,
+			`go run ./internal/tools/homebrewpreview 1.0.0 "${preview_license}"`,
+			`brew update`,
+			`brew upgrade amsftp-ci/preview/amsftp`,
+			`1.0.0 commit=`,
+			`brew uninstall --force amsftp-ci/preview/amsftp`,
+			`test ! -d "$(brew --cellar)/amsftp"`,
+			`brew untap amsftp-ci/preview`,
+			`kill "${server_pid}"`,
+			`wait "${server_pid}" || test "$?" -eq 143`,
+		}
+		if embedded {
+			ordered = append([]string{`if test "${RUNNER_OS}" = macOS`}, ordered...)
+			ordered = append(ordered, `fi`)
+		}
+		cursor := 0
+		complete := true
+		for _, fragment := range ordered {
+			relative := strings.Index(script[cursor:], fragment)
+			if relative < 0 {
+				complete = false
+				break
+			}
+			cursor += relative + len(fragment)
+		}
+		exactUninstallCount := 1
+		if dedicated {
+			exactUninstallCount = 2
+		}
+		if complete && strings.Count(script, `brew uninstall --force amsftp-ci/preview/amsftp`) == exactUninstallCount &&
+			!strings.Contains(script, `cp LICENSE`) && !strings.Contains(script, `license="MIT"`) {
+			return true
+		}
+	}
+	return false
 }
 
 func checkCIOldstable(job workflowJob, add func(int, string, string)) {
-	if !jobHasExactOSMatrix(job) {
+	if !jobHasExactOSMatrix(job, false) {
 		add(job.line, "workflow.ci_oldstable_matrix", "oldstable job must run exactly the ubuntu-22.04, ubuntu-24.04, macos-15, and macos-15-intel matrix via matrix.os")
 	}
 	if !jobHasTrustedOldstablePrefix(job) {
@@ -236,9 +540,11 @@ func jobHasTrustedBuildPrefix(job workflowJob) bool {
 }
 
 func stepIsExactCheckout(step workflowStep) bool {
-	return step.uses != nil && step.uses.value == "actions/checkout@"+approvedActionCommits["actions/checkout"] &&
-		stepHasOnlyKeys(step, "name", "uses", "with") &&
-		mappingHasExactScalars(step.with, map[string]string{"persist-credentials": "false"})
+	if step.uses == nil || step.uses.value != "actions/checkout@"+approvedActionCommits["actions/checkout"] || !stepHasOnlyKeys(step, "name", "uses", "with") {
+		return false
+	}
+	return mappingHasExactScalars(step.with, map[string]string{"persist-credentials": "false"}) ||
+		mappingHasExactScalars(step.with, map[string]string{"fetch-depth": "0", "persist-credentials": "false"})
 }
 
 func stepIsExactCurrentSetupGo(step workflowStep) bool {
@@ -444,7 +750,7 @@ func strategyHasApprovedShape(strategy *policyYAMLNode) bool {
 		failFast.scalar.style == policyYAMLPlainScalar && failFast.scalar.value == "false" && matrix != nil
 }
 
-func jobHasExactOSMatrix(job workflowJob) bool {
+func jobHasExactOSMatrix(job workflowJob, includeLinuxARM64 bool) bool {
 	if job.runsOn == nil || job.runsOn.style != policyYAMLPlainScalar || job.runsOn.value != "${{ matrix.os }}" ||
 		!strategyHasApprovedShape(job.strategy) {
 		return false
@@ -460,6 +766,9 @@ func jobHasExactOSMatrix(job workflowJob) bool {
 		"ubuntu-24.04":   {},
 		"macos-15":       {},
 		"macos-15-intel": {},
+	}
+	if includeLinuxARM64 {
+		want["ubuntu-24.04-arm"] = struct{}{}
 	}
 	if osValues == nil || osValues.kind != policyYAMLSequenceNode || len(osValues.items) != len(want) {
 		return false

@@ -1,9 +1,11 @@
 # Stage 6 — Hardening & 1.0 Release
 
-- **状态**：Not Started
+- **状态**：In Progress
 - **阶段类型**：兼容、安全、发行与支持
 - **前置条件**：[Stage 5 — Direct Transfer & Scale](05-direct-transfer-scale.md) 已通过退出门禁
 - **完成后进入**：1.0 维护与后续路线评审
+- **执行计划**：[Stage 6 execution plan](06-hardening-release-plan.md)
+- **证据账本**：[Stage 6 verification](../verification/stage-06.md)
 
 ## 1. 阶段目标
 
@@ -110,6 +112,8 @@
 - Helper 产物与主客户端发布同源、版本可追溯；仍需用户逐 Endpoint 明确批准安装。
 - 发布流程生成变更说明、校验和、SPDX SBOM 和构建 provenance/attestation；应用/包标识固定为 `io.github.tyrantlucifer.amsftp`，签名/公证按分发渠道要求执行。
 
+当前 M6.2 执行证据已从确定性 formula renderer 扩展到 CI-only pre-publication harness：SHA `ed7dcd46dab669b929a483767a97890776caf4b9` 在 Hosted macOS ARM/Intel 通过本地 loopback assets 与 local tap 完成 0.9.0 clean install、version、同 SHA 1.0.0 upgrade、formula test、forced all-version uninstall、Cellar removal、untap 和受检 server shutdown。它不发布 formula、不创建 service，也不把 Homebrew 作为 Helper 信任根；harness 的 BSD-3-Clause placeholder 仅满足 formula 语法，绝不是项目 LICENSE。真实项目 LICENSE、最终受保护 bytes、公开 Homebrew clean install/upgrade/uninstall 仍是发布门禁，不能由本地 tap 测试替代。
+
 ### S6-D06 安全审查
 
 威胁模型至少覆盖：
@@ -179,6 +183,10 @@
 2. 建立发行构建、校验、渠道包和 provenance。
 3. 在干净 macOS/Linux 环境验证安装、daemon、SSH、升级、恢复和卸载。
 
+当前增量：Helper state v2、公共四目标 deterministic package/provenance 与 target-aware dependency closure 已有 exact-SHA Hosted。installed lifecycle evidence `d625a677f59e6e21d55516d2533db34c43d516fa` push 24/24 并完整通过受信根 v3→v4/rollback/uninstall；PR 仅初始 Stage 5 readiness 超出 bounded poll，同 SHA push 伴随证明其为 runner timing instability，未 rerun。公共 Helper 已冻结 status/install/upgrade/disable/remove 管理语法：install/upgrade/remove 必须显式接受 shared-session/stable-home，disable 禁止无关 consent，任意 manifest/artifact/path 输入在 runtime 前拒绝；restricted serve 保持独立私有 stdio 角色且不进入补全。evidence SHA `9c2c19185ede624d5d7905614bb0bc6112b90a19` 的双 quality 与完整 installed lifecycle 通过；不同 workflow 的 macOS ARM/Intel heartbeat/stderr/PTY 可见性失败均由同 SHA 对侧成功 companion 分类为既有时序不稳定。release-source commit `53fceb0bf672607ba52d47550a65b095f3e0c76e` 进一步固定四目标 archive/Helper manifest/detached signature 名称和不可变 GitHub Release URL：只先读取有界 metadata，验签/current-policy/请求 identity 通过后仍不读取 archive；Installer preliminary consent、fresh probe、high-water 通过后才惰性读取。归档只接受 exact USTAR 内容，compressed/expanded 均硬限制，binary 流式进入立即 unlink 的 0600 file，每次 reopen 都重做 size/hash，bind/Installer 重做 current policy。daemon/state/SFTP owner composition evidence `9ee5afaa3290ccd2d6c00b0aee58563caae73844` 建立了私有 Host alias→opaque EndpointID 注册表、受限 lifecycle RPC、独立 fresh OpenSSH/SFTP owner、exact 0700 SFTP MKDIR、同一认证尝试内的 fresh formal handshake，以及基于 JobStore removal lease 的重启恢复；本地 current/oldstable 全门禁和 Hosted push 24/24 通过，PR 的四个既有 readiness/process-reader 时序失败均有同 SHA push 成功 companion，未 rerun。native lifecycle SHA `99905179e1eac23819a8b7f25edffc07c29cf653` 进一步在 Ubuntu 22.04/24.04 与 macOS ARM/Intel 使用 fresh owner-private HOME，安装 0755 binary、0644 man 与三套 completion，验证 source/installed version、daemon/Job start/status/stop，精确移除 owned files 并保留真实 SQLite；PR 四平台全执行成功，push 两个平台成功，三个此前 Helper race/oldstable failure 均有同 SHA 对侧 companion。production verifier/policy 仍为空，公共 mutation 命令仍在 runtime 前 exit 3，daemon 也没有最终计划确认渠道，因此生产 Helper/Level 2 继续关闭。项目 LICENSE、公开 channel、signing/notary 与 final release 仍未完成，不能提前打开 Helper distribution。
+
+最新增量：Homebrew preview SHA `ed7dcd46dab669b929a483767a97890776caf4b9` 通过 exact current Go 1.26.5 `make ci` 与 oldstable Go 1.25.12 `make check`。push [29643786050](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29643786050) 的 Hosted macOS ARM/Intel 均完成 local-tap 全生命周期；PR [29643787252](https://github.com/TyrantLucifer/awsome-sftp-cli/actions/runs/29643787252) ARM 也完成，Intel 在进入 Homebrew 前命中既有 Helper heartbeat fixture，同 SHA push Intel 已通过。push oldstable Intel 的 exact-stderr-cap 与 PR quality 的 Stage 5 readiness 失败同样有同 SHA 成功 companion；未 rerun、未弱化 timeout/assertion/workflow。该切片只关闭 truthful pre-publication harness，不替 owner/legal 选择项目 LICENSE，也不证明真实 public channel、final release trust 或 production Helper/Level 2。
+
 门禁：支持平台不依赖开发机残留，失败升级可恢复。
 
 ### M6.3 — 安全、兼容与诊断
@@ -186,6 +194,18 @@
 1. 完成威胁建模、代码/配置审查和负向测试。
 2. 跑完 OS/终端/OpenSSH/SFTP/Helper 兼容矩阵。
 3. 完成 doctor、支持包、脱敏和故障文档。
+
+当前增量：foundation、doctor、support-bundle、semantic hardening、compatibility/troubleshooting、threat model 与 initial finding ledger 已交付。real-auth correction SHA `fd5ebe499331f5697cdc5eb1e238d12e939ee53a` 已有 push/PR 完整 OpenSSH/Askpass 与 externally-renewed Kerberos/GSSAPI support-bundle scan 证据。OpenSSH floor/current SHA `e7733ec23ec1903dbdc41a926db20fe6defcccc7`/`a7f3ddd8a99df973518140de7eae45e295ae6ea2` 与 Kerberos binding SHA `14e5ec4e63c70fb93ed93d15adbe7fdf7cce5d5e` 通过 dual-Go full local gates；双工作流精确记录 `OpenSSH_8.9p1 Ubuntu-3ubuntu0.16`、`OpenSSH_9.6p1 Ubuntu-3ubuntu13.18` 与 `Kerberos 5 version 1.20.1`，并在任何测试账户/服务变更前重检 retained version。REL-007 SHA `cc6559e41572aa21a7fc249fe0086fe4df50fe27` 的三条 coverage contract、完整双 Go 本地门禁和双工作流 quality/auth 均通过，八个强制审查域均绑定可执行负向证据。PLAT-009 已 `Verified`；REL-006、REL-007 已 `In Progress`。production Helper/Level 2、protected final artifacts 与 final independent review 仍开放。
+
+当前 SFTP compatibility 增量使用独立测试子进程运行纯内存 SFTP v3 server，并显式关闭全部 OpenSSH extensions。Level 0 list/stat/read/download、write capability 不误报、unsafe no-replace publication 以零 mutation 拒绝，以及 invalid UTF-8 filename bytes 的实际 wire list→stat→read 全部有聚焦合同。PLAT-006 据此转为 `Verified`；PLAT-005/REL-006 仍因 native third-party vendor、macOS Kerberos、Linux arm64 native 与 production Helper 边界保持 `In Progress`。
+
+当前 Linux arm64 平台增量把 `ubuntu-24.04-arm` 加入主 CI 原生矩阵，复用既有完整 install/daemon/Job/doctor/uninstall、ext4/XFS、kernel-security 与 PTY lifecycle；provenance aggregator 必须收到 `native-ubuntu-24.04-arm`，并精确验证 `runner_arch=ARM64`、`GOOS=linux`、`GOARCH=arm64`。缺腿、伪造架构字段、错误 manifest 数量或未下载 producer 文件都会失败。只有 exact-SHA Hosted push/PR 均通过后才接受该批；即使通过，PLAT-003/REL-006 仍因 final protected archives、公开渠道、macOS Kerberos、native vendor SFTP 与 production Helper 保持 `In Progress`。
+
+当前 daemon lifecycle 增量要求五个 native runner 从 exact Stage 5 安装态升级到 current，再回滚 Stage 5 并恢复 current。合同覆盖 live old daemon 下原子替换 binary、由 current 客户端识别旧 daemon、验证 PID 后停止、current Job API、SIGKILL 后残留 Socket 的 fail-closed 拒绝与同路径恢复、旧 daemon 面对 v4 state 时的稳定拒绝和数据库 byte identity。普通客户端 autostart 同时改为只有 `Lstat` 明确返回不存在才调用 starter；已有或无法检查的路径均保留连接失败且不删除 Socket，并用独立 Unix session 保证 daemon 不随客户端终端退出。SHA `5b72101` 的双 Go 本地门禁通过；PR `29681591589` 首轮 25/25，push `29681590469` 对两个既有时序失败最小重跑后 25/25，全部十个 native jobs 的新步骤通过。本批不完成 published rollback、Helper-too-new、最终 native Helper matrix 或 Production Helper/Level 2。
+
+Transition-hardening SHA `3bfbd174a7cf264847d8d3bf0ff6e0e5ad62aff0` closes the concrete stop/start race exposed by that lifecycle: an accepted shutdown is not success until the authenticated client is closed, the exact control Socket is absent, and the daemon instance lock can be acquired and released. The bounded waiter retries only a still-existing Socket or a still-held lock; an inspection error or path replaced by a non-Socket fails closed and never removes it. The same batch adds a real child-process Helper matrix for current v4, v5 minimum-client rejection, protocol-v2 rejection, exact v4-manifest versus compatible-v5-artifact rejection, and current-v4 recovery after each failure. Current `make ci` and exact oldstable `make check` pass locally; PR `29683309618` passed 25/25 on attempt 1 and push `29683308347` passed 25/25 after one unchanged failed-only rerun of two existing timing fixtures.
+
+The next vendor-compatibility increment installs Ubuntu 24.04's real ProFTPD `mod_sftp`, records exact server and package versions, and byte-compares that record before any test user/service mutation. Its isolated public-key server must pass direct SFTP preflight, production Provider Level 0 browse, extension-gated Planner/Worker upload and download, and exact internal-preview TUI browse. Workflow provenance freezes the package list, version binding and harness command so a no-op or different workload is rejected. Focused RED/GREEN, complete docscheck, fixed actionlint, shell syntax, exact current Go 1.26.5 `make ci`, and exact oldstable Go 1.25.12 `make check` are green; exact-head Hosted execution remains the acceptance gate. The public matrix stays `best-effort` for other vendor servers until that Hosted evidence exists. Public-channel rollback, macOS Kerberos, protected release bytes, Production Helper and Level 2 remain open.
 
 门禁：无未处置高风险，已知兼容问题有降级或明确不支持说明。
 
@@ -195,6 +215,10 @@
 2. 从冷启动用户路径进行独立验收，修正文档或阻塞缺陷。
 3. 生成最终发行物、校验和、变更说明与验证记录。
 4. 发布后执行安装/更新冒烟并准备可逆撤回方案。
+
+当前增量：REL-009 SHA `19e8ab73d5f90a51815634b9b36112f86711f372` 的文档路径已有完整本地与双工作流分类证据，独立 exact-RC 新用户演练仍开放。REL-008 SHA `bad687f67789960bac426bd9414cfbcc5b859b49` 新增五条 executable contracts 与 `amsftp-release-gate-record-v1`：17 项门禁必须绑定同一 candidate SHA/tree 且 completed/success；physical 100 GiB、process/network-isolated Level 2、soak、两份独立终审、candidate push/PR 和 post-merge main 均有不可互换的精确边界。双 Go 本地门禁通过；PR 24/24，push quality/auth 通过，残余两个既有 Helper reader 时序失败有同 SHA PR companion。REL-010 SHA `181f8a8fbf083c5dadf450373981693e82ecdf74` 的四条 contract 新增 final-only `docscheck --release`，冻结 23 个 Stage 6 ID、ADR-backed final decisions 与原序 12 项退出条件；精确双 Go 本地门禁及 push/PR 各 24/24 通过。最终 M6.1 cold-start 批次把 VIM-013、VIM-014、REL-001 转为 `Verified`，M6.3 doctor 闭环再把 OBS-010 转为 `Verified`；当前 audit 确定报告 17 个非终态行和 12 个未勾选条件。validator/audit 只验真，不冻结 RC、不查询或生成证据。当前没有 RC record，production Helper/Level 2 与所有受保护发布门禁保持 CLOSED。
+
+时序稳定性增量：SHA `60255dc8dc5e4732ae0fe55ac11ca860390bc81c` 建立 Helper 终态合流、确定性 tail poll 与初始 Stage 2 屏障；SHA `573aeefcaa488d73a7b5186a46ef03f87c1d8416` 恢复 resident stderr child；SHA `60ff9080812e0e47f720d102671116a6557b9921` 保证 65,536/65,537 精确写入。Loaded-selection SHA `2f4ed536ca2553e1bd266ed66fd275b664a00690` 让四条选中项动作共用屏障并通过双 Go 本地门禁，但 Hosted 发现固定 `READ-ONLY | sort:name` 不适用于含 capability 的远端 loaded 行。Final-screen 纠正 SHA `98a3315070f12b97fe43fa1a79dcdfc4e7428701`、tree `6c2e1dda9cb1768d98498458dcbe25adfe684aea` 要求最终屏幕含光标目标 `> filename` 且不含 `READ-ONLY | loading`；确定性 local/remote capability screen、完整本地 PTY current race 20 轮、exact oldstable 10 轮、最终双 Go 完整门禁及 push `29662965862`/PR `29662967034` 各 24/24 均通过。临时 sshd 压力仅在 isolated transport 不再接受连接后失败，保留分类且不重跑。该批不生成 RC evidence，不改变 production Helper/Level 2 CLOSED 边界。
 
 门禁：所有发布原则、退出标准和功能矩阵证据一致，才标记 1.0。
 

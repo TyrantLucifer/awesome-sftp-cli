@@ -12,6 +12,13 @@ import (
 
 const level2DirectCapability = "direct_transfer"
 
+// ProductionDirectTransferOpen is the frozen production distribution boundary.
+// Level 2 backends remain injectable only for isolated verification fixtures.
+const ProductionDirectTransferOpen = false
+
+// DefaultIntegrityPolicy returns the current production transfer-integrity floor.
+func DefaultIntegrityPolicy() IntegrityPolicy { return IntegrityStrong }
+
 type DirectPolicy struct {
 	UserEnabled      bool            `json:"user_enabled"`
 	WorkspaceEnabled bool            `json:"workspace_enabled"`
@@ -24,7 +31,9 @@ func (policy DirectPolicy) enabled() bool {
 		(policy.Integrity == IntegrityStrong || policy.Integrity == IntegrityRequireStrong)
 }
 
-func (policy DirectPolicy) zero() bool { return policy == (DirectPolicy{}) }
+func (policy DirectPolicy) zero() bool {
+	return !policy.UserEnabled && !policy.WorkspaceEnabled && !policy.DataAllowed
+}
 
 type Level2PreflightOutcome string
 

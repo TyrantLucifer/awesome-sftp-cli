@@ -553,7 +553,7 @@ func newDatabaseAtHead(t *testing.T, ctx context.Context, head int) *sql.DB {
 	if err := os.Chmod(filepath.Dir(path), 0o700); err != nil { //nolint:gosec // directory requires owner traversal
 		t.Fatal(err)
 	}
-	migrations := []migration.Migration{migration.Version1(), migration.Version2(), migration.Version3()}
+	migrations, _ := migration.CompiledSet()
 	for index := 0; index < head; index++ {
 		m := migrations[index]
 		for _, statement := range m.Statements {

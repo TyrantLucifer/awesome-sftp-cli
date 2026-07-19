@@ -82,6 +82,7 @@ SSHD_A_LOG = os.environ["AMSFTP_RECOVERY_SSHD_A_LOG"]
 SSHD_A_PORT = int(os.environ["AMSFTP_RECOVERY_SSHD_A_PORT"])
 STATE_HOME = os.environ["AMSFTP_RECOVERY_STATE_HOME"]
 VT_OBSERVER = os.environ["AMSFTP_RECOVERY_VT_OBSERVER"]
+PICKER_MARKER = os.environ["AMSFTP_RECOVERY_PICKER_MARKER"]
 
 
 def wait_until(predicate, description, timeout=20):
@@ -191,6 +192,7 @@ class PtyApp:
                 "AMSFTP_RECOVERY_SSHD_A_PID",
                 "AMSFTP_RECOVERY_SSHD_A_PORT",
                 "AMSFTP_RECOVERY_STATE_HOME",
+                "AMSFTP_RECOVERY_PICKER_MARKER",
             }},
             preexec_fn=child_setup,
             close_fds=True,
@@ -281,11 +283,15 @@ def run_and_close(arguments, markers):
         app.wait_for(*markers)
         app.close()
     except Exception:
-        app._drain()
-        printable = bytes(byte for byte in app.output[-12000:] if byte in b"\n\r\t" or 32 <= byte < 127)
-        sys.stderr.write(printable.decode(errors="replace")[-4000:] + "\n")
-        app.abort()
+        abort_with_diagnostic(app)
         raise
+
+
+def abort_with_diagnostic(app):
+    app._drain()
+    printable = bytes(byte for byte in app.output[-12000:] if byte in b"\n\r\t" or 32 <= byte < 127)
+    sys.stderr.write(printable.decode(errors="replace")[-4000:] + "\n")
+    app.abort()
 
 
 def stop_process_group(pid):
@@ -364,6 +370,18 @@ def assert_private_runtime():
 def main():
     run_and_close([LOCAL_ROOT, f"recovery-a:{A_ROOT}"], ["local-stage1-marker.txt", "a-parent-marker.txt"])
 
+    fresh_picker = PtyApp([])
+    try:
+        fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "Type an SSH alias;")
+        fresh_picker.send("\x1b[B\x1b[B")
+        fresh_picker.wait_for_screen("> host       recovery-picker")
+        fresh_picker.send("\r")
+        fresh_picker.wait_for_screen(os.path.basename(PICKER_MARKER))
+        fresh_picker.close()
+    except Exception:
+        abort_with_diagnostic(fresh_picker)
+        raise
+
     workspace = PtyApp([f"recovery-a:{A_ROOT}", f"recovery-b:{B_ROOT}"])
     try:
         workspace.wait_for("a-parent-marker.txt", "b-stage1-marker.txt")
@@ -375,6 +393,20 @@ def main():
         raise
 
     run_and_close(["--workspace", "recovery-stage1"], ["a-parent-marker.txt", "b-stage1-marker.txt"])
+
+    workspace_picker = PtyApp([])
+    try:
+        workspace_picker.wait_for_screen("Open workspace or SSH host", "recovery-stage1")
+        workspace_picker.send("recovery-stage1")
+        workspace_picker.wait_for_screen("Host: recovery-stage1")
+        workspace_picker.send("\x1b[B")
+        workspace_picker.wait_for_screen("> workspace  recovery-stage1")
+        workspace_picker.send("\r")
+        workspace_picker.wait_for_screen("a-parent-marker.txt", "b-stage1-marker.txt")
+        workspace_picker.close()
+    except Exception:
+        abort_with_diagnostic(workspace_picker)
+        raise
 
     app = PtyApp([f"recovery-a:{A_DEEP}", f"recovery-b:{B_ROOT}"])
     restarted_sshd_log = None

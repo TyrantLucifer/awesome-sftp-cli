@@ -133,6 +133,7 @@ type LocalOperations struct {
 	afterHashChunk func()
 	afterTailPoll  func()
 	afterWatchPoll func()
+	tailPoll       <-chan time.Time
 	walk           localWalkFunc
 }
 

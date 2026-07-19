@@ -1,12 +1,22 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+source ./internal/integration/support-bundle-secret-scan.sh
+
 if test "$(id -u)" -ne 0; then
   printf 'hosted-kerberos.sh must run as root\n' >&2
   exit 1
 fi
 
 : "${AMSFTP_KERBEROS_BINARY:?AMSFTP_KERBEROS_BINARY is required}"
+: "${AMSFTP_KERBEROS_EXPECT_VERSION:?AMSFTP_KERBEROS_EXPECT_VERSION is required}"
+
+actual_kerberos_version="$(/usr/bin/klist -V 2>&1)"
+if ! test "${actual_kerberos_version}" = "${AMSFTP_KERBEROS_EXPECT_VERSION}"; then
+  printf 'current MIT Kerberos version drifted before authentication\n' >&2
+  exit 1
+fi
+printf 'current MIT Kerberos version binding passed\n'
 
 root="${AMSFTP_KERBEROS_ROOT:-/tmp/amsftp-hosted-kerberos}"
 case "${root}" in
@@ -411,6 +421,22 @@ while IFS= read -r -d '' candidate; do
     exit 1
   fi
 done < <(find "${client_home}" -type f -print0)
+
+kerberos_needles="${root}/support-bundle-secret-needles"
+printf '%s\n' "${master_password}" "${client_principal}" "${client_ccache}" "${client_keytab}" >"${kerberos_needles}"
+printf '%s\n' "${host_keytab}" "${client_home}" "${state_home}" "${root}" >>"${kerberos_needles}"
+chmod 0600 "${kerberos_needles}"
+run_support_bundle_secret_scan \
+  "${client_user}" \
+  "${installed}" \
+  "${client_home}" \
+  "${state_home}" \
+  "${state_home}/support-bundle-scan" \
+  "${kerberos_needles}" \
+  "${client_ccache}" \
+  "${client_keytab}" \
+  "${host_keytab}"
+rm -f "${kerberos_needles}"
 
 destroy_ticket
 rm -f "${client_keytab}"

@@ -28,8 +28,10 @@ var fixedSFTPArguments = []string{
 
 type Config struct {
 	Binary, HostAlias string
+	ConfigFile        string
 	Environment       []string
 	Redact            []string
+	Fresh             bool
 }
 
 func Arguments(hostAlias string) ([]string, error) {
@@ -38,6 +40,49 @@ func Arguments(hostAlias string) ([]string, error) {
 	}
 	arguments := append([]string(nil), fixedSFTPArguments...)
 	return append(arguments, hostAlias, "sftp"), nil
+}
+
+func freshArguments(hostAlias string) ([]string, error) {
+	arguments, err := Arguments(hostAlias)
+	if err != nil {
+		return nil, err
+	}
+	insert := len(arguments) - 2
+	fresh := []string{"-oControlMaster=no", "-oControlPath=none", "-oControlPersist=no"}
+	arguments = append(arguments, make([]string, len(fresh))...)
+	copy(arguments[insert+len(fresh):], arguments[insert:])
+	copy(arguments[insert:], fresh)
+	return arguments, nil
+}
+
+func argumentsForConfig(config Config) ([]string, error) {
+	if err := validateExplicitConfigFile(config.ConfigFile); err != nil {
+		return nil, err
+	}
+	var arguments []string
+	var err error
+	if config.Fresh {
+		arguments, err = freshArguments(config.HostAlias)
+	} else {
+		arguments, err = Arguments(config.HostAlias)
+	}
+	if err != nil {
+		return nil, err
+	}
+	if config.ConfigFile != "" {
+		arguments = append([]string{"-F", config.ConfigFile}, arguments...)
+	}
+	return arguments, nil
+}
+
+func validateExplicitConfigFile(path string) error {
+	if path == "" {
+		return nil
+	}
+	if err := platform.ValidatePrivateFile(path, platform.ValidateRuntime); err != nil {
+		return fmt.Errorf("validate explicit OpenSSH config: %w", err)
+	}
+	return nil
 }
 
 func ValidateHostAlias(value string) error {
@@ -113,7 +158,7 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 	if err != nil {
 		return nil, fmt.Errorf("validate OpenSSH executable: %w", err)
 	}
-	arguments, err := Arguments(config.HostAlias)
+	arguments, err := argumentsForConfig(config)
 	if err != nil {
 		return nil, err
 	}

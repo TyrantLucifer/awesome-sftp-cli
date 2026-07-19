@@ -22,9 +22,14 @@ const (
 )
 
 type Config struct {
-	MaxBytes int64
-	Backups  int
-	Level    *slog.LevelVar
+	MaxBytes     int64
+	Backups      int
+	RingCapacity int
+	Level        *slog.LevelVar
+}
+
+func DefaultConfig() Config {
+	return Config{MaxBytes: defaultMaxBytes, Backups: defaultBackups, RingCapacity: defaultRingCapacity}
 }
 
 type DaemonLog struct {
@@ -62,7 +67,7 @@ func OpenDaemon(path string, config Config) (*DaemonLog, error) {
 	if level == nil {
 		level = &slog.LevelVar{}
 	}
-	records := NewRing(0)
+	records := NewRing(config.RingCapacity)
 	return &DaemonLog{
 		Logger:  slog.New(newFanoutHandler(NewJSONHandler(writer, level), NewRingHandler(records, level))),
 		Level:   level,
@@ -157,8 +162,10 @@ func allowPersistentAttr(groups []string, attr slog.Attr) bool {
 	}
 	value := attr.Value.String()
 	switch attr.Key {
-	case "component", "event":
-		return validToken(value)
+	case "component":
+		return IsReviewedComponent(value)
+	case "event":
+		return IsReviewedEvent(value)
 	case "endpoint_id":
 		_, err := domain.ParseEndpointID(value)
 		return err == nil
@@ -169,25 +176,39 @@ func allowPersistentAttr(groups []string, attr slog.Attr) bool {
 		_, err := domain.ParseRequestID(value)
 		return err == nil
 	case "error_code":
-		return validErrorCode(domain.Code(value))
+		return IsReviewedErrorCode(domain.Code(value))
 	default:
 		return false
 	}
 }
 
-func validToken(value string) bool {
-	if value == "" || len(value) > 64 {
-		return false
-	}
-	for _, char := range value {
-		if (char < 'a' || char > 'z') && (char < '0' || char > '9') && char != '_' {
-			return false
-		}
-	}
-	return true
+var reviewedComponents = map[string]struct{}{
+	"cache": {}, "daemon": {}, "helper": {}, "state": {}, "transfer": {},
 }
 
-func validErrorCode(code domain.Code) bool {
+var reviewedEvents = map[string]struct{}{
+	"cache_initialized":            {},
+	"cache_unavailable":            {},
+	"connection_failed":            {},
+	"helper_lifecycle_unavailable": {},
+	"progress":                     {},
+	"read_only_degraded":           {},
+	"rpc_request_failed":           {},
+	"rpc_request_started":          {},
+	"rpc_request_succeeded":        {},
+}
+
+func IsReviewedComponent(value string) bool {
+	_, ok := reviewedComponents[value]
+	return ok
+}
+
+func IsReviewedEvent(value string) bool {
+	_, ok := reviewedEvents[value]
+	return ok
+}
+
+func IsReviewedErrorCode(code domain.Code) bool {
 	switch code {
 	case domain.CodeInvalidArgument,
 		domain.CodeNotFound,

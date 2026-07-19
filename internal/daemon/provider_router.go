@@ -48,6 +48,7 @@ const (
 	WorkspaceLoad       = "workspace.load"
 	WorkspaceSave       = "workspace.save"
 	DiagnosticList      = "diagnostic.list"
+	HelperLifecycle     = "helper.lifecycle"
 )
 
 type SSHConnector func(context.Context, string) (providerapi.Provider, error)
@@ -66,6 +67,7 @@ type ProviderSessions struct {
 	diagnostics         DiagnosticSource
 	cache               *cachemanager.Manager
 	editSessions        EditSessionStore
+	helperManagement    HelperLifecycleService
 	helpers             map[domain.EndpointID]*helperruntime.Client
 	nextOwner           atomic.Uint64
 	maxDynamicEndpoints uint32
@@ -97,6 +99,9 @@ func (s *ProviderSessions) SetTransferService(service TransferService)    { s.tr
 func (s *ProviderSessions) SetDiagnosticSource(source DiagnosticSource)   { s.diagnostics = source }
 func (s *ProviderSessions) SetCacheManager(manager *cachemanager.Manager) { s.cache = manager }
 func (s *ProviderSessions) SetEditSessionStore(store EditSessionStore)    { s.editSessions = store }
+func (s *ProviderSessions) SetHelperLifecycle(service HelperLifecycleService) {
+	s.helperManagement = service
+}
 
 func NewProviderSessions(providers []providerapi.Provider, maxReadBytes uint32) (*ProviderSessions, error) {
 	return NewProviderSessionsWithLimits(providers, maxReadBytes, ProviderSessionLimits{
@@ -160,20 +165,21 @@ func (s *ProviderSessions) NewSession() Session {
 		providers[id] = implementation
 	}
 	session := &providerSession{
-		owner:           s,
-		providers:       providers,
-		maxReadBytes:    s.maxReadBytes,
-		connectSSH:      s.connectSSH,
-		owned:           make([]providerapi.Provider, 0),
-		cursors:         make(map[cursorKey]providerapi.Provider),
-		searches:        make(map[domain.RequestID]*filenameSearchCursor),
-		contentSearches: make(map[domain.RequestID]*contentSearchCursor),
-		workspace:       s.workspace,
-		transfer:        s.transfer,
-		diagnostics:     s.diagnostics,
-		cache:           s.cache,
-		editSessions:    s.editSessions,
-		helpers:         cloneHelperClients(s.helpers),
+		owner:            s,
+		providers:        providers,
+		maxReadBytes:     s.maxReadBytes,
+		connectSSH:       s.connectSSH,
+		owned:            make([]providerapi.Provider, 0),
+		cursors:          make(map[cursorKey]providerapi.Provider),
+		searches:         make(map[domain.RequestID]*filenameSearchCursor),
+		contentSearches:  make(map[domain.RequestID]*contentSearchCursor),
+		workspace:        s.workspace,
+		transfer:         s.transfer,
+		diagnostics:      s.diagnostics,
+		cache:            s.cache,
+		editSessions:     s.editSessions,
+		helperManagement: s.helperManagement,
+		helpers:          cloneHelperClients(s.helpers),
 	}
 	if s.authBroker != nil {
 		session.authBroker = s.authBroker
@@ -194,23 +200,24 @@ type cursorDiscarder interface {
 type providerSession struct {
 	mu sync.Mutex
 
-	owner           *ProviderSessions
-	providers       map[domain.EndpointID]providerapi.Provider
-	maxReadBytes    uint32
-	cursors         map[cursorKey]providerapi.Provider
-	searches        map[domain.RequestID]*filenameSearchCursor
-	contentSearches map[domain.RequestID]*contentSearchCursor
-	closed          bool
-	connectSSH      SSHConnector
-	owned           []providerapi.Provider
-	authBroker      *auth.Broker
-	authOwner       auth.OwnerID
-	workspace       *workspace.Store
-	transfer        TransferService
-	diagnostics     DiagnosticSource
-	cache           *cachemanager.Manager
-	editSessions    EditSessionStore
-	helpers         map[domain.EndpointID]*helperruntime.Client
+	owner            *ProviderSessions
+	providers        map[domain.EndpointID]providerapi.Provider
+	maxReadBytes     uint32
+	cursors          map[cursorKey]providerapi.Provider
+	searches         map[domain.RequestID]*filenameSearchCursor
+	contentSearches  map[domain.RequestID]*contentSearchCursor
+	closed           bool
+	connectSSH       SSHConnector
+	owned            []providerapi.Provider
+	authBroker       *auth.Broker
+	authOwner        auth.OwnerID
+	workspace        *workspace.Store
+	transfer         TransferService
+	diagnostics      DiagnosticSource
+	cache            *cachemanager.Manager
+	editSessions     EditSessionStore
+	helperManagement HelperLifecycleService
+	helpers          map[domain.EndpointID]*helperruntime.Client
 }
 
 func cloneHelperClients(source map[domain.EndpointID]*helperruntime.Client) map[domain.EndpointID]*helperruntime.Client {
@@ -258,6 +265,8 @@ func (s *providerSession) Handle(ctx context.Context, name string, payload json.
 		return s.saveWorkspace(payload)
 	case DiagnosticList:
 		return s.listDiagnostics(payload)
+	case HelperLifecycle:
+		return s.handleHelperLifecycle(ctx, payload)
 	case CacheMaterialize:
 		return s.cacheMaterialize(ctx, payload)
 	case CacheMarkDirty:

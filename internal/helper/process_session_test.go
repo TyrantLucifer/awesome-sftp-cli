@@ -3,6 +3,7 @@ package helper
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -63,6 +64,77 @@ func TestOpenSSHProcessSessionUsesFrozenArgvHeartbeatAndBoundedStderr(t *testing
 	}
 }
 
+func TestNativeHelperVersionMatrix(t *testing.T) {
+	for _, mode := range []string{"future-minimum-client", "future-protocol"} {
+		t.Run(mode, func(t *testing.T) {
+			session, err := startNativeHelperMatrixSession(t, mode)
+			if err == nil {
+				_ = session.Close()
+				t.Fatalf("current client accepted incompatible Helper mode %q", mode)
+			}
+			recovered, err := startNativeHelperMatrixSession(t, "serve")
+			if err != nil {
+				t.Fatalf("current Helper did not recover after %s rejection: %v", mode, err)
+			}
+			if recovered.Client().Level() != 1 || !recovered.Client().HasCapability(CapabilityDiskStats) {
+				t.Fatalf("recovered current Helper negotiation = %#v", recovered.Client().Negotiated())
+			}
+			if err := recovered.Close(); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	t.Run("future artifact exact binding", func(t *testing.T) {
+		session, err := startNativeHelperMatrixSession(t, "future-compatible-client")
+		if err != nil {
+			t.Fatalf("future Helper with compatible protocol/minimum client did not negotiate: %v", err)
+		}
+		manifest, err := ParseManifestV1(fixtureManifest)
+		if err != nil {
+			_ = session.Close()
+			t.Fatal(err)
+		}
+		if err := ValidateEnabledClient(EnablePlan{Manifest: manifest}, session.Client(), []CapabilityName{CapabilityDiskStats}); err == nil || !strings.Contains(err.Error(), "exact artifact version mismatch") {
+			_ = session.Close()
+			t.Fatalf("future Helper artifact binding error = %v", err)
+		}
+		if err := session.Close(); err != nil {
+			t.Fatal(err)
+		}
+		recovered, err := startNativeHelperMatrixSession(t, "serve")
+		if err != nil {
+			t.Fatalf("current Helper did not recover after future artifact rejection: %v", err)
+		}
+		if err := ValidateEnabledClient(EnablePlan{Manifest: manifest}, recovered.Client(), []CapabilityName{CapabilityDiskStats}); err != nil {
+			_ = recovered.Close()
+			t.Fatalf("current Helper exact binding after rejection: %v", err)
+		}
+		if err := recovered.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func startNativeHelperMatrixSession(t *testing.T, mode string) (*ProcessSession, error) {
+	t.Helper()
+	sshPath, capture := fakeOpenSSHExecutable(t)
+	return StartOpenSSHSession(context.Background(), OpenSSHSessionConfig{
+		SSHPath: sshPath, HostAlias: "fixture-host", Plan: fixtureProcessInstallPlan(),
+		Environment: append(os.Environ(),
+			"AMSFTP_HELPER_CHILD="+mode,
+			"AMSFTP_HELPER_TEST_BINARY="+mustExecutable(t),
+			"AMSFTP_HELPER_ARG_CAPTURE="+capture,
+		),
+		Hello: ClientHello{
+			MinimumProtocol: 1, MaximumProtocol: 1, MaximumFrame: MaxHelperFrameBytes,
+			MaximumConcurrent: 1, ClientVersion: Version{Major: 4},
+			Capabilities: []CapabilityRequest{{Name: CapabilityDiskStats, MaximumVersion: 1}},
+		},
+		HandshakeTimeout: 5 * time.Second,
+	})
+}
+
 func TestOpenSSHProcessSessionRejectsStderrBeyondHardCap(t *testing.T) {
 	sshPath, capture := fakeOpenSSHExecutable(t)
 	_, err := StartOpenSSHSession(context.Background(), OpenSSHSessionConfig{
@@ -98,11 +170,11 @@ func TestOpenSSHProcessSessionAcceptsExactStderrHardCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := len(session.Diagnostic()); got != MaxHelperStderrBytes {
-		t.Fatalf("diagnostic bytes = %d, want %d", got, MaxHelperStderrBytes)
-	}
 	if err := session.Close(); err != nil {
 		t.Fatal(err)
+	}
+	if got := len(session.Diagnostic()); got != MaxHelperStderrBytes {
+		t.Fatalf("diagnostic bytes = %d, want %d", got, MaxHelperStderrBytes)
 	}
 }
 
@@ -124,8 +196,10 @@ func TestOpenSSHProcessSessionHeartbeatFailureTerminatesProcessWithoutExplicitCl
 	if err != nil {
 		t.Fatal(err)
 	}
+	wait := make(chan error, 1)
+	go func() { wait <- session.Wait() }()
 	select {
-	case <-session.wait:
+	case <-wait:
 	case <-time.After(time.Second):
 		t.Fatal("heartbeat failure did not terminate the OpenSSH process group")
 	}
@@ -144,11 +218,15 @@ func TestOpenSSHHelperChild(t *testing.T) {
 		return
 	}
 	if mode == "stderr-overflow" {
-		_, _ = os.Stderr.Write(make([]byte, MaxHelperStderrBytes+1))
+		if _, err := io.CopyN(os.Stderr, strings.NewReader(strings.Repeat("x", MaxHelperStderrBytes+1)), MaxHelperStderrBytes+1); err != nil {
+			os.Exit(12)
+		}
 		select {}
 	}
 	if mode == "stderr-exact" {
-		_, _ = os.Stderr.Write([]byte(strings.Repeat("x", MaxHelperStderrBytes)))
+		if _, err := io.CopyN(os.Stderr, strings.NewReader(strings.Repeat("x", MaxHelperStderrBytes)), MaxHelperStderrBytes); err != nil {
+			os.Exit(12)
+		}
 	}
 	if mode == "no-pong" {
 		_, _ = ServeHandshake(os.Stdin, os.Stdout, ServerConfig{
@@ -156,7 +234,18 @@ func TestOpenSSHHelperChild(t *testing.T) {
 		})
 		select {}
 	}
-	err := Serve(context.Background(), os.Stdin, os.Stdout, NewLocalServiceConfig(Version{Major: 4}))
+	config := NewLocalServiceConfig(Version{Major: 4})
+	switch mode {
+	case "future-minimum-client":
+		config = NewLocalServiceConfig(Version{Major: 5})
+		config.Server.MinimumClient = Version{Major: 5}
+	case "future-protocol":
+		config = NewLocalServiceConfig(Version{Major: 5})
+		config.Server.Protocol = 2
+	case "future-compatible-client":
+		config = NewLocalServiceConfig(Version{Major: 5})
+	}
+	err := Serve(context.Background(), os.Stdin, os.Stdout, config)
 	if err != nil {
 		_, _ = os.Stderr.WriteString("child serve: " + err.Error() + "\n")
 		os.Exit(11)

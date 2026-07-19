@@ -135,13 +135,21 @@ func (o *LocalOperations) Tail(parent context.Context, body json.RawMessage, emi
 	if err := readAvailable(); err != nil {
 		return completionFromTail(ctx, err, emitted), nil
 	}
-	ticker := time.NewTicker(time.Duration(request.PollIntervalMS) * time.Millisecond)
-	defer ticker.Stop()
+	poll := o.tailPoll
+	var ticker *time.Ticker
+	if poll == nil {
+		ticker = time.NewTicker(time.Duration(request.PollIntervalMS) * time.Millisecond)
+		poll = ticker.C
+		defer ticker.Stop()
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return completionFromTail(ctx, nil, emitted), nil
-		case <-ticker.C:
+		case _, ok := <-poll:
+			if !ok {
+				return Completion{Status: "partial_results", Reason: "poll_unavailable", Results: emitted}, nil
+			}
 			if o.afterTailPoll != nil {
 				o.afterTailPoll()
 			}

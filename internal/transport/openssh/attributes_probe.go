@@ -58,7 +58,7 @@ func ProbeAttributes(ctx context.Context, config Config, canonicalAbsoluteRawPat
 	if err != nil {
 		return SFTPAttributes{}, fmt.Errorf("validate OpenSSH executable for attribute probe: %w", err)
 	}
-	arguments, err := Arguments(config.HostAlias)
+	arguments, err := argumentsForConfig(config)
 	if err != nil {
 		return SFTPAttributes{}, err
 	}

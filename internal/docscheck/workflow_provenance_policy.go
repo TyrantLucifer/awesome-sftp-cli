@@ -2,6 +2,7 @@ package docscheck
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -136,6 +137,7 @@ func canonicalProvenanceWorkflowProfile(path string) (provenanceWorkflowProfile,
 			"auth-integration",
 			"native-ubuntu-22.04",
 			"native-ubuntu-24.04",
+			"native-ubuntu-24.04-arm",
 			"native-macos-15",
 			"native-macos-15-intel",
 			"oldstable-ubuntu-22.04",
@@ -165,39 +167,40 @@ func canonicalProvenanceWorkflowProfile(path string) (provenanceWorkflowProfile,
 				},
 				{
 					jobID: "auth-integration", leg: "auth-integration", runsOn: "ubuntu-24.04", timeout: "30",
+					needs:  []string{"quality"},
 					matrix: noProvenanceMatrix, record: standardProvenanceRecord,
 					expectedLegs: legs[1:2], environment: map[string]string{"LEG": "auth-integration"},
 				},
 				{
 					jobID: "native", leg: "native-${{ matrix.os }}", runsOn: "${{ matrix.os }}", timeout: "45",
 					matrix: osProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[2:6], environment: map[string]string{"LEG": "native-${{ matrix.os }}"},
+					expectedLegs: legs[2:7], environment: map[string]string{"LEG": "native-${{ matrix.os }}"},
 				},
 				{
 					jobID: "oldstable", leg: "oldstable-${{ matrix.os }}", runsOn: "${{ matrix.os }}", timeout: "30",
 					matrix: osProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[6:10], environment: map[string]string{"GOTOOLCHAIN": "local", "LEG": "oldstable-${{ matrix.os }}"},
+					expectedLegs: legs[7:11], environment: map[string]string{"GOTOOLCHAIN": "local", "LEG": "oldstable-${{ matrix.os }}"},
 				},
 				{
 					jobID: "build", leg: "build-${{ matrix.artifact }}", runsOn: "ubuntu-24.04", timeout: "20",
 					matrix: buildProvenanceMatrix, record: buildArtifactProvenanceRecord,
-					expectedLegs: legs[10:14], environment: map[string]string{"LEG": "build-${{ matrix.artifact }}"},
+					expectedLegs: legs[11:15], environment: map[string]string{"LEG": "build-${{ matrix.artifact }}"},
 				},
 				{
 					jobID: "reproducibility", leg: "repro-${{ matrix.artifact }}-${{ matrix.replica }}", runsOn: "ubuntu-24.04", timeout: "20",
 					matrix: reproProvenanceMatrix, record: reproArtifactProvenanceRecord,
-					expectedLegs: legs[14:22], environment: map[string]string{"LEG": "repro-${{ matrix.artifact }}-${{ matrix.replica }}"},
+					expectedLegs: legs[15:23], environment: map[string]string{"LEG": "repro-${{ matrix.artifact }}-${{ matrix.replica }}"},
 				},
 				{
 					jobID: "reproducibility-compare", leg: "reproducibility-compare", runsOn: "ubuntu-24.04", timeout: "15",
 					needs: []string{"reproducibility"}, matrix: noProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[22:23], environment: map[string]string{"LEG": "reproducibility-compare"},
+					expectedLegs: legs[23:24], environment: map[string]string{"LEG": "reproducibility-compare"},
 					comparisonArtifact: "reproducibility-comparison",
 				},
 			},
 			compareNeeds:       []string{"quality", "auth-integration", "native", "oldstable", "build", "reproducibility", "reproducibility-compare"},
 			expectedLegs:       legs,
-			fileCount:          46,
+			fileCount:          48,
 			comparisonArtifact: "reproducibility-comparison",
 			artifactGroups: []provenanceArtifactGroup{
 				{artifact: "amsftp-darwin-arm64", goos: "darwin", goarch: "arm64", buildLeg: "build-amsftp-darwin-arm64", reproALeg: "repro-amsftp-darwin-arm64-a", reproBLeg: "repro-amsftp-darwin-arm64-b"},
@@ -307,8 +310,10 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 	}
 
 	switch profile.jobID {
+	case "quality":
+		return canonicalQualityPreviewBundleHandoff(job.steps[:recordIndex])
 	case "auth-integration":
-		return len(job.steps) == 8 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
+		return len(job.steps) == 13 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
 	case "build":
 		return len(job.steps) == 8 && canonicalBuildProducerPrefix(job.steps[:recordIndex])
 	case "fuzz":
@@ -325,7 +330,7 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 }
 
 func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
-	if len(steps) != 6 {
+	if len(steps) != 11 {
 		return false
 	}
 	return stepIsExactCheckout(steps[0]) && stepIsExactCurrentSetupGo(steps[1]) &&
@@ -338,26 +343,121 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`  krb5-kdc \`,
 			`  krb5-user \`,
 			`  netcat-openbsd \`,
-			`  openssh-server`,
+			`  openssh-server \`,
+			`  proftpd-core \`,
+			`  proftpd-mod-crypto`,
 		}) &&
-		canonicalRunStep(steps[3], "Build installed same-binary fixture", []string{
+		canonicalRunStep(steps[3], "Capture current OpenSSH version", []string{
 			`set -euo pipefail`,
+			`current_version="$(/usr/bin/ssh -V 2>&1)"`,
+			`case "${current_version}" in`,
+			`  OpenSSH_*) ;;`,
+			`  *)`,
+			`    printf 'system ssh did not report an OpenSSH version\n' >&2`,
+			`    exit 1`,
+			`    ;;`,
+			`esac`,
 			`mkdir -p "${RUNNER_TEMP}/auth-integration"`,
-			`go build -trimpath -o "${RUNNER_TEMP}/auth-integration/amsftp" ./cmd/amsftp`,
+			`printf '%s\n' "${current_version}" | tee "${RUNNER_TEMP}/auth-integration/openssh-current-version"`,
 		}) &&
-		canonicalRunStep(steps[4], "Run real OpenSSH authentication matrix", []string{
+		canonicalRunStep(steps[4], "Capture current MIT Kerberos version", []string{
+			`set -euo pipefail`,
+			`kerberos_version="$(/usr/bin/klist -V 2>&1)"`,
+			`case "${kerberos_version}" in`,
+			`  Kerberos\ 5\ version\ *) ;;`,
+			`  *)`,
+			`    printf 'system klist did not report an MIT Kerberos version\n' >&2`,
+			`    exit 1`,
+			`    ;;`,
+			`esac`,
+			`mkdir -p "${RUNNER_TEMP}/auth-integration"`,
+			`printf '%s\n' "${kerberos_version}" | tee "${RUNNER_TEMP}/auth-integration/kerberos-current-version"`,
+		}) &&
+		canonicalRunStep(steps[5], "Capture current ProFTPD vendor SFTP version", []string{
+			`set -euo pipefail`,
+			`proftpd_version="$(/usr/sbin/proftpd -v 2>&1)"`,
+			`case "${proftpd_version}" in`,
+			`  ProFTPD\ Version\ *) ;;`,
+			`  *)`,
+			`    printf 'system proftpd did not report a ProFTPD version\n' >&2`,
+			`    exit 1`,
+			`    ;;`,
+			`esac`,
+			`{`,
+			`  printf '%s\n' "${proftpd_version}"`,
+			`  dpkg-query -W -f='${Package}=${Version}\n' proftpd-core proftpd-mod-crypto | LC_ALL=C sort`,
+			`} | tee "${RUNNER_TEMP}/auth-integration/proftpd-current-version"`,
+		}) &&
+		canonicalPreviewBundleDownload(steps[6]) &&
+		canonicalRunStep(steps[7], "Verify and extract internal preview bundle", []string{
+			`set -euo pipefail`,
+			`bundle="${RUNNER_TEMP}/auth-integration/bundle"`,
+			`test "$(find "${bundle}" -mindepth 1 -maxdepth 1 -type f | wc -l | tr -d '[:space:]')" = 7`,
+			`(cd "${bundle}" && sha256sum -c checksums.txt)`,
+			`archive="${bundle}/amsftp_0.1.0-internal_linux_amd64.tar.gz"`,
+			`install_root="${RUNNER_TEMP}/auth-integration/install"`,
+			`test -f "${archive}"`,
+			`test ! -e "${install_root}"`,
+			`mkdir -p "${install_root}"`,
+			`tar -xzf "${archive}" -C "${install_root}"`,
+			`installed="${install_root}/amsftp_0.1.0-internal_linux_amd64/amsftp"`,
+			`test -x "${installed}"`,
+			`"${installed}" --version | grep -F "0.1.0-internal commit=${GITHUB_SHA} dirty=false"`,
+			`tar -xOf "${archive}" amsftp_0.1.0-internal_linux_amd64/VERSION.json | grep -F "\"commit\":\"${GITHUB_SHA}\""`,
+		}) &&
+		canonicalRunStep(steps[8], "Run real OpenSSH authentication matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
-			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \`,
+			`  AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \`,
+			`  AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/openssh-current-version")" \`,
 			`  AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-auth.sh`,
 		}) &&
-		canonicalRunStep(steps[5], "Run real MIT Kerberos/GSSAPI matrix", []string{
+		canonicalRunStep(steps[9], "Run real MIT Kerberos/GSSAPI matrix", []string{
 			`set -euo pipefail`,
 			`sudo env \`,
-			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/amsftp" \`,
+			`  AMSFTP_KERBEROS_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \`,
+			`  AMSFTP_KERBEROS_EXPECT_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/kerberos-current-version")" \`,
 			`  AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
 			`  bash ./internal/integration/hosted-kerberos.sh`,
+		}) &&
+		canonicalRunStep(steps[10], "Run real ProFTPD vendor SFTP matrix", []string{
+			`set -euo pipefail`,
+			`AMSFTP_VENDOR_BINARY="${RUNNER_TEMP}/auth-integration/install/amsftp_0.1.0-internal_linux_amd64/amsftp" \`,
+			`  AMSFTP_VENDOR_SFTP_EXPECT_VERSION_FILE="${RUNNER_TEMP}/auth-integration/proftpd-current-version" \`,
+			`  AMSFTP_VENDOR_SFTP_ROOT="/tmp/amsftp-vendor-sftp-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \`,
+			`  bash ./internal/integration/hosted-vendor-sftp.sh`,
+		})
+}
+
+func canonicalQualityPreviewBundleHandoff(steps []workflowStep) bool {
+	packaging := -1
+	for index, step := range steps {
+		if step.name != nil && step.name.value == "Exercise deterministic internal preview packaging and clean-home lifecycle" {
+			if packaging != -1 {
+				return false
+			}
+			packaging = index
+		}
+	}
+	return packaging >= 0 && packaging+1 < len(steps) && canonicalPreviewBundleUpload(steps[packaging+1])
+}
+
+func canonicalPreviewBundleUpload(step workflowStep) bool {
+	return canonicalBuildArtifactUpload(
+		step,
+		"Upload internal preview bundle",
+		"amsftp-internal-preview-${{ github.sha }}",
+		"${{ runner.temp }}/internal-preview-first",
+	)
+}
+
+func canonicalPreviewBundleDownload(step workflowStep) bool {
+	return step.name != nil && step.name.value == "Download internal preview bundle" && step.uses != nil &&
+		step.uses.value == "actions/download-artifact@"+approvedActionCommits["actions/download-artifact"] &&
+		nodeHasExactKeys(step.node, "name", "uses", "with") &&
+		mappingHasExactScalars(step.with, map[string]string{
+			"name": "amsftp-internal-preview-${{ github.sha }}", "path": "${{ runner.temp }}/auth-integration/bundle",
 		})
 }
 
@@ -581,6 +681,9 @@ func canonicalOSMatrix(job workflowJob) bool {
 	}
 	values := matrix.mappings[0].value
 	expected := []string{"ubuntu-22.04", "ubuntu-24.04", "macos-15", "macos-15-intel"}
+	if job.id == "native" {
+		expected = []string{"ubuntu-22.04", "ubuntu-24.04", "ubuntu-24.04-arm", "macos-15", "macos-15-intel"}
+	}
 	if values == nil || values.kind != policyYAMLSequenceNode || len(values.items) != len(expected) {
 		return false
 	}
@@ -1004,6 +1107,20 @@ func canonicalVerificationLines(profile provenanceWorkflowProfile) []string {
 		`  test -n "$(field_value go_env_goos "${record}")"`,
 		`  test -n "$(field_value go_env_goarch "${record}")"`,
 		`  test "$(field_value status "${record}")" = clean`,
+	)
+	if slices.Contains(profile.expectedLegs, "native-ubuntu-24.04-arm") {
+		lines = append(lines,
+			`  case "${leg}" in`,
+			`    native-ubuntu-24.04-arm)`,
+			`      test "$(field_value runner_os "${record}")" = Linux`,
+			`      test "$(field_value runner_arch "${record}")" = ARM64`,
+			`      test "$(field_value go_env_goos "${record}")" = linux`,
+			`      test "$(field_value go_env_goarch "${record}")" = arm64`,
+			`      ;;`,
+			`  esac`,
+		)
+	}
+	lines = append(lines,
 		`done <"${manifest}"`,
 		`artifact_hash() {`,
 		`  leg="$1"`,

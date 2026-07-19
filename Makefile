@@ -31,7 +31,7 @@ COVERAGE_DIR ?= coverage
 TOOL_MOD := -modfile=tools/go.mod
 
 .PHONY: fmt-check vet lint test test-contract test-race test-scale bench-scale fuzz-smoke
-.PHONY: docs-check mod-check supply-chain build-all
+.PHONY: docs-check notice-check mod-check supply-chain build-all
 .PHONY: make-contract-scan make-contract make-contract-flags check ci
 
 fmt-check:
@@ -79,6 +79,10 @@ docs-check:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
 	"$(GO)" run ./internal/tools/docscheck .
 
+notice-check:
+	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
+	"$(GO)" run ./internal/tools/releasenotice --check docs/release/runtime-dependencies.json docs/release/license-materials.json docs/release/NOTICE
+
 mod-check:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
 	"$(GO)" mod tidy -diff
@@ -110,7 +114,7 @@ make-contract: make-contract-scan
 make-contract-flags:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
 
-check: make-contract fmt-check vet test test-contract docs-check mod-check
+check: make-contract fmt-check vet test test-contract docs-check notice-check mod-check
 
 ci: check lint test-race fuzz-smoke supply-chain build-all
 

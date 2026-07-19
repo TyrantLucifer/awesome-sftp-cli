@@ -8,20 +8,18 @@ import (
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/buildinfo"
 )
 
-const usage = `Usage:
-  amsftp [<location> [<location>]]
-  amsftp --workspace <name>
-  amsftp [client|daemon|askpass|helper] [arguments...]
-  amsftp [--help|--version]
-`
-
 type Handler func(context.Context, []string, io.Writer, io.Writer) error
 
 type Handlers struct {
-	Client  Handler
-	Daemon  Handler
-	Askpass Handler
-	Helper  Handler
+	Client        Handler
+	Daemon        Handler
+	Askpass       Handler
+	Helper        Handler
+	Job           Handler
+	Config        Handler
+	Doctor        Handler
+	SupportBundle Handler
+	Completion    Handler
 }
 
 func Run(
@@ -34,29 +32,36 @@ func Run(
 	invocation, err := ParseInvocation(args)
 	if err != nil {
 		fmt.Fprintf(stderr, "amsftp: %v\n", err)
-		return 2
+		return int(ExitUsage)
 	}
 
 	if invocation.ShowHelp {
-		fmt.Fprint(stdout, usage)
-		return 0
+		fmt.Fprint(stdout, Usage())
+		return int(ExitSuccess)
 	}
 	if invocation.ShowVersion {
 		fmt.Fprintln(stdout, buildinfo.Current())
-		return 0
+		return int(ExitSuccess)
 	}
 
 	handler := handlers.handler(invocation.Role)
 	if handler == nil {
 		fmt.Fprintf(stderr, "amsftp: %s handler is not configured\n", invocation.Role)
-		return 1
+		return int(ExitInternal)
 	}
 	if err := handler(ctx, roleArgs(args, invocation.Role), stdout, stderr); err != nil {
+		if renderer, ok := err.(interface{ RenderCLIError(io.Writer) error }); ok {
+			if renderErr := renderer.RenderCLIError(stderr); renderErr != nil {
+				fmt.Fprintf(stderr, "amsftp: render machine error: %v\n", renderErr)
+				return int(ExitInternal)
+			}
+			return int(exitCode(err))
+		}
 		fmt.Fprintf(stderr, "amsftp: %s handler: %v\n", invocation.Role, err)
-		return 1
+		return int(exitCode(err))
 	}
 
-	return 0
+	return int(ExitSuccess)
 }
 
 func (h Handlers) handler(role Role) Handler {
@@ -69,6 +74,16 @@ func (h Handlers) handler(role Role) Handler {
 		return h.Askpass
 	case RoleHelper:
 		return h.Helper
+	case RoleJob:
+		return h.Job
+	case RoleConfig:
+		return h.Config
+	case RoleDoctor:
+		return h.Doctor
+	case RoleSupportBundle:
+		return h.SupportBundle
+	case RoleCompletion:
+		return h.Completion
 	default:
 		return nil
 	}

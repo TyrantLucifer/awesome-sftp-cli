@@ -21,9 +21,13 @@ installed=/usr/bin/amsftp-recovery-test
 client_user=amsftp-recovery-client
 target_a=amsftp-recovery-a
 target_b=amsftp-recovery-b
+target_picker=amsftp-recovery-picker
 state_home=/var/lib/amsftp-recovery-state
+picker_chroot=/var/lib/amsftp-recovery-picker-root
+picker_marker="${picker_chroot}/picker-stage1-marker.txt"
 sshd_a_pid=
 sshd_b_pid=
+sshd_picker_pid=
 
 stop_group() {
   local pid="${1:-}"
@@ -40,17 +44,18 @@ stop_group() {
 }
 
 cleanup() {
-  for pid_file in "${root}/sshd-a/sshd.pid" "${root}/sshd-b/sshd.pid"; do
+  for pid_file in "${root}/sshd-a/sshd.pid" "${root}/sshd-b/sshd.pid" "${root}/sshd-picker/sshd.pid"; do
     if test -f "${pid_file}"; then
       stop_group "$(cat "${pid_file}")"
     fi
   done
   stop_group "${sshd_a_pid}"
   stop_group "${sshd_b_pid}"
+  stop_group "${sshd_picker_pid}"
   pkill -KILL -u "${client_user}" -f "^${installed}" 2>/dev/null || true
   rm -f "${installed}"
-  rm -rf "${state_home}" "${root}"
-  for user_name in "${client_user}" "${target_a}" "${target_b}"; do
+  rm -rf "${state_home}" "${picker_chroot}" "${root}"
+  for user_name in "${client_user}" "${target_a}" "${target_b}" "${target_picker}"; do
     if id "${user_name}" >/dev/null 2>&1; then
       userdel -r "${user_name}" >/dev/null 2>&1 || true
     fi
@@ -61,17 +66,18 @@ trap cleanup EXIT
 cleanup
 trap cleanup EXIT
 
-for user_name in "${client_user}" "${target_a}" "${target_b}"; do
+for user_name in "${client_user}" "${target_a}" "${target_b}" "${target_picker}"; do
   useradd --create-home --shell /bin/bash "${user_name}"
 done
 
 # OpenSSH rejects locked local accounts before evaluating authorized_keys on
-# the hosted Ubuntu runners. Give only the two SFTP targets random, test-local
+# the hosted Ubuntu runners. Give only the three SFTP targets random, test-local
 # passwords while every recovery sshd keeps password authentication disabled.
 recovery_account_password="$(openssl rand -hex 24)"
 printf '%s:%s\n%s:%s\n' \
   "${target_a}" "${recovery_account_password}" \
   "${target_b}" "${recovery_account_password}" | chpasswd
+printf '%s:%s\n' "${target_picker}" "${recovery_account_password}" | chpasswd
 unset recovery_account_password
 
 install -d -o root -g root -m 0755 "${root}"
@@ -93,7 +99,7 @@ install -d -o "${client_user}" -g "${client_user}" -m 0700 \
 runuser -u "${client_user}" -- /usr/bin/ssh-keygen -q -t ed25519 -N '' -f "${client_home}/.ssh/recovery_key"
 chmod 0600 "${client_home}/.ssh/recovery_key"
 
-for target in "${target_a}" "${target_b}"; do
+for target in "${target_a}" "${target_b}" "${target_picker}"; do
   target_home="$(getent passwd "${target}" | cut -d: -f6)"
   install -d -o "${target}" -g "${target}" -m 0700 "${target_home}/.ssh"
   install -o "${target}" -g "${target}" -m 0600 "${client_home}/.ssh/recovery_key.pub" "${target_home}/.ssh/authorized_keys"
@@ -110,6 +116,9 @@ printf 'local-ready\n' >"${local_root}/local-stage1-marker.txt"
 printf 'a-parent-ready\n' >"${a_root}/a-parent-marker.txt"
 printf 'a-deep-ready\n' >"${a_deep}/a-deep-marker.txt"
 printf 'b-ready\n' >"${b_root}/b-stage1-marker.txt"
+install -d -o root -g root -m 0755 "${picker_chroot}"
+printf 'picker-ready\n' >"${picker_marker}"
+chmod 0644 "${picker_marker}"
 chown -R "${client_user}:${client_user}" "${local_root}"
 chown -R "${target_a}:${target_a}" "${a_root}"
 chown -R "${target_b}:${target_b}" "${b_root}"
@@ -128,6 +137,10 @@ port_a="$(free_port)"
 port_b="${port_a}"
 while test "${port_b}" = "${port_a}"; do
   port_b="$(free_port)"
+done
+port_picker="${port_a}"
+while test "${port_picker}" = "${port_a}" || test "${port_picker}" = "${port_b}"; do
+  port_picker="$(free_port)"
 done
 
 configure_sshd() {
@@ -174,12 +187,19 @@ start_sshd() {
 mkdir -p /run/sshd
 configure_sshd a "${port_a}" "${target_a}"
 configure_sshd b "${port_b}" "${target_b}"
+configure_sshd picker "${port_picker}" "${target_picker}"
+cat >>"${root}/sshd-picker/sshd_config" <<EOF
+ChrootDirectory ${picker_chroot}
+ForceCommand internal-sftp -d /
+EOF
 sshd_a_pid="$(start_sshd a "${port_a}")"
 sshd_b_pid="$(start_sshd b "${port_b}")"
+sshd_picker_pid="$(start_sshd picker "${port_picker}")"
 
 known_hosts="${client_home}/.ssh/known_hosts"
 /usr/bin/ssh-keyscan -p "${port_a}" 127.0.0.1 >"${known_hosts}" 2>/dev/null
 /usr/bin/ssh-keyscan -p "${port_b}" 127.0.0.1 >>"${known_hosts}" 2>/dev/null
+/usr/bin/ssh-keyscan -p "${port_picker}" 127.0.0.1 >>"${known_hosts}" 2>/dev/null
 chown "${client_user}:${client_user}" "${known_hosts}"
 chmod 0600 "${known_hosts}"
 
@@ -209,9 +229,37 @@ Host recovery-b
   StrictHostKeyChecking yes
   LogLevel ERROR
   ConnectTimeout 5
+
+Host recovery-picker
+  HostName 127.0.0.1
+  Port ${port_picker}
+  User ${target_picker}
+  IdentityFile ${client_home}/.ssh/recovery_key
+  IdentitiesOnly yes
+  PreferredAuthentications publickey
+  GlobalKnownHostsFile /dev/null
+  UserKnownHostsFile ${known_hosts}
+  StrictHostKeyChecking yes
+  LogLevel ERROR
+  ConnectTimeout 5
 EOF
 chown "${client_user}:${client_user}" "${client_home}/.ssh/config"
 chmod 0600 "${client_home}/.ssh/config"
+
+root_listing="${root}/recovery-picker-root.list"
+if ! printf 'ls /\nquit\n' | runuser -u "${client_user}" -- env \
+  HOME="${client_home}" \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  /usr/bin/sftp -q -b - recovery-picker >"${root_listing}" 2>&1; then
+  sed -n '1,120p' "${root_listing}" >&2
+  printf 'recovery-picker root SFTP preflight failed\n' >&2
+  exit 1
+fi
+if ! grep -Fq "$(basename "${picker_marker}")" "${root_listing}"; then
+  sed -n '1,120p' "${root_listing}" >&2
+  printf 'recovery-picker root SFTP preflight did not list picker marker\n' >&2
+  exit 1
+fi
 
 vt_observer="${root}/vt-observer"
 go build -trimpath -o "${vt_observer}" ./internal/integration/vt-observer
@@ -239,6 +287,7 @@ env -i \
   AMSFTP_RECOVERY_SSHD_A_PORT="${port_a}" \
   AMSFTP_RECOVERY_STATE_HOME="${state_home}" \
   AMSFTP_RECOVERY_VT_OBSERVER="${vt_observer}" \
+  AMSFTP_RECOVERY_PICKER_MARKER="${picker_marker}" \
   python3 ./internal/integration/hosted-stage1-recovery.py
 
 printf 'hosted Stage 1 recovery matrix passed\n'

@@ -33,6 +33,8 @@ make BUILD_DIR="$EXTERNAL_ROOT/build outputs" \
 
 `test` 的 profile 位于 `$(COVERAGE_DIR)/unit.out`；`test-contract` 的 profile 位于 `$(COVERAGE_DIR)/provider-contract.out`。
 
+普通 `docs-check` 适用于开发中的仓库。最终候选还必须显式运行 `GOTOOLCHAIN=local go run ./internal/tools/docscheck --release .`；该模式要求冻结的 23 个 Stage 6 行全部处于 `Verified` 或有 ADR 的 `Deferred`/`Removed`，并要求 12 个退出条件保持原文、原序且全部勾选。它在 Stage 6 仍进行时应当失败，不能用普通 docscheck 的成功代替。
+
 Make 契约的信任边界是仓库根目录中已提交的 canonical `Makefile`。可接受的本地/CI 证据必须从产品仓库根目录直接执行 `make <target>`；workflow policy 同时要求 `MAKEFLAGS`、`GNUMAKEFLAGS`、`MAKEFILES` 的有效值为空，并只认可精确、安全的 Make 命令。通过 wrapper Makefile、额外 `-f`、`MAKEFILES` preload、include 或其他外部 Make source 得到的结果不属于这条契约，也不能作为门禁证据；Make 自身不被描述为任意外部 source 的完整性边界。
 
 canonical Makefile 的初始/文件尾解析期 guard 拒绝 `-n`/`-i`/`-q`/`-t` 及其长形式；14 个 recipe 目标的第一行还必须精确为强制执行的 `+@: $(MAKE_CONTRACT_RECIPE_GUARD)`，因此即使 canonical source 在 footer 后晚置 `-t`，GNU Make 3.81 也必须展开 guard 并 fail closed，而不能把门禁假报为 “Nothing to be done”。guard 的 helper、派生结果和 recipe 入口使用 GNU Make `override` 保护，不能被命令行或 `-e` 环境变量降级；显式命令行赋值 `MAKEFLAGS`/`MFLAGS` 会因来源不可信而直接失败，checker 会重放内部变量、双 Make 输入、`SHELL`、`.SHELLFLAGS`、`.RECIPEPREFIX` 与环境覆盖攻击矩阵。flag 解析只检查 GNU Make 规范化后的选项前缀，遇到独立 `--` 或首个普通命令行变量赋值即停止；因此 `GO`、`BUILD_DIR`/`COVERAGE_DIR` 的预期覆盖及带空格路径（即使后续片段含 `-n`/`--touch` 文本）不会被误当成执行 flag。`-C <dir>`、`-I <dir>` 等带独立参数的安全选项也不会因参数文本被误判。静态 checker 会先折叠非 recipe 的 Make 逻辑续行，并按 shell 规则折叠 recipe 的反斜杠换行，再解析命令位置；命令只允许 `$(GO)` 或少量固定、无间接执行能力的基础工具，字面量 `go`、`*/go`、未知 Make/shell 引用、执行包装器和其他间接执行入口均 fail closed。canonical source 中的 global/target-specific `SHELL`、`.SHELLFLAGS`、`.RECIPEPREFIX`、Make 执行 flags/preload 变量以及 `.ONESHELL`、`.IGNORE`、`.POSIX` 同样被拒绝，不能改写 recipe 解释器或错误传播语义。

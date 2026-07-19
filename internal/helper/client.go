@@ -73,7 +73,7 @@ func newClient(parent context.Context, reader io.Reader, writer io.Writer, hello
 	if err != nil {
 		return nil, err
 	}
-	if err := write(Envelope{Version: 1, Type: FrameClientHello}, hello); err != nil {
+	if err := write(Envelope{Version: EnvelopeVersion, Type: FrameClientHello}, hello); err != nil {
 		return nil, fmt.Errorf("create helper client: send hello: %w", err)
 	}
 	frameReader, err := ipc.NewReader(reader, hello.MaximumFrame)
@@ -210,7 +210,7 @@ func (c *Client) Start(ctx context.Context, requestID domain.RequestID, operatio
 	c.requests[requestID] = clientRequest{events: events}
 	c.seen[requestID] = struct{}{}
 	c.mu.Unlock()
-	if err := c.write(Envelope{Version: 1, Type: FrameRequest, RequestID: requestID}, RequestPayload{Operation: operation, Body: append(json.RawMessage(nil), trimmed...)}); err != nil {
+	if err := c.write(Envelope{Version: EnvelopeVersion, Type: FrameRequest, RequestID: requestID}, RequestPayload{Operation: operation, Body: append(json.RawMessage(nil), trimmed...)}); err != nil {
 		c.fail(fmt.Errorf("start helper request: write: %w", err))
 		return nil, err
 	}
@@ -251,7 +251,7 @@ func (c *Client) Cancel(requestID domain.RequestID) error {
 	if closed {
 		return errors.New("cancel helper request: client is closed")
 	}
-	return c.write(Envelope{Version: 1, Type: FrameCancel, RequestID: requestID}, struct{}{})
+	return c.write(Envelope{Version: EnvelopeVersion, Type: FrameCancel, RequestID: requestID}, struct{}{})
 }
 
 func (c *Client) HasCapability(name CapabilityName) bool {
@@ -332,7 +332,7 @@ func (c *Client) heartbeatLoop(interval, timeout time.Duration) {
 		timer := time.NewTimer(timeout)
 		writeDone := make(chan error, 1)
 		go func() {
-			writeDone <- c.write(Envelope{Version: 1, Type: FramePing}, struct {
+			writeDone <- c.write(Envelope{Version: EnvelopeVersion, Type: FramePing}, struct {
 				Nonce string `json:"nonce"`
 			}{Nonce: nonce})
 		}()

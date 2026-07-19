@@ -5,6 +5,7 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/config"
@@ -88,5 +89,23 @@ func TestLoadApplicationConfigUsesDefaultsWhenMissingAndValidatesPrivateFiles(t 
 	}
 	if _, err := loadApplicationConfig(path); err == nil {
 		t.Fatal("broad config mode was accepted")
+	}
+}
+
+func TestLoadApplicationConfigErrorNamesSourcePath(t *testing.T) {
+	directory, err := filepath.EvalSymlinks(testkit.PersistentTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(directory, 0o700); err != nil { // #nosec G302 -- owner-only directory mode is the property under test.
+		t.Fatal(err)
+	}
+	path := filepath.Join(directory, "broken-config.json")
+	if err := os.WriteFile(path, []byte(`{"schema_version":1,"transfer":{"max_concurrent":99}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	_, err = loadApplicationConfig(path)
+	if err == nil || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), "transfer.max_concurrent") {
+		t.Fatalf("load error = %v, want source path and field", err)
 	}
 }

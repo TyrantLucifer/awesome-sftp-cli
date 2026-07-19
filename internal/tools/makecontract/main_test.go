@@ -556,7 +556,7 @@ func TestVerifyContractRejectsTargetSpecificRecipeShell(t *testing.T) {
 	})
 
 	root := t.TempDir()
-	malicious := "fmt-check vet lint test test-contract test-race test-scale bench-scale fuzz-smoke docs-check mod-check supply-chain build-all: SHELL = $(GO)\n"
+	malicious := "fmt-check vet lint test test-contract test-race test-scale bench-scale fuzz-smoke docs-check notice-check mod-check supply-chain build-all: SHELL = $(GO)\n"
 	if err := os.WriteFile(filepath.Join(root, "Makefile"), []byte(malicious), 0o600); err != nil {
 		t.Fatalf("write malicious Makefile: %v", err)
 	}

@@ -79,19 +79,49 @@ func TestPersistentHandlerDropsSecretsAndUnregisteredFields(t *testing.T) {
 	}
 }
 
+func TestPersistentHandlerDropsLexicallyValidButUnregisteredSecretValues(t *testing.T) {
+	var output bytes.Buffer
+	logger := slog.New(NewJSONHandler(&output, nil))
+	secrets := []string{
+		"username_canary_7f3a", "hostname_canary_7f3a", "private_key_canary_7f3a",
+		"askpass_answer_canary_7f3a", "kerberos_ticket_canary_7f3a", "environment_secret_canary_7f3a",
+		"command_argument_canary_7f3a", "file_content_canary_7f3a",
+	}
+	for _, secret := range secrets {
+		logger.ErrorContext(context.Background(), secret,
+			Component(secret),
+			Event(secret),
+			slog.String("error_code", secret),
+			slog.String("path", "/private/"+secret),
+		)
+	}
+	for _, secret := range secrets {
+		if strings.Contains(output.String(), secret) {
+			t.Fatalf("persistent log retained safe-shaped secret %q: %s", secret, output.String())
+		}
+	}
+}
+
 func TestDaemonLogLevelCanChangeAtRuntime(t *testing.T) {
 	var output bytes.Buffer
 	level := &slog.LevelVar{}
 	level.Set(slog.LevelWarn)
 	logger := slog.New(NewJSONHandler(&output, level))
-	logger.Info("hidden", Component("daemon"), Event("level_test"))
+	logger.Info("hidden", Component("daemon"), Event("rpc_request_started"))
 	if output.Len() != 0 {
 		t.Fatalf("disabled info output = %q", output.String())
 	}
 	level.Set(slog.LevelDebug)
-	logger.Debug("visible", Component("daemon"), Event("level_test"))
+	logger.Debug("visible", Component("daemon"), Event("rpc_request_succeeded"))
 	if !strings.Contains(output.String(), `"level":"DEBUG"`) {
 		t.Fatalf("dynamic debug output = %q", output.String())
+	}
+}
+
+func TestDefaultConfigFreezesDiagnosticResourceCeilings(t *testing.T) {
+	want := Config{MaxBytes: 4 * 1024 * 1024, Backups: 3, RingCapacity: 1000}
+	if got := DefaultConfig(); got != want {
+		t.Fatalf("DefaultConfig() = %#v, want %#v", got, want)
 	}
 }
 
@@ -102,7 +132,7 @@ func TestOpenDaemonLogRotatesWithinBoundAndUsesPrivateModes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for index := 0; index < 30; index++ {
-		log.Logger.Info("unsafe message", Component("daemon"), Event("rotation_test"), RequestID(testRequestID))
+		log.Logger.Info("unsafe message", Component("daemon"), Event("rpc_request_succeeded"), RequestID(testRequestID))
 	}
 	if err := log.Close(); err != nil {
 		t.Fatal(err)
@@ -136,7 +166,7 @@ func TestDaemonLogConcurrentWritesRemainBoundedJSON(t *testing.T) {
 		go func() {
 			defer writers.Done()
 			for index := 0; index < 50; index++ {
-				log.Logger.Info("unsafe", Component("daemon"), Event("concurrent_test"), RequestID(testRequestID))
+				log.Logger.Info("unsafe", Component("daemon"), Event("rpc_request_started"), RequestID(testRequestID))
 			}
 		}()
 	}

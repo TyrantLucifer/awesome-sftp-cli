@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-mac-sftp/internal/platform"
+	"github.com/TyrantLucifer/awesome-mac-sftp/internal/testkit"
 	pkgsftp "github.com/pkg/sftp"
 )
 
@@ -24,6 +25,35 @@ func TestArgumentsMatchADR0001Exactly(t *testing.T) {
 	want := []string{"-T", "-oEscapeChar=none", "-oForwardAgent=no", "-oForwardX11=no", "-oPermitLocalCommand=no", "-oClearAllForwardings=yes", "-oRemoteCommand=none", "-oStdinNull=no", "-oForkAfterAuthentication=no", "-oTunnel=no", "-oGSSAPIDelegateCredentials=no", "-s", "work-alias", "sftp"}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("arguments = %#v", got)
+	}
+}
+
+func TestExplicitConfigFileIsPrivateAndDoesNotChangeDefaultArguments(t *testing.T) {
+	root := testkit.PersistentTempDir(t)
+	configPath := filepath.Join(root, "config")
+	if err := os.WriteFile(configPath, []byte("Host release-lab\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := validateExplicitConfigFile(configPath); err != nil {
+		t.Fatalf("private config: %v", err)
+	}
+	got, err := argumentsForConfig(Config{HostAlias: "release-lab", ConfigFile: configPath})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"-F", configPath, "-T", "-oEscapeChar=none", "-oForwardAgent=no", "-oForwardX11=no", "-oPermitLocalCommand=no", "-oClearAllForwardings=yes", "-oRemoteCommand=none", "-oStdinNull=no", "-oForkAfterAuthentication=no", "-oTunnel=no", "-oGSSAPIDelegateCredentials=no", "-s", "release-lab", "sftp"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("explicit-config arguments = %#v", got)
+	}
+
+	if err := validateExplicitConfigFile("relative"); err == nil {
+		t.Fatal("relative config accepted")
+	}
+	if err := os.Chmod(configPath, 0o644); err != nil { //nolint:gosec // intentionally prove a public config is rejected.
+		t.Fatal(err)
+	}
+	if err := validateExplicitConfigFile(configPath); err == nil {
+		t.Fatal("public config accepted")
 	}
 }
 

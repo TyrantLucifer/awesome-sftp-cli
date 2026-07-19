@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -306,7 +307,7 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 		default:
 		}
 		attemptCtx, stop := context.WithTimeout(context.Background(), 200*time.Millisecond)
-		client, err = connectExisting(attemptCtx, paths, purpose)
+		client, err = connectExistingAs(attemptCtx, paths, purpose, "0.9.0-stage5", "stage5-compatible-client")
 		stop()
 		if err == nil {
 			break
@@ -323,6 +324,28 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	}
 	if len(endpoints.Endpoints) != 1 || endpoints.Endpoints[0].Kind != "local" {
 		t.Fatalf("endpoints = %#v", endpoints.Endpoints)
+	}
+	if client.Info().Protocol != (ipc.ProtocolVersion{Major: ipc.ProtocolMajor, Minor: ipc.ProtocolMinor}) {
+		t.Fatalf("prior-version client protocol = %#v", client.Info().Protocol)
+	}
+	socketBefore, err := os.Lstat(paths.ControlSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rejectFutureDaemonProtocol(t, paths, purpose)
+	var endpointsAfterRejectedUpgrade ipc.ProviderEndpointsResponse
+	if err := client.Call(context.Background(), daemon.ProviderEndpoints, struct{}{}, &endpointsAfterRejectedUpgrade); err != nil {
+		t.Fatalf("prior-version client after rejected future protocol: %v", err)
+	}
+	if len(endpointsAfterRejectedUpgrade.Endpoints) != 1 || endpointsAfterRejectedUpgrade.Endpoints[0].Kind != "local" {
+		t.Fatalf("endpoints after rejected future protocol = %#v", endpointsAfterRejectedUpgrade.Endpoints)
+	}
+	socketAfter, err := os.Lstat(paths.ControlSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(socketBefore, socketAfter) {
+		t.Fatal("daemon control socket was replaced after an incompatible hello")
 	}
 	for _, cachePath := range []string{paths.CacheDir, filepath.Join(paths.CacheDir, "content-v1", "blobs", "sha256")} {
 		metadata, statErr := os.Lstat(cachePath)
@@ -359,17 +382,108 @@ func TestDaemonRoleServesLocalProviderAndStopsCleanly(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("second daemon did not converge on held lock")
 	}
-	cancel()
+	controlRuntime := daemonCommandRuntime{
+		probe: func(probeCtx context.Context) (daemonControlClient, bool, error) {
+			return probeDaemon(probeCtx, paths, purpose)
+		},
+		waitStopped: func(waitCtx context.Context) error {
+			return waitForDaemonShutdown(waitCtx, paths, purpose)
+		},
+	}
+	var statusOutput strings.Builder
+	if err := runDaemonCommandWithRuntime(context.Background(), []string{"status", "--format", "json"}, &statusOutput, controlRuntime); err != nil {
+		cancel()
+		t.Fatalf("daemon status command: %v", err)
+	}
+	if !strings.Contains(statusOutput.String(), `"running":true`) || !strings.Contains(statusOutput.String(), `"state":"running"`) {
+		cancel()
+		t.Fatalf("daemon status output = %q", statusOutput.String())
+	}
+	var stopOutput strings.Builder
+	if err := runDaemonCommandWithRuntime(context.Background(), []string{"stop", "--confirm", "stop", "--format", "json"}, &stopOutput, controlRuntime); err != nil {
+		cancel()
+		t.Fatalf("daemon stop command: %v", err)
+	}
+	if !strings.Contains(stopOutput.String(), `"running":false`) || !strings.Contains(stopOutput.String(), `"state":"stopped"`) {
+		cancel()
+		t.Fatalf("daemon stop output = %q", stopOutput.String())
+	}
+	replacementLock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
+	if err != nil {
+		cancel()
+		t.Fatalf("daemon stop returned before instance lock release: %v", err)
+	}
+	if err := replacementLock.Close(); err != nil {
+		cancel()
+		t.Fatalf("release replacement instance lock: %v", err)
+	}
 	select {
 	case err := <-done:
 		if err != nil {
 			t.Fatal(err)
 		}
 	case <-time.After(5 * time.Second):
+		cancel()
 		t.Fatal("daemon did not stop")
 	}
+	cancel()
 	if _, err := os.Lstat(paths.ControlSocket); !os.IsNotExist(err) {
 		t.Fatalf("socket remains after shutdown: %v", err)
+	}
+}
+
+func TestDaemonAutostartRequiresProvenSocketAbsence(t *testing.T) {
+	root := testkit.PersistentTempDir(t)
+	existing := filepath.Join(root, "existing-control.sock")
+	if err := os.WriteFile(existing, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	connectErr := errors.New("existing daemon handshake failed")
+	if err := requireAbsentControlSocketForAutostart(existing, connectErr); !errors.Is(err, connectErr) {
+		t.Fatalf("existing socket error = %v, want wrapped connect failure", err)
+	}
+	content, err := os.ReadFile(existing) //nolint:gosec // exact test-owned path proves failed autostart preserves bytes
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "preserve" {
+		t.Fatalf("existing socket stand-in changed to %q", content)
+	}
+
+	absent := filepath.Join(root, "absent-control.sock")
+	if err := requireAbsentControlSocketForAutostart(absent, connectErr); err != nil {
+		t.Fatalf("proven-absent socket rejected: %v", err)
+	}
+
+	uninspectable := filepath.Join(root, strings.Repeat("x", 5000))
+	if err := requireAbsentControlSocketForAutostart(uninspectable, connectErr); err == nil || errors.Is(err, connectErr) {
+		t.Fatalf("uninspectable socket error = %v, want independent inspection failure", err)
+	}
+}
+
+func TestDaemonRejectsInvalidConfigurationBeforePersistentStateMutation(t *testing.T) {
+	runtimeRoot := t.TempDir()
+	persistent := testkit.PersistentTempDir(t)
+	for _, directory := range []string{runtimeRoot, persistent} {
+		if err := os.Chmod(directory, 0o700); err != nil { // #nosec G302 -- owner-only roots are required by the daemon contract.
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(persistent, "config.json")
+	if err := os.WriteFile(configPath, []byte(`{"schema_version":1,"cache":{"global_entries":5000}}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	paths := platform.Paths{
+		ConfigFile: configPath, StateDir: filepath.Join(persistent, "state"), CacheDir: filepath.Join(persistent, "cache"),
+		LogFile: filepath.Join(persistent, "log", "daemon.jsonl"), RuntimeDir: runtimeRoot,
+		ControlSocket: filepath.Join(runtimeRoot, "control-v1.sock"), LockFile: filepath.Join(runtimeRoot, "daemon.lock"),
+	}
+	err := runDaemonWithPaths(context.Background(), paths, platform.ValidateRuntimeFallback)
+	if err == nil || !strings.Contains(err.Error(), configPath) || !strings.Contains(err.Error(), "cache.global_entries") {
+		t.Fatalf("daemon config error = %v", err)
+	}
+	if _, err := os.Lstat(paths.StateDir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("state directory mutated before config validation: %v", err)
 	}
 }
 
@@ -402,11 +516,66 @@ func TestParseDaemonArgsRequiresOneExactExplicitMigrationResumeFlag(t *testing.T
 }
 
 func connectExisting(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
+	return connectExistingAs(ctx, paths, purpose, "test", "test-client")
+}
+
+func connectExistingAs(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, clientVersion, instanceID string) (*daemon.Client, error) {
 	connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
 	if err != nil {
 		return nil, err
 	}
-	return daemon.NewClient(ctx, connection, "test", "test-client")
+	return daemon.NewClient(ctx, connection, clientVersion, instanceID)
+}
+
+func rejectFutureDaemonProtocol(t *testing.T, paths platform.Paths, purpose platform.ValidationPurpose) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer connection.Close()
+	writer, err := ipc.NewWriter(connection, ipc.MaxFrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader, err := ipc.NewReader(connection, ipc.MaxFrameBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload, err := json.Marshal(ipc.HelloRequest{
+		ClientVersion:    "2.0.0-future",
+		ClientInstanceID: "future-client",
+		Protocols:        []ipc.VersionRange{{Major: ipc.ProtocolMajor + 1, MinMinor: 0, MaxMinor: 0}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := ipc.EncodeEnvelope(ipc.Envelope{
+		Protocol:  ipc.ProtocolVersion{Major: ipc.ProtocolMajor, Minor: ipc.ProtocolMinor},
+		Kind:      ipc.KindRequest,
+		Name:      daemon.RequestHello,
+		RequestID: domain.RequestID("req_dddddddddddddddddddddddddd"),
+		Payload:   payload,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.WriteFrame(request); err != nil {
+		t.Fatal(err)
+	}
+	frame, err := reader.ReadFrame()
+	if err != nil {
+		t.Fatal(err)
+	}
+	response, err := ipc.DecodeEnvelope(frame)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if response.Error == nil || response.Error.Code != domain.CodeProtocolIncompatible || response.Error.Retry.Kind != domain.RetryNever || response.Error.Effect != domain.EffectNone {
+		t.Fatalf("future protocol response = %#v", response.Error)
+	}
 }
 
 func TestStartLocationsParsesLocalAndRemote(t *testing.T) {

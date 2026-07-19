@@ -59,6 +59,14 @@ type Client struct {
 	closed    chan struct{}
 	closeOnce sync.Once
 	err       error
+	info      ClientInfo
+}
+
+type ClientInfo struct {
+	DaemonVersion string
+	Protocol      ipc.ProtocolVersion
+	Features      []ipc.ProtocolFeature
+	EventTypes    []string
 }
 
 func NewClient(ctx context.Context, conn net.Conn, clientVersion, instanceID string) (*Client, error) {
@@ -80,8 +88,26 @@ func NewClient(ctx context.Context, conn net.Conn, clientVersion, instanceID str
 		return nil, fmt.Errorf("create daemon client: hello: %w", err)
 	}
 	c.version = hello.Selected
+	c.info = ClientInfo{
+		DaemonVersion: hello.DaemonVersion,
+		Protocol:      hello.Selected,
+		Features:      append([]ipc.ProtocolFeature(nil), hello.Features...),
+		EventTypes:    append([]string(nil), hello.EventTypes...),
+	}
 	go c.readLoop()
 	return c, nil
+}
+
+func (c *Client) Info() ClientInfo {
+	if c == nil {
+		return ClientInfo{}
+	}
+	return ClientInfo{
+		DaemonVersion: c.info.DaemonVersion,
+		Protocol:      c.info.Protocol,
+		Features:      append([]ipc.ProtocolFeature(nil), c.info.Features...),
+		EventTypes:    append([]string(nil), c.info.EventTypes...),
+	}
 }
 
 func (c *Client) Call(ctx context.Context, name string, request, response any) error {
