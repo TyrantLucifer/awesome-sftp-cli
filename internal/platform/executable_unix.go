@@ -6,8 +6,29 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"path/filepath"
 	"syscall"
 )
+
+// ResolveTrustedExecutable freezes a symlinked launch path to its canonical
+// target, then applies the regular-file, owner, mode, ancestor, and ACL checks
+// to the exact path that the caller will execute. This keeps package-manager
+// entry points usable without executing through a mutable symlink afterward.
+func ResolveTrustedExecutable(path string) (string, error) {
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("resolve executable absolute path: %w", err)
+	}
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return "", fmt.Errorf("resolve executable symlinks: %w", err)
+	}
+	resolved = filepath.Clean(resolved)
+	if err := ValidateExecutable(resolved); err != nil {
+		return "", err
+	}
+	return resolved, nil
+}
 
 func ValidateExecutable(path string) error {
 	validator, err := currentTrustValidator()

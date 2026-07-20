@@ -974,7 +974,11 @@ jobs:
           brew tap amsftp-ci/preview "file://${tap_remote}"
           brew trust amsftp-ci/preview
           HOMEBREW_NO_AUTO_UPDATE=1 brew install --build-from-source amsftp-ci/preview/amsftp
+          test -L "$(brew --prefix)/bin/amsftp"
           "$(brew --prefix)/bin/amsftp" --version | grep -F "0.9.0 commit=${head} dirty=false"
+          "$(brew --prefix)/bin/amsftp" daemon start --format json >/dev/null
+          "$(brew --prefix)/bin/amsftp" daemon status --format json | grep -F '"running":true'
+          "$(brew --prefix)/bin/amsftp" daemon stop --confirm stop --format json >/dev/null
           go run ./internal/tools/homebrewpreview 1.0.0 "${preview_license}" "${new_bundle}" "${asset_origin}" >"${tap_remote}/Formula/amsftp.rb"
           git -C "${tap_remote}" add Formula/amsftp.rb
           git -C "${tap_remote}" commit -m 'amsftp 1.0.0 preview'

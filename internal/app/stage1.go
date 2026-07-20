@@ -291,7 +291,8 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		if err != nil {
 			return nil, sshConnectStageError("find authentication helper", domain.CodeInternal, domain.RetryNever, err)
 		}
-		if err := platform.ValidateExecutable(executable); err != nil {
+		executable, err = platform.ResolveTrustedExecutable(executable)
+		if err != nil {
 			return nil, sshConnectStageError("validate authentication helper", domain.CodeIntegrityFailed, domain.RetryNever, err)
 		}
 		environment, err := auth.OpenSSHEnvironment(os.Environ(), executable, attempt.Token())
@@ -480,7 +481,11 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 	if err != nil {
 		return nil, err
 	}
-	// #nosec G204 -- os.Executable returns this already-running, trusted binary; no user command is accepted.
+	executable, err = platform.ResolveTrustedExecutable(executable)
+	if err != nil {
+		return nil, fmt.Errorf("validate daemon executable: %w", err)
+	}
+	// #nosec G204 -- the canonical executable passed trust validation and no user command is accepted.
 	command := exec.Command(executable, "daemon")
 	configureDaemonAutostart(command)
 	command.Stdin, command.Stdout, command.Stderr = nil, nil, nil
