@@ -32,6 +32,7 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/v{0}', inputs.version) || github.ref }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -112,7 +113,7 @@ jobs:
           tree="$(git rev-parse 'HEAD^{tree}')"
           source_epoch="$(git show -s --format=%ct HEAD)"
           modules_json="$(tr -d '\n' < docs/release/runtime-dependencies.json)"
-          mkdir -p "${stage}/bin" "${output}"
+          mkdir -p "${stage}/bin"
           cp LICENSE "${stage}/LICENSE"
           go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json > "${stage}/NOTICE"
           cmp docs/release/NOTICE "${stage}/NOTICE"
@@ -169,7 +170,7 @@ jobs:
 
   publish:
     name: Publish GitHub release and Homebrew formula
-    if: github.ref_type == 'tag'
+    if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
     needs: package
     runs-on: ubuntu-24.04
     timeout-minutes: 15
@@ -181,6 +182,8 @@ jobs:
       - name: Check out tagged source
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/v{0}', inputs.version) || github.ref }}
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Download verified bundle
