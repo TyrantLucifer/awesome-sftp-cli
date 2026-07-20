@@ -1,6 +1,6 @@
 name: ci
-on:
-  pull_request:
+on: {workflow_dispatch: null, pull_request: {branches: ["release/**"]}, push: {branches: ["release/**"], tags: ["v*"]}}
+
 permissions:
   contents: read
 jobs:

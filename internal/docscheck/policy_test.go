@@ -21,12 +21,13 @@ type policyFinding struct {
 	Message string
 }
 
-func TestWorkflowPolicyRequiresCIAndNightly(t *testing.T) {
+func TestWorkflowPolicyRequiresCanonicalWorkflows(t *testing.T) {
 	tests := []struct {
 		name string
 		path string
 	}{
 		{name: "ci", path: ".github/workflows/ci.yml"},
+		{name: "fast ci", path: ".github/workflows/fast-ci.yml"},
 		{name: "nightly", path: ".github/workflows/nightly.yml"},
 	}
 	for _, test := range tests {
@@ -41,6 +42,39 @@ func TestWorkflowPolicyRequiresCIAndNightly(t *testing.T) {
 			})
 		})
 	}
+}
+
+func TestWorkflowRoutingPoliciesKeepFastAndReleaseGatesSeparate(t *testing.T) {
+	t.Run("release gates reject ordinary pull requests", func(t *testing.T) {
+		root := prepareFixture(t, "valid")
+		replacePolicyFile(t, root, ".github/workflows/ci.yml",
+			`on: {workflow_dispatch: null, pull_request: {branches: ["release/**"]}, push: {branches: ["release/**"], tags: ["v*"]}}`,
+			"on: [pull_request]")
+		assertPolicyFinding(t, root, policyFinding{
+			Path: ".github/workflows/ci.yml", Line: 2, Rule: "workflow.release_routing",
+			Message: "release gates must run only for release/** pull requests and pushes, v* tags, or workflow_dispatch",
+		})
+	})
+
+	t.Run("fast ci rejects release-only routing", func(t *testing.T) {
+		root := prepareFixture(t, "valid")
+		replacePolicyFile(t, root, ".github/workflows/fast-ci.yml",
+			"on:\n  pull_request:\n    branches-ignore:\n      - \"release/**\"\n  push:\n    branches:\n      - main\n",
+			"on:\n  push:\n    branches:\n      - release/**\n")
+		assertPolicyFinding(t, root, policyFinding{
+			Path: ".github/workflows/fast-ci.yml", Line: 2, Rule: "workflow.fast_routing",
+			Message: "fast ci must run exactly for pull requests and main pushes",
+		})
+	})
+
+	t.Run("fast ci keeps stable aggregator", func(t *testing.T) {
+		root := prepareFixture(t, "valid")
+		replacePolicyFile(t, root, ".github/workflows/fast-ci.yml", "    name: required\n", "    name: optional\n")
+		assertPolicyFinding(t, root, policyFinding{
+			Path: ".github/workflows/fast-ci.yml", Line: 17, Rule: "workflow.fast_required",
+			Message: "fast ci required job must be named required, use always(), and aggregate exactly changes, docs, quality, lint, race, workflow, dependencies, native, auth, release",
+		})
+	})
 }
 
 func TestWorkflowGenericPolicy(t *testing.T) {

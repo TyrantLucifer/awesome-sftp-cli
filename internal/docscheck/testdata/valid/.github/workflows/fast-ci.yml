@@ -1,0 +1,27 @@
+name: fast-ci
+on:
+  pull_request:
+    branches-ignore:
+      - "release/**"
+  push:
+    branches:
+      - main
+permissions:
+  contents: read
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - run: exit 0
+  required:
+    name: required
+    needs: [changes, docs, quality, lint, race, workflow, dependencies, native, auth, release]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+      - run: exit 0

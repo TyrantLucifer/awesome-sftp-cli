@@ -2,7 +2,7 @@
 
 ## 1. 常用入口
 
-提交前首选运行 `make check`。完整本地门禁是 `make ci`；它会生成覆盖率和四个构建产物，因此应把带空格的外部目录以双引号传给 `BUILD_DIR` 与 `COVERAGE_DIR`：
+日常迭代先运行受影响包及其直接契约测试，例如 `GOTOOLCHAIN=local go test ./internal/<package>`。`make check` 是跨包检查点，`make ci` 是发布前完整门禁；后者会生成覆盖率和四个构建产物，因此应把带空格的外部目录以双引号传给 `BUILD_DIR` 与 `COVERAGE_DIR`：
 
 ```sh
 EXTERNAL_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/amsftp-local.XXXXXX")"
@@ -11,6 +11,20 @@ make BUILD_DIR="$EXTERNAL_ROOT/build outputs" \
 ```
 
 不要为了通过清洁树检查而删除已有的 `.cache`、`bin`、`dist` 或 `coverage`；这些路径可能是开发者的既有基线。
+
+### 1.1 Hosted workflow 分层
+
+仓库把开发反馈和发布证据拆成三层：
+
+| 工作流 | 触发范围 | 用途 |
+| --- | --- | --- |
+| `Fast CI` | 普通 pull request 与 `main` push | 计算 Git diff 和 Go 反向依赖闭包，只验证受影响包；按风险附加 race、原生平台、真实认证、依赖或发布检查。分支保护只需绑定稳定的 `required` 汇总 job。 |
+| `Release Gates` | `release/**` pull request/push、`v*` tag 或手动触发 | 运行原 `CI` 的完整质量、认证、原生平台、oldstable、四目标构建与可复现性矩阵，产出发布级证据。 |
+| `Nightly` | 定时或手动触发 | 承担长时间 fuzz、并发重复和独立可复现构建，不阻塞普通开发反馈。 |
+
+`internal/tools/ciimpact` 把生产代码变更映射到所属 Go package，并沿反向 import/test-import 关系纳入消费者；仅修改 `_test.go` 或 package 内 `testdata` 时不扩散到消费者。纯文档不会启动代码矩阵，纯 workflow 变更只启动文档策略与 actionlint。传输、Provider、状态、缓存、daemon 和 IPC 变更增加 race；平台/进程边界增加 Ubuntu 与 macOS 原生验证；认证和发布路径只增加各自专项门禁。依赖图、Makefile、分类器自身、未知路径、无法取得 diff/package graph 或超过 32 个受影响包时一律 fail open，升级为 Fast CI 全量计划。
+
+Fast CI 的目标是尽快给出可信的开发反馈，不是发布证据。合并前无需为了形式感反复手动运行 `make ci`；进入 release 分支、打 tag 或准备公开候选时，仍必须通过完整 `Release Gates` 与相应外部门禁。
 
 ## 2. Make 目标契约
 
@@ -28,7 +42,7 @@ make BUILD_DIR="$EXTERNAL_ROOT/build outputs" \
 | `supply-chain` | 运行 govulncheck 与 actionlint。 |
 | `build-all` | 以 `CGO_ENABLED=0` 和 `-trimpath` 构建四个支持目标。 |
 | `check` | 组合 Make 契约、格式、vet、单元/contract、文档与 module 门禁。 |
-| `ci` | 在 `check` 上增加 lint、race、fuzz、供应链与四目标构建。 |
+| `ci` | 发布前本地门禁：在 `check` 上增加 lint、race、fuzz、供应链与四目标构建；不要求每个普通改动反复执行。 |
 | `make-contract` | 内部门禁：扫描 canonical Makefile，并以假 Go 可执行文件运行全部实际 Go 目标，验证 `GO` 覆盖、分析器工作目录和禁止字面量 `go` 的契约。 |
 
 `test` 的 profile 位于 `$(COVERAGE_DIR)/unit.out`；`test-contract` 的 profile 位于 `$(COVERAGE_DIR)/provider-contract.out`。
@@ -77,7 +91,7 @@ go test -count=100 \
 
 ## 6. 版本与平台矩阵
 
-稳定门禁使用 Go 1.26.5；oldstable 门禁使用 Go 1.25.12，并通过 `GOTOOLCHAIN=local` 禁止自动切换。工作流要求两套工具链都在 `ubuntu-22.04`、`ubuntu-24.04`、`macos-15`（arm64）与 `macos-15-intel` 上验证；在授权 hosted run 真正绿色前，这仍是未满足门禁而不是当前证据。oldstable 运行 `make check`，稳定原生门禁分别运行格式、vet、单元、显式 Provider contract、race、原生构建及 `--help`/`--version` smoke。发布式交叉构建覆盖：
+稳定工具链使用 Go 1.26.5；oldstable 门禁使用 Go 1.25.12，并通过 `GOTOOLCHAIN=local` 禁止自动切换。Fast CI 默认在 `ubuntu-24.04` 验证受影响包，只有原生边界变更才额外运行 `macos-15`；完整 `Release Gates` 才要求两套工具链在 `ubuntu-22.04`、`ubuntu-24.04`、`macos-15`（arm64）与 `macos-15-intel` 上验证。在授权 hosted run 真正绿色前，后者仍是未满足门禁而不是当前证据。oldstable 运行 `make check`，稳定原生发布门禁分别运行格式、vet、单元、显式 Provider contract、race、原生构建及 `--help`/`--version` smoke。发布式交叉构建覆盖：
 
 | GOOS | GOARCH | 输出文件 |
 | --- | --- | --- |

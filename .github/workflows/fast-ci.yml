@@ -1,0 +1,377 @@
+name: Fast CI
+
+on:
+  pull_request:
+    branches-ignore:
+      - "release/**"
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fast-ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOTOOLCHAIN: local
+
+jobs:
+  changes:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      docs: ${{ steps.impact.outputs.docs }}
+      code: ${{ steps.impact.outputs.code }}
+      workflow: ${{ steps.impact.outputs.workflow }}
+      dependencies: ${{ steps.impact.outputs.dependencies }}
+      core: ${{ steps.impact.outputs.core }}
+      native: ${{ steps.impact.outputs.native }}
+      auth: ${{ steps.impact.outputs.auth }}
+      release: ${{ steps.impact.outputs.release }}
+      full: ${{ steps.impact.outputs.full }}
+      packages: ${{ steps.impact.outputs.packages }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - id: impact
+        name: Classify changed packages and risk overlays
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          go run ./internal/tools/ciimpact \
+            --base "${BASE_SHA}" \
+            --head "${HEAD_SHA}" \
+            >>"${GITHUB_OUTPUT}"
+      - name: Summarize impact plan
+        env:
+          DOCS: ${{ steps.impact.outputs.docs }}
+          CODE: ${{ steps.impact.outputs.code }}
+          WORKFLOW: ${{ steps.impact.outputs.workflow }}
+          DEPENDENCIES: ${{ steps.impact.outputs.dependencies }}
+          CORE: ${{ steps.impact.outputs.core }}
+          NATIVE: ${{ steps.impact.outputs.native }}
+          AUTH: ${{ steps.impact.outputs.auth }}
+          RELEASE: ${{ steps.impact.outputs.release }}
+          FULL: ${{ steps.impact.outputs.full }}
+          PACKAGES: ${{ steps.impact.outputs.packages }}
+        run: |
+          set -euo pipefail
+          {
+            printf '### Fast CI impact plan\n\n'
+            printf '| Flag | Value |\n| --- | --- |\n'
+            printf '| docs | `%s` |\n' "${DOCS}"
+            printf '| code | `%s` |\n' "${CODE}"
+            printf '| workflow | `%s` |\n' "${WORKFLOW}"
+            printf '| dependencies | `%s` |\n' "${DEPENDENCIES}"
+            printf '| core | `%s` |\n' "${CORE}"
+            printf '| native | `%s` |\n' "${NATIVE}"
+            printf '| auth | `%s` |\n' "${AUTH}"
+            printf '| release | `%s` |\n' "${RELEASE}"
+            printf '| full | `%s` |\n' "${FULL}"
+            printf '\nPackages: `%s`\n' "${PACKAGES}"
+          } >>"${GITHUB_STEP_SUMMARY}"
+
+  docs:
+    needs: changes
+    if: ${{ (needs.changes.outputs.docs == 'true' || needs.changes.outputs.workflow == 'true') && needs.changes.outputs.code != 'true' && needs.changes.outputs.full != 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - run: make docs-check
+
+  quality:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - run: make fmt-check
+      - run: make docs-check
+      - name: Vet and test impacted packages
+        env:
+          PACKAGES_JSON: ${{ needs.changes.outputs.packages }}
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(jq -r '.[]' <<<"${PACKAGES_JSON}")
+          test "${#packages[@]}" -gt 0
+          go vet "${packages[@]}"
+          go test -count=1 "${packages[@]}"
+
+  lint:
+    needs: changes
+    if: needs.changes.outputs.code == 'true' || needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Lint impacted packages
+        env:
+          PACKAGES_JSON: ${{ needs.changes.outputs.packages }}
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(jq -r '.[]' <<<"${PACKAGES_JSON}")
+          test "${#packages[@]}" -gt 0
+          go tool -modfile=tools/go.mod golangci-lint run "${packages[@]}"
+
+  race:
+    needs: changes
+    if: needs.changes.outputs.core == 'true' || needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Race-test impacted safety-critical packages
+        env:
+          PACKAGES_JSON: ${{ needs.changes.outputs.packages }}
+        run: |
+          set -euo pipefail
+          mapfile -t packages < <(jq -r '.[]' <<<"${PACKAGES_JSON}")
+          test "${#packages[@]}" -gt 0
+          go test -race -count=1 "${packages[@]}"
+
+  workflow:
+    needs: changes
+    if: needs.changes.outputs.workflow == 'true' || needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - run: go tool -modfile=tools/go.mod actionlint .github/workflows/ci.yml .github/workflows/fast-ci.yml .github/workflows/nightly.yml
+
+  dependencies:
+    needs: changes
+    if: needs.changes.outputs.dependencies == 'true' || needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - run: make mod-check
+      - run: go tool -modfile=tools/go.mod govulncheck ./...
+
+  native:
+    needs: changes
+    if: needs.changes.outputs.native == 'true' || needs.changes.outputs.full == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-24.04
+          - macos-15
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Test impacted packages natively
+        env:
+          PACKAGES_JSON: ${{ needs.changes.outputs.packages }}
+        run: |
+          set -euo pipefail
+          packages=()
+          while IFS= read -r package; do
+            packages+=("${package}")
+          done < <(printf '%s' "${PACKAGES_JSON}" | jq -r '.[]')
+          test "${#packages[@]}" -gt 0
+          go test -count=1 "${packages[@]}"
+          go build -trimpath ./cmd/amsftp
+
+  auth:
+    needs: changes
+    if: needs.changes.outputs.auth == 'true' || needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Install authentication fixtures
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            expect \
+            krb5-admin-server \
+            krb5-kdc \
+            krb5-user \
+            netcat-openbsd \
+            openssh-server \
+            proftpd-core \
+            proftpd-mod-crypto
+      - name: Run real authentication contracts
+        run: |
+          set -euo pipefail
+          binary="${RUNNER_TEMP}/amsftp-auth"
+          go build -trimpath -o "${binary}" ./cmd/amsftp
+          openssh_version="$(/usr/bin/ssh -V 2>&1)"
+          kerberos_version="$(/usr/bin/klist -V 2>&1)"
+          vendor_version_file="${RUNNER_TEMP}/proftpd-version"
+          {
+            /usr/sbin/proftpd -v 2>&1
+            dpkg-query -W -f='${Package}=${Version}\n' proftpd-core proftpd-mod-crypto | LC_ALL=C sort
+          } >"${vendor_version_file}"
+          sudo env \
+            AMSFTP_AUTH_BINARY="${binary}" \
+            AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="${openssh_version}" \
+            AMSFTP_AUTH_ROOT="/tmp/amsftp-fast-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            bash ./internal/integration/hosted-auth.sh
+          sudo env \
+            AMSFTP_KERBEROS_BINARY="${binary}" \
+            AMSFTP_KERBEROS_EXPECT_VERSION="${kerberos_version}" \
+            AMSFTP_KERBEROS_ROOT="/tmp/amsftp-fast-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            bash ./internal/integration/hosted-kerberos.sh
+          AMSFTP_VENDOR_BINARY="${binary}" \
+            AMSFTP_VENDOR_SFTP_EXPECT_VERSION_FILE="${vendor_version_file}" \
+            AMSFTP_VENDOR_SFTP_ROOT="/tmp/amsftp-fast-vendor-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            bash ./internal/integration/hosted-vendor-sftp.sh
+
+  release:
+    needs: changes
+    if: needs.changes.outputs.release == 'true' || needs.changes.outputs.full == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - run: make notice-check
+      - run: make build-all
+        env:
+          BUILD_DIR: ${{ runner.temp }}/fast-release
+
+  required:
+    name: required
+    needs:
+      - changes
+      - docs
+      - quality
+      - lint
+      - race
+      - workflow
+      - dependencies
+      - native
+      - auth
+      - release
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    env:
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      DOCS_REQUIRED: ${{ (needs.changes.outputs.docs == 'true' || needs.changes.outputs.workflow == 'true') && needs.changes.outputs.code != 'true' && needs.changes.outputs.full != 'true' }}
+      DOCS_RESULT: ${{ needs.docs.result }}
+      CODE_REQUIRED: ${{ needs.changes.outputs.code == 'true' || needs.changes.outputs.full == 'true' }}
+      QUALITY_RESULT: ${{ needs.quality.result }}
+      LINT_RESULT: ${{ needs.lint.result }}
+      RACE_REQUIRED: ${{ needs.changes.outputs.core == 'true' || needs.changes.outputs.full == 'true' }}
+      RACE_RESULT: ${{ needs.race.result }}
+      WORKFLOW_REQUIRED: ${{ needs.changes.outputs.workflow == 'true' || needs.changes.outputs.full == 'true' }}
+      WORKFLOW_RESULT: ${{ needs.workflow.result }}
+      DEPENDENCIES_REQUIRED: ${{ needs.changes.outputs.dependencies == 'true' || needs.changes.outputs.full == 'true' }}
+      DEPENDENCIES_RESULT: ${{ needs.dependencies.result }}
+      NATIVE_REQUIRED: ${{ needs.changes.outputs.native == 'true' || needs.changes.outputs.full == 'true' }}
+      NATIVE_RESULT: ${{ needs.native.result }}
+      AUTH_REQUIRED: ${{ needs.changes.outputs.auth == 'true' || needs.changes.outputs.full == 'true' }}
+      AUTH_RESULT: ${{ needs.auth.result }}
+      RELEASE_REQUIRED: ${{ needs.changes.outputs.release == 'true' || needs.changes.outputs.full == 'true' }}
+      RELEASE_RESULT: ${{ needs.release.result }}
+    steps:
+      - name: Enforce the selected Fast CI plan
+        run: |
+          set -euo pipefail
+          test "${CHANGES_RESULT}" = success
+          require_success() {
+            required="$1"
+            result="$2"
+            name="$3"
+            if test "${required}" = true && test "${result}" != success; then
+              printf '%s was required but concluded %s\n' "${name}" "${result}" >&2
+              return 1
+            fi
+            case "${result}" in
+              success|skipped) ;;
+              *)
+                printf '%s concluded %s\n' "${name}" "${result}" >&2
+                return 1
+                ;;
+            esac
+          }
+          require_success "${DOCS_REQUIRED}" "${DOCS_RESULT}" docs
+          require_success "${CODE_REQUIRED}" "${QUALITY_RESULT}" quality
+          require_success "${CODE_REQUIRED}" "${LINT_RESULT}" lint
+          require_success "${RACE_REQUIRED}" "${RACE_RESULT}" race
+          require_success "${WORKFLOW_REQUIRED}" "${WORKFLOW_RESULT}" workflow
+          require_success "${DEPENDENCIES_REQUIRED}" "${DEPENDENCIES_RESULT}" dependencies
+          require_success "${NATIVE_REQUIRED}" "${NATIVE_RESULT}" native
+          require_success "${AUTH_REQUIRED}" "${AUTH_RESULT}" auth
+          require_success "${RELEASE_REQUIRED}" "${RELEASE_RESULT}" release

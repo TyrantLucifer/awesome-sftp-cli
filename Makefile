@@ -93,7 +93,7 @@ mod-check:
 supply-chain:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
 	"$(GO)" tool $(TOOL_MOD) govulncheck ./...
-	"$(GO)" tool $(TOOL_MOD) actionlint .github/workflows/ci.yml .github/workflows/nightly.yml
+	"$(GO)" tool $(TOOL_MOD) actionlint .github/workflows/ci.yml .github/workflows/fast-ci.yml .github/workflows/nightly.yml
 
 build-all:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
