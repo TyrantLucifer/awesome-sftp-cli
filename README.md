@@ -3,7 +3,7 @@
 AMSFTP 是一个面向 macOS 和 Linux 终端用户的 Vim-first 双栏文件工作台。任一栏都可以指向本地目录或 `~/.ssh/config` 中的远端主机；浏览、预览、编辑、搜索和传输统一通过本地 daemon 协调，认证与主机策略继续由系统 OpenSSH 负责。
 
 > [!WARNING]
-> 当前可用版本是未经签名、仅供所有者内部验证的 `v0.1.0-internal.20260719.1`。它不是公开的 AMSFTP 1.0，不应重新分发。标准 Level 0 SFTP 路径可用；production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
+> `v0.1.0` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
 
 ## 主要能力
 
@@ -28,9 +28,9 @@ AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为
 
 ## 安装与升级
 
-内部预览版发布页：[`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1)。
+公开预览发布页：[`v0.1.0`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
 
-首个严格 `X.Y.Z` 的公开预览发布后，可直接使用下面任一渠道。安装脚本默认安装到 `$HOME/.local`，会校验归档 SHA-256、原子替换 binary、保存上一版为 `amsftp.previous`，并重新生成 man page 与 shell completion：
+严格 `X.Y.Z` 的公开预览发布后，可直接使用下面任一渠道。安装脚本默认安装到 `$HOME/.local`，会校验归档 SHA-256、原子替换 binary、保存上一版为 `amsftp.previous`，并重新生成 man page 与 shell completion：
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
@@ -44,7 +44,7 @@ brew install TyrantLucifer/tap/amsftp
 brew upgrade TyrantLucifer/tap/amsftp
 ```
 
-当前已发布的 owner-only 内部版本不属于这个公开渠道，仍按下面的手工步骤安装：
+历史 owner-only 内部版本不属于这个公开渠道，仍按下面的手工步骤安装：
 
 1. 选择与本机 OS/架构匹配的归档并同时取得 `checksums.txt`。
 2. 使用 `sha256sum -c checksums.txt`（macOS 可使用 `shasum -a 256`）核对下载内容。
@@ -197,12 +197,16 @@ make docs-check
 
 ## 当前限制
 
-- 当前发布物仅供内部使用，未完成公开发行所需的签名、公证和最终渠道证明。
+- 当前公开预览未完成公开 1.0 所需的 Apple 签名、公证和最终渠道证明。
 - production Helper 分发和生命周期保持关闭。
 - production Level 2 跨主机直传保持关闭；跨端点复制使用 Level 0 中继或已明确开放的安全快路径。
 - Windows、原生 GUI、FUSE 挂载、完整 Vim 宏/寄存器和远端常驻服务不在当前范围内。
 
 下一阶段方向见[路线图](docs/product/roadmap.md)。
+
+## 许可证
+
+AMSFTP 以 [Apache License 2.0](LICENSE) 发布；第三方运行时材料与归档归属见[发行 NOTICE](docs/release/NOTICE)。
 
 ## 文档入口
 
