@@ -157,6 +157,8 @@ jobs:
           git archive 312bcccbcbd54246bbe5ff9babf4f14560449176 | tar -x -C "${old_source}"
           mkdir -p "${old_source}/internal/integration"
           cp -R internal/integration/pinned-cache-lifecycle "${old_source}/internal/integration/"
+          sed -i 's|github.com/TyrantLucifer/awesome-sftp-cli|github.com/TyrantLucifer/awesome-mac-sftp|g' \
+            "${old_source}/internal/integration/pinned-cache-lifecycle/main.go"
           (
             cd "${old_source}"
             # This frozen source predates the repository rename, so -X must match its historical module path.

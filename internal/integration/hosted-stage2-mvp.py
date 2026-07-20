@@ -69,13 +69,19 @@ def read_until(fd, observer, output, wanted, timeout=15):
     raise RuntimeError("PTY output did not contain %r; tail=%r" % (wanted, bytes(output[-3000:])))
 
 
-def read_ready_selection(fd, observer, output, filename, timeout=15):
+def read_ready_selection(fd, observer, output, filename, timeout=15, settle=1):
     wanted = ("> " + filename).encode("utf-8")
     deadline = time.monotonic() + timeout
+    ready_since = None
     while time.monotonic() < deadline:
         if selection_ready(observer, output, wanted):
-            return bytes(output)
-        ready, _, _ = select.select([fd], [], [], 0.1)
+            if ready_since is None:
+                ready_since = time.monotonic()
+            elif time.monotonic() - ready_since >= settle:
+                return bytes(output)
+        else:
+            ready_since = None
+        ready, _, _ = select.select([fd], [], [], 0.05)
         if not ready:
             continue
         try:
