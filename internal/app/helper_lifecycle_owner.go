@@ -80,7 +80,8 @@ func openDaemonHelperRemote(ctx context.Context, broker *auth.Broker, hostAlias 
 	if err != nil {
 		return helperruntime.LifecycleRemoteLease{}, fmt.Errorf("find Helper authentication executable: %w", err)
 	}
-	if err := platform.ValidateExecutable(executable); err != nil {
+	executable, err = platform.ResolveTrustedExecutable(executable)
+	if err != nil {
 		return helperruntime.LifecycleRemoteLease{}, fmt.Errorf("validate Helper authentication executable: %w", err)
 	}
 	environment, err := auth.OpenSSHEnvironment(os.Environ(), executable, attempt.Token())

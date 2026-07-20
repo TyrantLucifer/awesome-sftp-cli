@@ -42,6 +42,40 @@ func TestValidateExecutableRejectsWritableAndSymlinkFiles(t *testing.T) {
 	}
 }
 
+func TestResolveTrustedExecutableFreezesValidatedSymlinkTarget(t *testing.T) {
+	directory := privateTemporaryDirectory(t)
+	target := filepath.Join(directory, "amsftp")
+	// #nosec G306 -- executable fixtures intentionally require execute permission.
+	if err := os.WriteFile(target, []byte("fake"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(directory, "amsftp-link")
+	if err := os.Symlink(target, link); err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := ResolveTrustedExecutable(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != target {
+		t.Fatalf("resolved executable = %q, want %q", resolved, target)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	// #nosec G306 -- deliberately unsafe replacement exercises fail-closed validation.
+	if err := os.WriteFile(target, []byte("unsafe"), 0o722); err != nil {
+		t.Fatal(err)
+	}
+	// #nosec G302 -- deliberately unsafe group/other-write bits exercise fail-closed validation.
+	if err := os.Chmod(target, 0o722); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResolveTrustedExecutable(link); err == nil {
+		t.Fatal("symlink to writable executable accepted")
+	}
+}
+
 func TestSameExecutableIdentityRejectsSameInodeRewrite(t *testing.T) {
 	directory := privateTemporaryDirectory(t)
 	path := filepath.Join(directory, "ssh")
