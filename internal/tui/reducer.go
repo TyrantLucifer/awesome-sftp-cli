@@ -1487,10 +1487,7 @@ func reducePreviewKey(model Model, key Key) (Model, []Intent) {
 	intent.PreviewMode = model.Preview.Identity.Mode
 	intent.PreviewOffset = model.Preview.Identity.Offset
 	intent.PreviewView = model.Preview.View
-	step := model.Preview.Identity.RequestedLimit
-	if step == 0 {
-		step = builtinpreview.ReadChunkBytes
-	}
+	step := uint64(builtinpreview.ReadChunkBytes)
 	switch key {
 	case KeyParent:
 		intent.PreviewMode = builtinpreview.ReadHead
@@ -1499,11 +1496,26 @@ func reducePreviewKey(model Model, key Key) (Model, []Intent) {
 		intent.PreviewMode = builtinpreview.ReadTail
 		intent.PreviewOffset = 0
 	case KeyDown:
+		lineCount := strings.Count(model.Preview.DisplayText(), "\n") + 1
+		if model.Preview.LineOffset < lineCount-1 {
+			model.Preview.LineOffset++
+			return model, nil
+		}
+		if !model.Preview.Truncated || model.Preview.Identity.Mode == builtinpreview.ReadTail {
+			return model, nil
+		}
 		intent.PreviewMode = builtinpreview.ReadRange
 		if intent.PreviewOffset <= ^uint64(0)-step {
 			intent.PreviewOffset += step
 		}
 	case KeyUp:
+		if model.Preview.LineOffset > 0 {
+			model.Preview.LineOffset--
+			return model, nil
+		}
+		if !model.Preview.Truncated || model.Preview.Identity.Mode == builtinpreview.ReadHead {
+			return model, nil
+		}
 		intent.PreviewMode = builtinpreview.ReadRange
 		if intent.PreviewOffset > step {
 			intent.PreviewOffset -= step

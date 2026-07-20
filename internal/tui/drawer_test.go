@@ -138,8 +138,9 @@ func TestPreviewDrawerKeysEmitBoundedReadModesAndViewToggles(t *testing.T) {
 	model, _ = Reduce(model, KeyPress{Key: KeyDown})
 	model, _ = Reduce(model, KeyPress{Key: KeyPreviewDrawer})
 	model.Preview = PreviewState{
-		Identity: PreviewRequestIdentity{Mode: builtinpreview.ReadRange, Offset: 65536, RequestedLimit: 65536},
-		View:     builtinpreview.ViewAuto,
+		Identity:  PreviewRequestIdentity{Mode: builtinpreview.ReadRange, Offset: 65536, RequestedLimit: 65536},
+		Truncated: true,
+		View:      builtinpreview.ViewAuto,
 	}
 	tests := []struct {
 		key        Key
@@ -165,5 +166,30 @@ func TestPreviewDrawerKeysEmitBoundedReadModesAndViewToggles(t *testing.T) {
 		if got.Preview.View != test.wantView {
 			t.Fatalf("key %q view = %q, want %q", test.key, got.Preview.View, test.wantView)
 		}
+	}
+}
+
+func TestPreviewDrawerScrollsRenderedLinesBeforeRequestingAnotherRange(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, _ = Reduce(model, KeyPress{Key: KeyPreviewDrawer})
+	model.Preview = PreviewState{
+		Identity: PreviewRequestIdentity{Mode: builtinpreview.ReadHead, RequestedLimit: builtinpreview.ReadChunkBytes},
+		Data:     []byte("line zero\nline one\nline two"),
+		View:     builtinpreview.ViewAuto,
+	}
+
+	model, intents := Reduce(model, KeyPress{Key: KeyDown})
+	if len(intents) != 0 || model.Preview.LineOffset != 1 {
+		t.Fatalf("scroll down model=%#v intents=%#v", model.Preview, intents)
+	}
+	model, intents = Reduce(model, KeyPress{Key: KeyUp})
+	if len(intents) != 0 || model.Preview.LineOffset != 0 {
+		t.Fatalf("scroll up model=%#v intents=%#v", model.Preview, intents)
+	}
+	model.Preview.LineOffset = 2
+	model, intents = Reduce(model, KeyPress{Key: KeyDown})
+	if len(intents) != 0 || model.Preview.LineOffset != 2 {
+		t.Fatalf("scroll past complete preview model=%#v intents=%#v", model.Preview, intents)
 	}
 }

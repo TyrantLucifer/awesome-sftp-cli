@@ -2102,6 +2102,21 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 	if entry.Metadata.Size != nil {
 		fileSize = *entry.Metadata.Size
 	}
+	if entry.Metadata.Size != nil && fileSize == 0 {
+		identity.Mode = builtinpreview.ReadHead
+		identity.Offset = 0
+		identity.RequestedLimit = 0
+		actions <- tui.BeginPreview{Generation: generation, Location: location, Identity: identity, View: view}
+		result := builtinpreview.Render(builtinpreview.Request{
+			Path: string(location.Path), Data: nil, View: view, Complete: true,
+			HasFileSize: true, FileSize: 0,
+		}, renderLimits)
+		actions <- tui.PreviewChunk{
+			Generation: generation, Identity: identity, Data: []byte(result.Text), Done: true,
+			Truncated: result.Truncated, Rendered: true, Kind: string(result.Kind), Summary: result.Summary,
+		}
+		return
+	}
 	plan, err := planPreviewRead(fileSize, identity.Mode, identity.Offset)
 	if err != nil {
 		actions <- tui.BeginPreview{Generation: generation, Location: location, View: view}
@@ -2236,6 +2251,9 @@ func planPreviewRead(fileSize uint64, mode builtinpreview.ReadMode, offset uint6
 	case builtinpreview.ReadTail:
 		plan = builtinpreview.PlanTail(fileSize)
 	case builtinpreview.ReadRange, builtinpreview.ReadContinue:
+		windowBytes := min(fileSize, builtinpreview.ReadChunkBytes)
+		lastReadableOffset := fileSize - windowBytes
+		offset = min(offset, lastReadableOffset)
 		plan, err = builtinpreview.PlanRange(fileSize, offset, builtinpreview.ReadChunkBytes)
 	default:
 		return builtinpreview.ReadPlan{}, fmt.Errorf("unsupported preview read mode %q", mode)

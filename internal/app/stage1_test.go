@@ -133,6 +133,45 @@ func TestPlanPreviewReadRoutesHeadTailAndAbsoluteRange(t *testing.T) {
 	}
 }
 
+func TestPlanPreviewReadClampsNavigationToAReadableWindow(t *testing.T) {
+	tests := []struct {
+		name       string
+		fileSize   uint64
+		offset     uint64
+		wantOffset uint64
+	}{
+		{
+			name:       "small file after first chunk",
+			fileSize:   278,
+			offset:     65_814,
+			wantOffset: 0,
+		},
+		{
+			name:       "exact eof",
+			fileSize:   278,
+			offset:     278,
+			wantOffset: 0,
+		},
+		{
+			name:       "large file past last full window",
+			fileSize:   2*builtinpreview.ReadChunkBytes + 10,
+			offset:     3 * builtinpreview.ReadChunkBytes,
+			wantOffset: builtinpreview.ReadChunkBytes + 10,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := planPreviewRead(test.fileSize, builtinpreview.ReadRange, test.offset)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Mode != builtinpreview.ReadRange || got.Offset != test.wantOffset || got.Limit == 0 || got.Limit > builtinpreview.ReadChunkBytes || got.Offset+got.Limit > test.fileSize {
+				t.Fatalf("planPreviewRead(%d, range, %d) = %#v", test.fileSize, test.offset, got)
+			}
+		})
+	}
+}
+
 func TestTerminalImageOutputAcceptsOnlyTheCurrentVisiblePreviewIdentity(t *testing.T) {
 	endpoint := domain.Endpoint{ID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", Kind: domain.EndpointLocal}
 	location := domain.Location{EndpointID: endpoint.ID, Path: "/image.png"}

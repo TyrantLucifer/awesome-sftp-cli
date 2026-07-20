@@ -109,6 +109,31 @@ func TestPreviewLocationRunsConfiguredExternalFallbackUnderAReleasedCacheLease(t
 	}
 }
 
+func TestPreviewLocationRendersAnEmptyFileWithoutAZeroLimitRead(t *testing.T) {
+	location := domain.Location{EndpointID: "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", Path: "/empty.txt"}
+	version := "v1"
+	fixture := &previewLocationFixture{location: location, fingerprint: domain.Fingerprint{VersionID: &version}}
+	identity := tui.PreviewRequestIdentity{
+		RequestID: "req_aaaaaaaaaaaaaaaaaaaaaaaaaa", Pane: tui.Left,
+		Mode: builtinpreview.ReadRange, Offset: builtinpreview.ReadChunkBytes, UIGeneration: 8,
+	}
+	actions := make(chan tui.Action, 3)
+	renderLimits, imageLimits := runtimePreviewLimits(config.Default().Preview)
+
+	previewLocation(context.Background(), fixture, identity, builtinpreview.ViewAuto, location, "workspace", cache.PolicyLRU, nil, builtinpreview.ImageCapabilityProof{}, renderLimits, imageLimits, actions)
+	begin, ok := (<-actions).(tui.BeginPreview)
+	if !ok || begin.Identity.Offset != 0 {
+		t.Fatalf("begin = %#v", begin)
+	}
+	chunk, ok := (<-actions).(tui.PreviewChunk)
+	if !ok || !chunk.Done || chunk.Message != "" || chunk.Kind != string(builtinpreview.KindText) {
+		t.Fatalf("chunk = %#v", chunk)
+	}
+	if fixture.reads != 0 {
+		t.Fatalf("empty preview issued %d provider reads", fixture.reads)
+	}
+}
+
 func TestPreviewLocationRendersObjectMetadataWithoutContentRead(t *testing.T) {
 	for _, testCase := range []struct {
 		name        string
@@ -209,6 +234,7 @@ type previewLocationFixture struct {
 	materialization string
 	materializes    int
 	releases        int
+	reads           int
 }
 
 func (fixture *previewLocationFixture) Call(_ context.Context, route string, request any, response any) error {
@@ -221,7 +247,11 @@ func (fixture *previewLocationFixture) Call(_ context.Context, route string, req
 		})
 		return nil
 	case daemon.ProviderRead:
+		fixture.reads++
 		got := request.(ipc.ProviderReadRequest)
+		if got.Limit == 0 {
+			return errors.New("zero preview read limit")
+		}
 		if got.Location != ipc.EncodeLocation(fixture.location) || got.Offset != 0 {
 			return errors.New("invalid preview read")
 		}

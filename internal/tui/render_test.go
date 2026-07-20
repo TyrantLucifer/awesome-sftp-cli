@@ -245,6 +245,30 @@ func TestRendererShowsCapabilityRevisionAndMultilinePreviewState(t *testing.T) {
 	}
 }
 
+func TestRendererStartsPreviewAtTheScrolledLine(t *testing.T) {
+	model := testModel(t)
+	file := model.Panes[Left].Entries[1].Location
+	model.Drawer = DrawerState{Mode: DrawerPreview, Focus: FocusDrawer, Rows: 4}
+	model.Preview = PreviewState{
+		Generation: 1,
+		Location:   file,
+		Data:       []byte("hidden-preview-line\nvisible-preview-line\nlast-preview-line"),
+		LineOffset: 1,
+	}
+	surface := newMemorySurface(120, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	if strings.Contains(got, "hidden-preview-line") {
+		t.Fatalf("scrolled preview rendered hidden line:\n%s", got)
+	}
+	for _, want := range []string{"visible-preview-line", "last-preview-line"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("scrolled preview missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestRendererShowsHelperLevelVersionCapabilitiesAndDegradationReason(t *testing.T) {
 	model := testModel(t)
 	snapshot, err := domain.NewCapabilitySnapshot(
