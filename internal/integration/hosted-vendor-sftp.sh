@@ -213,6 +213,14 @@ export AMSFTP_VENDOR_TUI_OUTPUT="${root}/vendor-tui.out"
 export AMSFTP_VENDOR_TUI_STDERR="${root}/vendor-tui.err"
 export AMSFTP_VENDOR_DAEMON_LOG="${root}/xdg-state/amsftp/log/daemon.jsonl"
 client_runtime_ready=1
+/usr/bin/env -i \
+  HOME="${client_home}" \
+  XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+  XDG_STATE_HOME="${XDG_STATE_HOME}" \
+  XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  "${AMSFTP_VENDOR_BINARY}" daemon start --format json | grep -F '"running":true'
 set +e
 /usr/bin/env -i \
   HOME="${client_home}" \

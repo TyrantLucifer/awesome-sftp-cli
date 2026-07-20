@@ -51,6 +51,7 @@ func TestHostedVendorSFTPRunsProviderAndPreviewBinary(t *testing.T) {
 		`TestRealProFTPDVendorSFTPLevel0AndDurableTransfers`,
 		`vendor SFTP provider browse and durable transfers passed`,
 		`export AMSFTP_VENDOR_DAEMON_LOG="${root}/xdg-state/amsftp/log/daemon.jsonl"`,
+		`"${AMSFTP_VENDOR_BINARY}" daemon start --format json | grep -F '"running":true'`,
 		`/usr/bin/env -i \`,
 		`AMSFTP_VENDOR_TUI_LOCATION=amsftp-proftpd:/`,
 		`AMSFTP_VENDOR_TUI_LOCAL=/tmp`,
