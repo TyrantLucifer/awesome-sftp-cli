@@ -10,6 +10,7 @@
 - 仓库现在进入“内部预览反馈与下一阶段迭代准备”状态，不宣称公开 1.0 已完成。
 - 内部预览反馈已修复 Preview drawer 的逐行滚动、小文件 EOF range 越界与空文件零长度读取问题。
 - CI 已拆为普通 PR/main 使用的影响感知 `Fast CI`、release 分支/tag/手动触发的完整 `Release Gates`，以及定时 `Nightly`；普通改动不再重复运行发布矩阵。
+- 严格 `X.Y.Z` 公开预览的一键安装/升级脚本、Homebrew formula 生成器与 tag 发布 workflow 已进入主线；脚本校验 checksum、原子替换 binary、保留上一版并按 daemon 契约完成启停验证。
 
 ## 可用边界
 
@@ -18,9 +19,10 @@
 - production Helper 分发与生命周期仍为 **CLOSED**。
 - production Level 2 跨主机直传仍为 **CLOSED**。
 - 当前内部归档未经签名或公证，不得作为公开发行物重新分发。
+- 新公开预览渠道同样不宣称 Apple 签名或公证；当前仓库尚未选择项目许可证，也尚未配置受保护的 Release/tap 写入凭据，因此 workflow 会 fail closed，不能据此声称渠道已经上线。
 
 ## 下一步
 
-下一轮从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”开始：先收集真实使用问题并修正用户路径、诊断和兼容性，再决定是否启动 production Helper、Level 2 和公开 1.0 的独立门禁工作。
+下一轮先由项目所有者选择并提交项目 `LICENSE` 与单行 SPDX 标识、创建 `TyrantLucifer/homebrew-tap`，并在受保护的 `public-preview` environment 配置 `PUBLIC_RELEASE_TOKEN` 与 `HOMEBREW_TAP_TOKEN`，然后才能用严格 `vX.Y.Z` tag 打开 checksum 验证的一键安装渠道。之后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；production Helper、Level 2 和公开 1.0 仍使用独立门禁。
 
 开发前阅读根目录 [AGENTS.md](../../AGENTS.md)，并只运行与改动风险相称的定向测试。公开 release 仍必须单独通过 [RC 门禁](../release/RC-GATES.md)。
