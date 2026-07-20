@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - id: impact
@@ -71,16 +71,16 @@ jobs:
           {
             printf '### Fast CI impact plan\n\n'
             printf '| Flag | Value |\n| --- | --- |\n'
-            printf '| docs | `%s` |\n' "${DOCS}"
-            printf '| code | `%s` |\n' "${CODE}"
-            printf '| workflow | `%s` |\n' "${WORKFLOW}"
-            printf '| dependencies | `%s` |\n' "${DEPENDENCIES}"
-            printf '| core | `%s` |\n' "${CORE}"
-            printf '| native | `%s` |\n' "${NATIVE}"
-            printf '| auth | `%s` |\n' "${AUTH}"
-            printf '| release | `%s` |\n' "${RELEASE}"
-            printf '| full | `%s` |\n' "${FULL}"
-            printf '\nPackages: `%s`\n' "${PACKAGES}"
+            printf '| docs | %s |\n' "${DOCS}"
+            printf '| code | %s |\n' "${CODE}"
+            printf '| workflow | %s |\n' "${WORKFLOW}"
+            printf '| dependencies | %s |\n' "${DEPENDENCIES}"
+            printf '| core | %s |\n' "${CORE}"
+            printf '| native | %s |\n' "${NATIVE}"
+            printf '| auth | %s |\n' "${AUTH}"
+            printf '| release | %s |\n' "${RELEASE}"
+            printf '| full | %s |\n' "${FULL}"
+            printf '\nPackages: %s\n' "${PACKAGES}"
           } >>"${GITHUB_STEP_SUMMARY}"
 
   docs:
@@ -94,7 +94,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make docs-check
@@ -110,9 +110,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
       - run: make fmt-check
       - run: make docs-check
       - name: Vet and test impacted packages
@@ -136,7 +141,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Lint impacted packages
@@ -159,9 +164,14 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
       - name: Race-test impacted safety-critical packages
         env:
           PACKAGES_JSON: ${{ needs.changes.outputs.packages }}
@@ -182,7 +192,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: go tool -modfile=tools/go.mod actionlint .github/workflows/ci.yml .github/workflows/fast-ci.yml .github/workflows/nightly.yml
@@ -198,7 +208,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make mod-check
@@ -221,9 +231,16 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          if test "${RUNNER_OS}" = Linux; then
+            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+          fi
       - name: Test impacted packages natively
         env:
           PACKAGES_JSON: ${{ needs.changes.outputs.packages }}
@@ -248,7 +265,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Install authentication fixtures
@@ -274,21 +291,22 @@ jobs:
           vendor_version_file="${RUNNER_TEMP}/proftpd-version"
           {
             /usr/sbin/proftpd -v 2>&1
+            # shellcheck disable=SC2016 -- dpkg-query expands these package field placeholders.
             dpkg-query -W -f='${Package}=${Version}\n' proftpd-core proftpd-mod-crypto | LC_ALL=C sort
           } >"${vendor_version_file}"
           sudo env \
             AMSFTP_AUTH_BINARY="${binary}" \
             AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="${openssh_version}" \
-            AMSFTP_AUTH_ROOT="/tmp/amsftp-fast-auth-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-fast-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             bash ./internal/integration/hosted-auth.sh
           sudo env \
             AMSFTP_KERBEROS_BINARY="${binary}" \
             AMSFTP_KERBEROS_EXPECT_VERSION="${kerberos_version}" \
-            AMSFTP_KERBEROS_ROOT="/tmp/amsftp-fast-kerberos-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            AMSFTP_KERBEROS_ROOT="/tmp/amsftp-kerberos-fast-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             bash ./internal/integration/hosted-kerberos.sh
           AMSFTP_VENDOR_BINARY="${binary}" \
             AMSFTP_VENDOR_SFTP_EXPECT_VERSION_FILE="${vendor_version_file}" \
-            AMSFTP_VENDOR_SFTP_ROOT="/tmp/amsftp-fast-vendor-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
+            AMSFTP_VENDOR_SFTP_ROOT="/tmp/amsftp-vendor-sftp-fast-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             bash ./internal/integration/hosted-vendor-sftp.sh
 
   release:
@@ -302,7 +320,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make notice-check

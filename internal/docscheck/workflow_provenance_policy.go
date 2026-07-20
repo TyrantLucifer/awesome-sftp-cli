@@ -385,6 +385,7 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`esac`,
 			`{`,
 			`  printf '%s\n' "${proftpd_version}"`,
+			`  # shellcheck disable=SC2016 -- dpkg-query expands these package field placeholders.`,
 			`  dpkg-query -W -f='${Package}=${Version}\n' proftpd-core proftpd-mod-crypto | LC_ALL=C sort`,
 			`} | tee "${RUNNER_TEMP}/auth-integration/proftpd-current-version"`,
 		}) &&
@@ -870,8 +871,8 @@ func canonicalCompareSetupGo(step workflowStep) bool {
 	return step.uses != nil && step.uses.value == "actions/setup-go@"+approvedActionCommits["actions/setup-go"] &&
 		nodeHasExactKeys(step.node, "uses", "with") &&
 		mappingHasExactScalars(step.with, map[string]string{
-			"go-version-file": "go.mod",
-			"cache":           "false",
+			"go-version": "1.26.5",
+			"cache":      "false",
 		})
 }
 

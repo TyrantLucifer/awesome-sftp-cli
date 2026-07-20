@@ -60,7 +60,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Fuzz one target
@@ -127,7 +127,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Repeat concurrency contracts
@@ -222,7 +222,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: false
       - name: Prepare independent caches
         run: |
@@ -318,7 +318,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: false
       - name: Download reproducible artifacts
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -428,7 +428,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: false
       - name: Download provenance
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
