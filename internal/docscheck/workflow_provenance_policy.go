@@ -385,7 +385,7 @@ func canonicalAuthIntegrationPrefix(steps []workflowStep) bool {
 			`esac`,
 			`{`,
 			`  printf '%s\n' "${proftpd_version}"`,
-			`  # shellcheck disable=SC2016 -- dpkg-query expands these package field placeholders.`,
+			`  # shellcheck disable=SC2016`,
 			`  dpkg-query -W -f='${Package}=${Version}\n' proftpd-core proftpd-mod-crypto | LC_ALL=C sort`,
 			`} | tee "${RUNNER_TEMP}/auth-integration/proftpd-current-version"`,
 		}) &&

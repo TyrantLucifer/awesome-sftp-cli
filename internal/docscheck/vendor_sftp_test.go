@@ -70,6 +70,7 @@ func TestHostedVendorSFTPRunsProviderAndPreviewBinary(t *testing.T) {
 		`vendor TUI expect exit: %s`,
 		`"${AMSFTP_VENDOR_DAEMON_LOG}"`,
 		`sudo sed -n '1,240p' "${diagnostic}" >&2 || true`,
+		`"${AMSFTP_VENDOR_BINARY}" daemon stop --confirm stop --format json | grep -F '"state":"stopped"'`,
 		`vendor SFTP preview-binary TUI browse passed`,
 	})
 }

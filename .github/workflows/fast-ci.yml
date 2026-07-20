@@ -291,7 +291,7 @@ jobs:
           vendor_version_file="${RUNNER_TEMP}/proftpd-version"
           {
             /usr/sbin/proftpd -v 2>&1
-            # shellcheck disable=SC2016 -- dpkg-query expands these package field placeholders.
+            # shellcheck disable=SC2016
             dpkg-query -W -f='${Package}=${Version}\n' proftpd-core proftpd-mod-crypto | LC_ALL=C sort
           } >"${vendor_version_file}"
           sudo env \
