@@ -48,6 +48,9 @@ ssh_config_created=0
 ssh_directory_created=0
 client_runtime_ready=0
 client_home="${HOME}"
+source_binary="${AMSFTP_VENDOR_BINARY}"
+trusted_binary_root="${client_home}/.amsftp-vendor-sftp-${root_suffix}"
+trusted_binary_ready=0
 ssh_directory="${client_home}/.ssh"
 ssh_config="${ssh_directory}/config"
 ssh_config_backup="${root}/client-ssh-config"
@@ -80,9 +83,21 @@ cleanup() {
   if test "${user_created}" = 1; then
     sudo userdel -r "${vendor_user}" >/dev/null 2>&1 || true
   fi
+  if test "${trusted_binary_ready}" = 1; then
+    rm -rf "${trusted_binary_root}"
+  fi
   rm -rf "${root}"
 }
 trap cleanup EXIT
+
+if test -e "${trusted_binary_root}"; then
+  printf 'trusted vendor SFTP binary root already exists\n' >&2
+  exit 1
+fi
+install -d -m 0700 "${trusted_binary_root}"
+install -m 0700 "${source_binary}" "${trusted_binary_root}/amsftp"
+trusted_binary_ready=1
+AMSFTP_VENDOR_BINARY="${trusted_binary_root}/amsftp"
 
 if id "${vendor_user}" >/dev/null 2>&1; then
   printf 'reserved vendor SFTP user already exists\n' >&2

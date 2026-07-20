@@ -48,6 +48,9 @@ func TestHostedVendorSFTPRunsProviderAndPreviewBinary(t *testing.T) {
 	t.Parallel()
 	harness := readOpenSSHFloorContractFile(t, "../integration/hosted-vendor-sftp.sh")
 	assertOpenSSHFloorOrder(t, harness, []string{
+		`trusted_binary_root="${client_home}/.amsftp-vendor-sftp-${root_suffix}"`,
+		`install -m 0700 "${source_binary}" "${trusted_binary_root}/amsftp"`,
+		`AMSFTP_VENDOR_BINARY="${trusted_binary_root}/amsftp"`,
 		`TestRealProFTPDVendorSFTPLevel0AndDurableTransfers`,
 		`vendor SFTP provider browse and durable transfers passed`,
 		`export AMSFTP_VENDOR_DAEMON_LOG="${root}/xdg-state/amsftp/log/daemon.jsonl"`,
