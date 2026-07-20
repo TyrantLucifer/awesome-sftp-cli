@@ -2,6 +2,15 @@
 
 This procedure applies to immutable archives. A package manager may automate exact file placement, but it must preserve the same identity checks, daemon ordering, and state safety.
 
+For a strict `X.Y.Z` public preview installed by the repository installer, rerun the same command to resolve and install the latest release:
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
+```
+
+The installer verifies the new archive before replacement, stops only a daemon whose state the current installed binary can prove, retains the previous executable as `$HOME/.local/bin/amsftp.previous`, regenerates completions, and verifies the new daemon. A checksum, version, daemon-state, or startup failure stops the automated path instead of pretending the upgrade succeeded. For Homebrew installs use `brew update && brew upgrade TyrantLucifer/tap/amsftp`. The manual and uncertain-state procedures below remain authoritative for recovery and rollback.
+
 ## Prepare
 
 1. Record `amsftp --version`, `amsftp daemon status --format json`, and the current archive, `VERSION.json`, checksum, and release identity.

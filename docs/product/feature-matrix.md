@@ -57,6 +57,7 @@
 | REL-009 | 用户与运维文档 | Implemented | README 覆盖安装、首次运行、操作、架构、限制和恢复路径。 | [README](../../README.md)与[文档导航](../README.md) |
 | REL-010 | 公开 release 零缺口 | In Progress | 公开发布前所有非终态能力必须关闭或以明确决定延期。 | [RC 门禁](../release/RC-GATES.md) |
 | REL-012 | 发布撤回与回滚 | In Progress | 公开渠道完成已发布字节的升级、回滚和撤回演练后才能关闭。 | [升级与回滚](../release/UPGRADE.md)与[路线图](roadmap.md) |
+| REL-013 | 一键安装与升级 | Implemented | 严格 X.Y.Z 预览支持 checksum 验证安装脚本与 Homebrew formula；真实渠道仍等待项目许可证、tap 凭据和首个 tag。 | [安装说明](../release/INSTALL.md)、[升级与回滚](../release/UPGRADE.md)与[发布 workflow](../../.github/workflows/release.yml) |
 
 ## 更新规则
 

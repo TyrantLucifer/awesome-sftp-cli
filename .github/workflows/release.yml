@@ -1,0 +1,234 @@
+name: Public Preview Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Strict X.Y.Z version already tagged in git"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: public-preview-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  package:
+    name: Build and verify release bundle
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    env:
+      GOTOOLCHAIN: local
+      DISPATCH_VERSION: ${{ inputs.version }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: "1.26.5"
+          check-latest: false
+          cache: true
+
+      - name: Resolve immutable release identity
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${GITHUB_REF_TYPE}" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+          else
+            version="${DISPATCH_VERSION}"
+          fi
+          if [[ ! "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "release version must be strict X.Y.Z" >&2
+            exit 1
+          fi
+          tag="v${version}"
+          git rev-parse --verify "refs/tags/${tag}^{commit}" >/dev/null
+          commit="$(git rev-parse "refs/tags/${tag}^{commit}")"
+          if [[ "${commit}" != "$(git rev-parse HEAD)" ]]; then
+            echo "checked-out commit does not match ${tag}" >&2
+            exit 1
+          fi
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "commit=${commit}" >> "${GITHUB_OUTPUT}"
+
+      - name: Require reviewed project license
+        id: license
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s LICENSE
+          test -s docs/release/project-license.spdx
+          spdx="$(tr -d '\r\n' < docs/release/project-license.spdx)"
+          if [[ -z "${spdx}" || "${spdx}" == *" "* ]]; then
+            echo "project-license.spdx must contain one SPDX identifier" >&2
+            exit 1
+          fi
+          echo "spdx=${spdx}" >> "${GITHUB_OUTPUT}"
+
+      - name: Build target binaries
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          build_root="${RUNNER_TEMP}/amsftp-build"
+          mkdir -p "${build_root}"
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64; do
+            os="${target%/*}"
+            arch="${target#*/}"
+            target_root="${build_root}/${os}-${arch}"
+            mkdir -p "${target_root}"
+            CGO_ENABLED=0 GOOS="${os}" GOARCH="${arch}" go build -trimpath \
+              -ldflags "-s -w -X github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo.version=${VERSION} -X github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo.commit=${COMMIT}" \
+              -o "${target_root}/amsftp" ./cmd/amsftp
+          done
+
+      - name: Package release assets
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          COMMIT: ${{ steps.release.outputs.commit }}
+          SPDX_LICENSE: ${{ steps.license.outputs.spdx }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          stage="${RUNNER_TEMP}/amsftp-stage"
+          output="${RUNNER_TEMP}/amsftp-release"
+          tree="$(git rev-parse 'HEAD^{tree}')"
+          source_epoch="$(git show -s --format=%ct HEAD)"
+          modules_json="$(tr -d '\n' < docs/release/runtime-dependencies.json)"
+          mkdir -p "${stage}/bin" "${output}"
+          cp LICENSE "${stage}/LICENSE"
+          go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json > "${stage}/NOTICE"
+          cmp docs/release/NOTICE "${stage}/NOTICE"
+          cp docs/release/INSTALL.md "${stage}/INSTALL.md"
+          cp docs/release/UNINSTALL.md "${stage}/UNINSTALL.md"
+          cp docs/man/amsftp.1 "${stage}/amsftp.1"
+          for target in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
+            cp "${RUNNER_TEMP}/amsftp-build/${target}/amsftp" "${stage}/bin/${target}"
+          done
+          cat > "${stage}/manifest.json" <<EOF
+          {
+            "schema": "amsftp-public-release-manifest-v1",
+            "version": "${VERSION}",
+            "commit": "${COMMIT}",
+            "tree": "${tree}",
+            "source_date_epoch": ${source_epoch},
+            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","uninstall":"UNINSTALL.md","man":"amsftp.1"},
+            "platforms": [
+              {"os":"darwin","arch":"amd64","path":"bin/darwin-amd64"},
+              {"os":"darwin","arch":"arm64","path":"bin/darwin-arm64"},
+              {"os":"linux","arch":"amd64","path":"bin/linux-amd64"},
+              {"os":"linux","arch":"arm64","path":"bin/linux-arm64"}
+            ],
+            "modules": ${modules_json}
+          }
+          EOF
+          go run ./internal/tools/releasepack "${stage}/manifest.json" "${output}"
+          cp install.sh "${output}/install.sh"
+          chmod 0755 "${output}/install.sh"
+          sha256sum "${output}/install.sh" | sed "s#${output}/##" >> "${output}/checksums.txt"
+          (cd "${output}" && sha256sum -c checksums.txt)
+          go run ./internal/tools/homebrewformula "${VERSION}" "${SPDX_LICENSE}" "${output}" > "${output}/amsftp.rb"
+          test "$(find "${output}" -maxdepth 1 -type f | wc -l)" -eq 9
+
+      - name: Verify release entry points
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          output="${RUNNER_TEMP}/amsftp-release"
+          sh -n "${output}/install.sh"
+          grep -F "version \"${VERSION}\"" "${output}/amsftp.rb"
+          grep -F "amsftp_${VERSION}_darwin_arm64.tar.gz" "${output}/checksums.txt"
+          grep -F " install.sh" "${output}/checksums.txt"
+
+      - name: Upload verified release bundle
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: public-preview-${{ steps.release.outputs.version }}
+          path: ${{ runner.temp }}/amsftp-release/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish GitHub release and Homebrew formula
+    if: github.ref_type == 'tag'
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: public-preview
+    env:
+      GH_TOKEN: ${{ secrets.PUBLIC_RELEASE_TOKEN }}
+      VERSION: ${{ needs.package.outputs.version }}
+    steps:
+      - name: Check out tagged source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          persist-credentials: false
+
+      - name: Download verified bundle
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+        with:
+          name: public-preview-${{ env.VERSION }}
+          path: release-assets
+
+      - name: Publish GitHub release
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GH_TOKEN}"
+          if gh release view "v${VERSION}" >/dev/null 2>&1; then
+            existing="${RUNNER_TEMP}/existing-release"
+            mkdir -p "${existing}"
+            gh release download "v${VERSION}" --dir "${existing}"
+            test "$(find release-assets -maxdepth 1 -type f | wc -l)" -eq "$(find "${existing}" -maxdepth 1 -type f | wc -l)"
+            for asset in release-assets/*; do
+              cmp "${asset}" "${existing}/$(basename "${asset}")"
+            done
+          else
+            gh release create "v${VERSION}" release-assets/* --verify-tag --title "amsftp v${VERSION}" --notes-file - <<EOF
+          Public preview release of amsftp.
+
+          The macOS binaries are checksum-verified but currently unsigned and not notarized. macOS may require an explicit first-run approval. Production Helper and Level 2 remain CLOSED.
+
+          Install:
+          curl --proto '=https' --tlsv1.2 -fsSL https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
+          EOF
+          fi
+
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${GH_TOKEN}"
+          gh auth setup-git
+          git clone --depth 1 https://github.com/TyrantLucifer/homebrew-tap.git "${RUNNER_TEMP}/homebrew-tap"
+          install -d "${RUNNER_TEMP}/homebrew-tap/Formula"
+          install -m 0644 release-assets/amsftp.rb "${RUNNER_TEMP}/homebrew-tap/Formula/amsftp.rb"
+          git -C "${RUNNER_TEMP}/homebrew-tap" config user.name "github-actions[bot]"
+          git -C "${RUNNER_TEMP}/homebrew-tap" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "${RUNNER_TEMP}/homebrew-tap" add Formula/amsftp.rb
+          if git -C "${RUNNER_TEMP}/homebrew-tap" diff --cached --quiet; then
+            exit 0
+          fi
+          git -C "${RUNNER_TEMP}/homebrew-tap" commit -m "amsftp ${VERSION}"
+          git -C "${RUNNER_TEMP}/homebrew-tap" push origin HEAD:main

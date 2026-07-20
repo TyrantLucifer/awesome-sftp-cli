@@ -26,9 +26,25 @@ AMSFTP 是一个面向 macOS 和 Linux 终端用户的 Vim-first 双栏文件工
 
 AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为了加速传输自动开启 Agent forwarding、凭据委托或远端常驻服务。
 
-## 安装内部预览版
+## 安装与升级
 
 内部预览版发布页：[`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1)。
+
+首个严格 `X.Y.Z` 的公开预览发布后，可直接使用下面任一渠道。安装脚本默认安装到 `$HOME/.local`，会校验归档 SHA-256、原子替换 binary、保存上一版为 `amsftp.previous`，并重新生成 man page 与 shell completion：
+
+```sh
+curl --proto '=https' --tlsv1.2 -fsSL \
+  https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
+```
+
+再次运行同一命令即可升级。也可以使用 Homebrew：
+
+```sh
+brew install TyrantLucifer/tap/amsftp
+brew upgrade TyrantLucifer/tap/amsftp
+```
+
+当前已发布的 owner-only 内部版本不属于这个公开渠道，仍按下面的手工步骤安装：
 
 1. 选择与本机 OS/架构匹配的归档并同时取得 `checksums.txt`。
 2. 使用 `sha256sum -c checksums.txt`（macOS 可使用 `shasum -a 256`）核对下载内容。
@@ -42,7 +58,7 @@ AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为
    amsftp doctor --format json
    ```
 
-macOS 归档尚未签名或公证。不要对无法独立确认 commit 和 checksum 的下载内容绕过 Gatekeeper。完整安装、升级和卸载边界见[安装说明](docs/release/INSTALL.md)、[升级与回滚](docs/release/UPGRADE.md)和[卸载说明](docs/release/UNINSTALL.md)。
+macOS 归档尚未签名或公证。命令行安装可避免 Finder 下载路径带来的额外交互，但不等于 Apple 签名或公证；不要对无法独立确认来源和 checksum 的下载内容关闭系统安全策略。完整安装、升级和卸载边界见[安装说明](docs/release/INSTALL.md)、[升级与回滚](docs/release/UPGRADE.md)和[卸载说明](docs/release/UNINSTALL.md)。
 
 ## 首次连接
 
