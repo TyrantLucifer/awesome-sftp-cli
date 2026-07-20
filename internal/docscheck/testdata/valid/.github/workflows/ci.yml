@@ -1,6 +1,6 @@
 name: ci
-on:
-  pull_request:
+on: {workflow_dispatch: null, pull_request: {branches: ["release/**"]}, push: {branches: ["release/**"], tags: ["v*"]}}
+
 permissions:
   contents: read
 jobs:
@@ -13,7 +13,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make check
@@ -36,7 +36,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make fmt-check
@@ -132,7 +132,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
         with:
-          go-version-file: go.mod
+          go-version: 1.26.5
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: mkdir -p "${{ runner.temp }}/build/${{ matrix.artifact }}"

@@ -294,5 +294,5 @@ if test "${expect_rc}" -ne 0; then
   ps -o pid=,ppid=,stat=,args= -u "$(id -u)" | sed -n '1,120p' >&2 || true
   exit "${expect_rc}"
 fi
-"${AMSFTP_VENDOR_BINARY}" daemon stop --confirm stop --format json | grep -F '"status":"stopped"'
+"${AMSFTP_VENDOR_BINARY}" daemon stop --confirm stop --format json | grep -F '"state":"stopped"'
 printf 'vendor SFTP preview-binary TUI browse passed\n'

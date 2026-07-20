@@ -106,7 +106,7 @@ func TestRepositoryTruthRejectsSymlinkEscapes(t *testing.T) {
 }
 
 func TestRequiredWorkflowsRejectSymlinks(t *testing.T) {
-	for _, path := range []string{".github/workflows/ci.yml", ".github/workflows/nightly.yml"} {
+	for _, path := range []string{".github/workflows/ci.yml", ".github/workflows/fast-ci.yml", ".github/workflows/nightly.yml"} {
 		t.Run(filepath.Base(path)+" final file", func(t *testing.T) {
 			root := prepareFixture(t, "valid")
 			replaceFixtureFileWithOutsideSymlink(t, root, path)
@@ -303,6 +303,7 @@ func assertExactCheckFindings(t *testing.T, root string, want []Finding) {
 func requiredWorkflowFindings() []Finding {
 	return []Finding{
 		{Path: ".github/workflows/ci.yml", Line: 1, Rule: "workflow.required", Message: "required workflow file is missing or is not a regular file"},
+		{Path: ".github/workflows/fast-ci.yml", Line: 1, Rule: "workflow.required", Message: "required workflow file is missing or is not a regular file"},
 		{Path: ".github/workflows/nightly.yml", Line: 1, Rule: "workflow.required", Message: "required workflow file is missing or is not a regular file"},
 	}
 }

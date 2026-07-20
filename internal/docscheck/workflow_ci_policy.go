@@ -551,7 +551,7 @@ func stepIsExactCurrentSetupGo(step workflowStep) bool {
 	return step.uses != nil && step.uses.value == "actions/setup-go@"+approvedActionCommits["actions/setup-go"] &&
 		stepHasOnlyKeys(step, "name", "uses", "with") &&
 		mappingHasExactScalars(step.with, map[string]string{
-			"go-version-file":       "go.mod",
+			"go-version":            "1.26.5",
 			"cache":                 "true",
 			"cache-dependency-path": setupGoCacheDependencyPath,
 		})

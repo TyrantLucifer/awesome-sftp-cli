@@ -177,7 +177,7 @@ make test
 make docs-check
 ```
 
-当 `go` 不在 `PATH` 中时，通过 `GO=/absolute/path/to/go` 传给 Make。开发中优先运行受影响包的定向测试；`make check` 和 `make ci` 分别用于完整质量门禁和发布前门禁。工具链、缓存目录和各命令边界见[开发测试指南](docs/development/testing.md)。
+当 `go` 不在 `PATH` 中时，通过 `GO=/absolute/path/to/go` 传给 Make。开发中优先运行受影响包的定向测试；普通 PR 由 `Fast CI` 只验证受影响包并按风险追加专项检查，完整 `Release Gates` 只在 release 分支、tag 或手动触发。`make check` 和 `make ci` 分别用于本地跨包检查点和发布前门禁，不要求每个一行改动重复全跑。工具链、缓存目录和各命令边界见[开发测试指南](docs/development/testing.md)。
 
 ## 当前限制
 

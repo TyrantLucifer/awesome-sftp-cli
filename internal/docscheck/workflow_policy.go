@@ -127,6 +127,10 @@ func checkWorkflowPolicy(path string, lines []string) []Finding {
 	}
 	if path == ".github/workflows/ci.yml" {
 		findings = append(findings, checkCIWorkflowPolicy(doc)...)
+		findings = append(findings, checkReleaseWorkflowRoutingPolicy(doc)...)
+	}
+	if path == ".github/workflows/fast-ci.yml" {
+		findings = append(findings, checkFastWorkflowRoutingPolicy(doc)...)
 	}
 	return deduplicateWorkflowFindings(findings)
 }
