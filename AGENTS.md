@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- 主线已经包含内部预览实现；当前发布为 `v0.1.0-internal.20260719.1`。
+- 主线已经包含公开预览渠道自动化；当前严格版本候选为 `v0.1.0`，历史内部预览仍可追溯。
 - 规范仓库名与 Go module 均为 `awesome-sftp-cli` / `github.com/TyrantLucifer/awesome-sftp-cli`。
-- 这是 unsigned、owner-only 的内部版本，不是公开 1.0。
+- 项目许可证为 Apache License 2.0；`v0.1.0` 候选仍是 unsigned public preview，不是公开 1.0。
 - Level 0 SFTP 可用；production Helper 和 production Level 2 保持 CLOSED。
 - 当前迭代入口是[项目状态](docs/development/status.md)与[路线图](docs/product/roadmap.md)，不是历史 Stage 文档。
 
