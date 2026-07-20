@@ -48,6 +48,12 @@ ssh_config_created=0
 ssh_directory_created=0
 client_runtime_ready=0
 client_home="${HOME}"
+source_binary="${AMSFTP_VENDOR_BINARY}"
+trusted_parent=/var/lib/amsftp-tests
+trusted_user_root="${trusted_parent}/$(id -u)"
+trusted_client_root="${trusted_user_root}/vendor-sftp-${root_suffix}"
+trusted_binary_root="${trusted_client_root}/bin"
+trusted_client_ready=0
 ssh_directory="${client_home}/.ssh"
 ssh_config="${ssh_directory}/config"
 ssh_config_backup="${root}/client-ssh-config"
@@ -80,9 +86,23 @@ cleanup() {
   if test "${user_created}" = 1; then
     sudo userdel -r "${vendor_user}" >/dev/null 2>&1 || true
   fi
+  if test "${trusted_client_ready}" = 1; then
+    rm -rf "${trusted_client_root}"
+  fi
   rm -rf "${root}"
 }
 trap cleanup EXIT
+
+sudo install -d -o root -g root -m 0755 "${trusted_parent}"
+sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_user_root}"
+if test -e "${trusted_client_root}"; then
+  printf 'trusted vendor SFTP client root already exists\n' >&2
+  exit 1
+fi
+install -d -m 0700 "${trusted_binary_root}"
+trusted_client_ready=1
+install -m 0700 "${source_binary}" "${trusted_binary_root}/amsftp"
+AMSFTP_VENDOR_BINARY="${trusted_binary_root}/amsftp"
 
 if id "${vendor_user}" >/dev/null 2>&1; then
   printf 'reserved vendor SFTP user already exists\n' >&2
@@ -199,20 +219,28 @@ AMSFTP_REAL_VENDOR_SFTP=1 \
 printf 'vendor SFTP provider browse and durable transfers passed\n'
 
 install -d -m 0700 \
-  "${root}/xdg-config" \
-  "${root}/xdg-state" \
-  "${root}/xdg-cache" \
-  "${root}/xdg-runtime"
-export XDG_CONFIG_HOME="${root}/xdg-config"
-export XDG_STATE_HOME="${root}/xdg-state"
-export XDG_CACHE_HOME="${root}/xdg-cache"
-export XDG_RUNTIME_DIR="${root}/xdg-runtime"
+  "${trusted_client_root}/xdg-config" \
+  "${trusted_client_root}/xdg-state" \
+  "${trusted_client_root}/xdg-cache" \
+  "${trusted_client_root}/xdg-runtime"
+export XDG_CONFIG_HOME="${trusted_client_root}/xdg-config"
+export XDG_STATE_HOME="${trusted_client_root}/xdg-state"
+export XDG_CACHE_HOME="${trusted_client_root}/xdg-cache"
+export XDG_RUNTIME_DIR="${trusted_client_root}/xdg-runtime"
 export TERM=xterm-256color
 export AMSFTP_VENDOR_BINARY
 export AMSFTP_VENDOR_TUI_OUTPUT="${root}/vendor-tui.out"
 export AMSFTP_VENDOR_TUI_STDERR="${root}/vendor-tui.err"
-export AMSFTP_VENDOR_DAEMON_LOG="${root}/xdg-state/amsftp/log/daemon.jsonl"
+export AMSFTP_VENDOR_DAEMON_LOG="${trusted_client_root}/xdg-state/amsftp/log/daemon.jsonl"
 client_runtime_ready=1
+/usr/bin/env -i \
+  HOME="${client_home}" \
+  XDG_CONFIG_HOME="${XDG_CONFIG_HOME}" \
+  XDG_STATE_HOME="${XDG_STATE_HOME}" \
+  XDG_CACHE_HOME="${XDG_CACHE_HOME}" \
+  XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR}" \
+  PATH=/usr/local/bin:/usr/bin:/bin \
+  "${AMSFTP_VENDOR_BINARY}" daemon start --format json | grep -F '"running":true'
 set +e
 /usr/bin/env -i \
   HOME="${client_home}" \

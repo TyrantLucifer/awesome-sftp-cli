@@ -514,8 +514,9 @@ func renderPreviewDrawer(surface Surface, preview PreviewState, y, width, rows i
 		style = StyleError
 	}
 	lines := strings.Split(preview.DisplayText(), "\n")
-	for row := 0; row < rows-1 && row < len(lines); row++ {
-		surface.PutClipped(0, y+1+row, width, lines[row], style)
+	lineOffset := min(max(0, preview.LineOffset), max(0, len(lines)-1))
+	for row := 0; row < rows-1 && lineOffset+row < len(lines); row++ {
+		surface.PutClipped(0, y+1+row, width, lines[lineOffset+row], style)
 	}
 }
 

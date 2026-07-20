@@ -348,6 +348,7 @@ type PreviewState struct {
 	Summary    string
 	Message    string
 	View       builtinpreview.ViewMode
+	LineOffset int
 }
 
 type PreviewRequestIdentity struct {

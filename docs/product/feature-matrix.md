@@ -32,7 +32,7 @@
 | MOVE-001 | 安全移动 | Verified | 目标验证并提交前不删除来源。 | [move 实现](../../internal/transfer/move.go)与[持久传输指南](../user/durable-transfers.md) |
 | DELETE-001 | 显式删除 | Verified | 删除与剪切分离，不可逆递归删除需要独立确认。 | [delete 实现](../../internal/transfer/delete.go)与[持久传输指南](../user/durable-transfers.md) |
 | CONFLICT-001 | 冲突和并发修改 | Verified | overwrite、skip、rename 与编辑回传冲突都有明确选择，不静默覆盖。 | [Plan 测试](../../internal/transfer/plan_test.go)与[编辑测试](../../internal/tui/edit_session_test.go) |
-| PREVIEW-001 | 有界预览 | Verified | 文本、图片和外部预览受字节、时间和终端能力限制。 | [预览测试](../../internal/tui/preview_test.go)与[预览指南](../user/preview-edit-cache.md) |
+| PREVIEW-001 | 有界预览 | Verified | 文本、图片和外部预览受字节、时间和终端能力限制；行滚动、EOF range 与空文件不会产生越界或零长度读取。 | [预览测试](../../internal/tui/preview_test.go)、[drawer 测试](../../internal/tui/drawer_test.go)、[编排测试](../../internal/app/preview_orchestration_test.go)与[预览指南](../user/preview-edit-cache.md) |
 | EDIT-001 | 远端编辑和 opener | Verified | 使用缓存租约并在回传前复查远端版本。 | [edit 路由测试](../../internal/daemon/edit_router_test.go) |
 | CACHE-001 | 配额与租约缓存 | Verified | LRU、ephemeral、pinned offline 不回收活跃租约。 | [缓存生命周期测试](../../internal/cachemanager/lifecycle_test.go) |
 | SEARCH-001 | 有界文件名和内容搜索 | Verified | 搜索有时间、结果、深度和字节预算，耗尽时明确 partial。 | [搜索 contract](../../internal/search/filename_contract_test.go)与[搜索指南](../user/search-helper.md) |

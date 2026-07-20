@@ -11,12 +11,12 @@ AMSFTP provides bounded Preview/Jobs/Log drawers, an owner-only managed cache, l
 | `L` | Open/focus/close the bounded, redacted Log drawer. |
 | `l` on a file | Open Preview directly; on a directory, enter the directory as before. |
 | `h`, `l` in Preview | Read the 64 KiB head or tail. |
-| `j`, `k` in Preview | Move the range forward or backward in 64 KiB steps. |
+| `j`, `k` in Preview | Scroll the rendered Preview one line down or up. At a partial range boundary, request the next or previous bounded 64 KiB window. |
 | `r` in Preview | Cycle automatic, raw-JSON when available, and metadata views. |
 
 Switching drawer tabs keeps only one bottom drawer active. `K`/`J`/`L` are uppercase and do not collide with lowercase Vim navigation. Narrow terminals reduce the drawer height; resize, pane switch, cursor movement, refresh, and endpoint generation changes preserve the UI model while canceling or rejecting stale Preview results.
 
-Every provider Preview read is at most 64 KiB and a Preview retains at most 512 KiB. Built-in rendering is capped at 512 KiB input/output, 256 KiB parsed JSON, JSON depth 64, 10,000 rendered lines, and 4,096 syntax spans. Partial ranges show offsets/truncation; binary, NUL, invalid UTF-8, ANSI, and control bytes are sanitized or rendered as bounded hex instead of being written raw to the terminal. A sparse or very large file is never read in full just to preview it.
+Every provider Preview read is at most 64 KiB and a Preview retains at most 512 KiB. Built-in rendering is capped at 512 KiB input/output, 256 KiB parsed JSON, JSON depth 64, 10,000 rendered lines, and 4,096 syntax spans. Range navigation is clamped to a readable source window, and empty files render without issuing a zero-length Provider read. Partial ranges show offsets/truncation; binary, NUL, invalid UTF-8, ANSI, and control bytes are sanitized or rendered as bounded hex instead of being written raw to the terminal. A sparse or very large file is never read in full just to preview it.
 
 Metadata is built from bounded Provider facts rather than file-body parsing. It can show Endpoint, canonical path, object kind, size, modification time, permissions, symlink target, fingerprint strength, hash, file/version IDs, media type, captured range, and completeness. A symlink opened with `l` is shown as metadata without following or reading its target. Every external field is converted to one safe line and capped at 1,024 bytes or its smaller share of the 512 KiB output budget.
 
