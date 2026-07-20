@@ -48,12 +48,17 @@ func TestHostedVendorSFTPRunsProviderAndPreviewBinary(t *testing.T) {
 	t.Parallel()
 	harness := readOpenSSHFloorContractFile(t, "../integration/hosted-vendor-sftp.sh")
 	assertOpenSSHFloorOrder(t, harness, []string{
-		`trusted_binary_root="${client_home}/.amsftp-vendor-sftp-${root_suffix}"`,
+		`trusted_parent=/var/lib/amsftp-tests`,
+		`trusted_user_root="${trusted_parent}/$(id -u)"`,
+		`trusted_client_root="${trusted_user_root}/vendor-sftp-${root_suffix}"`,
+		`sudo install -d -o root -g root -m 0755 "${trusted_parent}"`,
+		`sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_user_root}"`,
 		`install -m 0700 "${source_binary}" "${trusted_binary_root}/amsftp"`,
 		`AMSFTP_VENDOR_BINARY="${trusted_binary_root}/amsftp"`,
 		`TestRealProFTPDVendorSFTPLevel0AndDurableTransfers`,
 		`vendor SFTP provider browse and durable transfers passed`,
-		`export AMSFTP_VENDOR_DAEMON_LOG="${root}/xdg-state/amsftp/log/daemon.jsonl"`,
+		`export XDG_STATE_HOME="${trusted_client_root}/xdg-state"`,
+		`export AMSFTP_VENDOR_DAEMON_LOG="${trusted_client_root}/xdg-state/amsftp/log/daemon.jsonl"`,
 		`"${AMSFTP_VENDOR_BINARY}" daemon start --format json | grep -F '"running":true'`,
 		`/usr/bin/env -i \`,
 		`AMSFTP_VENDOR_TUI_LOCATION=amsftp-proftpd:/`,
