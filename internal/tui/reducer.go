@@ -1487,7 +1487,7 @@ func reducePreviewKey(model Model, key Key) (Model, []Intent) {
 	intent.PreviewMode = model.Preview.Identity.Mode
 	intent.PreviewOffset = model.Preview.Identity.Offset
 	intent.PreviewView = model.Preview.View
-	step := uint64(builtinpreview.ReadChunkBytes)
+	step := builtinpreview.ReadChunkBytes
 	switch key {
 	case KeyParent:
 		intent.PreviewMode = builtinpreview.ReadHead
