@@ -24,6 +24,7 @@ Schema version 1 supports `normal` and `visual` keymap contexts. `visual` inheri
 | Input | Action | Remap policy |
 |---|---|---|
 | `h` / `j` / `k` / `l` | parent / down / up / open | remappable |
+| `←` / `↓` / `↑` / `→` | parent / down / up / open | fixed physical-key aliases in Normal and Visual modes |
 | `v` / `V` / Space | Visual / Visual Line / discrete mark | remappable |
 | `/` / `f` | pane filter / filename search | remappable |
 | `S` / `s` / `H` / `R` | save workspace / sort / hidden / refresh | remappable |
@@ -39,7 +40,7 @@ Schema version 1 supports `normal` and `visual` keymap contexts. `visual` inheri
 | `w` / `x` / `a` | overwrite / skip / auto-rename conflict | reserved decision actions |
 | `W` / `X` / `A` | apply conflict decision to all | reserved decision actions |
 
-Digits remain count prefixes before keymap lookup. Counts are accepted only for the existing bounded navigation/copy/cut/paste/delete/rename set. Unsupported count/action combinations are ignored safely. `q` remains the fixed Normal-mode quit input and cannot be a Normal remap target; it remains available to an explicit Visual-context remap. Visual mappings use the `visual` context; confirmation, text-entry, authentication, recovery, and drawer-specific keys retain their fixed safe behavior.
+Digits remain count prefixes before keymap lookup. Counts are accepted only for the existing bounded navigation/copy/cut/paste/delete/rename set. Unsupported count/action combinations are ignored safely. Arrow keys are fixed physical-key aliases for the four navigation actions and do not change or consume configurable single-rune bindings. `q` remains the fixed Normal-mode quit input and cannot be a Normal remap target; it remains available to an explicit Visual-context remap. Visual mappings use the `visual` context; confirmation, text-entry, authentication, recovery, and drawer-specific keys retain their fixed safe behavior.
 
 ## Deliberate 1.0 exclusions
 

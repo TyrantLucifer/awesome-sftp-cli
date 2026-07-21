@@ -23,7 +23,7 @@
 | WORK-001 | 持久工作区 | Verified | 保存两栏位置和视图策略，不保存认证秘密。 | [workspace 路由测试](../../internal/daemon/workspace_router_test.go) |
 | WORK-006 | 工作区兼容迁移 | Verified | 历史 schema 确定迁移并保留原始备份，失败不覆盖来源。 | [兼容性边界](compatibility-boundaries.md) |
 | VIM-001 | Vim-first 模式 | Verified | 默认 Normal 模式，导航、选择、计数与危险动作分层。 | [键位测试](../../internal/tui/keymap_test.go)与[键位参考](../user/keymap.md) |
-| VIM-002 | `h/j/k/l` 与双栏操作 | Verified | 核心浏览和选择不依赖鼠标。 | [TUI reducer](../../internal/tui/reducer.go) |
+| VIM-002 | `h/j/k/l`、方向键与双栏操作 | Verified | Normal/Visual 浏览同时支持 Vim 键与方向键，核心浏览和选择不依赖鼠标。 | [终端键位测试](../../internal/tui/tcell_test.go)与[TUI reducer](../../internal/tui/reducer.go) |
 | DAEMON-001 | owner-only daemon | Verified | daemon 只为当前用户服务，TUI 退出不隐式取消 Job。 | [daemon server 测试](../../internal/daemon/server_test.go) |
 | DAEMON-002 | 安全 IPC 与生命周期 | Verified | socket、peer UID、协议和停止确认 fail closed。 | [daemon command 测试](../../internal/app/daemon_command_test.go) |
 | JOB-001 | 持久 Job | Verified | 复制、移动和删除拥有稳定状态、事件、检查点和控制命令；成功终态会精确刷新当前可见的受影响目录。 | [Job manager 测试](../../internal/transfer/manager_test.go)、[TUI reducer 测试](../../internal/tui/model_test.go)与[CLI 参考](../user/cli.md) |
