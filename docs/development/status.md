@@ -7,7 +7,7 @@
 - PR #6 已合并到 `main`，合并提交为 `1f8bef8c3055150c6e47d05eab30f79d02396e04`。
 - 一键安装与发布自动化 PR #9 已合并到 `main`，合并提交为 `7e6f6986af45712ae81d826001f0dc2454804a15`。
 - 内部预览版 [`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1) 已发布；候选提交为 `541c3c7434d05bc5366950c53c8b1f1774d72e38`。
-- 公开预览版 [`v0.1.5`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.5) 包含 Homebrew 认证 helper 修复、TUI Endpoint 模糊选择、Job 成功终态后的可见目录自动刷新、登录后 Normal/Visual 浏览的方向键支持，以及更清晰的 Jobs 状态、容量、速度与路径展示；沿用四平台归档、checksum、SBOM、一键安装脚本与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
+- 公开预览版 [`v0.1.6`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.6) 包含此前公开预览修复，以及用户可读的 TUI 状态栏、6–16 行自适应 Preview 抽屉和当前目录模糊跳转；沿用四平台归档、checksum、SBOM、一键安装脚本与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
 - Stage 0–6 的实现阶段已经结束；历史计划和验证流水从活动文档中移除，通过 Git 历史追溯。
 - 仓库现在进入“内部预览反馈与下一阶段迭代准备”状态，不宣称公开 1.0 已完成。
 - 内部预览反馈已修复 Preview drawer 的逐行滚动、小文件 EOF range 越界与空文件零长度读取问题。
@@ -33,6 +33,6 @@
 
 ## 下一步
 
-`v0.1.5` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
+`v0.1.6` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
 
 开发前阅读根目录 [AGENTS.md](../../AGENTS.md)，并只运行与改动风险相称的定向测试。公开 release 仍必须单独通过 [RC 门禁](../release/RC-GATES.md)。
