@@ -65,12 +65,20 @@ func TranslateTCellEventWithKeymap(event tcell.Event, mode Mode, keymap Keymap) 
 		case tcell.KeyBackspace:
 			return KeyPress{Key: KeyBackspace}, true
 		case tcell.KeyDown:
-			if mode == ModeEndpoint {
+			if mode == ModeNormal || mode == ModeVisual || mode == ModeEndpoint {
 				return KeyPress{Key: KeyDown}, true
 			}
 		case tcell.KeyUp:
-			if mode == ModeEndpoint {
+			if mode == ModeNormal || mode == ModeVisual || mode == ModeEndpoint {
 				return KeyPress{Key: KeyUp}, true
+			}
+		case tcell.KeyLeft:
+			if mode == ModeNormal || mode == ModeVisual {
+				return KeyPress{Key: KeyParent}, true
+			}
+		case tcell.KeyRight:
+			if mode == ModeNormal || mode == ModeVisual {
+				return KeyPress{Key: KeyOpen}, true
 			}
 		case tcell.KeyRune:
 			if mode == ModeEditRecovery {
