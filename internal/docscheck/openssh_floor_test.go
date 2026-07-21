@@ -18,7 +18,7 @@ func TestUbuntu2204RunsRealOpenSSH89FloorAndRecordsExactVersion(t *testing.T) {
 		`floor_version="$(/usr/bin/ssh -V 2>&1)"`,
 		`OpenSSH_8.9p1\ *)`,
 		`"${RUNNER_TEMP}/native/openssh-floor-version"`,
-		`AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/native/bin/amsftp"`,
+		`AMSFTP_AUTH_BINARY="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"`,
 		`AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="${floor_version}"`,
 		`bash ./internal/integration/hosted-auth.sh`,
 	})

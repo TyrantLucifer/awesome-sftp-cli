@@ -37,10 +37,13 @@ jobs:
       - name: Prepare trusted persistent test root
         run: |
           set -euo pipefail
-          if test "${RUNNER_OS}" = Linux; then
-            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
-            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
-          fi
+          trusted_root="/var/lib/amsftp-tests/$(id -u)"
+          sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
+          # Keep enough room for runtime/amsftp/control-v1.sock's 100-byte path budget.
+          exec_root="$(mktemp -d "${trusted_root}/q.XXXXXX")"
+          install -d -m 0700 "${exec_root}"
+          printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
       - run: make check
         env:
           BUILD_DIR: ${{ runner.temp }}/quality/build
@@ -54,15 +57,14 @@ jobs:
           input="${RUNNER_TEMP}/internal-preview-input"
           first="${RUNNER_TEMP}/internal-preview-first"
           second="${RUNNER_TEMP}/internal-preview-second"
-          install_root="${RUNNER_TEMP}/public-package-install"
+          install_root="${AMSFTP_CI_EXEC_ROOT}/public-package-install"
           install_prefix="${install_root}/prefix"
-          trusted_root="/var/lib/amsftp-tests/$(id -u)"
-          clean_home="${trusted_root}/public-package-home"
+          clean_home="${AMSFTP_CI_EXEC_ROOT}/public-package-home"
           old_source="${RUNNER_TEMP}/stage5-source"
-          old_binary="${RUNNER_TEMP}/amsftp-stage5"
-          old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"
-          current_cache_harness="${RUNNER_TEMP}/pinned-cache-current"
-          failure_harness="${RUNNER_TEMP}/pinned-cache-failure"
+          old_binary="${AMSFTP_CI_EXEC_ROOT}/amsftp-stage5"
+          old_cache_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-stage5"
+          current_cache_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-current"
+          failure_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-failure"
           cache_record="${RUNNER_TEMP}/pinned-cache-evidence.json"
           head="$(git rev-parse HEAD)"
           tree="$(git rev-parse 'HEAD^{tree}')"
@@ -568,9 +570,16 @@ jobs:
         run: |
           set -euo pipefail
           if test "${RUNNER_OS}" = Linux; then
+            trusted_root="/var/lib/amsftp-tests/$(id -u)"
             sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
-            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
+            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
+            exec_root="$(mktemp -d "${trusted_root}/n.XXXXXX")"
+          else
+            exec_root="$(mktemp -d "${HOME}/.amsftp-ci.XXXXXX")"
           fi
+          # Keep enough room for runtime/amsftp[-UID]/control-v1.sock's 100-byte path budget.
+          install -d -m 0700 "${exec_root}"
+          printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
       - run: make fmt-check
       - run: make vet
       - run: make test
@@ -582,23 +591,18 @@ jobs:
           BUILD_DIR: ${{ runner.temp }}/native/build
           COVERAGE_DIR: ${{ runner.temp }}/native/coverage
       - run: make test-race
-      - run: mkdir -p "${{ runner.temp }}/native/bin"
-      - run: go build -trimpath -o "${{ runner.temp }}/native/bin/amsftp" ./cmd/amsftp
-      - run: '"${{ runner.temp }}/native/bin/amsftp" --help'
-      - run: '"${{ runner.temp }}/native/bin/amsftp" --version'
+      - run: mkdir -p "${AMSFTP_CI_EXEC_ROOT}/bin"
+      - run: go build -trimpath -o "${AMSFTP_CI_EXEC_ROOT}/bin/amsftp" ./cmd/amsftp
+      - run: '"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp" --help'
+      - run: '"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp" --version'
       - name: Exercise native clean install and uninstall lifecycle
         run: |
           set -euo pipefail
-          native_binary="${RUNNER_TEMP}/native/bin/amsftp"
-          install_root="${RUNNER_TEMP}/native/install"
+          native_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"
+          install_root="${AMSFTP_CI_EXEC_ROOT}/clean-install"
           prefix="${install_root}/prefix"
           installed="${prefix}/bin/amsftp"
-          if test "${RUNNER_OS}" = Linux; then
-            trusted_root="/var/lib/amsftp-tests/$(id -u)"
-          else
-            trusted_root="${HOME}/.amsftp-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          fi
-          clean_home="${trusted_root}/clean-home"
+          clean_home="${AMSFTP_CI_EXEC_ROOT}/clean-home"
           test ! -e "${install_root}"
           test ! -e "${clean_home}"
           mkdir -p \
@@ -717,18 +721,13 @@ jobs:
       - name: Exercise native installed upgrade, rollback, and stale-socket recovery
         run: |
           set -euo pipefail
-          native_binary="${RUNNER_TEMP}/native/bin/amsftp"
+          native_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"
           old_source="${RUNNER_TEMP}/native/stage5-source"
-          old_binary="${RUNNER_TEMP}/native/bin/amsftp-stage5"
-          install_root="${RUNNER_TEMP}/native/upgrade-install"
+          old_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp-stage5"
+          install_root="${AMSFTP_CI_EXEC_ROOT}/upgrade-install"
           prefix="${install_root}/prefix"
           installed="${prefix}/bin/amsftp"
-          if test "${RUNNER_OS}" = Linux; then
-            trusted_root="/var/lib/amsftp-tests/$(id -u)"
-          else
-            trusted_root="${HOME}/.amsftp-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          fi
-          upgrade_home="${trusted_root}/upgrade-home"
+          upgrade_home="${AMSFTP_CI_EXEC_ROOT}/upgrade-home"
           test ! -e "${old_source}"
           test ! -e "${install_root}"
           test ! -e "${upgrade_home}"
@@ -745,6 +744,12 @@ jobs:
             "${upgrade_home}/state" \
             "${upgrade_home}/cache" \
             "${upgrade_home}/runtime"
+          if test "${RUNNER_OS}" = Linux; then
+            control_socket="${upgrade_home}/runtime/amsftp/control-v1.sock"
+          else
+            control_socket="${upgrade_home}/runtime/amsftp-$(id -u)/control-v1.sock"
+          fi
+          test "${#control_socket}" -le 100
           git archive 312bcccbcbd54246bbe5ff9babf4f14560449176 | tar -x -C "${old_source}"
           (
             cd "${old_source}"
@@ -801,8 +806,7 @@ jobs:
           daemon_pid=$!
           wait_for_running 'commit='
           env "${clean_env[@]}" "${installed}" job list --format json | grep -F '"output_version":1'
-          control_socket="$(find "${upgrade_home}/runtime" -type s -name control-v1.sock -print -quit)"
-          test -n "${control_socket}"
+          test -S "${control_socket}"
           kill -KILL "${daemon_pid}"
           set +e
           wait "${daemon_pid}"
@@ -882,7 +886,7 @@ jobs:
           esac
           printf '%s\n' "${floor_version}" | tee "${RUNNER_TEMP}/native/openssh-floor-version"
           sudo env \
-            AMSFTP_AUTH_BINARY="${RUNNER_TEMP}/native/bin/amsftp" \
+            AMSFTP_AUTH_BINARY="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp" \
             AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="${floor_version}" \
             AMSFTP_AUTH_ROOT="/tmp/amsftp-auth-floor-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}" \
             bash ./internal/integration/hosted-auth.sh
@@ -1032,7 +1036,7 @@ jobs:
             AMSFTP_HOSTILE_GID="$(id -g)" \
             "${platform_test}" -test.v -test.run '^TestControlSocketRejectsOtherUIDPeer$'
       - name: Run native PTY resize and recovery smoke
-        run: python3 ./internal/integration/hosted-pty.py "${{ runner.temp }}/native/bin/amsftp"
+        run: python3 ./internal/integration/hosted-pty.py "${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"
       - name: Record provenance
         run: |
           set -euo pipefail

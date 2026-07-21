@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -621,12 +620,13 @@ func TestLevel2InFlightCancelPropagatesAndNeverCommitsOrDeletesSource(t *testing
 	}
 	resolver := MapResolver{plan.SourceEndpoint.ID: source, plan.DestinationEndpoint.ID: destination}
 	journal := newMemoryJournal()
-	var controlCalls atomic.Uint32
 	result, err := newLevel2FixtureWorker(resolver, journal, backend).Execute(context.Background(), plan, ControlFunc(func(Checkpoint) ControlAction {
-		if controlCalls.Add(1) > 1 {
+		select {
+		case <-backend.started:
 			return ControlCancel
+		default:
+			return ControlContinue
 		}
-		return ControlContinue
 	}))
 	if !errors.Is(err, ErrCanceled) || !result.PartRetained || result.Bytes == 0 {
 		t.Fatalf("canceled direct result = (%#v, %v)", result, err)

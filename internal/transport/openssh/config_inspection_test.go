@@ -11,8 +11,6 @@ import (
 )
 
 func TestInspectConfigUsesBoundedNonConnectingOpenSSHExpansion(t *testing.T) {
-	t.Parallel()
-
 	binary := configInspectionExecutable(t, `#!/bin/sh
 test "$1" = "-G" || exit 21
 test "$2" = "-T" || exit 22
@@ -31,8 +29,6 @@ printf '%s\n' 'hostname 127.0.0.1' 'port 2222' 'stricthostkeychecking ask' 'user
 }
 
 func TestInspectConfigFailsClosedOnUnboundedOrSecretBearingFailure(t *testing.T) {
-	t.Parallel()
-
 	// #nosec G101 -- fixed redaction canary for a subprocess-output test, not a credential.
 	secret := "stage6-openssh-config-secret"
 	tooLarge := "hostname " + strings.Repeat("x", maxConfigInspectionBytes+1)
@@ -54,8 +50,6 @@ func TestInspectConfigFailsClosedOnUnboundedOrSecretBearingFailure(t *testing.T)
 }
 
 func TestInspectConfigRejectsDisabledKnownHostsAndRecognizesProxy(t *testing.T) {
-	t.Parallel()
-
 	binary := configInspectionExecutable(t, `#!/bin/sh
 printf '%s\n' 'hostname proxy-target' 'port 22' 'stricthostkeychecking no' 'userknownhostsfile none' 'proxyjump bastion' 'proxycommand none'
 `)
@@ -69,8 +63,6 @@ printf '%s\n' 'hostname proxy-target' 'port 22' 'stricthostkeychecking no' 'user
 }
 
 func TestInspectConfigRejectsAmbiguousOrUnknownHostKeyPolicy(t *testing.T) {
-	t.Parallel()
-
 	for name, lines := range map[string]string{
 		"duplicate": "hostname first\nhostname second\nport 22\nstricthostkeychecking yes\nuserknownhostsfile /safe/known_hosts\nproxyjump none\nproxycommand none",
 		"unknown":   "hostname host\nport 22\nstricthostkeychecking future-mode\nuserknownhostsfile /safe/known_hosts\nproxyjump none\nproxycommand none",

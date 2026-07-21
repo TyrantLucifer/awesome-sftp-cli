@@ -1053,10 +1053,13 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
 	const step = `      - name: Prepare trusted persistent test root
         run: |
           set -euo pipefail
-          if test "${RUNNER_OS}" = Linux; then
-            sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
-            sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
-          fi
+          trusted_root="/var/lib/amsftp-tests/$(id -u)"
+          sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
+          # Keep enough room for runtime/amsftp/control-v1.sock's 100-byte path budget.
+          exec_root="$(mktemp -d "${trusted_root}/q.XXXXXX")"
+          install -d -m 0700 "${exec_root}"
+          printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
 `
 	root := prepareFixture(t, "valid")
 	path := filepath.Join(root, ".github", "workflows", "ci.yml")
@@ -1070,6 +1073,29 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
 		t.Fatal("quality make check anchor not found")
 	}
 	assertNoWorkflowRule(t, ".github/workflows/ci.yml", updated, "workflow.ci_quality")
+	assertNoWorkflowRule(t, ".github/workflows/ci.yml", updated, "workflow.ci_environment_mutation")
+}
+
+func TestCIQualityRejectsPersistentTestRootJobEnvironmentExport(t *testing.T) {
+	const step = `      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          trusted_root="/var/lib/amsftp-tests/$(id -u)"
+          sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
+          # Keep enough room for runtime/amsftp/control-v1.sock's 100-byte path budget.
+          exec_root="$(mktemp -d "${trusted_root}/q.XXXXXX")"
+          install -d -m 0700 "${exec_root}"
+          printf 'AMSFTP_TEST_PERSISTENT_ROOT=%s\n' "${trusted_root}" >>"${GITHUB_ENV}"
+          printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
+`
+	const path = ".github/workflows/ci.yml"
+	root := prepareFixture(t, "valid")
+	replacePolicyFileOccurrence(t, root, path, "      - run: make check\n", step+"      - run: make check\n", 1)
+	assertPolicyFinding(t, root, policyFinding{
+		Path: path, Line: 7, Rule: "workflow.ci_environment_mutation",
+		Message: `required ci job "quality" must not reference GITHUB_ENV or GITHUB_PATH in run steps`,
+	})
 }
 
 func TestCIQualityLifecycleRequiresPreparedOwnerPrivatePersistentRoot(t *testing.T) {
@@ -1081,13 +1107,18 @@ func TestCIQualityLifecycleRequiresPreparedOwnerPrivatePersistentRoot(t *testing
 	}{
 		{
 			name: "trusted root",
-			script: `trusted_root="/var/lib/amsftp-tests/$(id -u)"
-clean_home="${trusted_root}/public-package-home"`,
+			script: `install_root="${AMSFTP_CI_EXEC_ROOT}/public-package-install"
+clean_home="${AMSFTP_CI_EXEC_ROOT}/public-package-home"`,
 			want: true,
 		},
 		{
 			name:   "runner temp",
 			script: `clean_home="${RUNNER_TEMP}/public-package-home"`,
+		},
+		{
+			name: "executable install beneath runner temp",
+			script: `install_root="${RUNNER_TEMP}/public-package-install"
+clean_home="${AMSFTP_CI_EXEC_ROOT}/public-package-home"`,
 		},
 		{
 			name: "declared but unused trusted root",
@@ -1141,9 +1172,10 @@ go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json doc
 
 func TestCIQualityLifecycleRequiresPinnedCacheUpgradeRecoveryProof(t *testing.T) {
 	name := &policyYAMLScalar{value: "Exercise deterministic internal preview packaging and clean-home lifecycle"}
-	complete := `old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"
-current_cache_harness="${RUNNER_TEMP}/pinned-cache-current"
-failure_harness="${RUNNER_TEMP}/pinned-cache-failure"
+	complete := `old_binary="${AMSFTP_CI_EXEC_ROOT}/amsftp-stage5"
+old_cache_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-stage5"
+current_cache_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-current"
+failure_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-failure"
 cp -R internal/integration/pinned-cache-lifecycle "${old_source}/internal/integration/"
 -o "${old_cache_harness}" ./internal/integration/pinned-cache-lifecycle
 -o "${current_cache_harness}" ./internal/integration/pinned-cache-lifecycle
@@ -1315,9 +1347,9 @@ func TestCINativeCommands(t *testing.T) {
 		{name: "contract", old: "      - run: make test-contract\n", new: "      - run: echo make test-contract\n", command: "make test-contract"},
 		{name: "race", old: "      - run: make test-race\n", new: "      - run: make test-race-disabled\n", command: "make test-race"},
 		{name: "conditional race", old: "      - run: make test-race\n", new: "      - if: always()\n        run: make test-race\n", command: "make test-race"},
-		{name: "build", old: "      - run: go build -trimpath -o \"${{ runner.temp }}/native/bin/amsftp\" ./cmd/amsftp\n", new: "      - run: echo go build -trimpath -o \"${{ runner.temp }}/native/bin/amsftp\" ./cmd/amsftp\n", command: "go build ./cmd/amsftp to runner.temp"},
-		{name: "help", old: "      - run: '\"${{ runner.temp }}/native/bin/amsftp\" --help'\n", new: "      - run: echo \"${{ runner.temp }}/native/bin/amsftp\" --help\n", command: "runner.temp binary --help"},
-		{name: "version", old: "      - run: '\"${{ runner.temp }}/native/bin/amsftp\" --version'\n", new: "      - run: echo \"${{ runner.temp }}/native/bin/amsftp\" --version\n", command: "runner.temp binary --version"},
+		{name: "build", old: "      - run: go build -trimpath -o \"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" ./cmd/amsftp\n", new: "      - run: echo go build -trimpath -o \"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" ./cmd/amsftp\n", command: "go build ./cmd/amsftp to the trusted CI executable root"},
+		{name: "help", old: "      - run: '\"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" --help'\n", new: "      - run: echo \"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" --help\n", command: "trusted-root binary --help"},
+		{name: "version", old: "      - run: '\"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" --version'\n", new: "      - run: echo \"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" --version\n", command: "trusted-root binary --version"},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -1354,9 +1386,9 @@ func TestCINativeRequiresCleanInstallDaemonAndExactUninstallLifecycle(t *testing
 			new:  "      - name: Exercise native clean install and uninstall lifecycle\n        if: false\n        run: |\n",
 		},
 		{
-			name: "mac persistent home beneath runner temp",
-			old:  `trusted_root="${HOME}/.amsftp-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`,
-			new:  `trusted_root="${RUNNER_TEMP}/amsftp-native"`,
+			name: "persistent home beneath runner temp",
+			old:  `clean_home="${AMSFTP_CI_EXEC_ROOT}/clean-home"`,
+			new:  `clean_home="${RUNNER_TEMP}/clean-home"`,
 		},
 		{
 			name: "clean home may be reused",
@@ -1432,8 +1464,14 @@ func TestCINativeRequiresCleanInstallDaemonAndExactUninstallLifecycle(t *testing
 
 func TestCINativeRequiresInstalledUpgradeRollbackAndStaleSocketProof(t *testing.T) {
 	name := &policyYAMLScalar{value: "Exercise native installed upgrade, rollback, and stale-socket recovery"}
-	complete := `old_source="${RUNNER_TEMP}/native/stage5-source"
-old_binary="${RUNNER_TEMP}/native/bin/amsftp-stage5"
+	complete := `native_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"
+old_source="${RUNNER_TEMP}/native/stage5-source"
+old_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp-stage5"
+install_root="${AMSFTP_CI_EXEC_ROOT}/upgrade-install"
+upgrade_home="${AMSFTP_CI_EXEC_ROOT}/upgrade-home"
+control_socket="${upgrade_home}/runtime/amsftp/control-v1.sock"
+control_socket="${upgrade_home}/runtime/amsftp-$(id -u)/control-v1.sock"
+test "${#control_socket}" -le 100
 git archive 312bcccbcbd54246bbe5ff9babf4f14560449176
 -o "${old_binary}" ./cmd/amsftp
 install_atomically "${old_binary}"
@@ -1466,6 +1504,7 @@ install_atomically "${native_binary}"
 		{name: "complete composition", script: complete, want: true},
 		{name: "missing frozen Stage 5 build", script: strings.Replace(complete, "git archive 312bcccbcbd54246bbe5ff9babf4f14560449176\n", "", 1)},
 		{name: "missing live upgrade", script: strings.Replace(complete, `install_atomically "${native_binary}"`, "", 1)},
+		{name: "missing socket path budget", script: strings.Replace(complete, "test \"${#control_socket}\" -le 100\n", "", 1)},
 		{name: "missing stale socket refusal", script: strings.Replace(complete, `test "${stale_socket_probe_rc}" -ne 0`, "", 1)},
 		{name: "missing rollback byte preservation", script: strings.Replace(complete, `test "${database_before}" = "${database_after}"`, "", 1)},
 		{name: "missing current recovery", script: strings.TrimSuffix(complete, `
@@ -1733,13 +1772,13 @@ func TestCINativeAndBuildCommandsRejectUnsafeExecution(t *testing.T) {
 			name: "native build masks failure",
 			old:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp || true\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "native smoke masks failure",
 			old:  "      - run: '\"${{ runner.temp }}/amsftp\" --help'\n",
 			new:  "      - run: '\"${{ runner.temp }}/amsftp\" --help || true'\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "runner.temp binary --help"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "trusted-root binary --help"`,
 		},
 		{
 			name: "cross build masks failure",
@@ -1751,13 +1790,13 @@ func TestCINativeAndBuildCommandsRejectUnsafeExecution(t *testing.T) {
 			name: "native build custom shell",
 			old:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - shell: /bin/true {0}\n        run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "native smoke working directory",
 			old:  "      - run: '\"${{ runner.temp }}/amsftp\" --help'\n",
 			new:  "      - working-directory: other\n        run: '\"${{ runner.temp }}/amsftp\" --help'\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "runner.temp binary --help"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "trusted-root binary --help"`,
 		},
 		{
 			name: "cross build custom shell",
@@ -1769,49 +1808,49 @@ func TestCINativeAndBuildCommandsRejectUnsafeExecution(t *testing.T) {
 			name: "native build pipeline masks failure",
 			old:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp | true\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "native smoke background masks failure",
 			old:  "      - run: '\"${{ runner.temp }}/amsftp\" --help'\n",
 			new:  "      - run: '\"${{ runner.temp }}/amsftp\" --help &'\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "runner.temp binary --help"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "trusted-root binary --help"`,
 		},
 		{
 			name: "native build dry run short flag",
 			old:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - run: go build -n -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "native build dry run equals flag",
 			old:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - run: go build -n=true -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "native build rejects unapproved flag",
 			old:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - run: go build -v -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "native build rejects disabled vcs stamping",
 			old:  "      - run: go build -trimpath -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "native build rejects duplicate output",
 			old:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - run: go build -o \"${{ runner.temp }}/first\" -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "native build rejects extra target",
 			old:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp\n",
 			new:  "      - run: go build -o \"${{ runner.temp }}/amsftp\" ./cmd/amsftp ./cmd/other\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 		},
 		{
 			name: "cross build dry run short flag",
@@ -1841,19 +1880,19 @@ func TestCINativeAndBuildCommandsRejectUnsafeExecution(t *testing.T) {
 			name: "combined smoke cannot receive duplicate credit",
 			old:  "      - run: '\"${{ runner.temp }}/amsftp\" --help'\n      - run: '\"${{ runner.temp }}/amsftp\" --version'\n",
 			new:  "      - run: '\"${{ runner.temp }}/amsftp\" --help --version'\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "runner.temp binary --help"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "trusted-root binary --help"`,
 		},
 		{
 			name: "smoke rejects extra flag",
 			old:  "      - run: '\"${{ runner.temp }}/amsftp\" --help'\n",
 			new:  "      - run: '\"${{ runner.temp }}/amsftp\" --help --verbose'\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "runner.temp binary --help"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "trusted-root binary --help"`,
 		},
 		{
 			name: "smoke rejects repeated flag",
 			old:  "      - run: '\"${{ runner.temp }}/amsftp\" --help'\n",
 			new:  "      - run: '\"${{ runner.temp }}/amsftp\" --help --help'\n",
-			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "runner.temp binary --help"`,
+			line: 26, rule: "workflow.ci_native_command", message: `native job is missing unconditional command "trusted-root binary --help"`,
 		},
 	}
 	for _, test := range tests {
@@ -1869,7 +1908,7 @@ func TestCINativeAndBuildCommandsRejectUnsafeExecution(t *testing.T) {
 }
 
 func canonicalCICommandMutation(value string) string {
-	const nativeOutput = `"${{ runner.temp }}/native/bin/amsftp"`
+	const nativeOutput = `"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"`
 	value = strings.ReplaceAll(value, `"${{ runner.temp }}/amsftp"`, nativeOutput)
 	value = strings.ReplaceAll(value,
 		`"${{ runner.temp }}/${{ matrix.artifact }}"`,
@@ -1883,9 +1922,9 @@ func canonicalCICommandMutation(value string) string {
 func TestCINativeBuildAndSmokeRequireOneOrderedTrustedSequence(t *testing.T) {
 	const (
 		path    = ".github/workflows/ci.yml"
-		build   = "      - run: go build -trimpath -o \"${{ runner.temp }}/native/bin/amsftp\" ./cmd/amsftp\n"
-		help    = "      - run: '\"${{ runner.temp }}/native/bin/amsftp\" --help'\n"
-		version = "      - run: '\"${{ runner.temp }}/native/bin/amsftp\" --version'\n"
+		build   = "      - run: go build -trimpath -o \"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" ./cmd/amsftp\n"
+		help    = "      - run: '\"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" --help'\n"
+		version = "      - run: '\"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" --version'\n"
 	)
 	tests := []struct {
 		name        string
@@ -1897,25 +1936,25 @@ func TestCINativeBuildAndSmokeRequireOneOrderedTrustedSequence(t *testing.T) {
 			replacement: build +
 				"      - run: '\"${{ runner.temp }}/other/amsftp\" --help'\n" +
 				"      - run: '\"${{ runner.temp }}/other/amsftp\" --version'\n",
-			command: "runner.temp binary --help",
+			command: "trusted-root binary --help",
 		},
 		{
 			name:        "smoke before build",
 			replacement: help + version + build,
-			command:     "runner.temp binary --help",
+			command:     "trusted-root binary --help",
 		},
 		{
 			name: "help and version different paths",
 			replacement: build + help +
 				"      - run: '\"${{ runner.temp }}/other/amsftp\" --version'\n",
-			command: "runner.temp binary --version",
+			command: "trusted-root binary --version",
 		},
 		{
 			name: "build output replaced before smoke",
 			replacement: build +
-				"      - run: install -m 755 /bin/true \"${{ runner.temp }}/native/bin/amsftp\"\n" +
+				"      - run: install -m 755 /bin/true \"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\"\n" +
 				help + version,
-			command: "runner.temp binary --help",
+			command: "trusted-root binary --help",
 		},
 	}
 	for _, test := range tests {
@@ -1934,10 +1973,10 @@ func TestCIGoFlagsEnvironmentPrecedence(t *testing.T) {
 	const (
 		path          = ".github/workflows/ci.yml"
 		topAnchor     = "permissions:\n  contents: read\n"
-		nativeBuild   = "      - run: go build -trimpath -o \"${{ runner.temp }}/native/bin/amsftp\" ./cmd/amsftp\n"
+		nativeBuild   = "      - run: go build -trimpath -o \"${AMSFTP_CI_EXEC_ROOT}/bin/amsftp\" ./cmd/amsftp\n"
 		crossBuild    = "      - run: go build -trimpath -buildvcs=false -o \"${{ runner.temp }}/build/${{ matrix.artifact }}/${{ matrix.artifact }}\" ./cmd/amsftp\n"
 		nativeRule    = "workflow.ci_native_command"
-		nativeMessage = `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`
+		nativeMessage = `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`
 		buildRule     = "workflow.ci_build_command"
 		buildMessage  = "build job must cross-build each matrix tuple with CGO_ENABLED=0, -trimpath, and -buildvcs=false into runner.temp"
 	)
@@ -2039,25 +2078,49 @@ func TestRunnerTempPathRequiresCanonicalSegments(t *testing.T) {
 	}
 }
 
-func TestCINativeRequiresExactRunnerTempPaths(t *testing.T) {
+func TestTrustedCIExecRootPathRequiresCanonicalSegments(t *testing.T) {
+	tests := []struct {
+		name  string
+		path  string
+		valid bool
+	}{
+		{name: "canonical nested", path: "${AMSFTP_CI_EXEC_ROOT}/bin/amsftp", valid: true},
+		{name: "parent traversal", path: "${AMSFTP_CI_EXEC_ROOT}/../outside/amsftp"},
+		{name: "current directory", path: "${AMSFTP_CI_EXEC_ROOT}/bin/./amsftp"},
+		{name: "empty middle segment", path: "${AMSFTP_CI_EXEC_ROOT}/bin//amsftp"},
+		{name: "empty final segment", path: "${AMSFTP_CI_EXEC_ROOT}/bin/"},
+		{name: "backslash", path: `${AMSFTP_CI_EXEC_ROOT}/bin\amsftp`},
+		{name: "nested shell variable", path: "${AMSFTP_CI_EXEC_ROOT}/${OUT}/amsftp"},
+		{name: "wrong root", path: "${RUNNER_TEMP}/native/bin/amsftp"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := isTrustedCIExecRootPath(test.path); got != test.valid {
+				t.Fatalf("isTrustedCIExecRootPath(%q) = %t, want %t", test.path, got, test.valid)
+			}
+		})
+	}
+}
+
+func TestCINativeRequiresExactTrustedCIExecRootPaths(t *testing.T) {
 	const (
 		path    = ".github/workflows/ci.yml"
-		oldPath = "${{ runner.temp }}/native/bin"
-		message = `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`
+		oldPath = "${AMSFTP_CI_EXEC_ROOT}/bin"
+		message = `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`
 	)
 	for _, test := range []struct {
 		name    string
 		newPath string
 	}{
-		{name: "different static directory", newPath: "${{ runner.temp }}/other/bin"},
-		{name: "expression variable directory", newPath: "${{ runner.temp }}/${{ vars.OUT }}/bin"},
-		{name: "shell variable directory", newPath: "${{ runner.temp }}/$OUT/bin"},
+		{name: "different static directory", newPath: "${AMSFTP_CI_EXEC_ROOT}/other/bin"},
+		{name: "runner temp directory", newPath: "${RUNNER_TEMP}/native/bin"},
+		{name: "shell variable directory", newPath: "${OTHER_CI_ROOT}/bin"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			root := prepareFixture(t, "valid")
 			content := readPolicyFile(t, root, path)
-			if count := strings.Count(content, oldPath); count != 4 {
-				t.Fatalf("native path occurrence count = %d, want 4", count)
+			if count := strings.Count(content, oldPath); count != 7 {
+				t.Fatalf("native path occurrence count = %d, want 7", count)
 			}
 			writePolicyFile(t, root, path, strings.ReplaceAll(content, oldPath, test.newPath))
 			assertPolicyFinding(t, root, policyFinding{
@@ -2070,14 +2133,14 @@ func TestCINativeRequiresExactRunnerTempPaths(t *testing.T) {
 func TestCINativeRejectsNonCanonicalMkdirPath(t *testing.T) {
 	const (
 		path    = ".github/workflows/ci.yml"
-		oldStep = "      - run: mkdir -p \"${{ runner.temp }}/native/bin\"\n"
-		newStep = "      - run: mkdir -p \"${{ runner.temp }}/native/bin/\"\n"
+		oldStep = "      - run: mkdir -p \"${AMSFTP_CI_EXEC_ROOT}/bin\"\n"
+		newStep = "      - run: mkdir -p \"${AMSFTP_CI_EXEC_ROOT}/bin/\"\n"
 	)
 	root := prepareFixture(t, "valid")
 	replacePolicyFile(t, root, path, oldStep, newStep)
 	assertPolicyFinding(t, root, policyFinding{
 		Path: path, Line: 26, Rule: "workflow.ci_native_command",
-		Message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+		Message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 	})
 }
 
@@ -2110,21 +2173,21 @@ func TestCIBuildRequiresExactRunnerTempPaths(t *testing.T) {
 	}
 }
 
-func TestCINativeRejectsRunnerTempTraversal(t *testing.T) {
+func TestCINativeRejectsTrustedCIExecRootTraversal(t *testing.T) {
 	const (
 		path    = ".github/workflows/ci.yml"
-		oldPath = "${{ runner.temp }}/native/bin"
-		newPath = "${{ runner.temp }}/../outside/bin"
+		oldPath = "${AMSFTP_CI_EXEC_ROOT}/bin"
+		newPath = "${AMSFTP_CI_EXEC_ROOT}/../outside/bin"
 	)
 	root := prepareFixture(t, "valid")
 	content := readPolicyFile(t, root, path)
-	if count := strings.Count(content, oldPath); count != 4 {
-		t.Fatalf("native path occurrence count = %d, want 4", count)
+	if count := strings.Count(content, oldPath); count != 7 {
+		t.Fatalf("native path occurrence count = %d, want 7", count)
 	}
 	writePolicyFile(t, root, path, strings.ReplaceAll(content, oldPath, newPath))
 	assertPolicyFinding(t, root, policyFinding{
 		Path: path, Line: 26, Rule: "workflow.ci_native_command",
-		Message: `native job is missing unconditional command "go build ./cmd/amsftp to runner.temp"`,
+		Message: `native job is missing unconditional command "go build ./cmd/amsftp to the trusted CI executable root"`,
 	})
 }
 

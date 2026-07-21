@@ -76,7 +76,8 @@ func checkCIRequiredJobExecution(job workflowJob, add func(int, string, string))
 		if step.run == nil {
 			continue
 		}
-		if strings.Contains(step.run.value, "GITHUB_ENV") || strings.Contains(step.run.value, "GITHUB_PATH") {
+		if (strings.Contains(step.run.value, "GITHUB_ENV") || strings.Contains(step.run.value, "GITHUB_PATH")) &&
+			!stepPreparesTrustedPersistentTestRoot(step) {
 			add(job.line, "workflow.ci_environment_mutation", fmt.Sprintf("required ci job %q must not reference GITHUB_ENV or GITHUB_PATH in run steps", job.id))
 			return
 		}
@@ -109,8 +110,8 @@ func qualityLifecycleUsesTrustedPersistentRoot(job workflowJob) bool {
 			return false
 		}
 		script := step.run.value
-		return strings.Contains(script, `trusted_root="/var/lib/amsftp-tests/$(id -u)"`) &&
-			strings.Contains(script, `clean_home="${trusted_root}/public-package-home"`) &&
+		return strings.Contains(script, `install_root="${AMSFTP_CI_EXEC_ROOT}/public-package-install"`) &&
+			strings.Contains(script, `clean_home="${AMSFTP_CI_EXEC_ROOT}/public-package-home"`) &&
 			!strings.Contains(script, `clean_home="${RUNNER_TEMP}`)
 	}
 	return true
@@ -142,9 +143,10 @@ func qualityLifecycleProvesPinnedCacheUpgradeRecovery(job workflowJob) bool {
 		}
 		script := step.run.value
 		ordered := []string{
-			`old_cache_harness="${RUNNER_TEMP}/pinned-cache-stage5"`,
-			`current_cache_harness="${RUNNER_TEMP}/pinned-cache-current"`,
-			`failure_harness="${RUNNER_TEMP}/pinned-cache-failure"`,
+			`old_binary="${AMSFTP_CI_EXEC_ROOT}/amsftp-stage5"`,
+			`old_cache_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-stage5"`,
+			`current_cache_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-current"`,
+			`failure_harness="${AMSFTP_CI_EXEC_ROOT}/pinned-cache-failure"`,
 			`cp -R internal/integration/pinned-cache-lifecycle "${old_source}/internal/integration/"`,
 			`-o "${old_cache_harness}" ./internal/integration/pinned-cache-lifecycle`,
 			`-o "${current_cache_harness}" ./internal/integration/pinned-cache-lifecycle`,
@@ -188,9 +190,9 @@ func checkCINative(job workflowJob, add func(int, string, string)) {
 		{name: "make test", found: credit.test},
 		{name: "make test-contract", found: credit.testContract},
 		{name: "make test-race", found: credit.testRace},
-		{name: "go build ./cmd/amsftp to runner.temp", found: credit.build},
-		{name: "runner.temp binary --help", found: credit.help},
-		{name: "runner.temp binary --version", found: credit.version},
+		{name: "go build ./cmd/amsftp to the trusted CI executable root", found: credit.build},
+		{name: "trusted-root binary --help", found: credit.help},
+		{name: "trusted-root binary --version", found: credit.version},
 	}
 	for _, requirement := range requirements {
 		if !requirement.found {
@@ -217,8 +219,14 @@ func nativeLifecycleProvesInstalledUpgradeRollbackAndStaleSocket(job workflowJob
 			return false
 		}
 		ordered := []string{
+			`native_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"`,
 			`old_source="${RUNNER_TEMP}/native/stage5-source"`,
-			`old_binary="${RUNNER_TEMP}/native/bin/amsftp-stage5"`,
+			`old_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp-stage5"`,
+			`install_root="${AMSFTP_CI_EXEC_ROOT}/upgrade-install"`,
+			`upgrade_home="${AMSFTP_CI_EXEC_ROOT}/upgrade-home"`,
+			`control_socket="${upgrade_home}/runtime/amsftp/control-v1.sock"`,
+			`control_socket="${upgrade_home}/runtime/amsftp-$(id -u)/control-v1.sock"`,
+			`test "${#control_socket}" -le 100`,
 			`git archive 312bcccbcbd54246bbe5ff9babf4f14560449176`,
 			`-o "${old_binary}" ./cmd/amsftp`,
 			`install_atomically "${old_binary}"`,
@@ -272,13 +280,11 @@ func nativeLifecycleIsExact(job workflowJob) bool {
 	script := step.run.value
 	ordered := []string{
 		`set -euo pipefail`,
-		`native_binary="${RUNNER_TEMP}/native/bin/amsftp"`,
-		`install_root="${RUNNER_TEMP}/native/install"`,
+		`native_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"`,
+		`install_root="${AMSFTP_CI_EXEC_ROOT}/clean-install"`,
 		`prefix="${install_root}/prefix"`,
 		`installed="${prefix}/bin/amsftp"`,
-		`trusted_root="/var/lib/amsftp-tests/$(id -u)"`,
-		`trusted_root="${HOME}/.amsftp-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"`,
-		`clean_home="${trusted_root}/clean-home"`,
+		`clean_home="${AMSFTP_CI_EXEC_ROOT}/clean-home"`,
 		`test ! -e "${install_root}"`,
 		`test ! -e "${clean_home}"`,
 		`mkdir -p`,
@@ -464,7 +470,7 @@ func jobHasTrustedQualityPrefix(job workflowJob) bool {
 
 func trustedNativePrefixCredit(job workflowJob) nativePrefixCredit {
 	const (
-		nativeDirectory = "${{ runner.temp }}/native/bin"
+		nativeDirectory = "${AMSFTP_CI_EXEC_ROOT}/bin"
 		nativeOutput    = nativeDirectory + "/amsftp"
 	)
 	var credit nativePrefixCredit
@@ -487,11 +493,11 @@ func trustedNativePrefixCredit(job workflowJob) nativePrefixCredit {
 	}
 
 	directory, ok := trustedMkdirPath(job, job.steps[7+offset])
-	if !ok || directory != nativeDirectory || !isRunnerTempPath(directory) {
+	if !ok || directory != nativeDirectory || !isTrustedCIExecRootPath(directory) {
 		return credit
 	}
 	build, ok := trustedGoBuild(job, job.steps[8+offset], false)
-	if !ok || !build.trimpath || build.output != nativeOutput || !isRunnerTempPath(build.output) {
+	if !ok || !build.trimpath || build.output != nativeOutput || !isTrustedCIExecRootPath(build.output) {
 		return credit
 	}
 	credit.build = true
@@ -568,14 +574,37 @@ func stepIsExactOldstableSetupGo(step workflowStep) bool {
 }
 
 func stepPreparesTrustedPersistentTestRoot(step workflowStep) bool {
-	const script = `set -euo pipefail
+	const legacyScript = `set -euo pipefail
 if test "${RUNNER_OS}" = Linux; then
   sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
   sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "/var/lib/amsftp-tests/$(id -u)"
 fi`
-	return step.name != nil && step.name.value == "Prepare trusted persistent test root" &&
-		step.run != nil && strings.TrimSpace(step.run.value) == script &&
-		stepHasOnlyKeys(step, "name", "run")
+	const qualityScript = `set -euo pipefail
+trusted_root="/var/lib/amsftp-tests/$(id -u)"
+sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
+# Keep enough room for runtime/amsftp/control-v1.sock's 100-byte path budget.
+exec_root="$(mktemp -d "${trusted_root}/q.XXXXXX")"
+install -d -m 0700 "${exec_root}"
+printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"`
+	const nativeScript = `set -euo pipefail
+if test "${RUNNER_OS}" = Linux; then
+  trusted_root="/var/lib/amsftp-tests/$(id -u)"
+  sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+  sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
+  exec_root="$(mktemp -d "${trusted_root}/n.XXXXXX")"
+else
+  exec_root="$(mktemp -d "${HOME}/.amsftp-ci.XXXXXX")"
+fi
+# Keep enough room for runtime/amsftp[-UID]/control-v1.sock's 100-byte path budget.
+install -d -m 0700 "${exec_root}"
+printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"`
+	if step.name == nil || step.name.value != "Prepare trusted persistent test root" || step.run == nil ||
+		!stepHasOnlyKeys(step, "name", "run") {
+		return false
+	}
+	script := strings.TrimSpace(step.run.value)
+	return script == legacyScript || script == qualityScript || script == nativeScript
 }
 
 func trustedPersistentTestRootOffset(steps []workflowStep) int {
@@ -875,6 +904,23 @@ func goFlagsChangeExecution(job workflowJob, step workflowStep) bool {
 
 func isRunnerTempPath(value string) bool {
 	const prefix = "${{ runner.temp }}/"
+	if !strings.HasPrefix(value, prefix) || len(value) == len(prefix) || strings.ContainsRune(value, '\\') {
+		return false
+	}
+	suffix := strings.TrimPrefix(value, prefix)
+	if strings.ContainsRune(suffix, '$') {
+		return false
+	}
+	for _, segment := range strings.Split(suffix, "/") {
+		if segment == "" || segment == "." || segment == ".." {
+			return false
+		}
+	}
+	return true
+}
+
+func isTrustedCIExecRootPath(value string) bool {
+	const prefix = "${AMSFTP_CI_EXEC_ROOT}/"
 	if !strings.HasPrefix(value, prefix) || len(value) == len(prefix) || strings.ContainsRune(value, '\\') {
 		return false
 	}
