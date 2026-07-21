@@ -4,7 +4,7 @@ AMSFTP provides recursive search while keeping standard SFTP as the permanent ba
 
 ## Search keys
 
-- `/` filters the current directory only.
+- `/` fuzzy-matches only the entries already loaded for the current directory. Up/Down selects a match, Enter keeps that entry selected in the full listing, and Esc restores the previous cursor and filter. It performs no recursive remote read.
 - `f` opens recursive filename search rooted at the active pane. Results stream into the search drawer and can be opened, previewed, or copied through the existing operation intents.
 - `g/` opens recursive content search. Without a Helper, AMSFTP first shows that this is a bounded, slower SFTP range-read scan; press Enter again to confirm. Esc cancels the modal or active search.
 
@@ -18,7 +18,7 @@ Filename search does not follow directory symlinks. Content search skips binary 
 - Level 1: an optional verified Helper can accelerate filename/content search and independently offer strong hash, disk stats, tail, watch, and same-host copy.
 - Level 2 remains a separate production-gated capability and is not claimed by the Helper search path.
 
-The status line refreshes the active SSH pane's capability snapshot at most once per second and shows `helper:L0 <reason>` or `helper:L1 <version> [capabilities]`. Stale Endpoint/session/generation refreshes are discarded. The Jobs drawer shows the frozen route (`local`, `sftp_relay`, or `helper_same_host`). Helper presence never implies every capability. A crash or malformed frame marks only the current enhanced action partial; a new search uses Level 0, and the SFTP Provider and unrelated Jobs remain available.
+The status line refreshes the active SSH pane's capability snapshot at most once per second, but presents the result as a user-facing connection mode: `Standard SFTP`, `Standard SFTP (enhancement failed)`, or `Enhanced: Helper <version>`. Internal capability counts, generations, and raw reason identifiers stay out of the primary status line; use `amsftp helper status` or diagnostics when that detail is needed. Stale Endpoint/session/generation refreshes are discarded. The Jobs drawer shows the frozen route (`local`, `sftp_relay`, or `helper_same_host`). Helper presence never implies every capability. A crash or malformed frame marks only the current enhanced action partial; a new search uses Level 0, and the SFTP Provider and unrelated Jobs remain available.
 
 Tail/watch events are loss-possible, coalesced hints. Refresh/stat/list is still authoritative. Disk stats do not treat unknown quota as unlimited. Strong-hash output becomes invalid if the file changes while it is read.
 

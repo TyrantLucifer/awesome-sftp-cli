@@ -187,15 +187,26 @@ func (p PaneState) selectedAt(index int) bool {
 }
 
 func (p *PaneState) rebuildVisible() {
-	query := strings.ToLower(p.Filter)
+	query := p.Filter
+	scores := make([]int, len(p.Entries))
 	p.visible = p.visible[:0]
 	for index := range p.Entries {
-		if (!p.ShowHidden && strings.HasPrefix(p.Entries[index].Name, ".")) || query != "" && !strings.Contains(strings.ToLower(p.Entries[index].Name), query) {
+		if !p.ShowHidden && strings.HasPrefix(p.Entries[index].Name, ".") {
 			continue
+		}
+		if query != "" {
+			score, ok := fuzzyScore(p.Entries[index].Name, query)
+			if !ok {
+				continue
+			}
+			scores[index] = score
 		}
 		p.visible = append(p.visible, index)
 	}
 	sort.SliceStable(p.visible, func(left, right int) bool {
+		if query != "" && scores[p.visible[left]] != scores[p.visible[right]] {
+			return scores[p.visible[left]] < scores[p.visible[right]]
+		}
 		return p.entryLess(p.Entries[p.visible[left]], p.Entries[p.visible[right]])
 	})
 	p.clampCursor()
@@ -515,6 +526,9 @@ type Model struct {
 	commandInput   []rune
 	editSaveAs     []rune
 	searchInput    []rune
+	jumpAnchor     domain.Location
+	jumpFilter     string
+	hasJumpAnchor  bool
 	pendingRename  transfer.FileRef
 	pendingDelete  []transfer.FileRef
 	pendingMove    []Intent

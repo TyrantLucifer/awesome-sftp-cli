@@ -17,7 +17,7 @@
 | CONN-003 | 双位置启动 | Verified | 支持本地路径和 `host:/absolute/path` 的任意两栏组合。 | [CLI 参考](../user/cli.md) |
 | CONN-005 | 多远端隔离 | Verified | 不同远端的连接、能力、错误和认证提示不会串线。 | [daemon Provider 路由测试](../../internal/daemon/provider_router_test.go) |
 | CONN-006 | 断线与重连 | Verified | 只读请求可安全恢复，写任务交给持久状态机判断。 | [SFTP Provider 测试](../../internal/provider/sftp/provider_test.go)与[运维手册](../operations/runbook.md) |
-| PANE-001 | 平等双栏 | Verified | 左右栏拥有独立 Endpoint、路径、光标、选择和加载状态；活动栏通过有界模糊 Host 选择器切换 Endpoint，未匹配文本不会提交。 | [TUI model 测试](../../internal/tui/model_test.go)与[Picker 测试](../../internal/tui/picker_test.go) |
+| PANE-001 | 平等双栏 | Verified | 左右栏拥有独立 Endpoint、路径、光标、选择和加载状态；活动栏支持有界模糊 Host 选择和已加载目录项模糊跳转，目录跳转可选择、确认并恢复完整列表或取消回原位置；主状态栏优先显示可操作恢复入口和用户可读连接/缓存状态，不暴露 capability generation 等内部标识。 | [TUI model 测试](../../internal/tui/model_test.go)、[目录跳转测试](../../internal/tui/jump_test.go)、[渲染测试](../../internal/tui/render_test.go)与[Picker 测试](../../internal/tui/picker_test.go) |
 | PANE-004 | 增量目录加载 | Verified | 首屏不等待完整目录读取，列表可取消并报告 partial。 | [Provider listing](../../internal/provider/listing.go)与[TUI 测试](../../internal/tui/render_test.go) |
 | PANE-005 | 窗口化渲染 | Verified | 大目录只构造可见行与有界 overscan。 | [渲染测试](../../internal/tui/render_test.go) |
 | WORK-001 | 持久工作区 | Verified | 保存两栏位置和视图策略，不保存认证秘密。 | [workspace 路由测试](../../internal/daemon/workspace_router_test.go) |
@@ -32,7 +32,7 @@
 | MOVE-001 | 安全移动 | Verified | 目标验证并提交前不删除来源。 | [move 实现](../../internal/transfer/move.go)与[持久传输指南](../user/durable-transfers.md) |
 | DELETE-001 | 显式删除 | Verified | 删除与剪切分离，不可逆递归删除需要独立确认。 | [delete 实现](../../internal/transfer/delete.go)与[持久传输指南](../user/durable-transfers.md) |
 | CONFLICT-001 | 冲突和并发修改 | Verified | overwrite、skip、rename 与编辑回传冲突都有明确选择，不静默覆盖。 | [Plan 测试](../../internal/transfer/plan_test.go)与[编辑测试](../../internal/tui/edit_session_test.go) |
-| PREVIEW-001 | 有界预览 | Verified | 文本、图片和外部预览受字节、时间和终端能力限制；行滚动、EOF range 与空文件不会产生越界或零长度读取。 | [预览测试](../../internal/tui/preview_test.go)、[drawer 测试](../../internal/tui/drawer_test.go)、[编排测试](../../internal/app/preview_orchestration_test.go)与[预览指南](../user/preview-edit-cache.md) |
+| PREVIEW-001 | 有界预览 | Verified | 文本、图片和外部预览受字节、时间和终端能力限制；Preview 抽屉按终端高度在 6–16 行内自适应，Jobs/Log 保持固定有界；行滚动、EOF range 与空文件不会产生越界或零长度读取。 | [预览测试](../../internal/tui/preview_test.go)、[drawer 测试](../../internal/tui/drawer_test.go)、[编排测试](../../internal/app/preview_orchestration_test.go)与[预览指南](../user/preview-edit-cache.md) |
 | EDIT-001 | 远端编辑和 opener | Verified | 使用缓存租约并在回传前复查远端版本。 | [edit 路由测试](../../internal/daemon/edit_router_test.go) |
 | CACHE-001 | 配额与租约缓存 | Verified | LRU、ephemeral、pinned offline 不回收活跃租约。 | [缓存生命周期测试](../../internal/cachemanager/lifecycle_test.go) |
 | SEARCH-001 | 有界文件名和内容搜索 | Verified | 搜索有时间、结果、深度和字节预算，耗尽时明确 partial。 | [搜索 contract](../../internal/search/filename_contract_test.go)与[搜索指南](../user/search-helper.md) |

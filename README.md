@@ -101,7 +101,7 @@ amsftp /absolute/local/path work:/absolute/remote/path
 | `D` | 进入独立确认的删除流程 |
 | `K` / `J` / `L` | 打开 Preview / Jobs / Log 抽屉 |
 | `e` / `o` | 使用终端编辑器编辑 / 使用默认应用打开 |
-| `/` / `f` / `g/` | 当前目录过滤 / 文件名搜索 / 内容搜索 |
+| `/` / `f` / `g/` | 当前目录模糊跳转 / 文件名搜索 / 内容搜索 |
 | `!` / `gs` | 一次性命令 / 交互 shell |
 | `q` | 退出当前 TUI；不隐式取消后台 Job |
 

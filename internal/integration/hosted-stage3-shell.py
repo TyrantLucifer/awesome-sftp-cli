@@ -113,7 +113,7 @@ def exercise_shell(binary, observer, endpoint, cwd, marker, command_marker, envi
     output = bytearray()
     try:
         set_size(fd, 24, 120)
-        read_until(fd, observer, output, b"READ-ONLY")
+        read_until(fd, observer, output, b"Ready")
 
         # Prove the user-visible one-shot command surface through the real
         # process cwd (local) or a fresh OpenSSH transport (remote). The second

@@ -77,7 +77,7 @@ def run_client(binary, browse_path, environment, terminate=False):
         read_until(fd, b"resize")
         set_size(fd, 24, 80)
         os.kill(pid, signal.SIGWINCH)
-        read_until(fd, b"READ-ONLY")
+        read_until(fd, b"Ready")
         if terminate:
             os.kill(pid, signal.SIGTERM)
         else:

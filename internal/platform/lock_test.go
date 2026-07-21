@@ -52,9 +52,12 @@ func TestAcquireInstanceLockIsExclusiveAndReleases(t *testing.T) {
 func TestAcquireInstanceLockDoesNotTakeOverUnsafeExistingFile(t *testing.T) {
 	directory := privateTemporaryDirectory(t)
 	path := filepath.Join(directory, lockFileName)
-	// #nosec G306 -- the deliberately unsafe fixture proves fail-closed behavior.
-	if err := os.WriteFile(path, []byte("sentinel"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte("sentinel"), 0o600); err != nil {
 		t.Fatalf("write unsafe lock: %v", err)
+	}
+	// #nosec G302 -- the deliberately unsafe fixture proves fail-closed behavior.
+	if err := os.Chmod(path, 0o644); err != nil {
+		t.Fatalf("chmod unsafe lock: %v", err)
 	}
 
 	if _, err := AcquireInstanceLock(path, ValidateRuntimeFallback); err == nil {

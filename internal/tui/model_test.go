@@ -832,7 +832,7 @@ func TestRefreshRemapsCursorAndMarksByLocation(t *testing.T) {
 	}
 }
 
-func TestFilterAppliesToLoadedAndIncomingEntriesAndClearsLosslessly(t *testing.T) {
+func TestFuzzyFilterRanksLoadedAndIncomingEntriesAndClearsLosslessly(t *testing.T) {
 	model := testModel(t)
 	model, _ = Reduce(model, SetFilter{Pane: Left, Query: "file"})
 	if got := model.Panes[Left].VisibleNames(); fmt.Sprint(got) != "[file.txt]" {
@@ -848,7 +848,7 @@ func TestFilterAppliesToLoadedAndIncomingEntriesAndClearsLosslessly(t *testing.T
 			testEntry(leftEndpointID, "/left/hidden", domain.EntryFile),
 		},
 	})
-	if got := model.Panes[Left].VisibleNames(); fmt.Sprint(got) != "[another-file file.txt]" {
+	if got := model.Panes[Left].VisibleNames(); fmt.Sprint(got) != "[file.txt another-file]" {
 		t.Fatalf("filtered names after page = %v", got)
 	}
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
@@ -141,47 +142,7 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 		surface.PutClipped(leftWidth, y, 1, "│", StylePlain)
 	}
 	statusY := height - drawerRows - 1
-	status := "READ-ONLY"
-	active := model.Panes[model.Active]
-	if active.Listing.Partial {
-		status += " | partial"
-	} else if active.Listing.Loading {
-		status += " | loading"
-	}
-	if active.Filter != "" {
-		status += " | /" + SanitizeTerminalText(active.Filter)
-	}
-	if active.Listing.Message != "" {
-		status += " | " + SanitizeTerminalText(active.Listing.Message)
-	}
-	if active.CapabilityGeneration != 0 {
-		status += fmt.Sprintf(" | caps:%d@%d", len(active.Capabilities.Items), active.CapabilityGeneration)
-	}
-	if helper := renderHelperStatus(active.Capabilities); helper != "" {
-		status += " | " + helper
-	}
-	direction := "↑"
-	if active.Sort.Descending {
-		direction = "↓"
-	}
-	status += " | sort:" + string(active.Sort.Key) + direction
-	if active.ShowHidden {
-		status += " | hidden:on"
-	} else {
-		status += " | hidden:off"
-	}
-	if model.Count != 0 {
-		status += fmt.Sprintf(" | %d", model.Count)
-	}
-	if model.RecoverableEdits != 0 {
-		status += fmt.Sprintf(" | edits:recoverable(%d)", model.RecoverableEdits)
-	}
-	status += " | cache:" + string(model.CachePolicy)
-	status += " | " + string(model.Mode)
-	if model.Notice != "" {
-		status += " | " + SanitizeTerminalText(model.Notice)
-	}
-	surface.PutClipped(0, statusY, width, status, StyleStatus)
+	surface.PutClipped(0, statusY, width, renderStatusBar(model), StyleStatus)
 
 	if drawerRows != 0 {
 		renderDrawer(surface, model, statusY+1, width, drawerRows)
@@ -228,6 +189,89 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	return stats
 }
 
+func renderStatusBar(model Model) string {
+	active := model.Panes[model.Active]
+	if model.Mode == ModeFilter {
+		query := SanitizeTerminalText(active.Filter)
+		if query == "" {
+			query = "type to search"
+		}
+		matchLabel := "matches"
+		if active.VisibleCount() == 1 {
+			matchLabel = "match"
+		}
+		return fmt.Sprintf("Jump: %s | %d %s | ↑/↓ select | Enter jump | Esc clear", query, active.VisibleCount(), matchLabel)
+	}
+	segments := []string{renderPaneStatus(active)}
+	if model.Mode == ModeVisual {
+		segments = append(segments, "Visual selection")
+	}
+	if model.RecoverableEdits != 0 {
+		label := "edits"
+		if model.RecoverableEdits == 1 {
+			label = "edit"
+		}
+		segments = append(segments, fmt.Sprintf("%d %s to recover (E)", model.RecoverableEdits, label))
+	}
+	if active.Listing.Message != "" {
+		segments = append(segments, SanitizeTerminalText(active.Listing.Message))
+	}
+	if model.Notice != "" && (model.RecoverableEdits == 0 || !strings.Contains(model.Notice, "recoverable edit session")) {
+		segments = append(segments, SanitizeTerminalText(model.Notice))
+	}
+	if active.Filter != "" {
+		segments = append(segments, "Filter: "+SanitizeTerminalText(active.Filter))
+	}
+	if model.Count != 0 {
+		segments = append(segments, fmt.Sprintf("Count: %d", model.Count))
+	}
+	if active.Endpoint.Kind == domain.EndpointSSH {
+		if helper := renderHelperStatus(active.Capabilities); helper != "" {
+			segments = append(segments, helper)
+		}
+	}
+	direction := "↑"
+	if active.Sort.Descending {
+		direction = "↓"
+	}
+	segments = append(segments, "Sort: "+string(active.Sort.Key)+" "+direction)
+	if active.ShowHidden {
+		segments = append(segments, "Hidden files shown")
+	}
+	switch model.CachePolicy {
+	case cache.PolicyLRU:
+		segments = append(segments, "Cache: automatic")
+	case cache.PolicyEphemeral:
+		segments = append(segments, "Cache: temporary")
+	case cache.PolicyPinnedOffline:
+		segments = append(segments, "Cache: offline")
+	}
+	return strings.Join(segments, " | ")
+}
+
+func renderPaneStatus(pane PaneState) string {
+	if pane.Listing.Partial {
+		return "Partial results"
+	}
+	if pane.Listing.Loading {
+		return "Loading…"
+	}
+	switch pane.Connection {
+	case domain.StateConnecting:
+		return "Connecting…"
+	case domain.StateDisconnected:
+		return "Disconnected"
+	case domain.StateDegraded:
+		return "Limited connection"
+	case domain.StateAuthRequired:
+		return "Authentication required"
+	case domain.StateFailed:
+		return "Connection failed"
+	default:
+		return "Ready"
+	}
+}
+
 func renderHelperStatus(snapshot domain.CapabilitySnapshot) string {
 	capability, ok := snapshot.Lookup("helper_status")
 	if !ok {
@@ -239,22 +283,19 @@ func renderHelperStatus(snapshot domain.CapabilitySnapshot) string {
 	}
 	level := values["level"]
 	if level != "0" && level != "1" {
-		return "helper:unknown"
+		return "Connection mode unknown"
 	}
-	result := "helper:L" + level
 	if level == "1" {
+		result := "Enhanced: Helper"
 		if version := values["version"]; version != "" {
-			result += " v" + SanitizeTerminalText(version)
-		}
-		if capabilities := values["capabilities"]; capabilities != "" {
-			result += " [" + SanitizeTerminalText(capabilities) + "]"
+			result += " " + SanitizeTerminalText(version)
 		}
 		return result
 	}
-	if reason := values["reason"]; reason != "" {
-		result += " " + SanitizeTerminalText(reason)
+	if values["reason"] == "session_failed" {
+		return "Standard SFTP (enhancement failed)"
 	}
-	return result
+	return "Standard SFTP"
 }
 
 func renderCacheClearModal(surface Surface, model Model, width, height int) {
@@ -360,6 +401,9 @@ func drawerRows(drawer DrawerState, height int) int {
 	requested := drawer.Rows
 	if requested <= 0 {
 		requested = 6
+	}
+	if drawer.Mode == DrawerPreview {
+		requested = max(requested, min(16, height/2))
 	}
 	return min(requested, max(2, height-3))
 }

@@ -14,7 +14,7 @@ AMSFTP provides bounded Preview/Jobs/Log drawers, an owner-only managed cache, l
 | `j`, `k` in Preview | Scroll the rendered Preview one line down or up. At a partial range boundary, request the next or previous bounded 64 KiB window. |
 | `r` in Preview | Cycle automatic, raw-JSON when available, and metadata views. |
 
-Switching drawer tabs keeps only one bottom drawer active. `K`/`J`/`L` are uppercase and do not collide with lowercase Vim navigation. Narrow terminals reduce the drawer height; resize, pane switch, cursor movement, refresh, and endpoint generation changes preserve the UI model while canceling or rejecting stale Preview results.
+Switching drawer tabs keeps only one bottom drawer active. `K`/`J`/`L` are uppercase and do not collide with lowercase Vim navigation. Preview alone grows with the terminal from the six-row baseline to at most 16 rows, using about half of the available height; a typical 24-row terminal therefore shows ten content lines instead of four. Jobs and Log retain their fixed bounded height. Narrow terminals cap every drawer to the safe available area; resize, pane switch, cursor movement, refresh, and endpoint generation changes preserve the UI model while canceling or rejecting stale Preview results.
 
 Every provider Preview read is at most 64 KiB and a Preview retains at most 512 KiB. Built-in rendering is capped at 512 KiB input/output, 256 KiB parsed JSON, JSON depth 64, 10,000 rendered lines, and 4,096 syntax spans. Range navigation is clamped to a readable source window, and empty files render without issuing a zero-length Provider read. Partial ranges show offsets/truncation; binary, NUL, invalid UTF-8, ANSI, and control bytes are sanitized or rendered as bounded hex instead of being written raw to the terminal. A sparse or very large file is never read in full just to preview it.
 
@@ -26,7 +26,7 @@ Configured external previewers are considered only after the built-in result, an
 
 ## Cache policies and cleanup
 
-The status line always shows `cache:lru`, `cache:ephemeral`, or `cache:pinned_offline`. The default for a new workspace is `lru`.
+The status line always shows the current policy in user-facing terms: `Cache: automatic` for `lru`, `Cache: temporary` for `ephemeral`, or `Cache: offline` for `pinned_offline`. The default for a new workspace is `lru`.
 
 While the `g` path prompt is empty, these second keys are cache/shell controls rather than path text:
 

@@ -124,6 +124,42 @@ func TestDrawerRendererUsesBoundedBottomRegionAtNormalAndNarrowSizes(t *testing.
 	}
 }
 
+func TestPreviewDrawerAdaptsToTerminalHeightWithoutExpandingOtherDrawers(t *testing.T) {
+	for _, test := range []struct {
+		height int
+		want   int
+	}{{height: 7, want: 4}, {height: 12, want: 6}, {height: 24, want: 12}, {height: 40, want: 16}} {
+		if got := drawerRows(DrawerState{Mode: DrawerPreview, Rows: 6}, test.height); got != test.want {
+			t.Fatalf("preview drawer rows at height %d = %d, want %d", test.height, got, test.want)
+		}
+	}
+	if got := drawerRows(DrawerState{Mode: DrawerJobs, Rows: 6}, 24); got != 6 {
+		t.Fatalf("Jobs drawer rows = %d, want fixed 6", got)
+	}
+	if got := drawerRows(DrawerState{Mode: DrawerLog, Rows: 6}, 24); got != 6 {
+		t.Fatalf("Log drawer rows = %d, want fixed 6", got)
+	}
+}
+
+func TestAdaptivePreviewDrawerShowsTenContentLinesAtNormalHeight(t *testing.T) {
+	model := testModel(t)
+	model.Drawer = DrawerState{Mode: DrawerPreview, Focus: FocusDrawer, Rows: 6}
+	model.Preview = PreviewState{Location: model.Panes[Left].Entries[1].Location, Data: []byte(strings.Join([]string{
+		"line-00", "line-01", "line-02", "line-03", "line-04", "line-05",
+		"line-06", "line-07", "line-08", "line-09", "line-10",
+	}, "\n"))}
+	surface := newMemorySurface(100, 24)
+
+	stats := Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	if !strings.Contains(got, "line-09") || strings.Contains(got, "line-10") {
+		t.Fatalf("adaptive Preview did not render exactly ten content lines:\n%s", got)
+	}
+	if stats.ListRows != 10 {
+		t.Fatalf("list rows = %d, want 10 with a 12-row Preview drawer", stats.ListRows)
+	}
+}
+
 func TestTranslateTCellDistinguishesUppercaseDrawerKeys(t *testing.T) {
 	for input, want := range map[string]Key{"K": KeyPreviewDrawer, "J": KeyJobs, "L": KeyLogDrawer} {
 		action, ok := TranslateTCellEvent(tcell.NewEventKey(tcell.KeyRune, input, tcell.ModNone), ModeNormal)

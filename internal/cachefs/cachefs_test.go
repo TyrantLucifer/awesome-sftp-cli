@@ -96,8 +96,11 @@ func TestInitializeRejectsNonCanonicalUnsafeOrExistingForeignLayout(t *testing.T
 	t.Run("wrong mode", func(t *testing.T) {
 		root := privateRoot(t)
 		contentRoot := filepath.Join(root, ContentRootName)
-		if err := os.Mkdir(contentRoot, 0o755); err != nil { //nolint:gosec // deliberate unsafe existing-directory fixture
+		if err := os.Mkdir(contentRoot, 0o700); err != nil {
 			t.Fatalf("Mkdir(): %v", err)
+		}
+		if err := os.Chmod(contentRoot, 0o755); err != nil { //nolint:gosec // deliberate unsafe existing-directory fixture
+			t.Fatalf("Chmod(): %v", err)
 		}
 		if _, err := Initialize(root); err == nil {
 			t.Fatal("Initialize(wrong mode) error = nil")
@@ -369,8 +372,11 @@ func TestInspectBlobRejectsSymlinkPermissionsHardlinksAndWrongDigest(t *testing.
 			name: "public mode",
 			setup: func(t *testing.T, path string) {
 				t.Helper()
-				if err := os.WriteFile(path, content, 0o644); err != nil { //nolint:gosec // deliberate negative fixture
+				if err := os.WriteFile(path, content, 0o600); err != nil {
 					t.Fatalf("WriteFile(): %v", err)
+				}
+				if err := os.Chmod(path, 0o644); err != nil { //nolint:gosec // deliberate negative fixture
+					t.Fatalf("Chmod(): %v", err)
 				}
 			},
 		},

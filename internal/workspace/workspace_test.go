@@ -241,7 +241,11 @@ func TestCompletionNamesAreReadOnlyPrivateBoundedAndDeterministic(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(root, "not-a-workspace.txt"), []byte("ignored"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(root, "unsafe.json"), []byte("ignored"), 0o644); err != nil { //nolint:gosec // negative test deliberately creates a non-private workspace file.
+	unsafePath := filepath.Join(root, "unsafe.json")
+	if err := os.WriteFile(unsafePath, []byte("ignored"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(unsafePath, 0o644); err != nil { //nolint:gosec // negative test deliberately creates a non-private workspace file.
 		t.Fatal(err)
 	}
 	if err := os.Mkdir(filepath.Join(root, "directory.json"), 0o700); err != nil {
