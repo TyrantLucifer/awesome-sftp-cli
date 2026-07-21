@@ -41,7 +41,7 @@ func TestRendererVisitsOnlyWindowRowsForFiftyThousandEntries(t *testing.T) {
 	}
 }
 
-func TestRendererSnapshotShowsTwoPanesFocusReadOnlyAndPartialState(t *testing.T) {
+func TestRendererSnapshotShowsTwoPanesFocusAndPartialState(t *testing.T) {
 	model := testModel(t)
 	left := model.Panes[Left]
 	left.Listing.Partial = true
@@ -50,10 +50,60 @@ func TestRendererSnapshotShowsTwoPanesFocusReadOnlyAndPartialState(t *testing.T)
 
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"[left] /left", " right  /right", "> dir", "READ-ONLY", "partial"} {
+	for _, want := range []string{"[left] /left", " right  /right", "> dir", "Partial results"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("snapshot missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestRendererStatusPrioritizesPlainLanguageActions(t *testing.T) {
+	model := testModel(t)
+	snapshot, err := domain.NewCapabilitySnapshot(
+		domain.CapabilityRevision{SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Generation: 4}, true,
+		[]domain.Capability{{Name: "read", Version: 1}, {Name: "helper_status", Version: 1, Constraints: []domain.CapabilityConstraint{
+			{Name: "level", Value: "0"}, {Name: "reason", Value: "not_available"},
+		}}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	left := model.Panes[Left]
+	left.Endpoint.Kind = domain.EndpointSSH
+	left.Endpoint.SSHHostAlias = "work"
+	left.CapabilityGeneration = snapshot.Revision.Generation
+	left.Capabilities = snapshot
+	model.Panes[Left] = left
+	model.RecoverableEdits = 1
+
+	surface := newMemorySurface(120, 8)
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"Ready", "1 edit to recover (E)", "Standard SFTP", "Sort: name ↑", "Cache: automatic"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("plain-language status missing %q:\n%s", want, got)
+		}
+	}
+	for _, internal := range []string{"READ-ONLY", "caps:", "helper:L0", "edits:recoverable", "hidden:off", "cache:lru", " | normal"} {
+		if strings.Contains(got, internal) {
+			t.Fatalf("status exposed internal detail %q:\n%s", internal, got)
+		}
+	}
+
+	narrow := newMemorySurface(44, 8)
+	Render(narrow, model, RenderOptions{Overscan: 1})
+	if got = narrow.String(); !strings.Contains(got, "1 edit to recover (E)") {
+		t.Fatalf("narrow status hid the recovery action:\n%s", got)
+	}
+
+	left = model.Panes[Left]
+	left.Endpoint.Kind = domain.EndpointLocal
+	left.Endpoint.SSHHostAlias = ""
+	model.Panes[Left] = left
+	local := newMemorySurface(120, 8)
+	Render(local, model, RenderOptions{Overscan: 1})
+	if got = local.String(); strings.Contains(got, "SFTP") || strings.Contains(got, "Helper") {
+		t.Fatalf("local pane displayed an SSH connection mode:\n%s", got)
 	}
 }
 
@@ -238,7 +288,7 @@ func TestRendererShowsMetadataPaneStateAndDirectPathModal(t *testing.T) {
 	surface := newMemorySurface(80, 12)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"42 B", "0644", "sort:name", "hidden:on", "Go to absolute path", "Path: /srv"} {
+	for _, want := range []string{"42 B", "0644", "Sort: name", "Hidden files shown", "Go to absolute path", "Path: /srv"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("pane/path render missing %q:\n%s", want, got)
 		}
@@ -258,7 +308,7 @@ func TestRendererShowsPaneConnectionAndFailureState(t *testing.T) {
 	}
 }
 
-func TestRendererShowsCapabilityRevisionAndMultilinePreviewState(t *testing.T) {
+func TestRendererKeepsCapabilityRevisionOutOfMultilinePreviewStatus(t *testing.T) {
 	model := testModel(t)
 	snapshot, err := domain.NewCapabilitySnapshot(
 		domain.CapabilityRevision{SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Generation: 4},
@@ -279,10 +329,13 @@ func TestRendererShowsCapabilityRevisionAndMultilinePreviewState(t *testing.T) {
 
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"caps:2@4", "[Preview]", "/left/file.txt [truncated]", "first", "second"} {
+	for _, want := range []string{"[Preview]", "/left/file.txt [truncated]", "first", "second"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("preview/capability render missing %q:\n%s", want, got)
 		}
+	}
+	if strings.Contains(got, "caps:") {
+		t.Fatalf("preview status exposed an internal capability revision:\n%s", got)
 	}
 }
 
@@ -310,7 +363,7 @@ func TestRendererStartsPreviewAtTheScrolledLine(t *testing.T) {
 	}
 }
 
-func TestRendererShowsHelperLevelVersionCapabilitiesAndDegradationReason(t *testing.T) {
+func TestRendererShowsPlainLanguageConnectionModeAndDegradation(t *testing.T) {
 	model := testModel(t)
 	snapshot, err := domain.NewCapabilitySnapshot(
 		domain.CapabilityRevision{SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Generation: 4}, true,
@@ -322,15 +375,22 @@ func TestRendererShowsHelperLevelVersionCapabilitiesAndDegradationReason(t *test
 		t.Fatal(err)
 	}
 	left := model.Panes[Left]
+	left.Endpoint.Kind = domain.EndpointSSH
+	left.Endpoint.SSHHostAlias = "work"
 	left.CapabilityGeneration = snapshot.Revision.Generation
 	left.Capabilities = snapshot
 	model.Panes[Left] = left
 	surface := newMemorySurface(140, 10)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"helper:L1", "v4.0.0", "content_search,filename_search"} {
+	for _, want := range []string{"Enhanced: Helper 4.0.0"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Helper status missing %q:\n%s", want, got)
+		}
+	}
+	for _, internal := range []string{"helper:L1", "content_search,filename_search"} {
+		if strings.Contains(got, internal) {
+			t.Fatalf("Helper status exposed internal detail %q:\n%s", internal, got)
 		}
 	}
 
@@ -344,7 +404,7 @@ func TestRendererShowsHelperLevelVersionCapabilitiesAndDegradationReason(t *test
 	model.Panes[Left] = left
 	surface = newMemorySurface(140, 10)
 	Render(surface, model, RenderOptions{Overscan: 1})
-	if got = surface.String(); !strings.Contains(got, "helper:L0 session_failed") {
+	if got = surface.String(); !strings.Contains(got, "Standard SFTP (enhancement failed)") {
 		t.Fatalf("Helper degradation missing:\n%s", got)
 	}
 }

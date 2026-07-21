@@ -17,7 +17,7 @@
 | CONN-003 | 双位置启动 | Verified | 支持本地路径和 `host:/absolute/path` 的任意两栏组合。 | [CLI 参考](../user/cli.md) |
 | CONN-005 | 多远端隔离 | Verified | 不同远端的连接、能力、错误和认证提示不会串线。 | [daemon Provider 路由测试](../../internal/daemon/provider_router_test.go) |
 | CONN-006 | 断线与重连 | Verified | 只读请求可安全恢复，写任务交给持久状态机判断。 | [SFTP Provider 测试](../../internal/provider/sftp/provider_test.go)与[运维手册](../operations/runbook.md) |
-| PANE-001 | 平等双栏 | Verified | 左右栏拥有独立 Endpoint、路径、光标、选择和加载状态；活动栏通过有界模糊 Host 选择器切换 Endpoint，未匹配文本不会提交。 | [TUI model 测试](../../internal/tui/model_test.go)与[Picker 测试](../../internal/tui/picker_test.go) |
+| PANE-001 | 平等双栏 | Verified | 左右栏拥有独立 Endpoint、路径、光标、选择和加载状态；活动栏通过有界模糊 Host 选择器切换 Endpoint，未匹配文本不会提交；主状态栏优先显示可操作恢复入口和用户可读连接/缓存状态，不暴露 capability generation 等内部标识。 | [TUI model 测试](../../internal/tui/model_test.go)、[渲染测试](../../internal/tui/render_test.go)与[Picker 测试](../../internal/tui/picker_test.go) |
 | PANE-004 | 增量目录加载 | Verified | 首屏不等待完整目录读取，列表可取消并报告 partial。 | [Provider listing](../../internal/provider/listing.go)与[TUI 测试](../../internal/tui/render_test.go) |
 | PANE-005 | 窗口化渲染 | Verified | 大目录只构造可见行与有界 overscan。 | [渲染测试](../../internal/tui/render_test.go) |
 | WORK-001 | 持久工作区 | Verified | 保存两栏位置和视图策略，不保存认证秘密。 | [workspace 路由测试](../../internal/daemon/workspace_router_test.go) |

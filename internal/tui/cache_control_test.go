@@ -26,13 +26,13 @@ func TestStatusAlwaysDisplaysCurrentCachePolicy(t *testing.T) {
 	model := editTestModel(t)
 	surface := newMemorySurface(100, 10)
 	Render(surface, model, RenderOptions{})
-	if !strings.Contains(surface.String(), "cache:lru") {
+	if !strings.Contains(surface.String(), "Cache: automatic") {
 		t.Fatalf("status omitted default cache policy:\n%s", surface.String())
 	}
 	model.CachePolicy = cache.PolicyPinnedOffline
 	surface = newMemorySurface(100, 10)
 	Render(surface, model, RenderOptions{})
-	if !strings.Contains(surface.String(), "cache:pinned_offline") {
+	if !strings.Contains(surface.String(), "Cache: offline") {
 		t.Fatalf("status omitted restored cache policy:\n%s", surface.String())
 	}
 }

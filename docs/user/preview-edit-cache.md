@@ -26,7 +26,7 @@ Configured external previewers are considered only after the built-in result, an
 
 ## Cache policies and cleanup
 
-The status line always shows `cache:lru`, `cache:ephemeral`, or `cache:pinned_offline`. The default for a new workspace is `lru`.
+The status line always shows the current policy in user-facing terms: `Cache: automatic` for `lru`, `Cache: temporary` for `ephemeral`, or `Cache: offline` for `pinned_offline`. The default for a new workspace is `lru`.
 
 While the `g` path prompt is empty, these second keys are cache/shell controls rather than path text:
 

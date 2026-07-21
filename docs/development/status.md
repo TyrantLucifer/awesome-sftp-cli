@@ -15,6 +15,7 @@
 - 内部预览反馈已为登录后的 Normal/Visual 浏览补齐方向键；`←/↓/↑/→` 与 `h/j/k/l` 使用相同的返回上级、下移、上移和进入语义。
 - 内部预览反馈已修复复制、移动、重命名和删除 Job 成功完成后可见文件列表不及时更新的问题；后台只在存在非终态 Job 时继续有界轮询，并对受影响目录去重刷新。
 - 内部预览反馈已简化 TUI Jobs 展示：内部路由证据不再挤占默认摘要，容量自动切换单位，传输中显示采样速度，选中任务分行展示来源与目标并在窄终端明确省略路径中段。
+- 内部预览反馈已重排 TUI 主状态栏：恢复入口和连接状态改为用户可读文案并前置，默认模式、capability generation、raw Helper 原因和默认 hidden 状态不再挤占主视图；缓存策略保留显示但使用 automatic/temporary/offline 语义。
 - CI 已拆为普通 PR/main 使用的影响感知 `Fast CI`、release 分支/tag/手动触发的完整 `Release Gates`，以及定时 `Nightly`；普通改动不再重复运行发布矩阵。
 - 严格 `X.Y.Z` 公开预览的一键安装/升级脚本、Homebrew formula 生成器与 tag 发布 workflow 已进入主线；脚本校验 checksum、原子替换 binary、保留上一版并按 daemon 契约完成启停验证。
 - `v0.1.1` 已修复 `v0.1.0` Homebrew 符号链接入口被认证 helper 完整性检查拒绝的问题；包管理器入口会冻结到 Cellar 真实二进制并保持最终路径的 owner、mode、ACL 与祖先目录校验。
