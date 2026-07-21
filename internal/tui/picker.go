@@ -22,16 +22,29 @@ type PickerChoice struct {
 }
 
 type Picker struct {
-	choices  []PickerChoice
-	visible  []PickerChoice
-	query    string
-	selected int
+	choices     []PickerChoice
+	visible     []PickerChoice
+	query       string
+	selected    int
+	allowManual bool
 }
 
 func NewPicker(choices []PickerChoice) Picker {
+	picker := Picker{choices: append([]PickerChoice(nil), choices...), allowManual: true}
+	picker.rebuild()
+	return picker
+}
+
+func newSelectionPicker(choices []PickerChoice) Picker {
 	picker := Picker{choices: append([]PickerChoice(nil), choices...)}
 	picker.rebuild()
 	return picker
+}
+
+func (p Picker) clone() Picker {
+	p.choices = append([]PickerChoice(nil), p.choices...)
+	p.visible = append([]PickerChoice(nil), p.visible...)
+	return p
 }
 
 func (p *Picker) SetQuery(query string) {
@@ -95,7 +108,9 @@ func (p *Picker) rebuild() {
 			return ranked[left].choice.Name < ranked[right].choice.Name
 		})
 		p.visible = p.visible[:0]
-		p.visible = append(p.visible, PickerChoice{Kind: PickerManualHost, Name: p.query})
+		if p.allowManual {
+			p.visible = append(p.visible, PickerChoice{Kind: PickerManualHost, Name: p.query})
+		}
 		for _, item := range ranked {
 			p.visible = append(p.visible, item.choice)
 		}

@@ -508,21 +508,21 @@ type Model struct {
 	CachePolicy        cache.Policy
 	CommandRunning     bool
 
-	workspaceName []rune
-	pathInput     []rune
-	endpointInput []rune
-	renameInput   []rune
-	commandInput  []rune
-	editSaveAs    []rune
-	searchInput   []rune
-	pendingRename transfer.FileRef
-	pendingDelete []transfer.FileRef
-	pendingMove   []Intent
-	repeatDelete  []transfer.FileRef
-	repeatMove    []Intent
-	repeatIntents []Intent
-	Width         int
-	Height        int
+	workspaceName  []rune
+	pathInput      []rune
+	endpointPicker Picker
+	renameInput    []rune
+	commandInput   []rune
+	editSaveAs     []rune
+	searchInput    []rune
+	pendingRename  transfer.FileRef
+	pendingDelete  []transfer.FileRef
+	pendingMove    []Intent
+	repeatDelete   []transfer.FileRef
+	repeatMove     []Intent
+	repeatIntents  []Intent
+	Width          int
+	Height         int
 }
 
 type ClipboardState struct {
@@ -544,12 +544,20 @@ func NewModel(left, right PaneState) Model {
 	left.rebuildVisible()
 	right.rebuildVisible()
 	return Model{
-		Panes:       [2]PaneState{left, right},
-		Active:      Left,
-		Mode:        ModeNormal,
-		Drawer:      DrawerState{Mode: DrawerClosed, Focus: FocusPane, Rows: 6},
-		CachePolicy: cache.PolicyLRU,
+		Panes:          [2]PaneState{left, right},
+		Active:         Left,
+		Mode:           ModeNormal,
+		Drawer:         DrawerState{Mode: DrawerClosed, Focus: FocusPane, Rows: 6},
+		CachePolicy:    cache.PolicyLRU,
+		endpointPicker: newSelectionPicker([]PickerChoice{{Kind: PickerHost, Name: "local"}}),
 	}
+}
+
+func (m *Model) SetEndpointChoices(choices []PickerChoice) {
+	if len(choices) == 0 {
+		choices = []PickerChoice{{Kind: PickerHost, Name: "local"}}
+	}
+	m.endpointPicker = newSelectionPicker(choices)
 }
 
 type IntentKind string

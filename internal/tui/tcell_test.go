@@ -61,6 +61,8 @@ func TestTranslateTCellEvents(t *testing.T) {
 		{name: "conflict overwrite", event: tcell.NewEventKey(tcell.KeyRune, "w", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyConflictOverwrite}},
 		{name: "conflict auto rename all", event: tcell.NewEventKey(tcell.KeyRune, "A", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyConflictAutoRenameAll}},
 		{name: "endpoint text", event: tcell.NewEventKey(tcell.KeyRune, "w", tcell.ModNone), mode: ModeEndpoint, want: TextInput{Text: "w"}},
+		{name: "endpoint down", event: tcell.NewEventKey(tcell.KeyDown, "", tcell.ModNone), mode: ModeEndpoint, want: KeyPress{Key: KeyDown}},
+		{name: "endpoint up", event: tcell.NewEventKey(tcell.KeyUp, "", tcell.ModNone), mode: ModeEndpoint, want: KeyPress{Key: KeyUp}},
 		{name: "endpoint submit", event: tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone), mode: ModeEndpoint, want: KeyPress{Key: KeySubmit}},
 		{name: "resize", event: tcell.NewEventResize(91, 27), mode: ModeFilter, want: Resize{Width: 91, Height: 27}},
 	}

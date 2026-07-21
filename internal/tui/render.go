@@ -198,7 +198,7 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 		renderPathModal(surface, string(model.pathInput), width, height)
 	}
 	if model.Mode == ModeEndpoint {
-		renderEndpointModal(surface, string(model.endpointInput), width, height)
+		renderEndpointModal(surface, model.endpointPicker, width, height)
 	}
 	if model.Mode == ModeRename {
 		renderRenameModal(surface, model.pendingRename, string(model.renameInput), width, height)
@@ -626,21 +626,33 @@ func renderPathModal(surface Surface, value string, width, height int) {
 	surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] open  [Esc] cancel", StyleStatus)
 }
 
-func renderEndpointModal(surface Surface, value string, width, height int) {
-	modalWidth := min(width-4, 64)
-	if modalWidth < 20 || height < 7 {
+func renderEndpointModal(surface Surface, picker Picker, width, height int) {
+	modalWidth := min(width-4, 72)
+	if modalWidth < 20 || height < 8 {
 		return
 	}
-	const modalHeight = 6
+	choices := picker.Visible()
+	visibleRows := min(len(choices), max(1, min(8, height-7)))
+	modalHeight := visibleRows + 5
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
 	for row := 0; row < modalHeight; row++ {
 		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
 	}
-	surface.PutClipped(x+1, y, modalWidth-2, "Change active endpoint", StyleStatus)
-	surface.PutClipped(x+1, y+2, modalWidth-2, "Host alias: "+SanitizeTerminalText(value), StyleStatus)
-	surface.PutClipped(x+1, y+3, modalWidth-2, "type local for LocalFS", StyleStatus)
-	surface.PutClipped(x+1, y+4, modalWidth-2, "[Enter] connect  [Esc] cancel", StyleStatus)
+	surface.PutClipped(x+1, y, modalWidth-2, "Change active endpoint", StyleActiveHeader)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Filter: "+SanitizeTerminalText(picker.Query()), StyleStatus)
+	window := ComputeWindow(len(choices), picker.SelectedIndex(), visibleRows, 0)
+	for row, index := 0, window.VisibleStart; index < window.VisibleEnd; row, index = row+1, index+1 {
+		marker, style := "  ", StylePlain
+		if index == picker.SelectedIndex() {
+			marker, style = "> ", StyleCursor
+		}
+		surface.PutClipped(x+1, y+2+row, modalWidth-2, marker+SanitizeTerminalText(choices[index].Name), style)
+	}
+	if len(choices) == 0 {
+		surface.PutClipped(x+1, y+2, modalWidth-2, "No configured Host matches", StyleError)
+	}
+	surface.PutClipped(x+1, y+modalHeight-2, modalWidth-2, "↑/↓ select · Enter connect · Esc cancel", StyleStatus)
 }
 
 func renderRenameModal(surface Surface, reference transfer.FileRef, value string, width, height int) {

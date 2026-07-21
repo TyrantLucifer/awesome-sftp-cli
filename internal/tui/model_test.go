@@ -588,6 +588,10 @@ func mustCapabilitySnapshot(t *testing.T, sessionID domain.SessionID, generation
 
 func TestEndpointModeEmitsActivePaneConnectionWithoutChangingOtherPane(t *testing.T) {
 	model := testModel(t)
+	model.SetEndpointChoices([]PickerChoice{
+		{Kind: PickerHost, Name: "local"},
+		{Kind: PickerHost, Name: "work-host"},
+	})
 	originalRight := model.Panes[Right]
 	model, _ = Reduce(model, KeyPress{Key: KeyEndpoint})
 	if model.Mode != ModeEndpoint {
@@ -600,6 +604,29 @@ func TestEndpointModeEmitsActivePaneConnectionWithoutChangingOtherPane(t *testin
 	}
 	if !reflect.DeepEqual(model.Panes[Right], originalRight) || model.Mode != ModeNormal {
 		t.Fatalf("endpoint mode changed unrelated state: %#v", model)
+	}
+}
+
+func TestEndpointModeRejectsUnmatchedHostAndSupportsSelectionKeys(t *testing.T) {
+	model := testModel(t)
+	model.SetEndpointChoices([]PickerChoice{
+		{Kind: PickerHost, Name: "local"},
+		{Kind: PickerHost, Name: "production-edge"},
+		{Kind: PickerHost, Name: "production-worker"},
+	})
+	model, _ = Reduce(model, KeyPress{Key: KeyEndpoint})
+	model, _ = Reduce(model, TextInput{Text: "prd"})
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, intents := Reduce(model, KeyPress{Key: KeySubmit})
+	if len(intents) != 1 || intents[0].Kind != IntentConnectEndpoint || intents[0].Name != "production-worker" {
+		t.Fatalf("selected endpoint intents = %#v", intents)
+	}
+
+	model, _ = Reduce(model, KeyPress{Key: KeyEndpoint})
+	model, _ = Reduce(model, TextInput{Text: "typo-with-no-match"})
+	model, intents = Reduce(model, KeyPress{Key: KeySubmit})
+	if len(intents) != 0 || model.Mode != ModeEndpoint || model.Notice != "no matching endpoint; choose a configured SSH host or local" {
+		t.Fatalf("unmatched endpoint = mode %q notice %q intents %#v", model.Mode, model.Notice, intents)
 	}
 }
 

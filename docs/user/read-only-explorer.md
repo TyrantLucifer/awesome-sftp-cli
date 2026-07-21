@@ -33,7 +33,7 @@ With no arguments, the startup picker combines saved workspaces and selectable H
 | `j`, `k` | Move down or up. A numeric prefix such as `12j` is supported; counts do not repeat unsafe actions. |
 | `h`, `l` | Open the parent; `l` enters a selected directory or opens bounded Preview/metadata for another object such as a file or symlink. |
 | `g` | Enter a canonical absolute path for the active pane. |
-| `c` | Switch only the active pane to `local` or an SSH Host alias. The old remote session is released after the replacement listing succeeds. |
+| `c` | Open the bounded Endpoint picker for `local` and selectable aliases discovered from OpenSSH configuration. Type to fuzzy-filter, use Up/Down to select, and press Enter to switch only the active pane. Unmatched text cannot be submitted as an unchecked alias. The old remote session is released after the replacement listing succeeds. |
 | `/` | Filter the entries already received for the active directory. |
 | `s`, `H`, `R` | Cycle sort, toggle hidden entries, or refresh. |
 | `v`, `V`, `Space` | Maintain visual or discrete selection state. Transfer commands can consume this selection through a frozen Job plan. |
