@@ -34,7 +34,7 @@ With no arguments, the startup picker combines saved workspaces and selectable H
 | `h`, `l` | Open the parent; `l` enters a selected directory or opens bounded Preview/metadata for another object such as a file or symlink. |
 | `g` | Enter a canonical absolute path for the active pane. |
 | `c` | Open the bounded Endpoint picker for `local` and selectable aliases discovered from OpenSSH configuration. Type to fuzzy-filter, use Up/Down to select, and press Enter to switch only the active pane. Unmatched text cannot be submitted as an unchecked alias. The old remote session is released after the replacement listing succeeds. |
-| `/` | Filter the entries already received for the active directory. |
+| `/` | Fuzzy-match entries already received for the active directory. Type a query, use Up/Down to select, Enter to jump the cursor to that entry, or Esc to restore the previous cursor and filter. This does not start a recursive remote search. |
 | `s`, `H`, `R` | Cycle sort, toggle hidden entries, or refresh. |
 | `v`, `V`, `Space` | Maintain visual or discrete selection state. Transfer commands can consume this selection through a frozen Job plan. |
 | `S` | Save the two-pane workspace under a validated name. |

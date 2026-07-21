@@ -4,7 +4,7 @@ AMSFTP provides recursive search while keeping standard SFTP as the permanent ba
 
 ## Search keys
 
-- `/` filters the current directory only.
+- `/` fuzzy-matches only the entries already loaded for the current directory. Up/Down selects a match, Enter keeps that entry selected in the full listing, and Esc restores the previous cursor and filter. It performs no recursive remote read.
 - `f` opens recursive filename search rooted at the active pane. Results stream into the search drawer and can be opened, previewed, or copied through the existing operation intents.
 - `g/` opens recursive content search. Without a Helper, AMSFTP first shows that this is a bounded, slower SFTP range-read scan; press Enter again to confirm. Esc cancels the modal or active search.
 

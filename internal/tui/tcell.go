@@ -55,7 +55,7 @@ func TranslateTCellEventWithKeymap(event tcell.Event, mode Mode, keymap Keymap) 
 	case *tcell.EventKey:
 		switch event.Key() {
 		case tcell.KeyEnter:
-			if mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm || mode == ModeCommand || mode == ModeCommandConfirm || mode == ModeEditDecision || mode == ModeEditSaveAs || mode == ModeEditLaunchConfirm || mode == ModeEditRecovery || mode == ModeCacheClearConfirm || mode == ModeFilenameSearch || mode == ModeContentSearch || mode == ModeContentSearchConfirm {
+			if mode == ModeFilter || mode == ModeAuth || mode == ModeWorkspace || mode == ModePath || mode == ModeEndpoint || mode == ModeRename || mode == ModeMoveConfirm || mode == ModeDeleteConfirm || mode == ModeCommand || mode == ModeCommandConfirm || mode == ModeEditDecision || mode == ModeEditSaveAs || mode == ModeEditLaunchConfirm || mode == ModeEditRecovery || mode == ModeCacheClearConfirm || mode == ModeFilenameSearch || mode == ModeContentSearch || mode == ModeContentSearchConfirm {
 				return KeyPress{Key: KeySubmit}, true
 			}
 		case tcell.KeyTab:
@@ -65,11 +65,11 @@ func TranslateTCellEventWithKeymap(event tcell.Event, mode Mode, keymap Keymap) 
 		case tcell.KeyBackspace:
 			return KeyPress{Key: KeyBackspace}, true
 		case tcell.KeyDown:
-			if mode == ModeNormal || mode == ModeVisual || mode == ModeEndpoint {
+			if mode == ModeNormal || mode == ModeVisual || mode == ModeFilter || mode == ModeEndpoint {
 				return KeyPress{Key: KeyDown}, true
 			}
 		case tcell.KeyUp:
-			if mode == ModeNormal || mode == ModeVisual || mode == ModeEndpoint {
+			if mode == ModeNormal || mode == ModeVisual || mode == ModeFilter || mode == ModeEndpoint {
 				return KeyPress{Key: KeyUp}, true
 			}
 		case tcell.KeyLeft:

@@ -145,9 +145,14 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		pane := model.Panes[model.Active].clone()
+		if strings.ContainsAny(action.Text, "\x00\r\n") || len(pane.Filter)+len(action.Text) > 255 {
+			model.Notice = "entry jump must be one line of at most 255 bytes"
+			return model, nil
+		}
 		pane.Filter += action.Text
 		pane.visible = nil
 		pane.rebuildVisible()
+		pane.Cursor = 0
 		model.Panes[model.Active] = pane
 		return model, nil
 	case Resize:
@@ -1254,6 +1259,17 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		return model, []Intent{{Kind: IntentPreviewCancel}}
 	}
 	if key == KeyTab {
+		if model.Mode == ModeFilter {
+			pane := model.Panes[model.Active].clone()
+			pane.Filter = model.jumpFilter
+			pane.visible = nil
+			pane.rebuildVisible()
+			if model.hasJumpAnchor {
+				selectPaneLocation(&pane, model.jumpAnchor)
+			}
+			model.Panes[model.Active] = pane
+			model.clearDirectoryJump()
+		}
 		if model.Active == Left {
 			model.Active = Right
 		} else {
@@ -1270,9 +1286,13 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	if model.Mode == ModeFilter {
 		switch key {
 		case KeyEscape:
-			pane.Filter = ""
+			pane.Filter = model.jumpFilter
 			pane.visible = nil
 			pane.rebuildVisible()
+			if model.hasJumpAnchor {
+				selectPaneLocation(&pane, model.jumpAnchor)
+			}
+			model.clearDirectoryJump()
 			model.Mode = ModeNormal
 		case KeyBackspace:
 			if pane.Filter != "" {
@@ -1280,7 +1300,30 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 				pane.Filter = pane.Filter[:len(pane.Filter)-size]
 				pane.visible = nil
 				pane.rebuildVisible()
+				pane.Cursor = 0
 			}
+		case KeyDown:
+			if len(pane.visible) != 0 {
+				pane.Cursor = min(pane.Cursor+1, len(pane.visible)-1)
+			}
+		case KeyUp:
+			pane.Cursor = max(pane.Cursor-1, 0)
+		case KeySubmit:
+			if len(pane.visible) == 0 {
+				model.Notice = "no matching entries"
+				model.Panes[model.Active] = pane
+				return model, nil
+			}
+			location, hasLocation := pane.currentLocation()
+			pane.Filter = ""
+			pane.visible = nil
+			pane.rebuildVisible()
+			if hasLocation {
+				selectPaneLocation(&pane, location)
+			}
+			model.clearDirectoryJump()
+			model.Mode = ModeNormal
+			model.Notice = "entry selected; press l or → to open"
 		}
 		model.Panes[model.Active] = pane
 		return model, nil
@@ -1458,6 +1501,14 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			}
 		}
 	case KeyFilter:
+		model.jumpAnchor, model.hasJumpAnchor = pane.currentLocation()
+		model.jumpFilter = pane.Filter
+		pane.Filter = ""
+		pane.visible = nil
+		pane.rebuildVisible()
+		if model.hasJumpAnchor {
+			selectPaneLocation(&pane, model.jumpAnchor)
+		}
 		model.Mode = ModeFilter
 	case KeyFilenameSearch:
 		model.Mode = ModeFilenameSearch
@@ -1474,6 +1525,22 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		}
 	}
 	return model, nil
+}
+
+func selectPaneLocation(pane *PaneState, location domain.Location) {
+	for index := range pane.visible {
+		if pane.visibleEntry(index).Location == location {
+			pane.Cursor = index
+			return
+		}
+	}
+	pane.clampCursor()
+}
+
+func (model *Model) clearDirectoryJump() {
+	model.jumpAnchor = domain.Location{}
+	model.jumpFilter = ""
+	model.hasJumpAnchor = false
 }
 
 func recoveryPane(model Model, location domain.Location) PaneID {

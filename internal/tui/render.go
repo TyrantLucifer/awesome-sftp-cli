@@ -191,6 +191,17 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 
 func renderStatusBar(model Model) string {
 	active := model.Panes[model.Active]
+	if model.Mode == ModeFilter {
+		query := SanitizeTerminalText(active.Filter)
+		if query == "" {
+			query = "type to search"
+		}
+		matchLabel := "matches"
+		if active.VisibleCount() == 1 {
+			matchLabel = "match"
+		}
+		return fmt.Sprintf("Jump: %s | %d %s | ↑/↓ select | Enter jump | Esc clear", query, active.VisibleCount(), matchLabel)
+	}
 	segments := []string{renderPaneStatus(active)}
 	if model.Mode == ModeVisual {
 		segments = append(segments, "Visual selection")
@@ -390,6 +401,9 @@ func drawerRows(drawer DrawerState, height int) int {
 	requested := drawer.Rows
 	if requested <= 0 {
 		requested = 6
+	}
+	if drawer.Mode == DrawerPreview {
+		requested = max(requested, min(16, height/2))
 	}
 	return min(requested, max(2, height-3))
 }
