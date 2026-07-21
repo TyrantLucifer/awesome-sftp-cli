@@ -6,6 +6,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
@@ -543,6 +544,7 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		}
 		jobs := append([]transfer.JobView(nil), action.Jobs...)
 		intents := completedJobRefreshIntents(model, model.Jobs, jobs)
+		model.jobProgress = sampleJobProgress(model.jobProgress, jobs, action.ObservedAt)
 		model.Jobs = jobs
 		model.JobCursor = min(model.JobCursor, max(0, len(model.Jobs)-1))
 		return model, intents
@@ -672,6 +674,37 @@ func completedJobRefreshIntents(model Model, previous, current []transfer.JobVie
 		}
 	}
 	return intents
+}
+
+func sampleJobProgress(previous map[domain.JobID]jobProgressSample, jobs []transfer.JobView, observedAt time.Time) map[domain.JobID]jobProgressSample {
+	samples := make(map[domain.JobID]jobProgressSample, len(jobs))
+	for _, view := range jobs {
+		jobID := view.Snapshot.JobID
+		if jobID == "" {
+			continue
+		}
+		prior, hadPrior := previous[jobID]
+		if observedAt.IsZero() {
+			if hadPrior {
+				samples[jobID] = prior
+			}
+			continue
+		}
+		if hadPrior && !observedAt.After(prior.observedAt) {
+			samples[jobID] = prior
+			continue
+		}
+		sample := jobProgressSample{bytes: view.Bytes, observedAt: observedAt}
+		if hadPrior && !prior.observedAt.IsZero() && view.Bytes >= prior.bytes {
+			elapsed := observedAt.Sub(prior.observedAt)
+			if elapsed > 0 {
+				sample.bytesPerSecond = uint64(float64(view.Bytes-prior.bytes) / elapsed.Seconds())
+				sample.rateKnown = true
+			}
+		}
+		samples[jobID] = sample
+	}
+	return samples
 }
 
 func successfulJobState(state job.State) bool {

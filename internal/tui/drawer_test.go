@@ -101,6 +101,7 @@ func TestDrawerRendererUsesBoundedBottomRegionAtNormalAndNarrowSizes(t *testing.
 	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
 	model.Jobs = []transfer.JobView{{
 		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth},
+		Kind:     transfer.OperationCopy,
 		Source:   domain.Location{Path: "/source"}, Final: domain.Location{Path: "/final"},
 		Phase: transfer.PhaseStreaming, Route: transfer.RouteHelperSameHost, Bytes: 42, Items: 1, WaitingReason: "waiting_auth",
 	}}
@@ -109,10 +110,13 @@ func TestDrawerRendererUsesBoundedBottomRegionAtNormalAndNarrowSizes(t *testing.
 		surface := newMemorySurface(size.width, size.height)
 		stats := Render(surface, model, RenderOptions{Overscan: 1})
 		got := surface.String()
-		for _, want := range []string{"Preview", "[Jobs]", "Log", "waiting_auth", "helper_same_host"} {
+		for _, want := range []string{"Preview", "[Jobs]", "Log", "Copy", "Waiting"} {
 			if !strings.Contains(got, want) {
 				t.Fatalf("%dx%d drawer missing %q:\n%s", size.width, size.height, want, got)
 			}
+		}
+		if strings.Contains(got, "helper_same_host") || strings.Contains(got, "waiting_auth") {
+			t.Fatalf("%dx%d drawer exposed internal Job details:\n%s", size.width, size.height, got)
 		}
 		if stats.ListRows >= size.height-2 {
 			t.Fatalf("%dx%d list rows = %d, drawer did not reserve a bounded bottom region", size.width, size.height, stats.ListRows)

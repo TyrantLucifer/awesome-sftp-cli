@@ -152,7 +152,7 @@ def run_copy(binary, observer, source, destination, environment, filename, expec
         read_until(fd, observer, output, b"Job queued:")
         wait_for_path(expected_path)
         os.write(fd, b"J")
-        read_until(fd, observer, output, b"completed")
+        read_until(fd, observer, output, b"Completed")
         os.write(fd, b"q")
         wait_child(pid, fd)
     except Exception:
@@ -183,7 +183,7 @@ def run_move(binary, observer, source, destination, environment, filename):
         wait_for_path(destination_path)
         wait_for_absence(source_path)
         os.write(fd, b"J")
-        read_until(fd, observer, output, b"completed")
+        read_until(fd, observer, output, b"Completed")
         os.write(fd, b"q")
         wait_child(pid, fd)
     except Exception:
@@ -202,7 +202,7 @@ def prove_reattach(binary, observer, source, destination, environment):
     try:
         read_until(fd, observer, output, b"READ-ONLY")
         os.write(fd, b"J")
-        read_until(fd, observer, output, b"completed")
+        read_until(fd, observer, output, b"Completed")
         os.write(fd, b"q")
         wait_child(pid, fd)
     except Exception:
@@ -227,7 +227,7 @@ def run_rename(binary, observer, source, destination, environment, old_name, new
         wait_for_path(os.path.join(source, new_name))
         wait_for_absence(os.path.join(source, old_name))
         os.write(fd, b"J")
-        read_until(fd, observer, output, b"completed")
+        read_until(fd, observer, output, b"Completed")
         os.write(fd, b"q")
         wait_child(pid, fd)
     except Exception:
@@ -253,7 +253,7 @@ def run_delete(binary, observer, source, destination, environment, filename):
         read_until(fd, observer, output, b"Job queued:")
         wait_for_absence(os.path.join(source, filename))
         os.write(fd, b"J")
-        read_until(fd, observer, output, b"completed")
+        read_until(fd, observer, output, b"Completed")
         os.write(fd, b"q")
         wait_child(pid, fd)
     except Exception:

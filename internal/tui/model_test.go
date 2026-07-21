@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
@@ -298,6 +299,28 @@ func TestReducerOpensMinimalDurableJobsView(t *testing.T) {
 	model, intents = Reduce(model, KeyPress{Key: KeyJobs})
 	if model.Drawer.Mode != DrawerClosed || model.Drawer.Focus != FocusPane || len(intents) != 0 {
 		t.Fatalf("close Jobs model=%#v intents=%#v", model, intents)
+	}
+}
+
+func TestReducerSamplesJobSpeedFromSuccessiveBoundedRefreshes(t *testing.T) {
+	model := testModel(t)
+	jobID := domain.JobID("job_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	view := transfer.JobView{
+		Snapshot: jobstore.Snapshot{JobID: jobID, State: job.StateRunning},
+		Bytes:    1 << 20,
+	}
+	firstObservedAt := time.Unix(100, 0)
+
+	model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}, ObservedAt: firstObservedAt})
+	if sample := model.jobProgress[jobID]; sample.rateKnown {
+		t.Fatalf("first Job sample unexpectedly has a rate: %#v", sample)
+	}
+
+	view.Bytes = 3 << 20
+	model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}, ObservedAt: firstObservedAt.Add(time.Second)})
+	sample := model.jobProgress[jobID]
+	if !sample.rateKnown || sample.bytesPerSecond != 2<<20 {
+		t.Fatalf("Job speed sample = %#v, want 2 MiB/s", sample)
 	}
 }
 

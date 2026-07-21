@@ -43,7 +43,9 @@ The baseline conflict policies are `ask`, `overwrite`, `skip`, and `auto-rename`
 | `w`, `x`, `a` | Resolve the selected conflict as overwrite, skip, or auto-rename. |
 | `W`, `X`, `A` | Apply the same decision only to matching conflicts in this Job. It is never a global default. |
 
-Jobs displays durable state, phase, source/final paths, item count, trusted byte progress, waiting reason, terminal summary, recent bounded error, and restart recovery result. `waiting_auth` is distinct from network retry: repair or renew the system OpenSSH credential source, reattach the TUI if an interactive prompt is needed, then resume the Job.
+The default Jobs list prioritizes user-facing operation, state, and progress. Byte counts automatically use `KiB`, `MiB`, `GiB`, and larger units, with a percentage when the total is known. During transfer, adjacent bounded refresh samples provide the displayed rate; the first sample shows `—/s`, while waiting, paused, and terminal Jobs omit an instantaneous rate. Selecting a Job expands its source and destination onto separate lines. Narrow terminals preserve both ends of each path with an explicit middle ellipsis so long paths do not displace state and progress.
+
+Route, integrity, downgrade-boundary, and progress-semantics evidence remains available in durable Job/JSON diagnostic data but is not included in the default TUI summary. Values such as `bounded_relay_default`, `strong`, `before_target_write`, and `durable_bytes` are internal route evidence, not errors or states that require user action. The UI renders `waiting_auth` as `Waiting for authentication`; it remains distinct from network retry. Repair or renew the system OpenSSH credential source, reattach the TUI if an interactive prompt is needed, then resume the Job.
 
 ## Delete and trash behavior
 
