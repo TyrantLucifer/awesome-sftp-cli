@@ -36,7 +36,7 @@ def screen_observed(observer, output, wanted):
 
 def selection_ready(observer, output, wanted):
     result = subprocess.run(
-        [observer, "-final", "-absent", "READ-ONLY | loading", "-columns", "120", "-rows", "24", wanted.decode("utf-8")],
+        [observer, "-final", "-absent", "Loading", "-columns", "120", "-rows", "24", wanted.decode("utf-8")],
         input=output,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -200,7 +200,7 @@ def prove_reattach(binary, observer, source, destination, environment):
     pid, fd = launch(binary, source, destination, environment)
     output = bytearray()
     try:
-        read_until(fd, observer, output, b"READ-ONLY")
+        read_until(fd, observer, output, b"Ready")
         os.write(fd, b"J")
         read_until(fd, observer, output, b"Completed")
         os.write(fd, b"q")
