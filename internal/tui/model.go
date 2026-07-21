@@ -521,8 +521,16 @@ type Model struct {
 	repeatDelete   []transfer.FileRef
 	repeatMove     []Intent
 	repeatIntents  []Intent
+	jobProgress    map[domain.JobID]jobProgressSample
 	Width          int
 	Height         int
+}
+
+type jobProgressSample struct {
+	bytes          uint64
+	observedAt     time.Time
+	bytesPerSecond uint64
+	rateKnown      bool
 }
 
 type ClipboardState struct {
@@ -819,8 +827,9 @@ type JobCreated struct {
 	Message string
 }
 type JobsLoaded struct {
-	Jobs    []transfer.JobView
-	Message string
+	Jobs       []transfer.JobView
+	ObservedAt time.Time
+	Message    string
 }
 type JobUpdated struct {
 	Snapshot jobstore.Snapshot

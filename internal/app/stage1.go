@@ -876,7 +876,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			go func() {
 				var response daemon.JobListResponse
 				listErr := activeClient.Call(runCtx, daemon.JobList, daemon.JobListRequest{Limit: 100}, &response)
-				result := tui.JobsLoaded{Jobs: response.Jobs}
+				result := tui.JobsLoaded{Jobs: response.Jobs, ObservedAt: time.Now()}
 				if listErr != nil {
 					result.Message = "list Jobs failed: " + clientErrorMessage(listErr)
 				}

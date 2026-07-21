@@ -62,6 +62,7 @@ func TestRendererShowsMinimalDurableJobsView(t *testing.T) {
 	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
 	model.Jobs = []transfer.JobView{{
 		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateWaitingAuth},
+		Kind:     transfer.OperationCopy,
 		Route:    transfer.RouteSFTPRelay,
 		RouteEvidence: &transfer.RouteEvidence{
 			Version: 1,
@@ -77,18 +78,24 @@ func TestRendererShowsMinimalDurableJobsView(t *testing.T) {
 	surface := newMemorySurface(180, 12)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"[Jobs]", "waiting_auth", "streaming", "42 B", "/source", "/final", "sftp_relay", "bounded_relay_default", "strong", "before_target_write"} {
+	for _, want := range []string{"[Jobs]", "Copy", "Waiting for authentication", "42 B", "From: /source", "To:   /final"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("Jobs view missing %q:\n%s", want, got)
 		}
 	}
+	for _, hidden := range []string{"sftp_relay", "bounded_relay_default", "strong", "before_target_write", "durable_bytes"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("Jobs view exposed internal detail %q:\n%s", hidden, got)
+		}
+	}
 }
 
-func TestRendererShowsActualRouteAndStableReasonAfterDowngrade(t *testing.T) {
+func TestRendererKeepsRouteDowngradeEvidenceOutOfTheUserSummary(t *testing.T) {
 	model := testModel(t)
 	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
 	model.Jobs = []transfer.JobView{{
 		Snapshot:       jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning},
+		Kind:           transfer.OperationCopy,
 		PlannedRoute:   transfer.RouteSFTPServerCopy,
 		Route:          transfer.RouteSFTPRelay,
 		DowngradedFrom: transfer.RouteSFTPServerCopy,
@@ -107,9 +114,43 @@ func TestRendererShowsActualRouteAndStableReasonAfterDowngrade(t *testing.T) {
 	surface := newMemorySurface(180, 12)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"sftp_server_copy→sftp_relay", "server_copy_failed_part_absent", "strong", "before_target_write"} {
+	for _, want := range []string{"Copy", "Transferring", "From: /source", "To:   /final"} {
 		if !strings.Contains(got, want) {
-			t.Fatalf("downgraded Jobs view missing %q:\n%s", want, got)
+			t.Fatalf("Jobs view missing %q after a safe route downgrade:\n%s", want, got)
+		}
+	}
+	for _, hidden := range []string{"sftp_server_copy", "sftp_relay", "server_copy_failed_part_absent", "strong", "before_target_write"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("Jobs view exposed route evidence %q:\n%s", hidden, got)
+		}
+	}
+}
+
+func TestRendererUsesReadableProgressSpeedAndSelectedJobDetails(t *testing.T) {
+	model := testModel(t)
+	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
+	total := uint64(234_869_972)
+	jobID := domain.JobID("job_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	model.Jobs = []transfer.JobView{{
+		Snapshot:   jobstore.Snapshot{JobID: jobID, State: job.StateRunning},
+		Kind:       transfer.OperationCopy,
+		Source:     domain.Location{Path: "/data00/home/tianchao.thatcher/projects/very-long-source-directory/mysql-backup.sql"},
+		Final:      domain.Location{Path: "/Users/bytedance/Downloads/modules/very-long-destination-directory/mysql-backup.sql"},
+		Phase:      transfer.PhaseStreaming,
+		Bytes:      total,
+		BytesTotal: &total,
+		Items:      1,
+	}}
+	model.jobProgress = map[domain.JobID]jobProgressSample{
+		jobID: {bytesPerSecond: 12 << 20, rateKnown: true},
+	}
+	surface := newMemorySurface(72, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, want := range []string{"224.0 MiB / 224.0 MiB", "(100%)", "12.0 MiB/s", "From:", "To:", "mysql-backup.sql", "…"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("readable Jobs view missing %q:\n%s", want, got)
 		}
 	}
 }

@@ -6,6 +6,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 )
 
@@ -381,7 +382,7 @@ func renderDrawer(surface Surface, model Model, y, width, rows int) {
 	case DrawerContentSearch:
 		renderContentSearchDrawer(surface, model.ContentSearch, y+1, width, rows-1)
 	case DrawerJobs:
-		renderJobsDrawer(surface, model.Jobs, model.JobCursor, y+1, width, rows-1)
+		renderJobsDrawer(surface, model.Jobs, model.jobProgress, model.JobCursor, y+1, width, rows-1)
 	case DrawerLog:
 		renderLogDrawer(surface, model.Diagnostics, y+1, width, rows-1)
 	}
@@ -520,56 +521,166 @@ func renderPreviewDrawer(surface Surface, preview PreviewState, y, width, rows i
 	}
 }
 
-func renderJobsDrawer(surface Surface, jobs []transfer.JobView, cursor, y, width, rows int) {
+func renderJobsDrawer(surface Surface, jobs []transfer.JobView, progress map[domain.JobID]jobProgressSample, cursor, y, width, rows int) {
 	if len(jobs) == 0 {
 		surface.PutClipped(0, y, width, "No durable Jobs", StylePreview)
 		return
 	}
-	start := min(max(cursor, 0), len(jobs)-1)
-	for row := 0; row < rows && start+row < len(jobs); row++ {
-		view := jobs[start+row]
-		state := string(view.Snapshot.State)
-		if view.WaitingReason != "" {
-			state += " (" + view.WaitingReason + ")"
-		}
-		route := string(view.Route)
-		if evidence := view.RouteEvidence; evidence != nil {
-			if route == "" && evidence.Selected.Route != "" {
-				route = string(evidence.Selected.Route)
-			}
-			reason := view.RouteReason
-			if reason == "" {
-				reason = evidence.Selected.Reason
-			}
-			if view.DowngradedFrom != "" {
-				planned := view.PlannedRoute
-				if planned == "" {
-					planned = view.DowngradedFrom
-				}
-				route = string(planned) + "→" + route
-			}
-			details := []string{string(reason), string(evidence.Integrity.Policy)}
-			for _, detail := range []string{evidence.Risk, evidence.DowngradeBoundary, evidence.ProgressSemantics} {
-				if detail != "" {
-					details = append(details, detail)
-				}
-			}
-			route += "[" + strings.Join(details, "/") + "]"
-		}
-		line := fmt.Sprintf("%s  %s  %s  %d item(s)  %s  %s → %s", route, state, view.Phase, view.Items, formatJobBytes(view.Bytes, view.BytesTotal), view.Source.Path, view.Final.Path)
-		rowStyle := StylePreview
-		if start+row == cursor {
-			rowStyle = StyleCursor
-		}
-		surface.PutClipped(0, y+row, width, line, rowStyle)
+	cursor = min(max(cursor, 0), len(jobs)-1)
+	details := jobDetailLines(jobs[cursor])
+	if len(details) > max(0, rows-1) {
+		details = details[:max(0, rows-1)]
 	}
+	visibleJobs := max(1, rows-len(details))
+	start := max(0, cursor-visibleJobs/2)
+	if start+visibleJobs > len(jobs) {
+		start = max(0, len(jobs)-visibleJobs)
+	}
+	screenRow := 0
+	for index := start; index < len(jobs) && screenRow < rows; index++ {
+		view := jobs[index]
+		selected := index == cursor
+		style := StylePreview
+		marker := "  "
+		if selected {
+			style = StyleCursor
+			marker = "> "
+		}
+		surface.PutClipped(0, y+screenRow, width, marker+jobSummary(view, progress[view.Snapshot.JobID]), style)
+		screenRow++
+		if selected {
+			for _, detail := range details {
+				if screenRow >= rows {
+					break
+				}
+				surface.PutClipped(0, y+screenRow, width, fitJobDetail(detail.label, detail.value, width), StylePreview)
+				screenRow++
+			}
+		}
+	}
+}
+
+type jobDetail struct {
+	label string
+	value string
+}
+
+func jobDetailLines(view transfer.JobView) []jobDetail {
+	if view.Kind == transfer.OperationDelete {
+		return []jobDetail{{label: "  Target: ", value: string(view.Source.Path)}}
+	}
+	return []jobDetail{
+		{label: "  From: ", value: string(view.Source.Path)},
+		{label: "  To:   ", value: string(view.Final.Path)},
+	}
+}
+
+func fitJobDetail(label, value string, width int) string {
+	value = SanitizeTerminalText(value)
+	text := label + value
+	if width <= 0 || len([]rune(text)) <= width {
+		return text
+	}
+	available := width - len([]rune(label)) - 1
+	if available <= 1 {
+		return label
+	}
+	runes := []rune(value)
+	head := max(1, available/3)
+	tail := max(1, available-head)
+	if head+tail >= len(runes) {
+		return text
+	}
+	return label + string(runes[:head]) + "…" + string(runes[len(runes)-tail:])
+}
+
+func jobSummary(view transfer.JobView, sample jobProgressSample) string {
+	parts := []string{jobOperationLabel(view.Kind), jobStateLabel(view), formatJobBytes(view.Bytes, view.BytesTotal)}
+	if jobShowsSpeed(view) {
+		speed := "—/s"
+		if sample.rateKnown {
+			speed = formatBytes(sample.bytesPerSecond) + "/s"
+		}
+		parts = append(parts, speed)
+	}
+	if view.BytesTotal == nil && view.Items != 0 {
+		label := "items"
+		if view.Items == 1 {
+			label = "item"
+		}
+		parts = append(parts, fmt.Sprintf("%d %s", view.Items, label))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func jobOperationLabel(kind transfer.OperationKind) string {
+	switch kind {
+	case transfer.OperationCopy:
+		return "Copy"
+	case transfer.OperationMove:
+		return "Move"
+	case transfer.OperationDelete:
+		return "Delete"
+	default:
+		return "Transfer"
+	}
+}
+
+func jobStateLabel(view transfer.JobView) string {
+	switch view.Snapshot.State {
+	case job.StateDraft:
+		return "Draft"
+	case job.StateAwaitingConfirmation:
+		return "Awaiting confirmation"
+	case job.StateQueued:
+		return "Queued"
+	case job.StateRunning:
+		switch view.Phase {
+		case transfer.PhasePrepared:
+			return "Preparing"
+		case transfer.PhaseStreaming:
+			return "Transferring"
+		case transfer.PhaseTransferred, transfer.PhaseVerified, transfer.PhaseCommitting:
+			return "Finalizing"
+		default:
+			return "Running"
+		}
+	case job.StateVerifying:
+		return "Verifying"
+	case job.StatePaused:
+		return "Paused"
+	case job.StateWaitingAuth:
+		return "Waiting for authentication"
+	case job.StateWaitingConflict:
+		return "Waiting for conflict choice"
+	case job.StateRetryWait:
+		return "Waiting to retry"
+	case job.StateCompleted:
+		return "Completed"
+	case job.StateCompletedWithSourceRetained:
+		return "Completed (source retained)"
+	case job.StateFailed:
+		return "Failed"
+	case job.StateCanceled:
+		return "Canceled"
+	default:
+		return "Unknown"
+	}
+}
+
+func jobShowsSpeed(view transfer.JobView) bool {
+	return view.Snapshot.State == job.StateRunning && view.Phase == transfer.PhaseStreaming
 }
 
 func formatJobBytes(completed uint64, total *uint64) string {
 	if total == nil {
-		return fmt.Sprintf("%d B", completed)
+		return formatBytes(completed)
 	}
-	return fmt.Sprintf("%d/%d B", completed, *total)
+	progress := formatBytes(completed) + " / " + formatBytes(*total)
+	if *total != 0 {
+		progress += fmt.Sprintf(" (%.0f%%)", float64(completed)*100/float64(*total))
+	}
+	return progress
 }
 
 func renderWorkspaceModal(surface Surface, name string, width, height int) {
