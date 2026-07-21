@@ -321,6 +321,90 @@ func TestReducerControlsSelectedDurableJob(t *testing.T) {
 	}
 }
 
+func TestJobCreatedStartsBoundedBackgroundTracking(t *testing.T) {
+	model := testModel(t)
+	jobID := domain.JobID("job_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+
+	model, intents := Reduce(model, JobCreated{JobID: jobID, State: job.StateQueued})
+	if len(model.Jobs) != 1 || model.Jobs[0].Snapshot.JobID != jobID || model.Jobs[0].Snapshot.State != job.StateQueued {
+		t.Fatalf("tracked Jobs = %#v", model.Jobs)
+	}
+	if len(intents) != 1 || intents[0].Kind != IntentJobList {
+		t.Fatalf("Job creation intents = %#v, want one Job list refresh", intents)
+	}
+
+	model, intents = Reduce(model, JobsLoaded{Message: "temporary list failure"})
+	if len(intents) != 0 || len(model.Jobs) != 1 || model.Jobs[0].Snapshot.JobID != jobID {
+		t.Fatalf("failed Job refresh lost tracking: model=%#v intents=%#v", model.Jobs, intents)
+	}
+}
+
+func TestSuccessfulJobTransitionsRefreshAffectedVisiblePanesOnce(t *testing.T) {
+	tests := []struct {
+		name  string
+		kind  transfer.OperationKind
+		state job.State
+		want  []PaneID
+	}{
+		{name: "copy refreshes destination", kind: transfer.OperationCopy, state: job.StateCompleted, want: []PaneID{Right}},
+		{name: "delete refreshes source parent", kind: transfer.OperationDelete, state: job.StateCompleted, want: []PaneID{Left}},
+		{name: "move refreshes source and destination", kind: transfer.OperationMove, state: job.StateCompleted, want: []PaneID{Left, Right}},
+		{name: "retained move refreshes destination only", kind: transfer.OperationMove, state: job.StateCompletedWithSourceRetained, want: []PaneID{Right}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			model := testModel(t)
+			view := transfer.JobView{
+				Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning},
+				Kind:     test.kind,
+				Source:   mustLocation(t, leftEndpointID, "/left/file.txt"),
+				Final:    mustLocation(t, rightEndpointID, "/right/file.txt"),
+			}
+			if test.kind == transfer.OperationDelete {
+				view.Final = view.Source
+			}
+			model, intents := Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}})
+			if len(intents) != 0 {
+				t.Fatalf("running Job intents = %#v", intents)
+			}
+
+			view.Snapshot.State = test.state
+			model, intents = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}})
+			if len(intents) != len(test.want) {
+				t.Fatalf("completed Job intents = %#v, want panes %#v", intents, test.want)
+			}
+			for index, pane := range test.want {
+				if intents[index].Kind != IntentList || intents[index].Pane != pane || intents[index].Location != model.Panes[pane].Location {
+					t.Fatalf("completed Job intent %d = %#v, want list for pane %v", index, intents[index], pane)
+				}
+			}
+
+			_, intents = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}})
+			if len(intents) != 0 {
+				t.Fatalf("repeated terminal snapshot intents = %#v", intents)
+			}
+		})
+	}
+}
+
+func TestFailedOrCanceledJobsDoNotRefreshVisiblePanes(t *testing.T) {
+	for _, state := range []job.State{job.StateFailed, job.StateCanceled} {
+		model := testModel(t)
+		view := transfer.JobView{
+			Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning},
+			Kind:     transfer.OperationCopy,
+			Source:   mustLocation(t, leftEndpointID, "/left/file.txt"),
+			Final:    mustLocation(t, rightEndpointID, "/right/file.txt"),
+		}
+		model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}})
+		view.Snapshot.State = state
+		_, intents := Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}})
+		if len(intents) != 0 {
+			t.Fatalf("state %q intents = %#v", state, intents)
+		}
+	}
+}
+
 func TestReducerTracksVisualAndDiscreteSelection(t *testing.T) {
 	model := testModel(t)
 

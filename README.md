@@ -3,7 +3,7 @@
 AMSFTP 是一个面向 macOS 和 Linux 终端用户的 Vim-first 双栏文件工作台。任一栏都可以指向本地目录或 `~/.ssh/config` 中的远端主机；浏览、预览、编辑、搜索和传输统一通过本地 daemon 协调，认证与主机策略继续由系统 OpenSSH 负责。
 
 > [!WARNING]
-> `v0.1.2` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
+> `v0.1.3` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
 
 ## 主要能力
 
@@ -28,7 +28,7 @@ AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为
 
 ## 安装与升级
 
-公开预览发布页：[`v0.1.2`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.2)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
+公开预览发布页：[`v0.1.3`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.3)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
 
 严格 `X.Y.Z` 的公开预览发布后，可直接使用下面任一渠道。安装脚本默认安装到 `$HOME/.local`，会校验归档 SHA-256、原子替换 binary、保存上一版为 `amsftp.previous`，并重新生成 man page 与 shell completion：
 

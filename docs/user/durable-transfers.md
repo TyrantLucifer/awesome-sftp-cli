@@ -70,3 +70,5 @@ amsftp /absolute/source /absolute/destination
 5. For delete, press `D`, review the frozen selection, press `Enter`, review the irreversible warning, and press `Enter` again.
 
 The same flow accepts `host-alias:/absolute/path` on either pane. Host aliases, authentication, ProxyCommand/ProxyJump, agents, host-key policy, and Kerberos/GSSAPI continue to come from system OpenSSH.
+
+While the TUI is running, newly created nonterminal Jobs are polled with a bounded request even when the Jobs drawer is closed. When a Job first reaches `completed`, visible panes that show an affected parent directory are relisted once: copy refreshes the destination, delete refreshes the source parent, and move/rename refreshes both sides. `completed_with_source_retained` refreshes only the destination because the source was proved to remain in place. Failed or canceled Jobs do not infer a visible mutation; use `R` when an explicit authoritative relist is still needed.

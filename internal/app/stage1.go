@@ -1260,10 +1260,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		case <-runCtx.Done():
 			return nil
 		case <-jobRefreshTicker.C:
-			switch model.Drawer.Mode {
-			case tui.DrawerJobs:
+			if jobListRefreshRequired(model) {
 				startIntent(tui.Intent{Kind: tui.IntentJobList})
-			case tui.DrawerLog:
+			}
+			if model.Drawer.Mode == tui.DrawerLog {
 				startIntent(tui.Intent{Kind: tui.IntentDiagnosticList, Limit: 256})
 			}
 		case <-helperStatusTicker.C:
@@ -1448,6 +1448,18 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 		}
 	}
+}
+
+func jobListRefreshRequired(model tui.Model) bool {
+	if model.Drawer.Mode == tui.DrawerJobs {
+		return true
+	}
+	for _, view := range model.Jobs {
+		if view.Snapshot.JobID != "" && !view.Snapshot.State.Terminal() {
+			return true
+		}
+	}
+	return false
 }
 
 func configuredCopyIntent(intent tui.Intent, directPolicy transfer.DirectPolicy) transfer.Intent {
