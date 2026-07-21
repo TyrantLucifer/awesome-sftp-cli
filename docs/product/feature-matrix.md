@@ -26,7 +26,7 @@
 | VIM-002 | `h/j/k/l` 与双栏操作 | Verified | 核心浏览和选择不依赖鼠标。 | [TUI reducer](../../internal/tui/reducer.go) |
 | DAEMON-001 | owner-only daemon | Verified | daemon 只为当前用户服务，TUI 退出不隐式取消 Job。 | [daemon server 测试](../../internal/daemon/server_test.go) |
 | DAEMON-002 | 安全 IPC 与生命周期 | Verified | socket、peer UID、协议和停止确认 fail closed。 | [daemon command 测试](../../internal/app/daemon_command_test.go) |
-| JOB-001 | 持久 Job | Verified | 复制、移动和删除拥有稳定状态、事件、检查点和控制命令。 | [Job manager 测试](../../internal/transfer/manager_test.go)与[CLI 参考](../user/cli.md) |
+| JOB-001 | 持久 Job | Verified | 复制、移动和删除拥有稳定状态、事件、检查点和控制命令；成功终态会精确刷新当前可见的受影响目录。 | [Job manager 测试](../../internal/transfer/manager_test.go)、[TUI reducer 测试](../../internal/tui/model_test.go)与[CLI 参考](../user/cli.md) |
 | JOB-002 | 重启恢复 | Verified | daemon 重启后只跨越安全边界恢复，不把未知结果标记成功。 | [Job journal 测试](../../internal/transfer/job_journal_test.go) |
 | COPY-001 | 流式安全复制 | Verified | 先写 part，验证和提交后再暴露最终目标。 | [worker 测试](../../internal/transfer/worker_test.go) |
 | MOVE-001 | 安全移动 | Verified | 目标验证并提交前不删除来源。 | [move 实现](../../internal/transfer/move.go)与[持久传输指南](../user/durable-transfers.md) |

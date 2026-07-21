@@ -14,12 +14,37 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
+
+func TestJobListRefreshRequiredTracksBackgroundJobs(t *testing.T) {
+	model := tui.Model{}
+	if jobListRefreshRequired(model) {
+		t.Fatal("empty model requested Job polling")
+	}
+
+	model.Jobs = []transfer.JobView{{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning}}}
+	if !jobListRefreshRequired(model) {
+		t.Fatal("running background Job did not request polling")
+	}
+
+	model.Jobs[0].Snapshot.State = job.StateCompleted
+	if jobListRefreshRequired(model) {
+		t.Fatal("terminal background Job kept polling")
+	}
+
+	model.Drawer.Mode = tui.DrawerJobs
+	if !jobListRefreshRequired(model) {
+		t.Fatal("open Jobs drawer did not request polling")
+	}
+}
 
 func TestSSHConnectStageErrorPreservesSafeStageAndClassification(t *testing.T) {
 	cause := errors.New("private transport detail")

@@ -12,6 +12,7 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
 	builtinpreview "github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
@@ -515,22 +516,49 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		} else {
 			model.Notice = "Job queued: " + string(action.JobID) + " (" + string(action.State) + ")"
 		}
-		return model, nil
-	case JobsLoaded:
-		model.Jobs = append([]transfer.JobView(nil), action.Jobs...)
-		model.JobCursor = min(model.JobCursor, max(0, len(model.Jobs)-1))
-		model.Notice = action.Message
-		return model, nil
-	case JobUpdated:
-		for index := range model.Jobs {
-			if model.Jobs[index].Snapshot.JobID == action.Snapshot.JobID {
-				model.Jobs = append([]transfer.JobView(nil), model.Jobs...)
-				model.Jobs[index].Snapshot = action.Snapshot
+		if action.JobID == "" {
+			return model, nil
+		}
+		jobs := append([]transfer.JobView(nil), model.Jobs...)
+		tracked := false
+		for index := range jobs {
+			if jobs[index].Snapshot.JobID == action.JobID {
+				jobs[index].Snapshot.State = action.State
+				tracked = true
 				break
 			}
 		}
+		if !tracked {
+			view := transfer.JobView{}
+			view.Snapshot.JobID = action.JobID
+			view.Snapshot.State = action.State
+			jobs = append(jobs, view)
+		}
+		model.Jobs = jobs
+		return model, []Intent{{Kind: IntentJobList}}
+	case JobsLoaded:
+		if action.Message != "" {
+			model.Notice = action.Message
+			return model, nil
+		}
+		jobs := append([]transfer.JobView(nil), action.Jobs...)
+		intents := completedJobRefreshIntents(model, model.Jobs, jobs)
+		model.Jobs = jobs
+		model.JobCursor = min(model.JobCursor, max(0, len(model.Jobs)-1))
+		return model, intents
+	case JobUpdated:
+		previous := model.Jobs
+		jobs := append([]transfer.JobView(nil), previous...)
+		for index := range jobs {
+			if jobs[index].Snapshot.JobID == action.Snapshot.JobID {
+				jobs[index].Snapshot = action.Snapshot
+				break
+			}
+		}
+		intents := completedJobRefreshIntents(model, previous, jobs)
+		model.Jobs = jobs
 		model.Notice = action.Message
-		return model, nil
+		return model, intents
 	case DiagnosticsLoaded:
 		model.Diagnostics = append([]diagnostic.Record(nil), action.Records...)
 		model.Notice = action.Message
@@ -621,6 +649,61 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 	default:
 		return model, nil
 	}
+}
+
+func completedJobRefreshIntents(model Model, previous, current []transfer.JobView) []Intent {
+	previousStates := make(map[domain.JobID]job.State, len(previous))
+	for _, view := range previous {
+		previousStates[view.Snapshot.JobID] = view.Snapshot.State
+	}
+	refreshed := [2]bool{}
+	intents := make([]Intent, 0, 2)
+	for _, view := range current {
+		if !successfulJobState(view.Snapshot.State) || successfulJobState(previousStates[view.Snapshot.JobID]) {
+			continue
+		}
+		for _, location := range completedJobDirectories(view) {
+			for pane := Left; pane <= Right; pane++ {
+				if !refreshed[pane] && model.Panes[pane].Location == location {
+					refreshed[pane] = true
+					intents = append(intents, Intent{Kind: IntentList, Pane: pane, Location: location})
+				}
+			}
+		}
+	}
+	return intents
+}
+
+func successfulJobState(state job.State) bool {
+	return state == job.StateCompleted || state == job.StateCompletedWithSourceRetained
+}
+
+func completedJobDirectories(view transfer.JobView) []domain.Location {
+	locations := make([]domain.Location, 0, 2)
+	appendParent := func(location domain.Location) {
+		parent, ok := parentLocation(location)
+		if !ok {
+			return
+		}
+		for _, existing := range locations {
+			if existing == parent {
+				return
+			}
+		}
+		locations = append(locations, parent)
+	}
+	switch view.Kind {
+	case transfer.OperationCopy:
+		appendParent(view.Final)
+	case transfer.OperationDelete:
+		appendParent(view.Source)
+	case transfer.OperationMove:
+		if view.Snapshot.State == job.StateCompleted {
+			appendParent(view.Source)
+		}
+		appendParent(view.Final)
+	}
+	return locations
 }
 
 func truncateCommandNotice(value string, limit int) string {
