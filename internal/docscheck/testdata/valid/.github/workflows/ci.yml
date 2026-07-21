@@ -60,7 +60,7 @@ jobs:
       - name: Exercise native installed upgrade, rollback, and stale-socket recovery
         run: |
           native_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"; old_source="${RUNNER_TEMP}/native/stage5-source"
-          old_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp-stage5"; install_root="${AMSFTP_CI_EXEC_ROOT}/upgrade-install"; upgrade_home="${AMSFTP_CI_EXEC_ROOT}/upgrade-home"
+          old_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp-stage5"; install_root="${AMSFTP_CI_EXEC_ROOT}/upgrade-install"; upgrade_home="${AMSFTP_CI_EXEC_ROOT}/upgrade-home"; control_socket="${upgrade_home}/runtime/amsftp/control-v1.sock"; control_socket="${upgrade_home}/runtime/amsftp-$(id -u)/control-v1.sock"; test "${#control_socket}" -le 100
           git archive 312bcccbcbd54246bbe5ff9babf4f14560449176
           go build -o "${old_binary}" ./cmd/amsftp
           install_atomically "${old_binary}"

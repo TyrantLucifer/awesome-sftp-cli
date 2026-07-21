@@ -1056,7 +1056,8 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
           trusted_root="/var/lib/amsftp-tests/$(id -u)"
           sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
           sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
-          exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Keep enough room for runtime/amsftp/control-v1.sock's 100-byte path budget.
+          exec_root="$(mktemp -d "${trusted_root}/q.XXXXXX")"
           install -d -m 0700 "${exec_root}"
           printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
 `
@@ -1082,7 +1083,8 @@ func TestCIQualityRejectsPersistentTestRootJobEnvironmentExport(t *testing.T) {
           trusted_root="/var/lib/amsftp-tests/$(id -u)"
           sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
           sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
-          exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          # Keep enough room for runtime/amsftp/control-v1.sock's 100-byte path budget.
+          exec_root="$(mktemp -d "${trusted_root}/q.XXXXXX")"
           install -d -m 0700 "${exec_root}"
           printf 'AMSFTP_TEST_PERSISTENT_ROOT=%s\n' "${trusted_root}" >>"${GITHUB_ENV}"
           printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
@@ -1467,6 +1469,9 @@ old_source="${RUNNER_TEMP}/native/stage5-source"
 old_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp-stage5"
 install_root="${AMSFTP_CI_EXEC_ROOT}/upgrade-install"
 upgrade_home="${AMSFTP_CI_EXEC_ROOT}/upgrade-home"
+control_socket="${upgrade_home}/runtime/amsftp/control-v1.sock"
+control_socket="${upgrade_home}/runtime/amsftp-$(id -u)/control-v1.sock"
+test "${#control_socket}" -le 100
 git archive 312bcccbcbd54246bbe5ff9babf4f14560449176
 -o "${old_binary}" ./cmd/amsftp
 install_atomically "${old_binary}"
@@ -1499,6 +1504,7 @@ install_atomically "${native_binary}"
 		{name: "complete composition", script: complete, want: true},
 		{name: "missing frozen Stage 5 build", script: strings.Replace(complete, "git archive 312bcccbcbd54246bbe5ff9babf4f14560449176\n", "", 1)},
 		{name: "missing live upgrade", script: strings.Replace(complete, `install_atomically "${native_binary}"`, "", 1)},
+		{name: "missing socket path budget", script: strings.Replace(complete, "test \"${#control_socket}\" -le 100\n", "", 1)},
 		{name: "missing stale socket refusal", script: strings.Replace(complete, `test "${stale_socket_probe_rc}" -ne 0`, "", 1)},
 		{name: "missing rollback byte preservation", script: strings.Replace(complete, `test "${database_before}" = "${database_after}"`, "", 1)},
 		{name: "missing current recovery", script: strings.TrimSuffix(complete, `

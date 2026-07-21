@@ -224,6 +224,9 @@ func nativeLifecycleProvesInstalledUpgradeRollbackAndStaleSocket(job workflowJob
 			`old_binary="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp-stage5"`,
 			`install_root="${AMSFTP_CI_EXEC_ROOT}/upgrade-install"`,
 			`upgrade_home="${AMSFTP_CI_EXEC_ROOT}/upgrade-home"`,
+			`control_socket="${upgrade_home}/runtime/amsftp/control-v1.sock"`,
+			`control_socket="${upgrade_home}/runtime/amsftp-$(id -u)/control-v1.sock"`,
+			`test "${#control_socket}" -le 100`,
 			`git archive 312bcccbcbd54246bbe5ff9babf4f14560449176`,
 			`-o "${old_binary}" ./cmd/amsftp`,
 			`install_atomically "${old_binary}"`,
@@ -580,7 +583,8 @@ fi`
 trusted_root="/var/lib/amsftp-tests/$(id -u)"
 sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
 sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
-exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+# Keep enough room for runtime/amsftp/control-v1.sock's 100-byte path budget.
+exec_root="$(mktemp -d "${trusted_root}/q.XXXXXX")"
 install -d -m 0700 "${exec_root}"
 printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"`
 	const nativeScript = `set -euo pipefail
@@ -588,10 +592,11 @@ if test "${RUNNER_OS}" = Linux; then
   trusted_root="/var/lib/amsftp-tests/$(id -u)"
   sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
   sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
+  exec_root="$(mktemp -d "${trusted_root}/n.XXXXXX")"
 else
-  trusted_root="${HOME}/.amsftp-native-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+  exec_root="$(mktemp -d "${HOME}/.amsftp-ci.XXXXXX")"
 fi
-exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+# Keep enough room for runtime/amsftp[-UID]/control-v1.sock's 100-byte path budget.
 install -d -m 0700 "${exec_root}"
 printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"`
 	if step.name == nil || step.name.value != "Prepare trusted persistent test root" || step.run == nil ||
