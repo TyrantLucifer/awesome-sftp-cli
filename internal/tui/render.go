@@ -216,7 +216,7 @@ func renderStatusBar(model Model) string {
 	if active.Listing.Message != "" {
 		segments = append(segments, SanitizeTerminalText(active.Listing.Message))
 	}
-	if model.Notice != "" && !(model.RecoverableEdits != 0 && strings.Contains(model.Notice, "recoverable edit session")) {
+	if model.Notice != "" && (model.RecoverableEdits == 0 || !strings.Contains(model.Notice, "recoverable edit session")) {
 		segments = append(segments, SanitizeTerminalText(model.Notice))
 	}
 	if active.Filter != "" {
