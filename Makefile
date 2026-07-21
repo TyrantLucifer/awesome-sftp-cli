@@ -70,10 +70,10 @@ bench-scale:
 
 fuzz-smoke:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
-	"$(GO)" test -run='^$$' -fuzz='^FuzzFrameDecoder$$' -fuzztime=1s ./internal/ipc
-	"$(GO)" test -run='^$$' -fuzz='^FuzzEnvelopeDecode$$' -fuzztime=1s ./internal/ipc
-	"$(GO)" test -run='^$$' -fuzz='^FuzzWireBytes$$' -fuzztime=1s ./internal/ipc
-	"$(GO)" test -run='^$$' -fuzz='^FuzzNormalizePath$$' -fuzztime=1s ./internal/provider/fake
+	"$(GO)" test -run='^$$' -fuzz='^FuzzFrameDecoder$$' -fuzztime=10000x ./internal/ipc
+	"$(GO)" test -run='^$$' -fuzz='^FuzzEnvelopeDecode$$' -fuzztime=10000x ./internal/ipc
+	"$(GO)" test -run='^$$' -fuzz='^FuzzWireBytes$$' -fuzztime=10000x ./internal/ipc
+	"$(GO)" test -run='^$$' -fuzz='^FuzzNormalizePath$$' -fuzztime=10000x ./internal/provider/fake
 
 docs-check:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)

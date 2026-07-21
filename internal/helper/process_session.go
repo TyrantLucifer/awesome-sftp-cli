@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"os/exec"
 	"strings"
 	"sync"
@@ -90,11 +89,6 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 		cancel()
 		return nil, fmt.Errorf("start helper OpenSSH session: stdout: %w", err)
 	}
-	stderrPipe, err := command.StderrPipe()
-	if err != nil {
-		cancel()
-		return nil, fmt.Errorf("start helper OpenSSH session: stderr: %w", err)
-	}
 	after, err := platform.ExecutableIdentity(config.SSHPath)
 	if err != nil {
 		cancel()
@@ -105,19 +99,20 @@ func StartOpenSSHSession(parent context.Context, config OpenSSHSessionConfig) (*
 		return nil, errors.New("start helper OpenSSH session: executable changed before start")
 	}
 	collector := &helperStderrBuffer{redactions: append([]string(nil), config.Redact...), cancel: cancel}
+	// Let os/exec own the stderr copy loop so Wait cannot close its pipe before
+	// the bounded collector has drained the final bytes from the child.
+	command.Stderr = collector
 	if err := command.Start(); err != nil {
 		cancel()
 		return nil, fmt.Errorf("start helper OpenSSH session: start: %w", err)
 	}
 	stderrDone := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(collector, stderrPipe)
-		close(stderrDone)
-	}()
 	stopTermination := context.AfterFunc(processContext, func() { terminateHelperProcess(command) })
 	process := &processCompletion{done: make(chan struct{})}
 	go func() {
 		process.err = command.Wait()
+		// Cmd.Wait returns only after its internal stderr copy has completed.
+		close(stderrDone)
 		close(process.done)
 		stopTermination()
 	}()
