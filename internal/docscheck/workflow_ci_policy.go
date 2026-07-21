@@ -582,7 +582,6 @@ sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
 sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
 exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 install -d -m 0700 "${exec_root}"
-printf 'AMSFTP_TEST_PERSISTENT_ROOT=%s\n' "${trusted_root}" >>"${GITHUB_ENV}"
 printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"`
 	const nativeScript = `set -euo pipefail
 if test "${RUNNER_OS}" = Linux; then
@@ -594,7 +593,6 @@ else
 fi
 exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 install -d -m 0700 "${exec_root}"
-printf 'AMSFTP_TEST_PERSISTENT_ROOT=%s\n' "${trusted_root}" >>"${GITHUB_ENV}"
 printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"`
 	if step.name == nil || step.name.value != "Prepare trusted persistent test root" || step.run == nil ||
 		!stepHasOnlyKeys(step, "name", "run") {

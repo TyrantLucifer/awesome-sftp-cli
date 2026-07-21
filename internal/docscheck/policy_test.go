@@ -1058,7 +1058,6 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
           sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
           exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           install -d -m 0700 "${exec_root}"
-          printf 'AMSFTP_TEST_PERSISTENT_ROOT=%s\n' "${trusted_root}" >>"${GITHUB_ENV}"
           printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
 `
 	root := prepareFixture(t, "valid")
@@ -1074,6 +1073,27 @@ func TestCIQualityAllowsExactTrustedPersistentTestRootPreparation(t *testing.T) 
 	}
 	assertNoWorkflowRule(t, ".github/workflows/ci.yml", updated, "workflow.ci_quality")
 	assertNoWorkflowRule(t, ".github/workflows/ci.yml", updated, "workflow.ci_environment_mutation")
+}
+
+func TestCIQualityRejectsPersistentTestRootJobEnvironmentExport(t *testing.T) {
+	const step = `      - name: Prepare trusted persistent test root
+        run: |
+          set -euo pipefail
+          trusted_root="/var/lib/amsftp-tests/$(id -u)"
+          sudo install -d -o root -g root -m 0755 /var/lib/amsftp-tests
+          sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
+          exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          install -d -m 0700 "${exec_root}"
+          printf 'AMSFTP_TEST_PERSISTENT_ROOT=%s\n' "${trusted_root}" >>"${GITHUB_ENV}"
+          printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
+`
+	const path = ".github/workflows/ci.yml"
+	root := prepareFixture(t, "valid")
+	replacePolicyFileOccurrence(t, root, path, "      - run: make check\n", step+"      - run: make check\n", 1)
+	assertPolicyFinding(t, root, policyFinding{
+		Path: path, Line: 7, Rule: "workflow.ci_environment_mutation",
+		Message: `required ci job "quality" must not reference GITHUB_ENV or GITHUB_PATH in run steps`,
+	})
 }
 
 func TestCIQualityLifecycleRequiresPreparedOwnerPrivatePersistentRoot(t *testing.T) {

@@ -42,7 +42,6 @@ jobs:
           sudo install -d -o "$(id -u)" -g "$(id -g)" -m 0700 "${trusted_root}"
           exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           install -d -m 0700 "${exec_root}"
-          printf 'AMSFTP_TEST_PERSISTENT_ROOT=%s\n' "${trusted_root}" >>"${GITHUB_ENV}"
           printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
       - run: make check
         env:
@@ -578,7 +577,6 @@ jobs:
           fi
           exec_root="${trusted_root}/${LEG}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
           install -d -m 0700 "${exec_root}"
-          printf 'AMSFTP_TEST_PERSISTENT_ROOT=%s\n' "${trusted_root}" >>"${GITHUB_ENV}"
           printf 'AMSFTP_CI_EXEC_ROOT=%s\n' "${exec_root}" >>"${GITHUB_ENV}"
       - run: make fmt-check
       - run: make vet
