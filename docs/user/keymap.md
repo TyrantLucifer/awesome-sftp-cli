@@ -27,7 +27,7 @@ Schema version 1 supports `normal` and `visual` keymap contexts. `visual` inheri
 | `v` / `V` / Space | Visual / Visual Line / discrete mark | remappable |
 | `/` / `f` | pane filter / filename search | remappable |
 | `S` / `s` / `H` / `R` | save workspace / sort / hidden / refresh | remappable |
-| `c` | connect/switch Endpoint | remappable |
+| `c` | open the fuzzy Endpoint picker for `local` and discovered OpenSSH Hosts | remappable; unmatched text is not submitted |
 | `y` / `d` / `p` / `r` | copy / cut / paste / rename | remappable; original confirmation and Job rules remain |
 | `e` / `o` / `E` | edit / open externally / edit recovery | remappable |
 | `K` / `J` / `L` | Preview / Jobs / Log drawer | remappable |

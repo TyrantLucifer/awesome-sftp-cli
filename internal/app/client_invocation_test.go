@@ -54,6 +54,18 @@ func TestStartupPickerChoicesPreserveWorkspaceRecoveryStateAndHosts(t *testing.T
 	}
 }
 
+func TestEndpointPickerChoicesIncludeLocalAndDiscoveredHosts(t *testing.T) {
+	got := endpointPickerChoices([]string{"bastion", "production"})
+	want := []tui.PickerChoice{
+		{Kind: tui.PickerHost, Name: "local"},
+		{Kind: tui.PickerHost, Name: "bastion"},
+		{Kind: tui.PickerHost, Name: "production"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("endpointPickerChoices() = %#v, want %#v", got, want)
+	}
+}
+
 func TestRemoveLastRuneDoesNotSplitUTF8(t *testing.T) {
 	if got := removeLastRune("host界"); got != "host" {
 		t.Fatalf("removeLastRune() = %q", got)

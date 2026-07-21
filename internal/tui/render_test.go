@@ -319,12 +319,17 @@ func TestRendererShowsMinimumSizeGuidanceInsteadOfBlankScreen(t *testing.T) {
 
 func TestRendererShowsEndpointModal(t *testing.T) {
 	model := testModel(t)
+	model.SetEndpointChoices([]PickerChoice{
+		{Kind: PickerHost, Name: "local"},
+		{Kind: PickerHost, Name: "work-primary"},
+		{Kind: PickerHost, Name: "work-backup"},
+	})
 	model, _ = Reduce(model, KeyPress{Key: KeyEndpoint})
 	model, _ = Reduce(model, TextInput{Text: "work"})
 	surface := newMemorySurface(64, 10)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"Change active endpoint", "Host alias: work", "type local for LocalFS"} {
+	for _, want := range []string{"Change active endpoint", "Filter: work", "work-primary", "work-backup", "Enter connect", "Esc cancel"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("endpoint modal missing %q:\n%s", want, got)
 		}

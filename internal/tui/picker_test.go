@@ -62,6 +62,29 @@ func TestPickerSelectionIsClampedAcrossFiltering(t *testing.T) {
 	}
 }
 
+func TestSelectionPickerFuzzyMatchesWithoutOfferingUncheckedManualAlias(t *testing.T) {
+	picker := newSelectionPicker([]PickerChoice{
+		{Kind: PickerHost, Name: "local"},
+		{Kind: PickerHost, Name: "production-edge"},
+		{Kind: PickerHost, Name: "staging"},
+	})
+	picker.SetQuery("prd")
+	if got := pickerNames(picker.Visible()); !reflect.DeepEqual(got, []string{"production-edge"}) {
+		t.Fatalf("fuzzy choices = %#v, want configured production host only", got)
+	}
+	selected, ok := picker.Selected()
+	if !ok || selected.Name != "production-edge" {
+		t.Fatalf("selected = %#v, %t", selected, ok)
+	}
+	picker.SetQuery("typo-with-no-match")
+	if got := picker.Visible(); len(got) != 0 {
+		t.Fatalf("unmatched query offered unchecked alias: %#v", got)
+	}
+	if selected, ok := picker.Selected(); ok {
+		t.Fatalf("unmatched query selected %#v", selected)
+	}
+}
+
 func pickerNames(choices []PickerChoice) []string {
 	names := make([]string, len(choices))
 	for index, choice := range choices {

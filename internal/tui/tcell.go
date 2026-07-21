@@ -64,6 +64,14 @@ func TranslateTCellEventWithKeymap(event tcell.Event, mode Mode, keymap Keymap) 
 			return KeyPress{Key: KeyEscape}, true
 		case tcell.KeyBackspace:
 			return KeyPress{Key: KeyBackspace}, true
+		case tcell.KeyDown:
+			if mode == ModeEndpoint {
+				return KeyPress{Key: KeyDown}, true
+			}
+		case tcell.KeyUp:
+			if mode == ModeEndpoint {
+				return KeyPress{Key: KeyUp}, true
+			}
 		case tcell.KeyRune:
 			if mode == ModeEditRecovery {
 				switch event.Str() {

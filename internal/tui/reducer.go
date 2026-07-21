@@ -114,10 +114,13 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		if model.Mode == ModeEndpoint {
-			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(string(model.endpointInput))+len(action.Text) > 255 {
+			if action.Text == "" || strings.ContainsAny(action.Text, "\x00\r\n") || len(model.endpointPicker.Query())+len(action.Text) > 255 {
 				return model, nil
 			}
-			model.endpointInput = append(append([]rune(nil), model.endpointInput...), []rune(action.Text)...)
+			picker := model.endpointPicker.clone()
+			picker.SetQuery(picker.Query() + action.Text)
+			model.endpointPicker = picker
+			model.Notice = ""
 			return model, nil
 		}
 		if model.Mode == ModeRename {
@@ -1060,23 +1063,35 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	if model.Mode == ModeEndpoint {
 		switch key {
 		case KeyBackspace:
-			if len(model.endpointInput) != 0 {
-				model.endpointInput = append([]rune(nil), model.endpointInput[:len(model.endpointInput)-1]...)
+			query := []rune(model.endpointPicker.Query())
+			if len(query) != 0 {
+				picker := model.endpointPicker.clone()
+				picker.SetQuery(string(query[:len(query)-1]))
+				model.endpointPicker = picker
 			}
+			model.Notice = ""
 			return model, nil
 		case KeyEscape:
-			model.endpointInput = nil
 			model.Mode = ModeNormal
 			return model, nil
+		case KeyDown:
+			picker := model.endpointPicker.clone()
+			picker.Move(1)
+			model.endpointPicker = picker
+			return model, nil
+		case KeyUp:
+			picker := model.endpointPicker.clone()
+			picker.Move(-1)
+			model.endpointPicker = picker
+			return model, nil
 		case KeySubmit:
-			name := string(model.endpointInput)
-			if name == "" {
-				model.Notice = "endpoint name is required"
+			choice, ok := model.endpointPicker.Selected()
+			if !ok {
+				model.Notice = "no matching endpoint; choose a configured SSH host or local"
 				return model, nil
 			}
-			model.endpointInput = nil
 			model.Mode = ModeNormal
-			return model, []Intent{{Kind: IntentConnectEndpoint, Pane: model.Active, Name: name}}
+			return model, []Intent{{Kind: IntentConnectEndpoint, Pane: model.Active, Name: choice.Name}}
 		default:
 			return model, nil
 		}
@@ -1280,7 +1295,10 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		model.pathInput = nil
 	case KeyEndpoint:
 		model.Mode = ModeEndpoint
-		model.endpointInput = nil
+		picker := model.endpointPicker.clone()
+		picker.SetQuery("")
+		model.endpointPicker = picker
+		model.Notice = ""
 	case KeyDown:
 		if len(pane.visible) != 0 {
 			pane.Cursor = min(pane.Cursor+steps, len(pane.visible)-1)

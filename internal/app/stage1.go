@@ -623,6 +623,11 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		applyWorkspacePanePreferences(&right, restored.Panes[1])
 	}
 	model := tui.NewModel(left, right)
+	aliases, aliasErr := discoverHostAliases()
+	model.SetEndpointChoices(endpointPickerChoices(aliases))
+	if aliasErr != nil {
+		model.Notice = "SSH Host list unavailable; endpoint switch offers local only"
+	}
 	cachePolicy := workspace.CacheLRU
 	if restored != nil {
 		applyWorkspaceLayout(&model, restored.Layout)
@@ -1554,16 +1559,9 @@ func pickStartLocations(
 	if err := client.Call(ctx, daemon.WorkspaceList, workspace.ListRequest{}, &listed); err != nil {
 		message = appendPickerMessage(message, "Cannot list workspaces: "+clientErrorMessage(err))
 	}
-	var aliases []string
-	home, err := os.UserHomeDir()
+	aliases, err := discoverHostAliases()
 	if err != nil {
-		message = appendPickerMessage(message, "Cannot locate SSH config: "+err.Error())
-	} else {
-		sshDirectory := filepath.Join(home, ".ssh")
-		aliases, err = sshconfig.DiscoverAliases(filepath.Join(sshDirectory, "config"), sshDirectory)
-		if err != nil {
-			message = appendPickerMessage(message, "Cannot read SSH config: "+err.Error())
-		}
+		message = appendPickerMessage(message, "Cannot read SSH Host list: "+err.Error())
 	}
 	picker := tui.NewPicker(startupPickerChoices(listed.Workspaces, aliases))
 	for {
@@ -1637,6 +1635,26 @@ func startupPickerChoices(summaries []workspace.Summary, aliases []string) []tui
 		choices = append(choices, tui.PickerChoice{Kind: tui.PickerHost, Name: alias})
 	}
 	return choices
+}
+
+func endpointPickerChoices(aliases []string) []tui.PickerChoice {
+	choices := make([]tui.PickerChoice, 0, len(aliases)+1)
+	choices = append(choices, tui.PickerChoice{Kind: tui.PickerHost, Name: "local"})
+	for _, alias := range aliases {
+		if alias != "local" {
+			choices = append(choices, tui.PickerChoice{Kind: tui.PickerHost, Name: alias})
+		}
+	}
+	return choices
+}
+
+func discoverHostAliases() ([]string, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return nil, err
+	}
+	sshDirectory := filepath.Join(home, ".ssh")
+	return sshconfig.DiscoverAliases(filepath.Join(sshDirectory, "config"), sshDirectory)
 }
 
 func appendPickerMessage(current, addition string) string {
