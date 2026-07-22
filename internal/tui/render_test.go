@@ -184,6 +184,104 @@ func TestRendererShowsMinimalDurableJobsView(t *testing.T) {
 	}
 }
 
+func TestRendererShowsAvailableControlsForSelectedJob(t *testing.T) {
+	tests := []struct {
+		name   string
+		state  job.State
+		want   []string
+		hidden []string
+	}{
+		{
+			name:   "running",
+			state:  job.StateRunning,
+			want:   []string{"C cancel", "P pause"},
+			hidden: []string{"U resume", "U retry"},
+		},
+		{
+			name:   "paused",
+			state:  job.StatePaused,
+			want:   []string{"C cancel", "U resume"},
+			hidden: []string{"P pause", "U retry"},
+		},
+		{
+			name:   "waiting for authentication",
+			state:  job.StateWaitingAuth,
+			want:   []string{"C cancel", "U retry"},
+			hidden: []string{"P pause", "U resume"},
+		},
+		{
+			name:   "waiting for conflict choice",
+			state:  job.StateWaitingConflict,
+			want:   []string{"C cancel", "w overwrite", "x skip", "a rename", "W/X/A apply all"},
+			hidden: []string{"P pause", "U resume", "U retry"},
+		},
+		{
+			name:   "completed",
+			state:  job.StateCompleted,
+			want:   []string{"No actions"},
+			hidden: []string{"C cancel", "P pause", "U resume", "U retry"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			model := testModel(t)
+			model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
+			model.Jobs = []transfer.JobView{{
+				Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: tt.state},
+				Kind:     transfer.OperationCopy,
+			}}
+			surface := newMemorySurface(180, 12)
+
+			Render(surface, model, RenderOptions{Overscan: 1})
+			got := surface.String()
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Fatalf("Jobs controls for %s missing %q:\n%s", tt.state, want, got)
+				}
+			}
+			for _, hidden := range tt.hidden {
+				if strings.Contains(got, hidden) {
+					t.Fatalf("Jobs controls for %s exposed unavailable action %q:\n%s", tt.state, hidden, got)
+				}
+			}
+		})
+	}
+}
+
+func TestRendererHidesJobControlsWhenDrawerIsNotFocused(t *testing.T) {
+	model := testModel(t)
+	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusPane, Rows: 6}
+	model.Jobs = []transfer.JobView{{
+		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning},
+		Kind:     transfer.OperationCopy,
+	}}
+	surface := newMemorySurface(180, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	got := surface.String()
+	for _, hidden := range []string{"C cancel", "P pause", "U resume", "U retry"} {
+		if strings.Contains(got, hidden) {
+			t.Fatalf("unfocused Jobs drawer exposed inactive control %q:\n%s", hidden, got)
+		}
+	}
+}
+
+func TestRendererPrioritizesCancelControlInNarrowJobsDrawer(t *testing.T) {
+	model := testModel(t)
+	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
+	model.Jobs = []transfer.JobView{{
+		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning},
+		Kind:     transfer.OperationCopy,
+	}}
+	surface := newMemorySurface(48, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	if got := surface.String(); !strings.Contains(got, "C cancel") {
+		t.Fatalf("narrow Jobs drawer hid the primary cancel control:\n%s", got)
+	}
+}
+
 func TestRendererKeepsRouteDowngradeEvidenceOutOfTheUserSummary(t *testing.T) {
 	model := testModel(t)
 	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}

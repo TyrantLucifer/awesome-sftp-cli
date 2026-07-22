@@ -42,6 +42,8 @@ Schema version 1 supports `normal` and `visual` keymap contexts. `visual` inheri
 
 Digits remain count prefixes before keymap lookup. Counts are accepted only for the existing bounded navigation/copy/cut/paste/delete/rename set. Unsupported count/action combinations are ignored safely. Arrow keys are fixed physical-key aliases for the four navigation actions and do not change or consume configurable single-rune bindings. `q` remains the fixed Normal-mode quit input and cannot be a Normal remap target; it remains available to an explicit Visual-context remap. Visual mappings use the `visual` context; confirmation, text-entry, authentication, recovery, and drawer-specific keys retain their fixed safe behavior.
 
+When the Jobs drawer has focus, its header describes the controls that are available for the selected Job. Queued or active Jobs show `C` cancel and `P` pause; paused Jobs show `C` cancel and `U` resume; authentication or retry waits show `C` cancel and `U` retry. Conflict waits show the single-item `w`/`x`/`a` choices and the `W`/`X`/`A` apply-all choices. Terminal Jobs explicitly report that no actions are available, and the hints disappear when focus returns to a file pane so they never advertise inactive keys.
+
 ## Deliberate 1.0 exclusions
 
 AMSFTP 1.0 does not implement Vim macros or named registers. There are no `macro_record`, `macro_play`, or named-register actions in the schema or default map; unknown attempts fail validation. Clipboard operations use the single durable AMSFTP clipboard and repeat only replays already frozen operations under their original confirmation rules.
