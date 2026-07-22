@@ -240,7 +240,6 @@ func renderStatusLine(surface Surface, model Model, y, width int) {
 	rightWidth := len([]rune(right))
 	rightX := width - rightWidth - 1
 	if right == "" || rightX <= leftX+12 || len([]rune(primary)) > rightX-leftX-1 {
-		right = ""
 		rightX = width
 	} else {
 		surface.PutClipped(rightX, y, rightWidth, right, StyleStatus)
@@ -924,12 +923,10 @@ func renderEndpointModal(surface Surface, picker Picker, width, height int) {
 	surface.PutClipped(x+1, y+1, modalWidth-2, "Filter: "+SanitizeTerminalText(picker.Query()), StyleInput)
 	window := ComputeWindow(len(choices), picker.SelectedIndex(), visibleRows, 0)
 	for row, index := 0, window.VisibleStart; index < window.VisibleEnd; row, index = row+1, index+1 {
-		marker, style := "  ", StylePlain
+		marker, style := "  ", StyleModal
 		if index == picker.SelectedIndex() {
 			marker, style = "▌ ", StyleCursor
 			surface.Fill(x, y+2+row, modalWidth, style)
-		} else {
-			style = StyleModal
 		}
 		surface.PutClipped(x+1, y+2+row, modalWidth-2, marker+SanitizeTerminalText(choices[index].Name), style)
 	}
