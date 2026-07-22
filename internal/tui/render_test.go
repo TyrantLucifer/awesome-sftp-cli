@@ -218,8 +218,8 @@ func TestRendererShowsAvailableControlsForSelectedJob(t *testing.T) {
 		{
 			name:   "completed",
 			state:  job.StateCompleted,
-			want:   []string{"No actions"},
-			hidden: []string{"C cancel", "P pause", "U resume", "U retry"},
+			want:   []string{"j/k select"},
+			hidden: []string{"No actions", "C cancel", "P pause", "U resume", "U retry"},
 		},
 	}
 
@@ -340,10 +340,124 @@ func TestRendererUsesReadableProgressSpeedAndSelectedJobDetails(t *testing.T) {
 
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"224.0 MiB / 224.0 MiB", "(100%)", "12.0 MiB/s", "From:", "To:", "mysql-backup.sql", "…"} {
+	for _, want := range []string{"Transferring", "100%", "12.0 MiB/s", "Selected ·", "→", "mysql-backup.sql", "…"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("readable Jobs view missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestRendererSeparatesWideJobsListFromSelectedDetails(t *testing.T) {
+	model := testModel(t)
+	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
+	copyTotal := uint64(5 << 20)
+	canceledTotal := uint64(100)
+	model.Jobs = []transfer.JobView{
+		{
+			Snapshot:   jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateCanceled},
+			Kind:       transfer.OperationCopy,
+			Source:     domain.Location{Path: "/data00/home/itchao/archive-one.tar.gz"},
+			Final:      domain.Location{Path: "/Users/bytedance/Downloads/archive-one.tar.gz"},
+			Phase:      transfer.PhaseStreaming,
+			Bytes:      20,
+			BytesTotal: &canceledTotal,
+			Items:      1,
+		},
+		{
+			Snapshot:   jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaab", State: job.StateCompleted},
+			Kind:       transfer.OperationCopy,
+			Source:     domain.Location{Path: "/data00/home/itchao/archive-two.tar.gz"},
+			Final:      domain.Location{Path: "/Users/bytedance/Downloads/archive-two.tar.gz"},
+			Bytes:      copyTotal,
+			BytesTotal: &copyTotal,
+			Items:      1,
+		},
+		{
+			Snapshot:   jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaac", State: job.StateCompleted},
+			Kind:       transfer.OperationDelete,
+			Source:     domain.Location{Path: "/Users/bytedance/Downloads/archive-three.tar.gz"},
+			BytesTotal: &copyTotal,
+			Items:      1,
+		},
+		{
+			Snapshot:   jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaad", State: job.StateCanceled},
+			Kind:       transfer.OperationDelete,
+			Source:     domain.Location{Path: "/Users/bytedance/Downloads/archive-four.tar.gz"},
+			BytesTotal: &copyTotal,
+			Items:      1,
+		},
+	}
+	surface := newMemorySurface(140, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	lines := strings.Split(surface.String(), "\n")
+	drawerY := surface.height - drawerRows(model.Drawer, surface.height)
+	body := lines[drawerY+1 : drawerY+5]
+	for index, name := range []string{"archive-one.tar.gz", "archive-two.tar.gz", "archive-three.tar.gz", "archive-four.tar.gz"} {
+		if !strings.Contains(body[index], name) {
+			t.Fatalf("wide Jobs row %d missing identity %q:\n%s", index, name, surface.String())
+		}
+	}
+	divider := strings.IndexRune(body[0], '│')
+	if divider < 0 {
+		t.Fatalf("wide Jobs drawer has no master-detail divider:\n%s", surface.String())
+	}
+	if from := strings.Index(body[1], "From:"); from <= divider {
+		t.Fatalf("selected From detail was interleaved with the Jobs list:\n%s", surface.String())
+	}
+	if to := strings.Index(body[2], "To:"); to <= divider {
+		t.Fatalf("selected To detail was interleaved with the Jobs list:\n%s", surface.String())
+	}
+	if !strings.Contains(body[0], "Canceled at 20%") {
+		t.Fatalf("canceled Job did not retain concise progress context:\n%s", surface.String())
+	}
+	if !strings.Contains(body[1], "Completed") || !strings.Contains(body[1], "5.0 MiB") || strings.Contains(body[1], "100%") {
+		t.Fatalf("completed copy has redundant or missing progress semantics:\n%s", surface.String())
+	}
+	if !strings.Contains(body[2], "Completed") || !strings.Contains(body[2], "1 item") || strings.Contains(body[2], "0 B") || strings.Contains(body[2], "0%") {
+		t.Fatalf("completed delete has byte-transfer progress semantics:\n%s", surface.String())
+	}
+	canceledDelete := body[3][:strings.IndexRune(body[3], '│')]
+	if !strings.Contains(canceledDelete, "Canceled") || strings.Contains(canceledDelete, "%") || strings.Contains(canceledDelete, "B") {
+		t.Fatalf("canceled delete has byte-transfer progress semantics:\n%s", surface.String())
+	}
+	if style := surface.StyleAt(2, drawerY+2); style != StyleMuted {
+		t.Fatalf("completed Job identity style = %v, want muted", style)
+	}
+	completedColumn := strings.Index(body[1], "Completed")
+	if style := surface.StyleAt(completedColumn, drawerY+2); style != StyleSuccess {
+		t.Fatalf("completed Job status style = %v, want success", style)
+	}
+}
+
+func TestRendererUsesCompactSelectedFooterOnNarrowJobsDrawer(t *testing.T) {
+	model := testModel(t)
+	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
+	model.Jobs = []transfer.JobView{
+		{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning}, Kind: transfer.OperationCopy, Source: domain.Location{Path: "/source/one.txt"}, Final: domain.Location{Path: "/target/one.txt"}, Phase: transfer.PhaseStreaming},
+		{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaab", State: job.StateQueued}, Kind: transfer.OperationCopy, Source: domain.Location{Path: "/source/two.txt"}, Final: domain.Location{Path: "/target/two.txt"}},
+		{Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaac", State: job.StateCompleted}, Kind: transfer.OperationDelete, Source: domain.Location{Path: "/target/three.txt"}, Items: 1},
+	}
+	surface := newMemorySurface(72, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	lines := strings.Split(surface.String(), "\n")
+	drawerY := surface.height - drawerRows(model.Drawer, surface.height)
+	for index, name := range []string{"one.txt", "two.txt", "three.txt"} {
+		if !strings.Contains(lines[drawerY+1+index], name) {
+			t.Fatalf("narrow Jobs row %d missing identity %q:\n%s", index, name, surface.String())
+		}
+		if strings.Contains(lines[drawerY+1+index], "From:") || strings.Contains(lines[drawerY+1+index], "To:") {
+			t.Fatalf("narrow selected details interrupted the Jobs list:\n%s", surface.String())
+		}
+	}
+	footer := lines[drawerY+drawerRows(model.Drawer, surface.height)-1]
+	if !strings.Contains(footer, "Selected ·") || !strings.Contains(footer, "→") {
+		t.Fatalf("narrow Jobs drawer missing compact selected footer:\n%s", surface.String())
+	}
+	drawer := strings.Join(lines[drawerY:], "\n")
+	if strings.Contains(drawer, "│") {
+		t.Fatalf("narrow Jobs drawer unexpectedly used the wide split layout:\n%s", surface.String())
 	}
 }
 

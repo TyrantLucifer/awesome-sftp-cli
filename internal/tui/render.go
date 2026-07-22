@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
@@ -593,9 +594,15 @@ func drawerHeaderLabel(drawer DrawerState, jobs []transfer.JobView, cursor int) 
 		return header + "  — f/g/ search; Esc pane"
 	}
 	if drawer.Mode == DrawerJobs && drawer.Focus == FocusDrawer {
-		if controls := selectedJobControls(jobs, cursor); controls != "" {
-			return header + "  — " + controls + " · j/k select; Esc pane"
+		if len(jobs) == 0 {
+			return header + "  — K/J/L switch; Esc pane"
 		}
+		if controls := selectedJobControls(jobs, cursor); controls != "" {
+			header += "  — " + controls + " · "
+		} else {
+			header += "  — "
+		}
+		return header + "j/k select; Esc pane"
 	}
 	return header + "  — K/J/L switch; Esc pane"
 }
@@ -616,7 +623,7 @@ func selectedJobControls(jobs []transfer.JobView, cursor int) string {
 	case job.StateWaitingConflict:
 		return "C cancel · w overwrite · x skip · a rename · W/X/A apply all"
 	case job.StateCompleted, job.StateCompletedWithSourceRetained, job.StateFailed, job.StateCanceled:
-		return "No actions"
+		return ""
 	default:
 		return ""
 	}
@@ -713,43 +720,99 @@ func renderPreviewDrawer(surface Surface, preview PreviewState, y, width, rows i
 	}
 }
 
+const jobsWideLayoutMinWidth = 96
+
 func renderJobsDrawer(surface Surface, jobs []transfer.JobView, progress map[domain.JobID]jobProgressSample, cursor, y, width, rows int) {
 	if len(jobs) == 0 {
 		surface.PutClipped(0, y, width, "No durable Jobs", StylePreview)
 		return
 	}
 	cursor = min(max(cursor, 0), len(jobs)-1)
-	details := jobDetailLines(jobs[cursor])
-	if len(details) > max(0, rows-1) {
-		details = details[:max(0, rows-1)]
+	if width >= jobsWideLayoutMinWidth && rows >= 3 {
+		dividerX := min(max(52, width*3/5), width-28)
+		renderJobList(surface, jobs, progress, cursor, 0, y, dividerX, rows)
+		for row := 0; row < rows; row++ {
+			surface.PutClipped(dividerX, y+row, 1, "│", StyleBorder)
+		}
+		renderJobDetails(surface, jobs[cursor], progress[jobs[cursor].Snapshot.JobID], dividerX+2, y, width-dividerX-2, rows)
+		return
 	}
-	visibleJobs := max(1, rows-len(details))
+
+	detailRows := 0
+	if rows >= 3 {
+		detailRows = 1
+	}
+	renderJobList(surface, jobs, progress, cursor, 0, y, width, rows-detailRows)
+	if detailRows != 0 {
+		detail := fitSelectedJobFooter(jobs[cursor], width)
+		surface.PutClipped(0, y+rows-1, width, detail, StyleMuted)
+	}
+}
+
+func renderJobList(surface Surface, jobs []transfer.JobView, progress map[domain.JobID]jobProgressSample, cursor, x, y, width, rows int) {
+	if rows <= 0 || width <= 0 {
+		return
+	}
+	visibleJobs := max(1, rows)
 	start := max(0, cursor-visibleJobs/2)
 	if start+visibleJobs > len(jobs) {
 		start = max(0, len(jobs)-visibleJobs)
 	}
-	screenRow := 0
-	for index := start; index < len(jobs) && screenRow < rows; index++ {
+	for index := start; index < len(jobs) && index-start < rows; index++ {
 		view := jobs[index]
 		selected := index == cursor
-		style := jobStyle(view)
-		marker := "  "
-		if selected {
-			style = StyleCursor
-			marker = "▌ "
-			surface.Fill(0, y+screenRow, width, style)
-		}
-		surface.PutClipped(0, y+screenRow, width, marker+jobSummary(view, progress[view.Snapshot.JobID]), style)
-		screenRow++
-		if selected {
-			for _, detail := range details {
-				if screenRow >= rows {
-					break
-				}
-				surface.PutClipped(0, y+screenRow, width, fitJobDetail(detail.label, detail.value, width), StylePreview)
-				screenRow++
-			}
-		}
+		renderJobListRow(surface, view, progress[view.Snapshot.JobID], selected, x, y+index-start, width)
+	}
+}
+
+func renderJobListRow(surface Surface, view transfer.JobView, sample jobProgressSample, selected bool, x, y, width int) {
+	if width <= 0 {
+		return
+	}
+	marker := "  "
+	baseStyle := jobBaseStyle(view)
+	statusStyle := jobStyle(view)
+	if selected {
+		marker = "▌ "
+		baseStyle = StyleCursor
+		statusStyle = StyleCursor
+		surface.Fill(x, y, width, StyleCursor)
+	}
+	if width < 48 {
+		line := marker + jobOperationLabel(view.Kind) + " · " + jobStateLabel(view)
+		surface.PutClipped(x, y, width, line, baseStyle)
+		return
+	}
+
+	const operationWidth = 8
+	operation := fitMiddle(jobOperationLabel(view.Kind), operationWidth)
+	operation = fmt.Sprintf("%-*s", operationWidth, operation)
+	prefix := marker + operation + " "
+	status := jobListStatus(view, sample)
+	statusWidth := len([]rune(status))
+	minimumNameWidth := 8
+	if statusWidth > width-len([]rune(prefix))-minimumNameWidth-2 {
+		status = jobStateLabel(view)
+		statusWidth = len([]rune(status))
+	}
+	statusX := x + width - statusWidth - 1
+	nameWidth := statusX - x - len([]rune(prefix)) - 1
+	if nameWidth <= 0 {
+		line := prefix + jobStateLabel(view)
+		surface.PutClipped(x, y, width, line, baseStyle)
+		return
+	}
+	name := fitMiddle(jobDisplayName(view), nameWidth)
+	surface.PutClipped(x, y, width, prefix+name, baseStyle)
+	surface.PutClipped(statusX, y, statusWidth, status, statusStyle)
+}
+
+func jobBaseStyle(view transfer.JobView) CellStyle {
+	switch view.Snapshot.State {
+	case job.StateCompleted, job.StateCompletedWithSourceRetained, job.StateCanceled:
+		return StyleMuted
+	default:
+		return StylePreview
 	}
 }
 
@@ -771,14 +834,32 @@ type jobDetail struct {
 	value string
 }
 
-func jobDetailLines(view transfer.JobView) []jobDetail {
+func renderJobDetails(surface Surface, view transfer.JobView, sample jobProgressSample, x, y, width, rows int) {
+	details := jobDetailLines(view, sample)
+	for row := 0; row < rows && row < len(details); row++ {
+		detail := details[row]
+		style := StylePreview
+		if row == 0 {
+			style = jobStyle(view)
+		}
+		surface.PutClipped(x, y+row, width, fitJobDetail(detail.label, detail.value, width), style)
+	}
+}
+
+func jobDetailLines(view transfer.JobView, sample jobProgressSample) []jobDetail {
+	details := []jobDetail{{label: "Selected · ", value: jobOperationLabel(view.Kind) + " · " + jobListStatus(view, sample)}}
 	if view.Kind == transfer.OperationDelete {
-		return []jobDetail{{label: "  Target: ", value: string(view.Source.Path)}}
+		details = append(details, jobDetail{label: "Target: ", value: string(view.Source.Path)})
+	} else {
+		details = append(details,
+			jobDetail{label: "From: ", value: string(view.Source.Path)},
+			jobDetail{label: "To:   ", value: string(view.Final.Path)},
+		)
 	}
-	return []jobDetail{
-		{label: "  From: ", value: string(view.Source.Path)},
-		{label: "  To:   ", value: string(view.Final.Path)},
+	if label, value := jobDetailProgress(view, sample); value != "" {
+		details = append(details, jobDetail{label: label, value: value})
 	}
+	return details
 }
 
 func fitJobDetail(label, value string, width int) string {
@@ -800,23 +881,138 @@ func fitJobDetail(label, value string, width int) string {
 	return label + string(runes[:head]) + "…" + string(runes[len(runes)-tail:])
 }
 
-func jobSummary(view transfer.JobView, sample jobProgressSample) string {
-	parts := []string{jobOperationLabel(view.Kind), jobStateLabel(view), formatJobBytes(view.Bytes, view.BytesTotal)}
-	if jobShowsSpeed(view) {
-		speed := "—/s"
-		if sample.rateKnown {
-			speed = formatBytes(sample.bytesPerSecond) + "/s"
-		}
-		parts = append(parts, speed)
+func fitSelectedJobFooter(view transfer.JobView, width int) string {
+	const label = "Selected · "
+	if view.Kind == transfer.OperationDelete {
+		return fitJobDetail(label+"Target ", string(view.Source.Path), width)
 	}
-	if view.BytesTotal == nil && view.Items != 0 {
-		label := "items"
-		if view.Items == 1 {
-			label = "item"
-		}
-		parts = append(parts, fmt.Sprintf("%d %s", view.Items, label))
+	const arrow = " → "
+	available := width - len([]rune(label)) - len([]rune(arrow))
+	if available <= 2 {
+		return fitJobDetail(label, string(view.Final.Path), width)
 	}
-	return strings.Join(parts, " · ")
+	sourceWidth := available / 2
+	finalWidth := available - sourceWidth
+	return label + fitMiddle(string(view.Source.Path), sourceWidth) + arrow + fitMiddle(string(view.Final.Path), finalWidth)
+}
+
+func fitMiddle(value string, width int) string {
+	value = SanitizeTerminalText(value)
+	if width <= 0 {
+		return ""
+	}
+	runes := []rune(value)
+	if len(runes) <= width {
+		return value
+	}
+	if width == 1 {
+		return "…"
+	}
+	available := width - 1
+	head := max(1, available/3)
+	tail := max(0, available-head)
+	return string(runes[:head]) + "…" + string(runes[len(runes)-tail:])
+}
+
+func jobDisplayName(view transfer.JobView) string {
+	location := view.Final
+	if view.Kind == transfer.OperationDelete || location.Path == "" {
+		location = view.Source
+	}
+	value := SanitizeTerminalText(string(location.Path))
+	name := path.Base(value)
+	if name == "." || name == "/" || name == "" {
+		name = value
+	}
+	if name == "" {
+		return "(unknown item)"
+	}
+	return name
+
+}
+
+func jobListStatus(view transfer.JobView, sample jobProgressSample) string {
+	state := jobStateLabel(view)
+	if view.Kind == transfer.OperationDelete {
+		if items := formatJobItems(view.Items); items != "" {
+			return state + " · " + items
+		}
+		return state
+	}
+	switch view.Snapshot.State {
+	case job.StateRunning:
+		parts := []string{state}
+		if percent, ok := jobProgressPercent(view); ok {
+			parts = append(parts, fmt.Sprintf("%.0f%%", percent))
+		}
+		if jobShowsSpeed(view) && sample.rateKnown {
+			parts = append(parts, formatBytes(sample.bytesPerSecond)+"/s")
+		}
+		return strings.Join(parts, " · ")
+	case job.StateCanceled, job.StateFailed:
+		if percent, ok := jobProgressPercent(view); ok {
+			return fmt.Sprintf("%s at %.0f%%", state, percent)
+		}
+		return state
+	case job.StateCompleted, job.StateCompletedWithSourceRetained:
+		if size, ok := completedJobSize(view); ok {
+			return state + " · " + formatBytes(size)
+		}
+		return state
+	default:
+		return state
+	}
+}
+
+func jobDetailProgress(view transfer.JobView, sample jobProgressSample) (string, string) {
+	if view.Kind == transfer.OperationDelete {
+		if items := formatJobItems(view.Items); items != "" {
+			return "Items: ", items
+		}
+		return "", ""
+	}
+	if view.Snapshot.State == job.StateCompleted || view.Snapshot.State == job.StateCompletedWithSourceRetained {
+		if size, ok := completedJobSize(view); ok {
+			return "Size: ", formatBytes(size)
+		}
+		return "", ""
+	}
+	if view.BytesTotal == nil && view.Bytes == 0 {
+		return "", ""
+	}
+	value := formatJobBytes(view.Bytes, view.BytesTotal)
+	if jobShowsSpeed(view) && sample.rateKnown {
+		value += " · " + formatBytes(sample.bytesPerSecond) + "/s"
+	}
+	return "Progress: ", value
+}
+
+func completedJobSize(view transfer.JobView) (uint64, bool) {
+	if view.BytesTotal != nil {
+		return *view.BytesTotal, true
+	}
+	if view.Bytes != 0 {
+		return view.Bytes, true
+	}
+	return 0, false
+}
+
+func jobProgressPercent(view transfer.JobView) (float64, bool) {
+	if view.BytesTotal == nil || *view.BytesTotal == 0 {
+		return 0, false
+	}
+	return float64(view.Bytes) * 100 / float64(*view.BytesTotal), true
+}
+
+func formatJobItems(items uint64) string {
+	if items == 0 {
+		return ""
+	}
+	label := "items"
+	if items == 1 {
+		label = "item"
+	}
+	return fmt.Sprintf("%d %s", items, label)
 }
 
 func jobOperationLabel(kind transfer.OperationKind) string {
