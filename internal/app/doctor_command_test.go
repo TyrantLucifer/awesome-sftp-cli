@@ -72,6 +72,27 @@ func TestDoctorCommandReportsAbsenceAndLiveDatabaseWithoutRepair(t *testing.T) {
 	}
 }
 
+func TestDoctorReportsUntrustedInstallPathWithoutRawCause(t *testing.T) {
+	t.Parallel()
+
+	runtime := passingDoctorRuntime()
+	runtime.resolveExecutable = func(string) (string, error) {
+		return "", errors.New("ancestor /private/path is owned by another uid")
+	}
+	var stdout bytes.Buffer
+	if err := runDoctorWithRuntime(t.Context(), []string{"--format", "json"}, &stdout, runtime); err != nil {
+		t.Fatal(err)
+	}
+	var report doctor.Report
+	if err := json.Unmarshal(stdout.Bytes(), &report); err != nil {
+		t.Fatal(err)
+	}
+	assertDoctorResult(t, report, doctor.CheckConfig, doctor.Fail, "install_path_untrusted")
+	if strings.Contains(stdout.String(), "/private/path") {
+		t.Fatalf("doctor leaked install path cause: %q", stdout.String())
+	}
+}
+
 func TestDoctorCommandNeverExportsRawProbeCausesOrEndpointMetadata(t *testing.T) {
 	t.Parallel()
 
@@ -202,13 +223,14 @@ func passingDoctorRuntime() doctorRuntime {
 		CacheDir: "/safe/cache", RuntimeDir: "/safe/runtime", ControlSocket: "/safe/runtime/control-v1.sock",
 	}
 	return doctorRuntime{
-		paths: paths, purpose: platform.ValidateRuntime,
+		paths: paths, purpose: platform.ValidateRuntime, selfExecutable: "/safe/bin/amsftp",
 		pathExists:         func(string) (bool, error) { return true, nil },
 		loadConfig:         func(string) (config.Config, error) { return config.Default(), nil },
 		validateDirectory:  func(string, platform.ValidationPurpose) error { return nil },
 		validateSocket:     func(string, platform.ValidationPurpose) error { return nil },
 		dialDaemon:         func(context.Context, string, platform.ValidationPurpose) error { return nil },
 		validateExecutable: func(string) error { return nil },
+		resolveExecutable:  func(path string) (string, error) { return path, nil },
 		inspectDatabase:    func(context.Context, string) (uint64, error) { return 4, nil },
 		availableBytes:     func(string) (uint64, error) { return 1024 * 1024 * 1024, nil },
 		inspectOpenSSH: func(context.Context, string) (openssh.ConfigInspection, error) {

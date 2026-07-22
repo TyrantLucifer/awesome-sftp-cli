@@ -3,7 +3,7 @@
 AMSFTP 是一个面向 macOS 和 Linux 终端用户的 Vim-first 双栏文件工作台。任一栏都可以指向本地目录或 `~/.ssh/config` 中的远端主机；浏览、预览、编辑、搜索和传输统一通过本地 daemon 协调，认证与主机策略继续由系统 OpenSSH 负责。
 
 > [!WARNING]
-> `v0.1.12` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
+> `v0.1.13` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
 
 ## 主要能力
 
@@ -29,7 +29,7 @@ AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为
 
 ## 安装与升级
 
-公开预览发布页：[`v0.1.12`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.12)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
+公开预览发布页：[`v0.1.13`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.13)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
 
 严格 `X.Y.Z` 的公开预览发布后，可直接使用下面任一渠道。安装脚本默认安装到 `$HOME/.local`，会校验归档 SHA-256、原子替换 binary、保存上一版为 `amsftp.previous`，并重新生成 man page 与 shell completion：
 
@@ -38,7 +38,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
 ```
 
-再次运行同一命令即可升级。也可以使用 Homebrew：
+安装器在替换任何现有文件前预检 binary、配置、状态和缓存路径的 owner/mode/ACL/no-symlink 链。若默认 HOME 布局不可信，它会自动复用管理员已预置且通过校验的 `/var/lib/amsftp-users/<uid>`；若该根尚不存在，安装保持零目标变更并输出一次性初始化命令。受管根会持久记录布局，后续启动和升级不需要手工设置 XDG 变量；也可用 `--root /absolute/path` 显式选择已预置的可信根。再次运行同一命令即可升级。也可以使用 Homebrew：
 
 ```sh
 brew install TyrantLucifer/tap/amsftp

@@ -49,22 +49,29 @@ type pathSources struct {
 	homeDir       string
 	userConfigDir string
 	userCacheDir  string
+	installRoot   string
 	environment   map[string]string
 }
 
 func ResolvePaths(overrides Overrides) (Paths, []Diagnostic, error) {
-	homeDir, err := os.UserHomeDir()
+	installRoot, err := DiscoverManagedInstallRoot()
 	if err != nil {
-		return Paths{}, nil, fmt.Errorf("resolve home directory: %w", err)
+		return Paths{}, nil, fmt.Errorf("resolve managed install root: %w", err)
 	}
-
-	userConfigDir, err := currentUserConfigDir(runtime.GOOS, homeDir)
-	if err != nil {
-		return Paths{}, nil, err
-	}
-	userCacheDir, err := currentUserCacheDir(runtime.GOOS, homeDir)
-	if err != nil {
-		return Paths{}, nil, err
+	homeDir, userConfigDir, userCacheDir := installRoot, installRoot, installRoot
+	if installRoot == "" {
+		homeDir, err = os.UserHomeDir()
+		if err != nil {
+			return Paths{}, nil, fmt.Errorf("resolve home directory: %w", err)
+		}
+		userConfigDir, err = currentUserConfigDir(runtime.GOOS, homeDir)
+		if err != nil {
+			return Paths{}, nil, err
+		}
+		userCacheDir, err = currentUserCacheDir(runtime.GOOS, homeDir)
+		if err != nil {
+			return Paths{}, nil, err
+		}
 	}
 
 	environment := make(map[string]string, 5)
@@ -80,6 +87,7 @@ func ResolvePaths(overrides Overrides) (Paths, []Diagnostic, error) {
 		homeDir:       homeDir,
 		userConfigDir: userConfigDir,
 		userCacheDir:  userCacheDir,
+		installRoot:   installRoot,
 		environment:   environment,
 	}, overrides)
 }
@@ -117,16 +125,22 @@ func resolvePaths(sources pathSources, overrides Overrides) (Paths, []Diagnostic
 	if sources.euid < 0 {
 		return Paths{}, nil, fmt.Errorf("effective uid must be non-negative")
 	}
-	for name, path := range map[string]string{
-		"home directory":        sources.homeDir,
-		"user config directory": sources.userConfigDir,
-		"user cache directory":  sources.userCacheDir,
-	} {
-		if err := validateCanonicalAbsolutePath(path); err != nil {
-			return Paths{}, nil, fmt.Errorf("%s: %w", name, err)
+	if sources.installRoot == "" {
+		for name, path := range map[string]string{
+			"home directory":        sources.homeDir,
+			"user config directory": sources.userConfigDir,
+			"user cache directory":  sources.userCacheDir,
+		} {
+			if err := validateCanonicalAbsolutePath(path); err != nil {
+				return Paths{}, nil, fmt.Errorf("%s: %w", name, err)
+			}
+		}
+	} else {
+		if err := validateCanonicalAbsolutePath(sources.installRoot); err != nil {
+			return Paths{}, nil, fmt.Errorf("managed install root: %w", err)
 		}
 	}
-	if value := sources.environment["XDG_STATE_HOME"]; value != "" && filepath.IsAbs(value) {
+	if value := sources.environment["XDG_STATE_HOME"]; sources.installRoot == "" && value != "" && filepath.IsAbs(value) {
 		if err := validateCanonicalAbsolutePath(value); err != nil {
 			return Paths{}, nil, fmt.Errorf("XDG_STATE_HOME: %w", err)
 		}
@@ -150,28 +164,48 @@ func resolvePaths(sources pathSources, overrides Overrides) (Paths, []Diagnostic
 	fallbackRuntime := filepath.Join("/tmp", applicationSlug+"-"+strconv.Itoa(sources.euid))
 	var diagnostics []Diagnostic
 
-	switch sources.goos {
-	case "darwin":
-		paths.ConfigDir = filepath.Join(sources.userConfigDir, applicationID)
-		paths.StateDir = filepath.Join(paths.ConfigDir, "state")
-		paths.LogDir = filepath.Join(sources.homeDir, "Library", "Logs", applicationID)
-		paths.CacheDir = filepath.Join(sources.userCacheDir, applicationID)
-		preferredRuntime, diagnostics = preferredRuntimeDirectory(
-			sources.environment["TMPDIR"],
-			applicationSlug+"-"+strconv.Itoa(sources.euid),
-			fallbackRuntime,
-		)
-	case "linux":
-		stateBase := absoluteEnvironmentOrDefault(sources.environment["XDG_STATE_HOME"], filepath.Join(sources.homeDir, ".local", "state"))
-		paths.ConfigDir = filepath.Join(sources.userConfigDir, applicationSlug)
-		paths.StateDir = filepath.Join(stateBase, applicationSlug)
+	if sources.installRoot != "" {
+		paths.ConfigDir = filepath.Join(sources.installRoot, "config")
+		paths.StateDir = filepath.Join(sources.installRoot, "state")
 		paths.LogDir = filepath.Join(paths.StateDir, "log")
-		paths.CacheDir = filepath.Join(sources.userCacheDir, applicationSlug)
-		preferredRuntime, diagnostics = preferredRuntimeDirectory(
-			sources.environment["XDG_RUNTIME_DIR"],
-			applicationSlug,
-			fallbackRuntime,
-		)
+		paths.CacheDir = filepath.Join(sources.installRoot, "cache")
+		if sources.goos == "darwin" {
+			preferredRuntime, diagnostics = preferredRuntimeDirectory(
+				sources.environment["TMPDIR"],
+				applicationSlug+"-"+strconv.Itoa(sources.euid),
+				fallbackRuntime,
+			)
+		} else {
+			preferredRuntime, diagnostics = preferredRuntimeDirectory(
+				sources.environment["XDG_RUNTIME_DIR"],
+				applicationSlug,
+				fallbackRuntime,
+			)
+		}
+	} else {
+		switch sources.goos {
+		case "darwin":
+			paths.ConfigDir = filepath.Join(sources.userConfigDir, applicationID)
+			paths.StateDir = filepath.Join(paths.ConfigDir, "state")
+			paths.LogDir = filepath.Join(sources.homeDir, "Library", "Logs", applicationID)
+			paths.CacheDir = filepath.Join(sources.userCacheDir, applicationID)
+			preferredRuntime, diagnostics = preferredRuntimeDirectory(
+				sources.environment["TMPDIR"],
+				applicationSlug+"-"+strconv.Itoa(sources.euid),
+				fallbackRuntime,
+			)
+		case "linux":
+			stateBase := absoluteEnvironmentOrDefault(sources.environment["XDG_STATE_HOME"], filepath.Join(sources.homeDir, ".local", "state"))
+			paths.ConfigDir = filepath.Join(sources.userConfigDir, applicationSlug)
+			paths.StateDir = filepath.Join(stateBase, applicationSlug)
+			paths.LogDir = filepath.Join(paths.StateDir, "log")
+			paths.CacheDir = filepath.Join(sources.userCacheDir, applicationSlug)
+			preferredRuntime, diagnostics = preferredRuntimeDirectory(
+				sources.environment["XDG_RUNTIME_DIR"],
+				applicationSlug,
+				fallbackRuntime,
+			)
+		}
 	}
 
 	if overrides.ConfigFile != "" {

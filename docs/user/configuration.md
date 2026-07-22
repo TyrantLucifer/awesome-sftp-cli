@@ -15,6 +15,8 @@ The current precedence is:
 
 Environment variables are not a general configuration layer. AMSFTP passes the process environment to the validated system OpenSSH and uses bounded environment lookup when resolving default editor/opener commands. It does not accept secrets, SSH options, or safety-policy overrides through AMSFTP-specific environment variables. Job-semantic settings are frozen when a Job is planned; a future safe reload may affect only explicitly documented live settings.
 
+A standalone installation created with the installer's managed-root mode derives its config, state, log, and cache paths from the validated root recorded beside the binary. This intentionally ignores HOME and XDG config/state/cache values so a foreign-owned or symlinked home cannot split client and daemon state. Runtime socket selection still follows the platform runtime policy, and explicit recovery/test path overrides retain precedence without weakening validation.
+
 ## Commands
 
 Validate the effective default/user configuration:

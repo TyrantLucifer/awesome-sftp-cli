@@ -5,14 +5,19 @@ set -eu
 umask 077
 
 release_origin="https://github.com/TyrantLucifer/awesome-sftp-cli"
+trusted_root_base="/var/lib/amsftp-users"
 version="latest"
 prefix="${HOME}/.local"
+prefix_explicit="false"
+managed_root="false"
 start_daemon="true"
 work_dir=""
 staged_binary=""
+marker_tmp=""
+unsafe_previous_prefix=""
 
 usage() {
-    printf '%s\n' 'usage: install.sh [--version X.Y.Z] [--prefix /absolute/path] [--no-start-daemon]'
+    printf '%s\n' 'usage: install.sh [--version X.Y.Z] [--prefix /absolute/path | --root /absolute/path] [--no-start-daemon]'
 }
 
 die() {
@@ -23,6 +28,9 @@ die() {
 cleanup() {
     if test -n "$staged_binary" && test -e "$staged_binary"; then
         rm -f "$staged_binary"
+    fi
+    if test -n "$marker_tmp" && test -e "$marker_tmp"; then
+        rm -f "$marker_tmp"
     fi
     if test -n "$work_dir" && test -d "$work_dir"; then
         rm -rf "$work_dir"
@@ -40,7 +48,18 @@ while test "$#" -gt 0; do
             ;;
         --prefix)
             test "$#" -ge 2 || die '--prefix requires a value'
+            test "$prefix_explicit" = "false" || die '--prefix and --root are mutually exclusive'
             prefix=$2
+            prefix_explicit="true"
+            managed_root="false"
+            shift 2
+            ;;
+        --root)
+            test "$#" -ge 2 || die '--root requires a value'
+            test "$prefix_explicit" = "false" || die '--prefix and --root are mutually exclusive'
+            prefix=$2
+            prefix_explicit="true"
+            managed_root="true"
             shift 2
             ;;
         --no-start-daemon)
@@ -139,6 +158,51 @@ tar -xzf "$archive_path" -C "$work_dir" \
 test -f "$source_binary" && test ! -L "$source_binary" || die 'archive binary is missing or unsafe'
 test -f "$source_man" && test ! -L "$source_man" || die 'archive man page is missing or unsafe'
 
+staged_version=$("$source_binary" --version) || die 'staged binary version check failed'
+case "$staged_version" in
+    "$version "*) ;;
+    *) die "staged binary reports an unexpected version: $staged_version" ;;
+esac
+
+if test -e "$prefix/.amsftp-root" || test -L "$prefix/.amsftp-root"; then
+    managed_root="true"
+fi
+
+preflight_install() {
+    if test "$managed_root" = "true"; then
+        "$source_binary" __install preflight --root "$prefix" --format json >/dev/null 2>&1
+    else
+        "$source_binary" __install preflight --prefix "$prefix" --format json >/dev/null 2>&1
+    fi
+}
+
+if ! preflight_install; then
+    if test "$prefix_explicit" = "true"; then
+        die 'installation paths do not satisfy the local trust policy; choose a trusted --root'
+    fi
+    trusted_root="$trusted_root_base/$(id -u)"
+    if test -d "$trusted_root"; then
+        unsafe_previous_prefix="$prefix"
+        prefix="$trusted_root"
+        managed_root="true"
+        if preflight_install; then
+            printf 'Using trusted AMSFTP root %s because the default home layout is unsafe.\n' "$prefix"
+        else
+            managed_root="false"
+        fi
+    fi
+    if test "$managed_root" != "true"; then
+        current_user=$(id -un)
+        current_group=$(id -gn)
+        printf '%s\n' 'amsftp installer: the default home layout does not satisfy the local trust policy.' >&2
+        printf '%s\n' 'Ask an administrator to provision the owner-private AMSFTP root once:' >&2
+        printf '  sudo install -d -o root -g root -m 0755 %s\n' "$trusted_root_base" >&2
+        printf '  sudo install -d -o %s -g %s -m 0700 %s\n' "$current_user" "$current_group" "$trusted_root" >&2
+        printf '%s\n' 'Then rerun the same installer command.' >&2
+        exit 1
+    fi
+fi
+
 bin_dir="$prefix/bin"
 man_dir="$prefix/share/man/man1"
 bash_dir="$prefix/share/bash-completion/completions"
@@ -153,14 +217,11 @@ installed_binary="$bin_dir/amsftp"
 staged_binary="$bin_dir/.amsftp.install.$$"
 test ! -e "$staged_binary" || die 'staged install path already exists'
 install -m 0755 "$source_binary" "$staged_binary" || die 'cannot stage the new binary'
-staged_version=$($staged_binary --version) || die 'staged binary version check failed'
-case "$staged_version" in
-    "$version "*) ;;
-    *) die "staged binary reports an unexpected version: $staged_version" ;;
-esac
 
 was_running="false"
+had_previous="false"
 if test -x "$installed_binary" && test ! -L "$installed_binary"; then
+    had_previous="true"
     old_status=$($installed_binary daemon status --format json) || die 'cannot safely determine the current daemon state'
     case "$old_status" in
         *'"running":true'*)
@@ -179,6 +240,15 @@ if test -x "$installed_binary" && test ! -L "$installed_binary"; then
     mv -f "$previous_tmp" "$bin_dir/amsftp.previous" || die 'cannot publish the previous binary'
 fi
 
+if test "$managed_root" = "true"; then
+    marker_tmp="$prefix/.amsftp-root.install.$$"
+    test ! -e "$marker_tmp" || die 'managed-root marker staging path already exists'
+    printf '%s\n' 'amsftp-managed-root-v1' >"$marker_tmp" || die 'cannot stage the managed-root marker'
+    chmod 0600 "$marker_tmp" || die 'cannot protect the managed-root marker'
+    mv "$marker_tmp" "$prefix/.amsftp-root" || die 'cannot publish the managed-root marker'
+    marker_tmp=""
+fi
+
 mv "$staged_binary" "$installed_binary" || die 'cannot atomically publish the new binary'
 staged_binary=""
 install -m 0644 "$source_man" "$man_dir/amsftp.1" || die 'cannot install the man page'
@@ -192,11 +262,20 @@ $installed_binary completion fish >"$completion_tmp" || die 'cannot generate fis
 install -m 0644 "$completion_tmp" "$fish_dir/amsftp.fish" || die 'cannot install fish completion'
 
 if test "$start_daemon" = "true"; then
-    $installed_binary daemon start --format json >/dev/null || die 'new binary installed, but daemon startup failed; previous binary is preserved as amsftp.previous'
+    if ! $installed_binary daemon start --format json >/dev/null; then
+        if test "$had_previous" = "true"; then
+            die 'new binary installed, but daemon startup failed; previous binary is preserved as amsftp.previous'
+        fi
+        die 'new binary installed, but daemon startup failed; no previous binary existed'
+    fi
     new_status=$($installed_binary daemon status --format json) || die 'new daemon status failed'
     case "$new_status" in
         *'"running":true'*) ;;
         *) die 'new daemon did not report a running state' ;;
+    esac
+    case "$new_status" in
+        *"\"daemon_version\":\"$version "*) ;;
+        *) die 'new daemon did not report the installed version' ;;
     esac
 elif test "$was_running" = "true"; then
     printf '%s\n' 'The previous daemon was stopped and --no-start-daemon left it stopped.'
@@ -207,6 +286,9 @@ if ! $installed_binary doctor --format json >/dev/null; then
 fi
 
 printf 'AMSFTP %s installed at %s\n' "$version" "$installed_binary"
+if test -n "$unsafe_previous_prefix"; then
+    printf 'The unsafe previous prefix %s was not modified. Put %s before %s/bin in PATH.\n' "$unsafe_previous_prefix" "$bin_dir" "$unsafe_previous_prefix"
+fi
 case ":${PATH}:" in
     *":$bin_dir:"*) ;;
     *) printf 'Add %s to PATH before running amsftp.\n' "$bin_dir" ;;

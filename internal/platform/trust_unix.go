@@ -32,6 +32,26 @@ func ValidatePrivateFile(path string, purpose ValidationPurpose) error {
 	return validator.validatePrivateFile(path, purpose)
 }
 
+// ValidatePrivateCreatePath performs the same trust checks required before
+// creating a private directory without changing the filesystem.
+func ValidatePrivateCreatePath(path string, purpose ValidationPurpose) error {
+	validator, err := currentTrustValidator()
+	if err != nil {
+		return err
+	}
+	return validator.validatePrivateCreatePath(path, purpose)
+}
+
+// ValidateIntegrityCreatePath verifies every existing component as a trusted
+// ancestor and permits a missing suffix. It never creates the target.
+func ValidateIntegrityCreatePath(path string, purpose ValidationPurpose) error {
+	validator, err := currentTrustValidator()
+	if err != nil {
+		return err
+	}
+	return validator.validateIntegrityCreatePath(path, purpose)
+}
+
 func ValidatePrivateSocket(path string, purpose ValidationPurpose) error {
 	validator, err := currentTrustValidator()
 	if err != nil {

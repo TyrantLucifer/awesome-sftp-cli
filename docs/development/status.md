@@ -7,7 +7,7 @@
 - PR #6 已合并到 `main`，合并提交为 `1f8bef8c3055150c6e47d05eab30f79d02396e04`。
 - 一键安装与发布自动化 PR #9 已合并到 `main`，合并提交为 `7e6f6986af45712ae81d826001f0dc2454804a15`。
 - 内部预览版 [`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1) 已发布；候选提交为 `541c3c7434d05bc5366950c53c8b1f1774d72e38`。
-- 公开预览版 [`v0.1.12`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.12) 为 TUI 增加选中对象的上下文动作栏和常驻构建版本标识；沿用 macOS/Linux 渠道感知升级、四平台归档、checksum、SBOM、一键安装脚本与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
+- 公开预览版 [`v0.1.13`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.13) 为独立安装增加目标发布前路径预检和 owner-private managed root：默认 HOME 含 symlink、foreign-owner ancestor 或不安全权限时自动复用已预置 `/var/lib/amsftp-users/<uid>`，缺失时保持目标零变更并给出一次性管理员初始化命令；布局标记让后续 daemon、配置、状态、缓存和升级保持同一可信根。沿用 macOS/Linux 渠道感知升级、四平台归档、checksum、SBOM 与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
 - Stage 0–6 的实现阶段已经结束；历史计划和验证流水从活动文档中移除，通过 Git 历史追溯。
 - 仓库现在进入“内部预览反馈与下一阶段迭代准备”状态，不宣称公开 1.0 已完成。
 - 内部预览反馈已修复 Preview drawer 的逐行滚动、小文件 EOF range 越界与空文件零长度读取问题。
@@ -39,6 +39,6 @@
 
 ## 下一步
 
-`v0.1.12` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
+`v0.1.13` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
 
 开发前阅读根目录 [AGENTS.md](../../AGENTS.md)，并只运行与改动风险相称的定向测试。公开 release 仍必须单独通过 [RC 门禁](../release/RC-GATES.md)。

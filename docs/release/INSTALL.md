@@ -11,7 +11,19 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
 ```
 
-The script supports macOS/Linux on ARM64 and AMD64. It resolves the immutable release, downloads the matching archive plus `checksums.txt`, requires one exact lowercase SHA-256 match, stages the binary in the destination directory, verifies its reported version, safely stops a proven running daemon during upgrade, preserves the prior binary as `amsftp.previous`, regenerates man/completion files, and starts plus probes the new daemon. The default prefix is `$HOME/.local`; use `--prefix /absolute/path`, `--version X.Y.Z`, or `--no-start-daemon` when needed. It never invokes `sudo` or changes Gatekeeper policy.
+The script supports macOS/Linux on ARM64 and AMD64. It resolves the immutable release, downloads the matching archive plus `checksums.txt`, requires one exact lowercase SHA-256 match, and uses that staged binary to preflight the executable plus config/state/cache paths before creating a target directory, stopping a daemon, or replacing a file. It then verifies the reported version, safely stops a proven running daemon during upgrade, preserves a real prior binary as `amsftp.previous`, regenerates man/completion files, and starts plus probes the exact new daemon version.
+
+The default prefix is `$HOME/.local`. If that executable or its persistent paths contain a symlink, foreign-owned ancestor, unsafe mode/ACL, or unsupported filesystem trust boundary, the installer automatically uses an already provisioned `/var/lib/amsftp-users/<uid>` root. A managed root contains `bin/amsftp`, `config`, `state`, and `cache`; its owner-private `.amsftp-root` marker makes future commands and upgrades reuse the layout without XDG environment changes. The installer leaves an old unsafe prefix untouched and tells the user to place the managed `bin` first in `PATH`.
+
+When the managed root does not exist, preflight exits before target mutation and prints the exact one-time administrator commands. Their general form is:
+
+```sh
+sudo install -d -o root -g root -m 0755 /var/lib/amsftp-users
+sudo install -d -o "$USER" -g "$(id -gn)" -m 0700 \
+  "/var/lib/amsftp-users/$(id -u)"
+```
+
+Rerun the original installer afterward; automatic discovery then completes installation. Use `--root /absolute/path` for another pre-provisioned owner-private managed root, `--prefix /absolute/path` for a conventional layout that independently passes preflight, `--version X.Y.Z` for an exact release, or `--no-start-daemon` when needed. The installer never invokes `sudo`, changes a shared mount owner, widens permissions, or changes Gatekeeper policy.
 
 Homebrew provides the same four immutable archives:
 

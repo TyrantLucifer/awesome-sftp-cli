@@ -2,6 +2,7 @@ package app
 
 import (
 	"encoding/json"
+	"errors"
 	"io"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
@@ -44,6 +45,14 @@ func machineCommandError(args []string, err error) error {
 	}
 	code := exitCode(err)
 	summary := daemon.DiagnosticSummary(err)
+	if summary.ErrorCode == "" {
+		var operation *domain.OpError
+		if errors.As(err, &operation) && operation != nil {
+			summary.ErrorCode = operation.Code
+			summary.Retry = operation.Retry.Kind
+			summary.Effect = operation.Effect
+		}
+	}
 	return &machineError{
 		err: err,
 		envelope: cliErrorEnvelope{

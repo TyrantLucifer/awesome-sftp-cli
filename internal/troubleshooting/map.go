@@ -25,7 +25,7 @@ type Entry struct {
 
 func Entries() []Entry {
 	return []Entry{
-		{DoctorCheck, string(doctor.CheckConfig), "Configuration could not be validated or is not usable.", "Run `amsftp config print-effective`; correct the reported configuration source without replacing unrelated settings."},
+		{DoctorCheck, string(doctor.CheckConfig), "Configuration or the current AMSFTP installation path could not be validated. `install_path_untrusted` means the executable has a symlink, foreign-owned ancestor, unsafe mode/ACL, or invalid managed-root marker.", "Re-run the verified installer. If it requests a managed root, have an administrator provision the printed owner-private path and rerun; do not widen permissions or trust another UID. Otherwise run `amsftp config print-effective` and correct only the reported configuration source."},
 		{DoctorCheck, string(doctor.CheckRuntimeDirectory), "The per-user runtime directory is absent, unsafe, or inaccessible.", "Restore ownership and private permissions for the reported runtime directory, then rerun `amsftp doctor`."},
 		{DoctorCheck, string(doctor.CheckSocket), "The daemon socket is absent, stale, unsafe, or unreachable.", "Check `amsftp daemon status`; start the daemon normally and do not delete an active socket by hand."},
 		{DoctorCheck, string(doctor.CheckDaemon), "The daemon health probe did not return a valid healthy response.", "Run `amsftp daemon status`; restart only your own AMSFTP daemon if the status remains unhealthy."},

@@ -12,6 +12,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 )
 
@@ -113,7 +114,7 @@ func executeDaemonCommand(ctx context.Context, options daemonCommandOptions, arg
 		}
 		started, err := runtime.start(ctx)
 		if err != nil {
-			return machineCommandError(args, classifyJobConnectionError(fmt.Errorf("start daemon: %w", err)))
+			return machineCommandError(args, classifyDaemonStartError(fmt.Errorf("start daemon: %w", err)))
 		}
 		if started == nil {
 			return machineCommandError(args, NewExitError(ExitInternal, errors.New("daemon starter returned no client")))
@@ -147,6 +148,18 @@ func executeDaemonCommand(ctx context.Context, options daemonCommandOptions, arg
 	default:
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("unreachable daemon command")))
 	}
+}
+
+func classifyDaemonStartError(err error) error {
+	if errors.Is(err, platform.ErrUntrustedExecutable) {
+		return NewExitError(ExitConfig, &domain.OpError{
+			Code:      domain.CodeIntegrityFailed,
+			Operation: "start daemon",
+			Message:   "daemon executable path does not satisfy the local trust policy",
+			Cause:     err,
+		})
+	}
+	return classifyJobConnectionError(err)
 }
 
 func parseDaemonCommand(args []string) (daemonCommandOptions, error) {

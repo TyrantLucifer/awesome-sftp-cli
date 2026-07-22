@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -109,7 +110,87 @@ func TestInstallerResolvesLatestRelease(t *testing.T) {
 	assertInstalledVersion(t, prefix, version)
 }
 
+func TestInstallerAutomaticallyUsesProvisionedTrustedRoot(t *testing.T) {
+	assets := t.TempDir()
+	version := "9.8.7"
+	writeRelease(t, assets, version, false)
+	server := httptest.NewServer(http.FileServer(http.Dir(assets)))
+	t.Cleanup(server.Close)
+
+	home := t.TempDir()
+	trustedBase := filepath.Join(t.TempDir(), "amsftp-users")
+	trustedRoot := filepath.Join(trustedBase, strconv.Itoa(os.Geteuid()))
+	if err := os.MkdirAll(trustedRoot, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	script := patchedInstallerWithTrustedRoot(t, server.URL, trustedBase)
+	state := filepath.Join(t.TempDir(), "daemon-running")
+	logPath := filepath.Join(t.TempDir(), "daemon.log")
+	unsafePrefix := filepath.Join(home, ".local")
+	command := exec.Command("/bin/sh", script, "--version", version) //nolint:gosec // script is generated inside this test's private temporary directory.
+	command.Env = append(os.Environ(),
+		"HOME="+home,
+		"AMSFTP_FAKE_STATE="+state,
+		"AMSFTP_FAKE_LOG="+logPath,
+		"AMSFTP_FAKE_UNSAFE_PREFIX="+unsafePrefix,
+	)
+	output, err := command.CombinedOutput()
+	if err != nil {
+		t.Fatalf("installer failed: %v\n%s", err, output)
+	}
+	assertInstalledVersion(t, trustedRoot, version)
+	if _, err := os.Stat(filepath.Join(unsafePrefix, "bin", "amsftp")); !os.IsNotExist(err) {
+		t.Fatalf("unsafe default target was modified: %v", err)
+	}
+	marker := filepath.Join(trustedRoot, ".amsftp-root")
+	markerBytes, err := os.ReadFile(marker) //nolint:gosec // marker is test-owned.
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(markerBytes) != "amsftp-managed-root-v1\n" {
+		t.Fatalf("managed-root marker = %q", markerBytes)
+	}
+	if info, err := os.Stat(marker); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("managed-root marker info=%v err=%v", info, err)
+	}
+	if !strings.Contains(string(output), "Using trusted AMSFTP root") {
+		t.Fatalf("installer output did not report fallback: %s", output)
+	}
+	if !strings.Contains(string(output), "was not modified") || !strings.Contains(string(output), "before "+unsafePrefix+"/bin in PATH") {
+		t.Fatalf("installer output did not explain PATH migration: %s", output)
+	}
+}
+
+func TestInstallerRejectsUnsafeDefaultBeforePublishingWithoutTrustedRoot(t *testing.T) {
+	assets := t.TempDir()
+	version := "9.8.7"
+	writeRelease(t, assets, version, false)
+	server := httptest.NewServer(http.FileServer(http.Dir(assets)))
+	t.Cleanup(server.Close)
+
+	home := t.TempDir()
+	trustedBase := filepath.Join(t.TempDir(), "missing-amsftp-users")
+	script := patchedInstallerWithTrustedRoot(t, server.URL, trustedBase)
+	unsafePrefix := filepath.Join(home, ".local")
+	command := exec.Command("/bin/sh", script, "--version", version) //nolint:gosec // script is generated inside this test's private temporary directory.
+	command.Env = append(os.Environ(), "HOME="+home, "AMSFTP_FAKE_UNSAFE_PREFIX="+unsafePrefix)
+	output, err := command.CombinedOutput()
+	if err == nil {
+		t.Fatalf("installer unexpectedly succeeded: %s", output)
+	}
+	if _, statErr := os.Stat(filepath.Join(unsafePrefix, "bin", "amsftp")); !os.IsNotExist(statErr) {
+		t.Fatalf("unsafe default target was modified: %v", statErr)
+	}
+	if !strings.Contains(string(output), "sudo install -d") || !strings.Contains(string(output), trustedBase) {
+		t.Fatalf("installer did not provide bounded bootstrap instructions: %s", output)
+	}
+}
+
 func patchedInstaller(t *testing.T, origin string) string {
+	return patchedInstallerWithTrustedRoot(t, origin, "/var/lib/amsftp-users")
+}
+
+func patchedInstallerWithTrustedRoot(t *testing.T, origin, trustedBase string) string {
 	t.Helper()
 	raw, err := os.ReadFile(filepath.Join("..", "..", "install.sh"))
 	if err != nil {
@@ -121,6 +202,12 @@ func patchedInstaller(t *testing.T, origin string) string {
 		t.Fatalf("installer does not contain canonical release origin %q", old)
 	}
 	patched := bytes.Replace(raw, []byte(old), []byte(replacement), 1)
+	trustedOld := `trusted_root_base="/var/lib/amsftp-users"`
+	trustedReplacement := `trusted_root_base="` + trustedBase + `"`
+	if !bytes.Contains(patched, []byte(trustedOld)) {
+		t.Fatalf("installer does not contain trusted root base %q", trustedOld)
+	}
+	patched = bytes.Replace(patched, []byte(trustedOld), []byte(trustedReplacement), 1)
 	patched = bytes.ReplaceAll(patched, []byte("--proto '=https'"), []byte("--proto '=http,https'"))
 	path := filepath.Join(t.TempDir(), "install.sh")
 	if err := os.WriteFile(path, patched, 0o700); err != nil { //nolint:gosec // the test fixture must be executable and lives below t.TempDir.
@@ -204,12 +291,29 @@ func releaseArchive(t *testing.T, version, osName, archName string) []byte {
 version=%q
 case "${1-}" in
   --version) printf '%%s commit=test dirty=false\n' "$version" ;;
+  __install)
+    if test "${2-}" != "preflight"; then exit 2; fi
+    shift 2
+    candidate=""
+    while test "$#" -gt 0; do
+      case "$1" in
+        --prefix|--root) candidate=$2; shift 2 ;;
+        --format) shift 2 ;;
+        *) exit 2 ;;
+      esac
+    done
+    if test -n "${AMSFTP_FAKE_UNSAFE_PREFIX-}" && test "$candidate" = "$AMSFTP_FAKE_UNSAFE_PREFIX"; then
+      printf '{"safe":false}\n'
+      exit 3
+    fi
+    printf '{"safe":true}\n'
+    ;;
   completion) printf '# completion %%s %%s\n' "${2-}" "$version" ;;
   doctor) printf '{"ok":true}\n' ;;
   daemon)
     case "${2-}" in
       status)
-        if test -f "$AMSFTP_FAKE_STATE"; then printf '{"running":true}\n'; else printf '{"running":false}\n'; fi
+        if test -f "$AMSFTP_FAKE_STATE"; then printf '{"running":true,"daemon_version":"%%s commit=test"}\n' "$version"; else printf '{"running":false}\n'; fi
         ;;
       stop)
         rm -f "$AMSFTP_FAKE_STATE"

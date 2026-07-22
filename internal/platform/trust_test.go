@@ -77,6 +77,28 @@ func TestTrustValidatorRejectsUnsafeDirectoryComponents(t *testing.T) {
 	}
 }
 
+func TestTrustValidatorPreflightsMissingPrivatePathWithoutMutation(t *testing.T) {
+	filesystem := newFakeTrustFilesystem()
+	filesystem.addDirectory("/", 0, 0o755)
+	filesystem.addDirectory("/var", 0, 0o755)
+	filesystem.addDirectory("/var/lib", 0, 0o755)
+	filesystem.addDirectory("/var/lib/amsftp-users", 0, 0o755)
+	filesystem.addDirectory("/var/lib/amsftp-users/1000", 1000, 0o700)
+	validator := trustValidator{goos: "linux", euid: 1000, filesystem: filesystem, acls: filesystem}
+
+	if err := validator.validatePrivateCreatePath("/var/lib/amsftp-users/1000/state", ValidatePersistent); err != nil {
+		t.Fatalf("validatePrivateCreatePath(): %v", err)
+	}
+	if _, exists := filesystem.nodes["/var/lib/amsftp-users/1000/state"]; exists {
+		t.Fatal("preflight mutated the filesystem")
+	}
+
+	filesystem.nodes["/var/lib/amsftp-users"].uid = 2000
+	if err := validator.validatePrivateCreatePath("/var/lib/amsftp-users/1000/state", ValidatePersistent); err == nil {
+		t.Fatal("foreign-owned ancestor passed preflight")
+	}
+}
+
 func TestTrustValidatorRejectsACLFailure(t *testing.T) {
 	filesystem := newFakeTrustFilesystem()
 	filesystem.addDirectory("/", 0, 0o755)

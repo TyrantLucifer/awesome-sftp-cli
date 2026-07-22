@@ -17,7 +17,7 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
 ```
 
-The installer verifies the new archive before replacement, stops only a daemon whose state the current installed binary can prove, retains the previous executable as `$HOME/.local/bin/amsftp.previous`, regenerates completions, and verifies the new daemon. A checksum, version, daemon-state, or startup failure stops the automated path instead of pretending the upgrade succeeded. For Homebrew recovery use `brew update && brew upgrade TyrantLucifer/tap/amsftp`. The manual and uncertain-state procedures below remain authoritative for recovery and rollback.
+The installer verifies the new archive and preflights all installation paths before replacement, stops only a daemon whose state the current installed binary can prove, retains a real previous executable as `<prefix>/bin/amsftp.previous`, regenerates completions, and verifies the exact new daemon version. A managed `/var/lib/amsftp-users/<uid>` installation is rediscovered from its owner-private marker and keeps the same config/state/cache roots across upgrades. A checksum, path, version, daemon-state, or startup failure stops the automated path instead of pretending the upgrade succeeded. For Homebrew recovery use `brew update && brew upgrade TyrantLucifer/tap/amsftp`. The manual and uncertain-state procedures below remain authoritative for recovery and rollback.
 
 ## Prepare
 

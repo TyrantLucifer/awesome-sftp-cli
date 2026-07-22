@@ -3,12 +3,15 @@
 package platform
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"syscall"
 )
+
+var ErrUntrustedExecutable = errors.New("untrusted executable path")
 
 // ResolveTrustedExecutable freezes a symlinked launch path to its canonical
 // target, then applies the regular-file, owner, mode, ancestor, and ACL checks
@@ -25,7 +28,7 @@ func ResolveTrustedExecutable(path string) (string, error) {
 	}
 	resolved = filepath.Clean(resolved)
 	if err := ValidateExecutable(resolved); err != nil {
-		return "", err
+		return "", fmt.Errorf("%w: %w", ErrUntrustedExecutable, err)
 	}
 	return resolved, nil
 }
