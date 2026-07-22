@@ -50,10 +50,54 @@ func TestRendererSnapshotShowsTwoPanesFocusAndPartialState(t *testing.T) {
 
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"[left] /left", " right  /right", "> dir", "Partial results"} {
+	for _, want := range []string{"LEFT  /left", "RIGHT  /right", "▌ dir", "Partial results"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("snapshot missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestRendererUsesSemanticStylesForFocusSelectionAndStatus(t *testing.T) {
+	model := testModel(t)
+	left := model.Panes[Left]
+	left.marks[left.Entries[1].Location] = struct{}{}
+	model.Panes[Left] = left
+	surface := newMemorySurface(80, 8)
+
+	Render(surface, model, RenderOptions{Overscan: 1})
+	rightX := surface.width/2 + 1
+	if got := surface.StyleAt(1, 0); got != StyleActiveHeader {
+		t.Fatalf("active header style = %v, want %v", got, StyleActiveHeader)
+	}
+	if got := surface.StyleAt(rightX+1, 0); got != StyleHeader {
+		t.Fatalf("inactive header style = %v, want %v", got, StyleHeader)
+	}
+	if got := surface.StyleAt(surface.width/2-1, 1); got != StyleCursor {
+		t.Fatalf("active cursor row fill = %v, want %v", got, StyleCursor)
+	}
+	if got := surface.StyleAt(rightX+1, 1); got != StyleInactiveCursor {
+		t.Fatalf("inactive cursor style = %v, want %v", got, StyleInactiveCursor)
+	}
+	if got := surface.StyleAt(surface.width/2-1, 2); got != StyleSelected {
+		t.Fatalf("selected row fill = %v, want %v", got, StyleSelected)
+	}
+	if got := surface.StyleAt(0, surface.height-1); got != StyleStatusAccent {
+		t.Fatalf("mode badge style = %v, want %v", got, StyleStatusAccent)
+	}
+}
+
+func TestRendererMetadataCollapsesByPaneWidth(t *testing.T) {
+	model := testModel(t)
+	wide := newMemorySurface(120, 8)
+	Render(wide, model, RenderOptions{Overscan: 1})
+	if got := wide.String(); !strings.Contains(got, "DIR") {
+		t.Fatalf("wide pane omitted entry kind metadata:\n%s", got)
+	}
+
+	narrow := newMemorySurface(40, 8)
+	Render(narrow, model, RenderOptions{Overscan: 1})
+	if got := narrow.String(); strings.Contains(got, "DIR") || !strings.Contains(got, "dir") {
+		t.Fatalf("narrow pane did not preserve names while collapsing metadata:\n%s", got)
 	}
 }
 
@@ -213,7 +257,7 @@ func TestRenderPickerShowsChoicesSelectionAndSanitizedProblem(t *testing.T) {
 	surface := newMemorySurface(48, 8)
 	RenderPicker(surface, picker, "Choose a workspace or SSH host")
 	got := surface.String()
-	for _, want := range []string{"Open workspace or SSH host", "> workspace  recent", "host       server", "corrupt�[2Jstate", "Choose a workspace or SSH host"} {
+	for _, want := range []string{"Open workspace or SSH host", "▌ workspace  recent", "host       server", "corrupt�[2Jstate", "Choose a workspace or SSH host"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("picker render missing %q:\n%s", want, got)
 		}
@@ -221,13 +265,22 @@ func TestRenderPickerShowsChoicesSelectionAndSanitizedProblem(t *testing.T) {
 	if strings.Contains(got, "\x1b") {
 		t.Fatalf("picker render contains raw escape:\n%s", got)
 	}
+	if style := surface.StyleAt(surface.width-1, 3); style != StyleCursor {
+		t.Fatalf("selected picker row fill = %v, want %v", style, StyleCursor)
+	}
+	if style := surface.StyleAt(0, 2); style != StyleBorder {
+		t.Fatalf("picker divider style = %v, want %v", style, StyleBorder)
+	}
+	if style := surface.StyleAt(surface.width-1, surface.height-1); style != StyleStatus {
+		t.Fatalf("picker footer style = %v, want %v", style, StyleStatus)
+	}
 }
 
 func TestRenderPickerStillExplainsManualEntryAtMinimumSize(t *testing.T) {
 	picker := NewPicker(nil)
 	surface := newMemorySurface(12, 3)
 	RenderPicker(surface, picker, "")
-	if got := surface.String(); !strings.Contains(got, "Host:") {
+	if got := surface.String(); !strings.Contains(got, "SSH ›") {
 		t.Fatalf("minimum picker render = %q", got)
 	}
 }
@@ -236,7 +289,7 @@ func TestRendererUsesLocalFallbackForActivePaneWithoutDisplayName(t *testing.T) 
 	model := modelWithEntryCount(t, 1)
 	surface := newMemorySurface(40, 8)
 	Render(surface, model, RenderOptions{Overscan: 1})
-	if got := surface.String(); !strings.Contains(got, "[local] /left") {
+	if got := surface.String(); !strings.Contains(got, "LOCAL") {
 		t.Fatalf("snapshot missing active local fallback:\n%s", got)
 	}
 }
@@ -301,7 +354,7 @@ func TestRendererShowsPaneConnectionAndFailureState(t *testing.T) {
 	surface := newMemorySurface(64, 10)
 	Render(surface, model, RenderOptions{Overscan: 1})
 	got := surface.String()
-	for _, want := range []string{"disconnected", "connection lost"} {
+	for _, want := range []string{"Disconnected", "connection lost"} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("connection render missing %q:\n%s", want, got)
 		}
@@ -435,6 +488,15 @@ func TestRendererShowsEndpointModal(t *testing.T) {
 			t.Fatalf("endpoint modal missing %q:\n%s", want, got)
 		}
 	}
+	if style := surface.StyleAt(3, 1); style != StyleModalTitle {
+		t.Fatalf("endpoint modal title style = %v, want %v", style, StyleModalTitle)
+	}
+	if style := surface.StyleAt(2, 3); style != StyleCursor {
+		t.Fatalf("endpoint modal cursor fill = %v, want %v", style, StyleCursor)
+	}
+	if style := surface.StyleAt(2, 6); style != StyleStatus {
+		t.Fatalf("endpoint modal footer style = %v, want %v", style, StyleStatus)
+	}
 }
 
 func TestSanitizeTerminalTextRemovesControlsAndInvalidUTF8(t *testing.T) {
@@ -499,6 +561,7 @@ type memorySurface struct {
 	width  int
 	height int
 	cells  [][]rune
+	styles [][]CellStyle
 }
 
 func newMemorySurface(width, height int) *memorySurface {
@@ -511,12 +574,27 @@ func (s *memorySurface) Size() (int, int) { return s.width, s.height }
 
 func (s *memorySurface) Clear() {
 	s.cells = make([][]rune, s.height)
+	s.styles = make([][]CellStyle, s.height)
 	for row := range s.cells {
 		s.cells[row] = []rune(strings.Repeat(" ", s.width))
+		s.styles[row] = make([]CellStyle, s.width)
+		for column := range s.styles[row] {
+			s.styles[row][column] = StyleCanvas
+		}
 	}
 }
 
-func (s *memorySurface) PutClipped(x, y, width int, text string, _ CellStyle) {
+func (s *memorySurface) Fill(x, y, width int, style CellStyle) {
+	if y < 0 || y >= s.height || x < 0 || x >= s.width || width <= 0 {
+		return
+	}
+	for column := x; column < x+width && column < s.width; column++ {
+		s.cells[y][column] = ' '
+		s.styles[y][column] = style
+	}
+}
+
+func (s *memorySurface) PutClipped(x, y, width int, text string, style CellStyle) {
 	if y < 0 || y >= s.height || x < 0 || x >= s.width || width <= 0 {
 		return
 	}
@@ -526,8 +604,16 @@ func (s *memorySurface) PutClipped(x, y, width int, text string, _ CellStyle) {
 			break
 		}
 		s.cells[y][column] = char
+		s.styles[y][column] = style
 		column++
 	}
+}
+
+func (s *memorySurface) StyleAt(x, y int) CellStyle {
+	if y < 0 || y >= s.height || x < 0 || x >= s.width {
+		return StyleCanvas
+	}
+	return s.styles[y][x]
 }
 
 func (s *memorySurface) String() string {

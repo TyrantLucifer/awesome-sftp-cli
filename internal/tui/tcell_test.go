@@ -5,8 +5,26 @@ import (
 	"time"
 
 	"github.com/gdamore/tcell/v3"
+	"github.com/gdamore/tcell/v3/color"
 	"github.com/gdamore/tcell/v3/vt"
 )
+
+func TestGraphiteThemeUsesExplicitSemanticContrast(t *testing.T) {
+	theme := newGraphiteTheme()
+	canvas := theme.style(StyleCanvas)
+	if canvas.GetForeground() == color.Default || canvas.GetBackground() == color.Default {
+		t.Fatal("graphite canvas must not depend on terminal default colors")
+	}
+	if theme.style(StyleCursor).GetBackground() == canvas.GetBackground() {
+		t.Fatal("cursor background does not contrast with the canvas")
+	}
+	if theme.style(StyleActiveHeader).GetForeground() == theme.style(StyleHeader).GetForeground() {
+		t.Fatal("active and inactive headers are visually indistinguishable")
+	}
+	if theme.style(StyleError).GetForeground() == theme.style(StyleWarning).GetForeground() {
+		t.Fatal("danger and warning roles must remain distinguishable")
+	}
+}
 
 func TestTranslateTCellEvents(t *testing.T) {
 	tests := []struct {
@@ -103,9 +121,12 @@ func TestTCellSurfaceRendersThroughV3MockTerminal(t *testing.T) {
 	Render(surface, model, RenderOptions{Overscan: 1})
 	screen.Show()
 
-	cell := terminal.GetCell(vt.Coord{X: 0, Y: 0})
+	cell := terminal.GetCell(vt.Coord{X: 1, Y: 0})
 	if cell.C == "" || cell.C == " " {
-		t.Fatalf("first cell = %q, want rendered header", cell.C)
+		t.Fatalf("header cell = %q, want rendered header", cell.C)
+	}
+	if cell.S.Bg() == color.Default {
+		t.Fatal("header cell uses the terminal default background")
 	}
 
 	// Synchronize with tcell's input filter before Fini closes EventQ. The

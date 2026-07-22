@@ -14,19 +14,38 @@ import (
 type CellStyle uint8
 
 const (
-	StylePlain CellStyle = iota
+	StyleCanvas CellStyle = iota
+	StylePlain
+	StyleMuted
 	StyleHeader
 	StyleActiveHeader
 	StyleCursor
+	StyleInactiveCursor
 	StyleSelected
 	StyleStatus
+	StyleStatusAccent
 	StylePreview
+	StyleBorder
+	StyleDirectory
+	StyleSymlink
+	StyleSuccess
+	StyleWarning
 	StyleError
+	StyleModal
+	StyleModalTitle
+	StyleModalMuted
+	StyleModalWarning
+	StyleModalError
+	StyleInput
+	StyleTab
+	StyleActiveTab
+	styleCount
 )
 
 type Surface interface {
 	Size() (width, height int)
 	Clear()
+	Fill(x, y, width int, style CellStyle)
 	PutClipped(x, y, width int, text string, style CellStyle)
 }
 
@@ -45,35 +64,54 @@ func RenderPicker(surface Surface, picker Picker, message string) {
 	if width <= 0 || height <= 0 {
 		return
 	}
-	surface.PutClipped(0, 0, width, "Open workspace or SSH host", StyleActiveHeader)
+	surface.Fill(0, 0, width, StyleHeader)
+	surface.PutClipped(0, 0, width, " AMSFTP  Open workspace or SSH host", StyleActiveHeader)
 	if height == 1 {
 		return
 	}
-	surface.PutClipped(0, 1, width, "Host: "+SanitizeTerminalText(picker.Query()), StyleStatus)
+	choices := picker.Visible()
+	surface.Fill(0, 1, width, StyleInput)
+	surface.PutClipped(0, 1, width, " SSH › "+SanitizeTerminalText(picker.Query()), StyleInput)
+	count := fmt.Sprintf("%d matches ", len(choices))
+	if len(choices) == 1 {
+		count = "1 match "
+	}
+	if width >= 24 {
+		putRight(surface, 0, 1, width, count, StyleModalMuted)
+	}
 	if height == 2 {
 		return
 	}
-	choices := picker.Visible()
-	choiceRows := max(0, height-3)
+	surface.PutClipped(0, 2, width, strings.Repeat("─", width), StyleBorder)
+	if height == 3 {
+		return
+	}
+	choiceRows := max(0, height-4)
 	for index := 0; index < len(choices) && index < choiceRows; index++ {
 		choice := choices[index]
 		marker := "  "
 		style := StylePlain
 		if index == picker.SelectedIndex() {
-			marker = "> "
+			marker = "▌ "
 			style = StyleCursor
 		}
 		line := fmt.Sprintf("%s%-10s %s", marker, pickerKindLabel(choice.Kind), SanitizeTerminalText(choice.Name))
 		if choice.Problem != "" {
 			line += " — " + SanitizeTerminalText(choice.Problem)
-			style = StyleError
+			if index != picker.SelectedIndex() {
+				style = StyleError
+			}
 		}
-		surface.PutClipped(0, 2+index, width, line, style)
+		if index == picker.SelectedIndex() {
+			surface.Fill(0, 3+index, width, style)
+		}
+		surface.PutClipped(0, 3+index, width, line, style)
 	}
-	footer := "Type an SSH alias; ↑/↓ select; Enter open; Esc quit"
+	footer := " ↑/↓ select · Enter open · Esc quit"
 	if message != "" {
-		footer = SanitizeTerminalText(message)
+		footer = " " + SanitizeTerminalText(message)
 	}
+	surface.Fill(0, height-1, width, StyleStatus)
 	surface.PutClipped(0, height-1, width, footer, StyleStatus)
 }
 
@@ -135,14 +173,14 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	putPaneHeader(surface, model.Panes[Right], Right, model.Active, rightX, rightWidth)
 
 	stats := RenderStats{ListRows: listRows}
-	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Left], 0, leftWidth, 1, listRows, options.Overscan)
-	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Right], rightX, rightWidth, 1, listRows, options.Overscan)
+	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Left], model.Active == Left, 0, leftWidth, 1, listRows, options.Overscan)
+	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Right], model.Active == Right, rightX, rightWidth, 1, listRows, options.Overscan)
 
 	for y := 0; y < height-drawerRows-1; y++ {
-		surface.PutClipped(leftWidth, y, 1, "│", StylePlain)
+		surface.PutClipped(leftWidth, y, 1, "│", StyleBorder)
 	}
 	statusY := height - drawerRows - 1
-	surface.PutClipped(0, statusY, width, renderStatusBar(model), StyleStatus)
+	renderStatusLine(surface, model, statusY, width)
 
 	if drawerRows != 0 {
 		renderDrawer(surface, model, statusY+1, width, drawerRows)
@@ -189,6 +227,56 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	return stats
 }
 
+func renderStatusLine(surface Surface, model Model, y, width int) {
+	if width <= 0 {
+		return
+	}
+	surface.Fill(0, y, width, StyleStatus)
+	badge := " " + modeLabel(model.Mode) + " "
+	surface.PutClipped(0, y, width, badge, StyleStatusAccent)
+	leftX := len([]rune(badge)) + 1
+	primary := renderStatusBar(model)
+	right := renderStatusOptions(model.Panes[model.Active], model.CachePolicy)
+	rightWidth := len([]rune(right))
+	rightX := width - rightWidth - 1
+	if right == "" || rightX <= leftX+12 || len([]rune(primary)) > rightX-leftX-1 {
+		right = ""
+		rightX = width
+	} else {
+		surface.PutClipped(rightX, y, rightWidth, right, StyleStatus)
+	}
+	surface.PutClipped(leftX, y, max(0, rightX-leftX-1), primary, StyleStatus)
+}
+
+func modeLabel(mode Mode) string {
+	switch mode {
+	case ModeVisual:
+		return "VISUAL"
+	case ModeVisualLine:
+		return "V-LINE"
+	case ModeFilter:
+		return "JUMP"
+	case ModeFilenameSearch:
+		return "FIND"
+	case ModeContentSearch, ModeContentSearchConfirm:
+		return "CONTENT"
+	case ModeEndpoint:
+		return "ENDPOINT"
+	case ModeWorkspace:
+		return "SAVE"
+	case ModePath:
+		return "PATH"
+	case ModeRename:
+		return "RENAME"
+	case ModeCommand, ModeCommandConfirm:
+		return "COMMAND"
+	case ModeAuth:
+		return "AUTH"
+	default:
+		return "NORMAL"
+	}
+}
+
 func renderStatusBar(model Model) string {
 	active := model.Panes[model.Active]
 	if model.Mode == ModeFilter {
@@ -230,15 +318,19 @@ func renderStatusBar(model Model) string {
 			segments = append(segments, helper)
 		}
 	}
+	return strings.Join(segments, " | ")
+}
+
+func renderStatusOptions(active PaneState, policy cache.Policy) string {
 	direction := "↑"
 	if active.Sort.Descending {
 		direction = "↓"
 	}
-	segments = append(segments, "Sort: "+string(active.Sort.Key)+" "+direction)
+	segments := []string{"Sort: " + string(active.Sort.Key) + " " + direction}
 	if active.ShowHidden {
 		segments = append(segments, "Hidden files shown")
 	}
-	switch model.CachePolicy {
+	switch policy {
 	case cache.PolicyLRU:
 		segments = append(segments, "Cache: automatic")
 	case cache.PolicyEphemeral:
@@ -246,7 +338,7 @@ func renderStatusBar(model Model) string {
 	case cache.PolicyPinnedOffline:
 		segments = append(segments, "Cache: offline")
 	}
-	return strings.Join(segments, " | ")
+	return strings.Join(segments, " · ")
 }
 
 func renderPaneStatus(pane PaneState) string {
@@ -309,10 +401,12 @@ func renderCacheClearModal(surface Surface, model Model, width, height int) {
 	if model.CacheClearScope == CacheClearAll {
 		scope = "all workspaces"
 	}
-	surface.PutClipped(x, y, modalWidth, " Clear eligible cache ", StyleActiveHeader)
-	surface.PutClipped(x, y+1, modalWidth, "Scope: "+scope, StylePlain)
-	surface.PutClipped(x, y+2, modalWidth, "Dirty, pinned, leased, referenced, edit-bound, and unknown content is preserved.", StyleError)
-	surface.PutClipped(x, y+3, modalWidth, "Enter clear · Esc cancel", StyleStatus)
+	fillPanel(surface, x, y, modalWidth, 4)
+	surface.PutClipped(x+1, y, modalWidth-2, "Clear eligible cache", StyleModalTitle)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Scope: "+scope, StyleModal)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "Dirty, pinned, leased, referenced, edit-bound, and unknown content is preserved.", StyleModalWarning)
+	surface.Fill(x, y+3, modalWidth, StyleStatus)
+	surface.PutClipped(x, y+3, modalWidth, "[Enter] clear  [Esc] cancel", StyleStatus)
 }
 
 func renderEditRecoveryModal(surface Surface, model Model, width, height int) {
@@ -325,24 +419,27 @@ func renderEditRecoveryModal(surface Surface, model Model, width, height int) {
 	start := max(0, min(model.EditRecovery.Cursor-visibleRows/2, len(items)-visibleRows))
 	x := max(0, (width-modalWidth)/2)
 	y := max(1, (height-(visibleRows+4))/2)
-	surface.PutClipped(x, y, modalWidth, fmt.Sprintf(" Recoverable edits (%d) ", len(items)), StyleActiveHeader)
+	fillPanel(surface, x, y, modalWidth, visibleRows+3)
+	surface.PutClipped(x+1, y, modalWidth-2, fmt.Sprintf("Recoverable edits (%d)", len(items)), StyleModalTitle)
 	for row := 0; row < visibleRows; row++ {
 		item := items[start+row]
 		marker := "  "
-		style := StylePlain
+		style := StyleModal
 		if start+row == model.EditRecovery.Cursor {
-			marker, style = "> ", StyleCursor
+			marker, style = "▌ ", StyleCursor
+			surface.Fill(x, y+1+row, modalWidth, style)
 		}
 		availability := "ready"
 		if !item.Usable {
 			availability = "retained: " + item.Diagnostic
 		}
 		line := fmt.Sprintf("%s%s %s %s · %s", marker, item.SessionID, item.Purpose, item.Location.Path, availability)
-		surface.PutClipped(x, y+1+row, modalWidth, line, style)
+		surface.PutClipped(x+1, y+1+row, modalWidth-2, line, style)
 	}
 	selected := items[model.EditRecovery.Cursor]
+	surface.Fill(x, y+1+visibleRows, modalWidth, StyleStatus)
 	surface.PutClipped(x, y+1+visibleRows, modalWidth, fmt.Sprintf("state:%s durable:%s", selected.State, selected.Lifecycle), StyleStatus)
-	surface.PutClipped(x, y+2+visibleRows, modalWidth, "j/k select · Enter resume/check · K inspect remote · Esc retain", StylePlain)
+	surface.PutClipped(x+1, y+2+visibleRows, modalWidth-2, "j/k select · Enter resume/check · K inspect remote · Esc retain", StyleModal)
 }
 
 func renderEditDecisionModal(surface Surface, model Model, width, height int) {
@@ -353,11 +450,13 @@ func renderEditDecisionModal(surface Surface, model Model, width, height int) {
 	modalWidth := min(width-4, 76)
 	x := max(0, (width-modalWidth)/2)
 	y := max(1, height/2-2)
-	surface.PutClipped(x, y, modalWidth, " Edit result ", StyleActiveHeader)
-	surface.PutClipped(x, y+1, modalWidth, SanitizeTerminalText(string(state.Location.Path)), StylePlain)
+	fillPanel(surface, x, y, modalWidth, 4)
+	surface.PutClipped(x+1, y, modalWidth-2, "Edit result", StyleModalTitle)
+	surface.PutClipped(x+1, y+1, modalWidth-2, SanitizeTerminalText(string(state.Location.Path)), StyleModal)
 	if model.Mode == ModeEditSaveAs {
-		surface.PutClipped(x, y+2, modalWidth, "Save as: "+SanitizeTerminalText(string(model.editSaveAs)), StyleStatus)
-		surface.PutClipped(x, y+3, modalWidth, "Enter confirm · Esc back", StylePlain)
+		surface.PutClipped(x+1, y+2, modalWidth-2, "Save as: "+SanitizeTerminalText(string(model.editSaveAs)), StyleInput)
+		surface.Fill(x, y+3, modalWidth, StyleStatus)
+		surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] confirm  [Esc] back", StyleStatus)
 		return
 	}
 	var instruction string
@@ -375,9 +474,9 @@ func renderEditDecisionModal(surface Surface, model Model, width, height int) {
 	default:
 		instruction = "Observation uncertain: x abandon · Esc retain for recovery"
 	}
-	surface.PutClipped(x, y+2, modalWidth, instruction, StyleError)
+	surface.PutClipped(x+1, y+2, modalWidth-2, instruction, StyleModalWarning)
 	if state.Message != "" {
-		surface.PutClipped(x, y+3, modalWidth, SanitizeTerminalText(state.Message), StylePlain)
+		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(state.Message), StyleModal)
 	}
 }
 
@@ -389,9 +488,11 @@ func renderEditLaunchModal(surface Surface, model Model, width, height int) {
 	modalWidth := min(width-4, 90)
 	x := max(0, (width-modalWidth)/2)
 	y := max(1, height/2-2)
-	surface.PutClipped(x, y, modalWidth, " Confirm external direct execution ", StyleActiveHeader)
-	surface.PutClipped(x, y+1, modalWidth, SanitizeTerminalText(state.Command), StylePlain)
-	surface.PutClipped(x, y+2, modalWidth, "Enter run · Esc retain without launching", StyleStatus)
+	fillPanel(surface, x, y, modalWidth, 3)
+	surface.PutClipped(x+1, y, modalWidth-2, "Confirm external direct execution", StyleModalTitle)
+	surface.PutClipped(x+1, y+1, modalWidth-2, SanitizeTerminalText(state.Command), StyleModal)
+	surface.Fill(x, y+2, modalWidth, StyleStatus)
+	surface.PutClipped(x, y+2, modalWidth, "[Enter] run  [Esc] retain without launching", StyleStatus)
 }
 
 func drawerRows(drawer DrawerState, height int) int {
@@ -409,14 +510,18 @@ func drawerRows(drawer DrawerState, height int) int {
 }
 
 func renderDrawer(surface Surface, model Model, y, width, rows int) {
-	style := StyleHeader
+	style := StyleTab
 	if model.Drawer.Focus == FocusDrawer {
-		style = StyleActiveHeader
+		style = StyleActiveTab
 	}
 	header := drawerTabLabel(model.Drawer.Mode)
+	surface.Fill(0, y, width, style)
 	surface.PutClipped(0, y, width, header, style)
 	if rows <= 1 {
 		return
+	}
+	for row := 1; row < rows; row++ {
+		surface.Fill(0, y+row, width, StylePreview)
 	}
 	switch model.Drawer.Mode {
 	case DrawerPreview:
@@ -450,7 +555,14 @@ func renderLogDrawer(surface Surface, records []diagnostic.Record, y, width, row
 		if record.ErrorCode != "" {
 			line += "  code=" + string(record.ErrorCode)
 		}
-		surface.PutClipped(0, y+row, width, line, StylePreview)
+		style := StylePreview
+		switch strings.ToUpper(record.Level) {
+		case "ERROR":
+			style = StyleError
+		case "WARN", "WARNING":
+			style = StyleWarning
+		}
+		surface.PutClipped(0, y+row, width, line, style)
 	}
 }
 
@@ -500,7 +612,8 @@ func renderSearchDrawer(surface Surface, state SearchState, y, width, rows int) 
 		marker := "  "
 		style := StylePreview
 		if index == state.Cursor {
-			marker, style = "> ", StyleCursor
+			marker, style = "▌ ", StyleCursor
+			surface.Fill(0, y+1+index-window.VisibleStart, width, style)
 		}
 		line := marker + string(result.Entry.Kind) + "  " + SanitizeTerminalText(result.RelativePath)
 		surface.PutClipped(0, y+1+index-window.VisibleStart, width, line, style)
@@ -529,7 +642,8 @@ func renderContentSearchDrawer(surface Surface, state ContentSearchState, y, wid
 		result := state.Results[index]
 		marker, style := "  ", StylePreview
 		if index == state.Cursor {
-			marker, style = "> ", StyleCursor
+			marker, style = "▌ ", StyleCursor
+			surface.Fill(0, y+1+index-window.VisibleStart, width, style)
 		}
 		line := fmt.Sprintf("%s%s:%d:%d  %s", marker, SanitizeTerminalText(result.RelativePath), result.Line, result.Offset, SanitizeTerminalText(result.Snippet))
 		surface.PutClipped(0, y+1+index-window.VisibleStart, width, line, style)
@@ -584,11 +698,12 @@ func renderJobsDrawer(surface Surface, jobs []transfer.JobView, progress map[dom
 	for index := start; index < len(jobs) && screenRow < rows; index++ {
 		view := jobs[index]
 		selected := index == cursor
-		style := StylePreview
+		style := jobStyle(view)
 		marker := "  "
 		if selected {
 			style = StyleCursor
-			marker = "> "
+			marker = "▌ "
+			surface.Fill(0, y+screenRow, width, style)
 		}
 		surface.PutClipped(0, y+screenRow, width, marker+jobSummary(view, progress[view.Snapshot.JobID]), style)
 		screenRow++
@@ -601,6 +716,19 @@ func renderJobsDrawer(surface Surface, jobs []transfer.JobView, progress map[dom
 				screenRow++
 			}
 		}
+	}
+}
+
+func jobStyle(view transfer.JobView) CellStyle {
+	switch view.Snapshot.State {
+	case job.StateCompleted, job.StateCompletedWithSourceRetained:
+		return StyleSuccess
+	case job.StateFailed:
+		return StyleError
+	case job.StateWaitingAuth, job.StateWaitingConflict, job.StateRetryWait, job.StateAwaitingConfirmation:
+		return StyleWarning
+	default:
+		return StylePreview
 	}
 }
 
@@ -735,11 +863,10 @@ func renderWorkspaceModal(surface Surface, name string, width, height int) {
 	const modalHeight = 5
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
-	for row := 0; row < modalHeight; row++ {
-		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
-	}
-	surface.PutClipped(x+1, y, modalWidth-2, "Save workspace", StyleStatus)
-	surface.PutClipped(x+1, y+2, modalWidth-2, "Name: "+SanitizeTerminalText(name), StyleStatus)
+	fillPanel(surface, x, y, modalWidth, modalHeight)
+	surface.PutClipped(x+1, y, modalWidth-2, "Save workspace", StyleModalTitle)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "Name: "+SanitizeTerminalText(name), StyleInput)
+	surface.Fill(x, y+3, modalWidth, StyleStatus)
 	surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] save  [Esc] cancel", StyleStatus)
 }
 
@@ -760,9 +887,11 @@ func renderSearchModal(surface Surface, value string, content, confirm bool, wid
 		title = " Confirm slow SFTP scan "
 		footer = "≤1000 files · ≤1 MiB/file · ≤32 MiB total · ≤2 min · Enter accept · Esc back"
 	}
-	surface.PutClipped(x, y, modalWidth, title, StyleActiveHeader)
-	surface.PutClipped(x, y+1, modalWidth, "Pattern: "+SanitizeTerminalText(value), StyleStatus)
-	surface.PutClipped(x, y+2, modalWidth, footer, StylePlain)
+	fillPanel(surface, x, y, modalWidth, 3)
+	surface.PutClipped(x+1, y, modalWidth-2, strings.TrimSpace(title), StyleModalTitle)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Pattern: "+SanitizeTerminalText(value), StyleInput)
+	surface.Fill(x, y+2, modalWidth, StyleStatus)
+	surface.PutClipped(x+1, y+2, modalWidth-2, footer, StyleStatus)
 }
 
 func renderPathModal(surface Surface, value string, width, height int) {
@@ -773,11 +902,10 @@ func renderPathModal(surface Surface, value string, width, height int) {
 	const modalHeight = 5
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
-	for row := 0; row < modalHeight; row++ {
-		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
-	}
-	surface.PutClipped(x+1, y, modalWidth-2, "Go to absolute path", StyleStatus)
-	surface.PutClipped(x+1, y+2, modalWidth-2, "Path: "+SanitizeTerminalText(value), StyleStatus)
+	fillPanel(surface, x, y, modalWidth, modalHeight)
+	surface.PutClipped(x+1, y, modalWidth-2, "Go to absolute path", StyleModalTitle)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "Path: "+SanitizeTerminalText(value), StyleInput)
+	surface.Fill(x, y+3, modalWidth, StyleStatus)
 	surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] open  [Esc] cancel", StyleStatus)
 }
 
@@ -791,22 +919,24 @@ func renderEndpointModal(surface Surface, picker Picker, width, height int) {
 	modalHeight := visibleRows + 5
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
-	for row := 0; row < modalHeight; row++ {
-		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
-	}
-	surface.PutClipped(x+1, y, modalWidth-2, "Change active endpoint", StyleActiveHeader)
-	surface.PutClipped(x+1, y+1, modalWidth-2, "Filter: "+SanitizeTerminalText(picker.Query()), StyleStatus)
+	fillPanel(surface, x, y, modalWidth, modalHeight)
+	surface.PutClipped(x+1, y, modalWidth-2, "Change active endpoint", StyleModalTitle)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Filter: "+SanitizeTerminalText(picker.Query()), StyleInput)
 	window := ComputeWindow(len(choices), picker.SelectedIndex(), visibleRows, 0)
 	for row, index := 0, window.VisibleStart; index < window.VisibleEnd; row, index = row+1, index+1 {
 		marker, style := "  ", StylePlain
 		if index == picker.SelectedIndex() {
-			marker, style = "> ", StyleCursor
+			marker, style = "▌ ", StyleCursor
+			surface.Fill(x, y+2+row, modalWidth, style)
+		} else {
+			style = StyleModal
 		}
 		surface.PutClipped(x+1, y+2+row, modalWidth-2, marker+SanitizeTerminalText(choices[index].Name), style)
 	}
 	if len(choices) == 0 {
-		surface.PutClipped(x+1, y+2, modalWidth-2, "No configured Host matches", StyleError)
+		surface.PutClipped(x+1, y+2, modalWidth-2, "No configured Host matches", StyleModalError)
 	}
+	surface.Fill(x, y+modalHeight-2, modalWidth, StyleStatus)
 	surface.PutClipped(x+1, y+modalHeight-2, modalWidth-2, "↑/↓ select · Enter connect · Esc cancel", StyleStatus)
 }
 
@@ -818,12 +948,11 @@ func renderRenameModal(surface Surface, reference transfer.FileRef, value string
 	const modalHeight = 6
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
-	for row := 0; row < modalHeight; row++ {
-		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
-	}
-	surface.PutClipped(x+1, y, modalWidth-2, "Rename through durable Job", StyleStatus)
-	surface.PutClipped(x+1, y+1, modalWidth-2, "Source: "+SanitizeTerminalText(string(reference.Location.Path)), StyleStatus)
-	surface.PutClipped(x+1, y+3, modalWidth-2, "Name: "+SanitizeTerminalText(value), StyleStatus)
+	fillPanel(surface, x, y, modalWidth, modalHeight)
+	surface.PutClipped(x+1, y, modalWidth-2, "Rename through durable Job", StyleModalTitle)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Source: "+SanitizeTerminalText(string(reference.Location.Path)), StyleModal)
+	surface.PutClipped(x+1, y+3, modalWidth-2, "Name: "+SanitizeTerminalText(value), StyleInput)
+	surface.Fill(x, y+4, modalWidth, StyleStatus)
 	surface.PutClipped(x+1, y+4, modalWidth-2, "[Enter] queue  [Esc] cancel", StyleStatus)
 }
 
@@ -835,21 +964,20 @@ func renderDeleteModal(surface Surface, references []transfer.FileRef, confirmat
 	const modalHeight = 7
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
-	for row := 0; row < modalHeight; row++ {
-		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
-	}
+	fillPanel(surface, x, y, modalWidth, modalHeight)
 	title := "Delete frozen selection"
 	message := "This action is irreversible when trash is unavailable."
 	if confirmation >= 2 {
 		title = "Confirm irreversible deletion"
 		message = "Second confirmation: queue deletion of the frozen identities."
 	}
-	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
-	surface.PutClipped(x+1, y+2, modalWidth-2, fmt.Sprintf("Targets: %d", len(references)), StyleStatus)
+	surface.PutClipped(x+1, y, modalWidth-2, title, StyleModalError)
+	surface.PutClipped(x+1, y+2, modalWidth-2, fmt.Sprintf("Targets: %d", len(references)), StyleModal)
 	if len(references) != 0 {
-		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(string(references[0].Location.Path)), StyleStatus)
+		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(string(references[0].Location.Path)), StyleModal)
 	}
-	surface.PutClipped(x+1, y+4, modalWidth-2, message, StyleError)
+	surface.PutClipped(x+1, y+4, modalWidth-2, message, StyleModalError)
+	surface.Fill(x, y+5, modalWidth, StyleStatus)
 	surface.PutClipped(x+1, y+5, modalWidth-2, "[Enter] confirm  [Esc] cancel", StyleStatus)
 }
 
@@ -861,15 +989,14 @@ func renderMoveModal(surface Surface, intents []Intent, width, height int) {
 	const modalHeight = 6
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
-	for row := 0; row < modalHeight; row++ {
-		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
-	}
-	surface.PutClipped(x+1, y, modalWidth-2, "Confirm durable move", StyleStatus)
-	surface.PutClipped(x+1, y+2, modalWidth-2, fmt.Sprintf("Frozen operations: %d", len(intents)), StyleStatus)
+	fillPanel(surface, x, y, modalWidth, modalHeight)
+	surface.PutClipped(x+1, y, modalWidth-2, "Confirm durable move", StyleModalTitle)
+	surface.PutClipped(x+1, y+2, modalWidth-2, fmt.Sprintf("Frozen operations: %d", len(intents)), StyleModal)
 	if len(intents) != 0 {
 		line := fmt.Sprintf("%s → %s", intents[0].Source.Location.Path, intents[0].Location.Path)
-		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(line), StyleStatus)
+		surface.PutClipped(x+1, y+3, modalWidth-2, SanitizeTerminalText(line), StyleModal)
 	}
+	surface.Fill(x, y+4, modalWidth, StyleStatus)
 	surface.PutClipped(x+1, y+4, modalWidth-2, "Source is deleted only after destination verification. [Enter] queue  [Esc] cancel", StyleStatus)
 }
 
@@ -881,9 +1008,7 @@ func renderCommandModal(surface Surface, model Model, width, height int) {
 	const modalHeight = 7
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
-	for row := 0; row < modalHeight; row++ {
-		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
-	}
+	fillPanel(surface, x, y, modalWidth, modalHeight)
 	pane := model.Panes[model.Active]
 	title := "One-time command"
 	footer := "[Enter] review  [Esc] cancel"
@@ -895,15 +1020,16 @@ func renderCommandModal(surface Surface, model Model, width, height int) {
 	if endpoint == "" {
 		endpoint = string(pane.Endpoint.Kind)
 	}
-	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
-	surface.PutClipped(x+1, y+1, modalWidth-2, "Endpoint: "+SanitizeTerminalText(endpoint), StyleStatus)
-	surface.PutClipped(x+1, y+2, modalWidth-2, "CWD: "+SanitizeTerminalText(string(pane.Location.Path)), StyleStatus)
+	surface.PutClipped(x+1, y, modalWidth-2, title, StyleModalTitle)
+	surface.PutClipped(x+1, y+1, modalWidth-2, "Endpoint: "+SanitizeTerminalText(endpoint), StyleModal)
+	surface.PutClipped(x+1, y+2, modalWidth-2, "CWD: "+SanitizeTerminalText(string(pane.Location.Path)), StyleModal)
 	execution := "Exec: local shell -c; cwd via process Dir"
 	if pane.Endpoint.Kind == domain.EndpointSSH {
 		execution = "Exec: fresh ssh -T; cwd marker; no fallback"
 	}
-	surface.PutClipped(x+1, y+3, modalWidth-2, execution, StyleStatus)
-	surface.PutClipped(x+1, y+4, modalWidth-2, "Command: "+SanitizeTerminalText(string(model.commandInput)), StyleStatus)
+	surface.PutClipped(x+1, y+3, modalWidth-2, execution, StyleModalWarning)
+	surface.PutClipped(x+1, y+4, modalWidth-2, "Command: "+SanitizeTerminalText(string(model.commandInput)), StyleInput)
+	surface.Fill(x, y+5, modalWidth, StyleStatus)
 	surface.PutClipped(x+1, y+5, modalWidth-2, footer, StyleStatus)
 }
 
@@ -915,18 +1041,17 @@ func renderAuthModal(surface Surface, state AuthState, width, height int) {
 	const modalHeight = 5
 	x := (width - modalWidth) / 2
 	y := (height - modalHeight) / 2
-	for row := 0; row < modalHeight; row++ {
-		surface.PutClipped(x, y+row, modalWidth, strings.Repeat(" ", modalWidth), StyleStatus)
-	}
+	fillPanel(surface, x, y, modalWidth, modalHeight)
 	title := "Authentication — " + SanitizeTerminalText(state.Endpoint)
-	surface.PutClipped(x+1, y, modalWidth-2, title, StyleStatus)
-	surface.PutClipped(x+1, y+1, modalWidth-2, SanitizeTerminalText(state.Prompt), StyleStatus)
+	surface.PutClipped(x+1, y, modalWidth-2, title, StyleModalTitle)
+	surface.PutClipped(x+1, y+1, modalWidth-2, SanitizeTerminalText(state.Prompt), StyleModal)
+	surface.Fill(x, y+3, modalWidth, StyleStatus)
 	if state.Kind == "confirm" {
 		surface.PutClipped(x+1, y+3, modalWidth-2, "[Enter] continue  [Esc] cancel", StyleStatus)
 		return
 	}
 	masked := strings.Repeat("•", len(state.answer))
-	surface.PutClipped(x+1, y+3, modalWidth-2, "Answer: "+masked, StyleStatus)
+	surface.PutClipped(x+1, y+3, modalWidth-2, "Answer: "+masked, StyleInput)
 }
 
 func putPaneHeader(surface Surface, pane PaneState, paneID, active PaneID, x, width int) {
@@ -934,29 +1059,57 @@ func putPaneHeader(surface Surface, pane PaneState, paneID, active PaneID, x, wi
 	if name == "" {
 		name = "local"
 	}
-	connection := connectionLabel(pane.Connection)
-	header := fmt.Sprintf(" %s  %s (%s)", SanitizeTerminalText(name), SanitizeTerminalText(string(pane.Location.Path)), connection)
 	style := StyleHeader
 	if paneID == active {
 		style = StyleActiveHeader
-		header = fmt.Sprintf("[%s] %s (%s)", SanitizeTerminalText(name), SanitizeTerminalText(string(pane.Location.Path)), connection)
 	}
-	surface.PutClipped(x, 0, width, header, style)
+	surface.Fill(x, 0, width, style)
+	nameLabel := " " + strings.ToUpper(SanitizeTerminalText(name)) + "  "
+	surface.PutClipped(x, 0, width, nameLabel, style)
+	connection := "● " + connectionLabel(pane.Connection) + " "
+	connectionWidth := len([]rune(connection))
+	pathX := x + len([]rune(nameLabel))
+	pathWidth := max(0, width-len([]rune(nameLabel))-connectionWidth-1)
+	surface.PutClipped(pathX, 0, pathWidth, SanitizeTerminalText(string(pane.Location.Path)), style)
+	putRight(surface, x, 0, width, connection, connectionStyle(pane.Connection))
 }
 
 func connectionLabel(state domain.ConnectionState) string {
-	if state == domain.StateAuthRequired {
-		return "waiting_auth"
+	switch state {
+	case domain.StateReady:
+		return "READY"
+	case domain.StateConnecting:
+		return "CONNECTING"
+	case domain.StateDegraded:
+		return "DEGRADED"
+	case domain.StateAuthRequired:
+		return "AUTH"
+	case domain.StateDisconnected:
+		return "OFFLINE"
+	case domain.StateFailed:
+		return "FAILED"
+	default:
+		return "UNKNOWN"
 	}
-	if state == "" {
-		return "unknown"
+}
+
+func connectionStyle(state domain.ConnectionState) CellStyle {
+	switch state {
+	case domain.StateReady:
+		return StyleSuccess
+	case domain.StateConnecting, domain.StateDegraded, domain.StateAuthRequired:
+		return StyleWarning
+	case domain.StateDisconnected, domain.StateFailed:
+		return StyleError
+	default:
+		return StyleHeader
 	}
-	return string(state)
 }
 
 func renderPaneRows(
 	surface Surface,
 	pane PaneState,
+	active bool,
 	x, width, y, rows, overscan int,
 ) int {
 	window := ComputeWindow(len(pane.visible), pane.Cursor, rows, overscan)
@@ -968,21 +1121,65 @@ func renderPaneRows(
 		}
 		entry := pane.visibleEntry(index)
 		marker := "  "
-		style := StylePlain
-		if pane.selectedAt(index) {
-			style = StyleSelected
+		selected := pane.selectedAt(index)
+		rowStyle := StylePlain
+		if selected {
+			marker = "• "
+			rowStyle = StyleSelected
 		}
 		if index == pane.Cursor {
-			marker = "> "
-			style = StyleCursor
+			marker = "▌ "
+			rowStyle = StyleInactiveCursor
+			if active {
+				rowStyle = StyleCursor
+			}
+			if selected {
+				marker = "▌•"
+			}
 		}
-		text := marker + SanitizeTerminalText(entry.Name) + formatEntryMetadata(entry)
-		surface.PutClipped(x, y+index-window.VisibleStart, width, text, style)
+		rowY := y + index - window.VisibleStart
+		if rowStyle != StylePlain {
+			surface.Fill(x, rowY, width, rowStyle)
+		}
+		surface.PutClipped(x, rowY, min(2, width), marker, rowStyle)
+		metadata := formatEntryMetadata(entry, width)
+		metadataWidth := len([]rune(metadata))
+		metadataX := x + width - metadataWidth - 1
+		nameX := x + 2
+		nameWidth := max(0, metadataX-nameX-1)
+		if metadata == "" {
+			nameWidth = max(0, width-3)
+		}
+		nameStyle := rowStyle
+		metadataStyle := rowStyle
+		if rowStyle == StylePlain {
+			nameStyle = entryStyle(entry)
+			metadataStyle = StyleMuted
+		}
+		name := SanitizeTerminalText(entry.Name)
+		if entry.Symlink != nil {
+			name += " → " + SanitizeTerminalText(entry.Symlink.RawTarget)
+		}
+		surface.PutClipped(nameX, rowY, nameWidth, name, nameStyle)
+		if metadata != "" && metadataX > nameX {
+			surface.PutClipped(metadataX, rowY, metadataWidth, metadata, metadataStyle)
+		}
 	}
 	return visited
 }
 
-func formatEntryMetadata(entry domain.Entry) string {
+func entryStyle(entry domain.Entry) CellStyle {
+	switch entry.Kind {
+	case domain.EntryDirectory:
+		return StyleDirectory
+	case domain.EntrySymlink:
+		return StyleSymlink
+	default:
+		return StylePlain
+	}
+}
+
+func formatEntryMetadata(entry domain.Entry, width int) string {
 	size := "—"
 	if entry.Metadata.Size != nil {
 		size = formatBytes(*entry.Metadata.Size)
@@ -995,11 +1192,46 @@ func formatEntryMetadata(entry domain.Entry) string {
 	if entry.Metadata.ModifiedAt != nil {
 		modified = entry.Metadata.ModifiedAt.UTC().Format("2006-01-02 15:04")
 	}
-	result := fmt.Sprintf("  [%s] %s %s %s", entry.Kind, size, modified, mode)
-	if entry.Symlink != nil {
-		result += " -> " + SanitizeTerminalText(entry.Symlink.RawTarget)
+	if width >= 58 {
+		return fmt.Sprintf("%-4s %8s %16s %4s", entryKindLabel(entry.Kind), size, modified, mode)
 	}
-	return result
+	if width >= 38 {
+		if entry.Metadata.ModifiedAt != nil {
+			modified = entry.Metadata.ModifiedAt.UTC().Format("2006-01-02")
+		}
+		return fmt.Sprintf("%8s %10s %4s", size, modified, mode)
+	}
+	if width >= 24 {
+		return fmt.Sprintf("%8s", size)
+	}
+	return ""
+}
+
+func entryKindLabel(kind domain.EntryKind) string {
+	switch kind {
+	case domain.EntryDirectory:
+		return "DIR"
+	case domain.EntrySymlink:
+		return "LINK"
+	case domain.EntryFile:
+		return "FILE"
+	default:
+		return strings.ToUpper(string(kind))
+	}
+}
+
+func putRight(surface Surface, x, y, width int, text string, style CellStyle) {
+	textWidth := len([]rune(text))
+	if width <= 0 || textWidth <= 0 || textWidth > width {
+		return
+	}
+	surface.PutClipped(x+width-textWidth, y, textWidth, text, style)
+}
+
+func fillPanel(surface Surface, x, y, width, height int) {
+	for row := 0; row < height; row++ {
+		surface.Fill(x, y+row, width, StyleModal)
+	}
 }
 
 func formatBytes(value uint64) string {

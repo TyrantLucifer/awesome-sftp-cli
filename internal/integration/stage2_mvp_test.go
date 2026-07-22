@@ -44,7 +44,7 @@ func TestStage2PTYActionsWaitForReadySelection(t *testing.T) {
 	if !strings.Contains(text, "if selection_ready(observer, output, wanted):") {
 		t.Fatal("ready-selection barrier must observe the target after the loading state clears")
 	}
-	if !strings.Contains(text, "wanted = (\"> \" + filename).encode(\"utf-8\")") {
+	if !strings.Contains(text, "wanted = (\"▌ \" + filename).encode(\"utf-8\")") {
 		t.Fatal("ready-selection barrier must require the cursor-selected target")
 	}
 	if !strings.Contains(text, "\"-final\", \"-absent\", \"Loading\"") {

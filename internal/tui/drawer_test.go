@@ -121,6 +121,15 @@ func TestDrawerRendererUsesBoundedBottomRegionAtNormalAndNarrowSizes(t *testing.
 		if stats.ListRows >= size.height-2 {
 			t.Fatalf("%dx%d list rows = %d, drawer did not reserve a bounded bottom region", size.width, size.height, stats.ListRows)
 		}
+		drawerY := size.height - drawerRows(model.Drawer, size.height)
+		if style := surface.StyleAt(0, drawerY); style != StyleActiveTab {
+			t.Fatalf("%dx%d drawer tab style = %v, want %v", size.width, size.height, style, StyleActiveTab)
+		}
+		if drawerY+1 < size.height {
+			if style := surface.StyleAt(size.width-1, size.height-1); style != StylePreview {
+				t.Fatalf("%dx%d drawer body fill = %v, want %v", size.width, size.height, style, StylePreview)
+			}
+		}
 	}
 }
 

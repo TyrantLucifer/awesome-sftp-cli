@@ -70,7 +70,7 @@ def read_until(fd, observer, output, wanted, timeout=15):
 
 
 def read_ready_selection(fd, observer, output, filename, timeout=15, settle=1):
-    wanted = ("> " + filename).encode("utf-8")
+    wanted = ("▌ " + filename).encode("utf-8")
     deadline = time.monotonic() + timeout
     ready_since = None
     while time.monotonic() < deadline:

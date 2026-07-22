@@ -2,15 +2,15 @@ package tui
 
 import (
 	"github.com/gdamore/tcell/v3"
-	"github.com/gdamore/tcell/v3/color"
 )
 
 type TCellSurface struct {
 	screen tcell.Screen
+	theme  *TCellTheme
 }
 
 func NewTCellSurface(screen tcell.Screen) *TCellSurface {
-	return &TCellSurface{screen: screen}
+	return &TCellSurface{screen: screen, theme: &defaultTCellTheme}
 }
 
 func (s *TCellSurface) Size() (int, int) {
@@ -18,7 +18,19 @@ func (s *TCellSurface) Size() (int, int) {
 }
 
 func (s *TCellSurface) Clear() {
+	s.screen.SetStyle(s.theme.style(StyleCanvas))
 	s.screen.Clear()
+}
+
+func (s *TCellSurface) Fill(x, y, width int, style CellStyle) {
+	screenWidth, screenHeight := s.screen.Size()
+	if width <= 0 || y < 0 || y >= screenHeight || x >= screenWidth || x+width <= 0 {
+		return
+	}
+	cellStyle := s.theme.style(style)
+	for column := max(0, x); column < min(screenWidth, x+width); column++ {
+		s.screen.SetContent(column, y, ' ', nil, cellStyle)
+	}
 }
 
 func (s *TCellSurface) PutClipped(x, y, width int, text string, style CellStyle) {
@@ -26,7 +38,7 @@ func (s *TCellSurface) PutClipped(x, y, width int, text string, style CellStyle)
 		return
 	}
 	text = SanitizeTerminalText(text)
-	cellStyle := tcellStyle(style)
+	cellStyle := s.theme.style(style)
 	column := x
 	boundary := x + width
 	for text != "" && column < boundary {
@@ -106,25 +118,4 @@ func TranslateTCellEventWithKeymap(event tcell.Event, mode Mode, keymap Keymap) 
 		}
 	}
 	return nil, false
-}
-
-func tcellStyle(style CellStyle) tcell.Style {
-	switch style {
-	case StyleHeader:
-		return tcell.StyleDefault.Bold(true)
-	case StyleActiveHeader:
-		return tcell.StyleDefault.Bold(true).Reverse(true)
-	case StyleCursor:
-		return tcell.StyleDefault.Reverse(true)
-	case StyleSelected:
-		return tcell.StyleDefault.Underline(true)
-	case StyleStatus:
-		return tcell.StyleDefault.Reverse(true)
-	case StylePreview:
-		return tcell.StyleDefault.Foreground(color.Silver)
-	case StyleError:
-		return tcell.StyleDefault.Foreground(color.Red)
-	default:
-		return tcell.StyleDefault
-	}
 }
