@@ -670,6 +670,20 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		return err
 	}
 	runCtx, stop := context.WithCancel(ctx)
+	daemonLosses := make(chan *daemon.Client, 4)
+	watchDaemonConnection := func(activeClient *daemon.Client) {
+		go func() {
+			select {
+			case <-activeClient.Done():
+				select {
+				case daemonLosses <- activeClient:
+				case <-runCtx.Done():
+				}
+			case <-runCtx.Done():
+			}
+		}()
+	}
+	watchDaemonConnection(client)
 	authClient, err := connectDaemon(runCtx, paths, purpose)
 	if err != nil {
 		stop()
@@ -1306,6 +1320,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			if err := editFlow.Heartbeat(runCtx); err != nil {
 				model.Notice = "cache lease heartbeat failed; durable edit recovery remains retained: " + clientErrorMessage(err)
 			}
+		case lostClient := <-daemonLosses:
+			if lostClient == client {
+				startDaemonRecovery()
+			}
 		case err := <-authErrors:
 			if authFailureLostDaemon(err, func() error {
 				probeCtx, cancel := context.WithTimeout(runCtx, daemonReadyTimeout)
@@ -1351,6 +1369,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			oldClient := client
 			client = result.client
+			watchDaemonConnection(client)
 			localEndpoint = result.local
 			editFlow.client = client
 			editFlow.localEndpoint = localEndpoint.ID
