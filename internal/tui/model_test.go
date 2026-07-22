@@ -132,7 +132,7 @@ func TestReducerCapturesFrozenCopyOrCutAndPastesIntoCurrentPane(t *testing.T) {
 				Location: capture.Location, Kind: domain.EntryFile,
 				CapabilityRevision: domain.CapabilityRevision{SessionID: "sess_aaaaaaaaaaaaaaaaaaaaaaaaaa", Generation: 7},
 			}
-			model, _ = Reduce(model, ClipboardCaptured{Clipboard: test.clipboard, Reference: reference})
+			model, _ = Reduce(model, ClipboardCaptured{Clipboard: test.clipboard, Reference: reference, Generation: capture.ClipboardGeneration})
 			model, _ = Reduce(model, KeyPress{Key: KeyTab})
 			model, intents = Reduce(model, KeyPress{Key: KeyPaste})
 			if test.clipboard == transfer.ClipboardCut {
@@ -189,7 +189,7 @@ func TestReducerCapturesDirectoriesAndMultiSelectionAsFrozenClipboard(t *testing
 		{Location: intents[0].Locations[0], Kind: domain.EntryDirectory},
 		{Location: intents[0].Locations[1], Kind: domain.EntryFile},
 	}
-	model, _ = Reduce(model, ClipboardCaptured{Clipboard: transfer.ClipboardCopy, References: references})
+	model, _ = Reduce(model, ClipboardCaptured{Clipboard: transfer.ClipboardCopy, References: references, Generation: intents[0].ClipboardGeneration})
 	model, _ = Reduce(model, KeyPress{Key: KeyTab})
 	_, intents = Reduce(model, KeyPress{Key: KeyPaste})
 	if len(intents) != 2 {
@@ -199,6 +199,96 @@ func TestReducerCapturesDirectoriesAndMultiSelectionAsFrozenClipboard(t *testing
 		if intent.Kind != IntentCreateCopyJob || intent.Source.Location != references[index].Location {
 			t.Fatalf("paste intent %d = %#v", index, intent)
 		}
+	}
+}
+
+func TestReducerQueuesRapidPasteUntilMultiSelectionCaptureCompletes(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		selectItems func(Model) Model
+	}{
+		{
+			name: "space marks",
+			selectItems: func(model Model) Model {
+				model, _ = Reduce(model, KeyPress{Key: KeyMark})
+				model, _ = Reduce(model, KeyPress{Key: KeyDown})
+				model, _ = Reduce(model, KeyPress{Key: KeyMark})
+				return model
+			},
+		},
+		{
+			name: "visual",
+			selectItems: func(model Model) Model {
+				model, _ = Reduce(model, KeyPress{Key: KeyVisual})
+				model, _ = Reduce(model, KeyPress{Key: KeyDown})
+				return model
+			},
+		},
+		{
+			name: "visual line",
+			selectItems: func(model Model) Model {
+				model, _ = Reduce(model, KeyPress{Key: KeyVisualLine})
+				model, _ = Reduce(model, KeyPress{Key: KeyDown})
+				return model
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			model := test.selectItems(testModel(t))
+			model.Clipboard = ClipboardState{
+				Kind:      transfer.ClipboardCopy,
+				Reference: transfer.FileRef{Location: mustLocation(t, leftEndpointID, "/left/stale.txt"), Kind: domain.EntryFile},
+				Ready:     true,
+			}
+
+			model, intents := Reduce(model, KeyPress{Key: KeyCopy})
+			capture := assertSingleIntent(t, intents, IntentTransferCapture, "/left/dir")
+			if len(capture.Locations) != 2 {
+				t.Fatalf("capture locations = %#v, want two", capture.Locations)
+			}
+			if model.Clipboard.Ready {
+				t.Fatal("new capture left the stale clipboard ready")
+			}
+
+			model, _ = Reduce(model, KeyPress{Key: KeyTab})
+			model, intents = Reduce(model, KeyPress{Key: KeyPaste})
+			if len(intents) != 0 {
+				t.Fatalf("rapid paste used stale clipboard: %#v", intents)
+			}
+
+			references := []transfer.FileRef{
+				{Location: capture.Locations[0], Kind: domain.EntryDirectory},
+				{Location: capture.Locations[1], Kind: domain.EntryFile},
+			}
+			model, intents = Reduce(model, ClipboardCaptured{
+				Clipboard: transfer.ClipboardCopy, References: references, Generation: capture.ClipboardGeneration,
+			})
+			if len(intents) != 2 {
+				t.Fatalf("completed capture paste intents = %#v, want two", intents)
+			}
+			for index, intent := range intents {
+				if intent.Kind != IntentCreateCopyJob || intent.Pane != Right || intent.Location.Path != "/right" || intent.Source != references[index] {
+					t.Fatalf("paste intent %d = %#v", index, intent)
+				}
+			}
+		})
+	}
+}
+
+func TestReducerIgnoresStaleClipboardCapture(t *testing.T) {
+	model := testModel(t)
+	model, first := Reduce(model, KeyPress{Key: KeyCopy})
+	model, second := Reduce(model, KeyPress{Key: KeyCopy})
+	if len(first) != 1 || len(second) != 1 || first[0].ClipboardGeneration == second[0].ClipboardGeneration {
+		t.Fatalf("capture generations first=%#v second=%#v", first, second)
+	}
+
+	stale := transfer.FileRef{Location: first[0].Location, Kind: domain.EntryDirectory}
+	model, intents := Reduce(model, ClipboardCaptured{
+		Clipboard: transfer.ClipboardCopy, Reference: stale, Generation: first[0].ClipboardGeneration,
+	})
+	if len(intents) != 0 || model.Clipboard.Generation != second[0].ClipboardGeneration || !model.Clipboard.Capturing || model.Clipboard.Ready {
+		t.Fatalf("stale capture changed current clipboard: model=%#v intents=%#v", model.Clipboard, intents)
 	}
 }
 

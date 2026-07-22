@@ -10,7 +10,7 @@ Use `Space` for discrete marks or `v`/`V` for a visual selection. With no select
 |---|---|
 | `y` | Capture immutable copy `FileRef` values for the selected files or directories. No content is read and no Job starts yet. |
 | `d` | Capture the same frozen identities with cut semantics. It never deletes or renames a source by itself. |
-| `p` | Freeze destination directory, names, endpoint capabilities, route, conflict policy, verification, and resource budgets, then create one Job per clipboard item. A cut paste shows a move confirmation first. |
+| `p` | Freeze destination directory, names, endpoint capabilities, route, conflict policy, verification, and resource budgets, then create one Job per clipboard item. If `y`/`d` is still freezing a multi-selection, the paste is queued against that capture generation instead of reusing an older clipboard. A cut paste shows a move confirmation first. |
 | `r` | Capture exactly one file or directory, request a new plain entry name, and create a same-endpoint durable move. Multi-selection is rejected. |
 | `D` | Capture the selected identities for explicit deletion. The first confirmation freezes the scope; a second confirmation authorizes irreversible deletion when reliable trash is unavailable. |
 | `.` | Repeat only the last frozen high-level operation. Copy repeats directly; move/rename reopens confirmation; delete restarts both delete confirmations. A stale source identity is rejected by the Planner. |

@@ -471,7 +471,19 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 		}
 		return model, nil
 	case ClipboardCaptured:
+		generation := action.Generation
+		if generation == 0 {
+			generation = model.Clipboard.Generation
+		}
+		if action.Generation != 0 && action.Generation != model.Clipboard.Generation {
+			return model, nil
+		}
 		if action.Message != "" {
+			model.Clipboard.Capturing = false
+			model.Clipboard.Ready = false
+			if model.pendingPaste.Generation == generation {
+				model.pendingPaste = pendingPasteState{}
+			}
 			model.Notice = action.Message
 			return model, nil
 		}
@@ -480,14 +492,24 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			references = []transfer.FileRef{action.Reference}
 		}
 		if len(references) == 0 {
+			model.Clipboard.Capturing = false
+			model.Clipboard.Ready = false
+			if model.pendingPaste.Generation == generation {
+				model.pendingPaste = pendingPasteState{}
+			}
 			model.Notice = "capture returned no source"
 			return model, nil
 		}
-		model.Clipboard = ClipboardState{Kind: action.Clipboard, Reference: references[0], References: references, Ready: true}
+		model.Clipboard = ClipboardState{Kind: action.Clipboard, Reference: references[0], References: references, Generation: generation, Ready: true}
 		if len(references) == 1 {
 			model.Notice = string(action.Clipboard) + " source captured: " + string(references[0].Location.Path)
 		} else {
 			model.Notice = string(action.Clipboard) + " sources captured: " + fmt.Sprint(len(references))
+		}
+		if model.pendingPaste.Active && model.pendingPaste.Generation == generation {
+			pending := model.pendingPaste
+			model.pendingPaste = pendingPasteState{}
+			return pasteClipboard(model, pending.Pane, pending.Location, pending.Repetitions)
 		}
 		return model, nil
 	case DeletePrepared:
@@ -1341,43 +1363,29 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		if key == KeyCut {
 			clipboard = transfer.ClipboardCut
 		}
-		return model, []Intent{{Kind: IntentTransferCapture, Pane: model.Active, Location: locations[0], Locations: locations, Clipboard: clipboard}}
+		return beginClipboardCapture(model, model.Active, locations, clipboard)
 	case KeyPaste:
-		if !model.Clipboard.Ready {
-			model.Notice = "copy/cut clipboard is empty"
-			return model, nil
-		}
-		references := model.Clipboard.References
-		if len(references) == 0 {
-			references = []transfer.FileRef{model.Clipboard.Reference}
-		}
 		repetitions := 1
 		if count > 0 {
 			repetitions = count
 		}
-		if len(references) == 0 || repetitions > maxBatchJobIntents/len(references) {
-			model.Notice = "paste count exceeds the bounded Job batch"
-			return model, nil
-		}
-		intents := make([]Intent, 0, len(references)*repetitions)
-		for range repetitions {
-			for _, reference := range references {
-				intents = append(intents, Intent{
-					Kind: IntentCreateCopyJob, Pane: model.Active, Location: pane.Location,
-					Clipboard: model.Clipboard.Kind, Source: reference,
-					Name: path.Base(string(reference.Location.Path)),
-				})
+		if model.Clipboard.Capturing {
+			if repetitions > maxBatchJobIntents {
+				model.Notice = "paste count exceeds the bounded Job batch"
+				return model, nil
 			}
-		}
-		if model.Clipboard.Kind == transfer.ClipboardCut {
-			model.pendingMove = append([]Intent(nil), intents...)
-			model.Mode = ModeMoveConfirm
+			model.pendingPaste = pendingPasteState{
+				Generation: model.Clipboard.Generation, Pane: model.Active, Location: pane.Location,
+				Repetitions: repetitions, Active: true,
+			}
+			model.Notice = "copy/cut capture in progress; paste queued"
 			return model, nil
 		}
-		model.repeatIntents = append([]Intent(nil), intents...)
-		model.repeatMove = nil
-		model.repeatDelete = nil
-		return model, intents
+		if !model.Clipboard.Ready {
+			model.Notice = "copy/cut clipboard is empty"
+			return model, nil
+		}
+		return pasteClipboard(model, model.Active, pane.Location, repetitions)
 	case KeyDelete:
 		locations := selectedLocations(pane, count)
 		if len(locations) == 0 {
@@ -1585,7 +1593,7 @@ func reduceSearchKey(model Model, key Key) (Model, []Intent) {
 			PreviewMode: builtinpreview.ReadHead, PreviewView: builtinpreview.ViewAuto,
 		}}
 	case KeyCopy:
-		return model, []Intent{{Kind: IntentTransferCapture, Pane: pane, Location: result.Location, Locations: []domain.Location{result.Location}, Clipboard: transfer.ClipboardCopy}}
+		return beginClipboardCapture(model, pane, []domain.Location{result.Location}, transfer.ClipboardCopy)
 	default:
 		return model, nil
 	}
@@ -1620,7 +1628,7 @@ func reduceContentSearchKey(model Model, key Key) (Model, []Intent) {
 			PreviewMode: builtinpreview.ReadHead, PreviewView: builtinpreview.ViewAuto,
 		}}
 	case KeyCopy:
-		return model, []Intent{{Kind: IntentTransferCapture, Pane: pane, Location: result.Location, Locations: []domain.Location{result.Location}, Clipboard: transfer.ClipboardCopy}}
+		return beginClipboardCapture(model, pane, []domain.Location{result.Location}, transfer.ClipboardCopy)
 	default:
 		return model, nil
 	}
@@ -1840,4 +1848,51 @@ func selectedLocations(pane PaneState, count int) []domain.Location {
 		}
 	}
 	return locations
+}
+
+func beginClipboardCapture(model Model, pane PaneID, locations []domain.Location, clipboard transfer.ClipboardKind) (Model, []Intent) {
+	generation := model.Clipboard.Generation + 1
+	if generation == 0 {
+		generation = 1
+	}
+	model.Clipboard = ClipboardState{Kind: clipboard, Generation: generation, Capturing: true}
+	model.pendingPaste = pendingPasteState{}
+	model.Notice = fmt.Sprintf("capturing %d %s source(s)", len(locations), clipboard)
+	return model, []Intent{{
+		Kind: IntentTransferCapture, Pane: pane, Location: locations[0], Locations: locations,
+		Clipboard: clipboard, ClipboardGeneration: generation,
+	}}
+}
+
+func pasteClipboard(model Model, pane PaneID, location domain.Location, repetitions int) (Model, []Intent) {
+	references := model.Clipboard.References
+	if len(references) == 0 && model.Clipboard.Reference.Location.Path != "" {
+		references = []transfer.FileRef{model.Clipboard.Reference}
+	}
+	if repetitions <= 0 {
+		repetitions = 1
+	}
+	if len(references) == 0 || repetitions > maxBatchJobIntents/len(references) {
+		model.Notice = "paste count exceeds the bounded Job batch"
+		return model, nil
+	}
+	intents := make([]Intent, 0, len(references)*repetitions)
+	for range repetitions {
+		for _, reference := range references {
+			intents = append(intents, Intent{
+				Kind: IntentCreateCopyJob, Pane: pane, Location: location,
+				Clipboard: model.Clipboard.Kind, Source: reference,
+				Name: path.Base(string(reference.Location.Path)),
+			})
+		}
+	}
+	if model.Clipboard.Kind == transfer.ClipboardCut {
+		model.pendingMove = append([]Intent(nil), intents...)
+		model.Mode = ModeMoveConfirm
+		return model, nil
+	}
+	model.repeatIntents = append([]Intent(nil), intents...)
+	model.repeatMove = nil
+	model.repeatDelete = nil
+	return model, intents
 }

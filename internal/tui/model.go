@@ -532,6 +532,7 @@ type Model struct {
 	pendingRename  transfer.FileRef
 	pendingDelete  []transfer.FileRef
 	pendingMove    []Intent
+	pendingPaste   pendingPasteState
 	repeatDelete   []transfer.FileRef
 	repeatMove     []Intent
 	repeatIntents  []Intent
@@ -551,7 +552,17 @@ type ClipboardState struct {
 	Kind       transfer.ClipboardKind
 	Reference  transfer.FileRef
 	References []transfer.FileRef
+	Generation uint64
+	Capturing  bool
 	Ready      bool
+}
+
+type pendingPasteState struct {
+	Generation  uint64
+	Pane        PaneID
+	Location    domain.Location
+	Repetitions int
+	Active      bool
 }
 
 func NewModel(left, right PaneState) Model {
@@ -643,6 +654,7 @@ type Intent struct {
 	Capabilities          domain.CapabilitySnapshot
 	CommitEndpoint        bool
 	Clipboard             transfer.ClipboardKind
+	ClipboardGeneration   uint64
 	Source                transfer.FileRef
 	Target                transfer.FileRef
 	Recursive             bool
@@ -825,6 +837,7 @@ type ClipboardCaptured struct {
 	Clipboard  transfer.ClipboardKind
 	Reference  transfer.FileRef
 	References []transfer.FileRef
+	Generation uint64
 	Message    string
 }
 type DeletePrepared struct {
