@@ -483,6 +483,11 @@ func (store *Store) write(ctx context.Context, budgets []uint64, operation func(
 	if store == nil || store.database == nil || store.walGuard == nil {
 		return errors.New("edit store: nil database")
 	}
+	releaseWrite, err := store.walGuard.AcquireWrite(ctx)
+	if err != nil {
+		return err
+	}
+	defer releaseWrite()
 	connection, err := store.database.Conn(ctx)
 	if err != nil {
 		return err

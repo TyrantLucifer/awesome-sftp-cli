@@ -64,6 +64,60 @@ func TestCreateJobIsTransactionalAndRequestIdempotent(t *testing.T) {
 	}
 }
 
+func TestConcurrentCreateWaitsForCurrentWALTransaction(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	store, database := newTestStore(t, ctx)
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- store.immediate(ctx, []uint64{1 << 20}, func(*sql.Conn, *transactionWriter) error {
+			close(entered)
+			<-release
+			return nil
+		})
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first WAL transaction did not start")
+	}
+
+	request := createRequest(t, 42)
+	secondDone := make(chan error, 1)
+	go func() {
+		_, _, err := store.Create(ctx, request)
+		secondDone <- err
+	}()
+	select {
+	case err := <-secondDone:
+		t.Fatalf("concurrent create returned before current WAL transaction completed: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	close(release)
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatalf("first WAL transaction: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("first WAL transaction did not complete")
+	}
+	select {
+	case err := <-secondDone:
+		if err != nil {
+			t.Fatalf("concurrent create after WAL transaction: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("concurrent create did not resume")
+	}
+	assertCount(t, ctx, database, "jobs", 1)
+}
+
 func TestJobEventPayloadsHaveFrozenHardByteCeiling(t *testing.T) {
 	oversized := `"` + strings.Repeat("x", 32*1024) + `"`
 	request := createRequest(t, 2)

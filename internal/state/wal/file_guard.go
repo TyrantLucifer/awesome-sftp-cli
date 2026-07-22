@@ -13,6 +13,7 @@ type FileGuard struct {
 	controller *Controller
 	walPath    string
 	active     bool
+	writeGate  chan struct{}
 }
 
 type FileTransaction struct {
@@ -63,7 +64,30 @@ func OpenFileGuard(ctx context.Context, connection *sql.Conn) (*FileGuard, error
 	if err != nil {
 		return nil, err
 	}
-	return &FileGuard{controller: controller, walPath: walPath}, nil
+	return &FileGuard{controller: controller, walPath: walPath, writeGate: make(chan struct{}, 1)}, nil
+}
+
+// AcquireWrite serializes a complete online write batch, including its
+// post-commit checkpoint, across every store that shares this WAL guard.
+func (guard *FileGuard) AcquireWrite(ctx context.Context) (func(), error) {
+	if guard == nil || guard.controller == nil || guard.writeGate == nil {
+		return nil, fmt.Errorf("acquire guarded WAL writer: nil guard")
+	}
+	if ctx == nil {
+		return nil, fmt.Errorf("acquire guarded WAL writer: nil context")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("acquire guarded WAL writer: %w", err)
+	}
+	select {
+	case guard.writeGate <- struct{}{}:
+		var once sync.Once
+		return func() {
+			once.Do(func() { <-guard.writeGate })
+		}, nil
+	case <-ctx.Done():
+		return nil, fmt.Errorf("acquire guarded WAL writer: %w", ctx.Err())
+	}
 }
 
 func (guard *FileGuard) Begin(statementBudgets []uint64) (*FileTransaction, error) {

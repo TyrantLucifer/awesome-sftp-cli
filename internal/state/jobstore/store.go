@@ -1136,6 +1136,11 @@ func (store *Store) immediate(ctx context.Context, budgets []uint64, operation f
 	if store == nil || store.database == nil || store.walGuard == nil {
 		return fmt.Errorf("job store: nil database")
 	}
+	releaseWrite, err := store.walGuard.AcquireWrite(ctx)
+	if err != nil {
+		return fmt.Errorf("job store: acquire WAL writer: %w", err)
+	}
+	defer releaseWrite()
 	connection, err := store.database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("job store: reserve connection: %w", err)

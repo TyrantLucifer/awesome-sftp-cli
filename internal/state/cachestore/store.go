@@ -679,6 +679,11 @@ func (store *Store) write(ctx context.Context, statements int, operation func(*s
 	if store == nil || store.database == nil || store.walGuard == nil {
 		return fmt.Errorf("cache store: nil database")
 	}
+	releaseWrite, err := store.walGuard.AcquireWrite(ctx)
+	if err != nil {
+		return fmt.Errorf("cache store: acquire WAL writer: %w", err)
+	}
+	defer releaseWrite()
 	connection, err := store.database.Conn(ctx)
 	if err != nil {
 		return fmt.Errorf("cache store: reserve connection: %w", err)
