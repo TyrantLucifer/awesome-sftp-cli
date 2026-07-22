@@ -82,7 +82,7 @@ make ci
 - 文档变更：`go test ./internal/docscheck`、`make docs-check`、`git diff --check`。
 - 单包行为：先跑受影响包和直接契约测试。
 - Provider/传输/状态/IPC 安全语义：补定向测试，再根据影响运行 `make check` 或 race。
-- 发布、工具链、workflow、依赖或平台变化：完成相关定向测试后运行完整 `make ci` 和对应原生/发行门禁。
+- 发布自动化、工具链、workflow、依赖或平台实现发生变化：完成相关定向测试后运行完整 `make ci`；普通发版本身按下方 Release 规则执行。
 - 不要为了形式感反复跑与改动无关的全量矩阵；也不要用较小测试冒充发布证据。
 
 行为变更和 bugfix 先写能复现预期的失败测试，再实现最小修复。纯文案和机械链接调整不需要制造无价值测试。
@@ -95,7 +95,7 @@ make ci
 - `docs/product/feature-matrix.md`：稳定能力 ID、状态、用户契约和实现/测试依据。
 - `docs/development/status.md`：简短当前状态，不记录每日命令流水。
 - `docs/product/roadmap.md`：未来方向，不伪装成已完成能力。
-- `docs/release/RC-GATES.md`：公开 release 专用，内部预览发布不能据此宣称公开就绪。
+- `docs/release/RC-GATES.md`：保留为历史门禁设计与后续稳定性专项的输入；当前不作为发布前置条件或发布阻断依据。
 
 功能或状态变化必须在同一 change 中更新相关用户文档、功能矩阵和状态。不要写入临时分支名、容易过期的 CI 运行号或聊天上下文。
 
@@ -106,9 +106,19 @@ make ci
 - 构建、coverage、临时 fixture 和 `.superpowers/` 不是持久事实源，不应提交。
 - 提交保持单一意图；提交前检查 `git status`、`git diff --check` 和相称的测试结果。
 
+### Commit message 规范
+
+- 所有提交使用 Conventional Commits，格式为 `<type>(<scope>): <description>`；`scope` 可省略，破坏性变更使用 `<type>(<scope>)!: <description>`。
+- `type` 必须小写，并从以下类型中选择：`feat`（新功能）、`fix`（缺陷修复）、`docs`（仅文档）、`refactor`（不改变行为的重构）、`perf`（性能优化）、`test`（测试）、`build`（构建或依赖）、`ci`（CI/workflow）、`chore`（其他维护）、`revert`（回退提交）。
+- `scope` 使用简短、稳定的小写包名或领域名，例如 `transfer`、`tui`、`provider`、`docs`；不要使用分支名、issue 编号或临时阶段名。
+- `description` 使用简洁的祈使语气，首字母小写，结尾不加句号；标题总长度建议不超过 72 个字符。
+- 需要正文时，在标题后空一行说明动机和行为变化；关联 issue 或声明破坏性变更时，在 footer 使用 `Refs: #123`、`Closes: #123` 或 `BREAKING CHANGE: ...`。
+- 提交前根据实际 diff 选择类型，不得把功能、修复或破坏性变化笼统标为 `chore`。
+- 示例：`feat(transfer): add resumable upload planning`、`fix(tui): bound directory viewport rendering`、`docs(release): clarify unsigned preview status`。
+
 ## Release 规则
 
-- 内部 preview、release candidate 和 public release 是不同语义，文档与命令不得混用。
-- public release 前运行 `docscheck --release`，并关闭 `docs/release/RC-GATES.md` 的真实门禁。
-- 不得伪造签名、公证、原生平台、物理大文件、Kerberos、Helper 密钥托管或最终字节身份等外部证据。
-- 如果门禁依赖当前环境无法取得的真实证据，保持 CLOSED 并明确记录恢复动作。
+- 发布以不可变的语义化版本 tag 为入口，格式为 `vX.Y.Z`；确认 tag 指向目标提交后，将 tag 推送到远端即可触发 `.github/workflows/release.yml` 自动构建并发布 Release。
+- 普通发布不再要求预先运行 `docscheck --release`、关闭 `docs/release/RC-GATES.md`，或人工汇总额外 release-gate 证据；不要因 Release Gates workflow 的成功、失败或不稳定状态阻断 tag 发布。
+- `.github/workflows/ci.yml` 中的 Release Gates 当前不作为发布授权或发布完成的判断依据，也不要求 Agent 在发布前查看；其稳定性问题留待后续专项优化。
+- 不要手工复制自动发布流程的步骤或伪造发布结果；tag 推送后的构建、制品和 Release 创建由发布 workflow 负责。
