@@ -19,6 +19,8 @@ Homebrew provides the same four immutable archives:
 brew install TyrantLucifer/tap/amsftp
 ```
 
+After either supported installation, use `amsftp upgrade` for normal updates. The command detects Homebrew versus the exact `<prefix>/bin/amsftp` standalone layout, checks the latest strict version before stopping anything, refuses active-Job interruption, and restores only a daemon that was previously running. Direct installer and `brew upgrade` commands remain documented recovery paths.
+
 The currently published owner-only internal tag is not a strict public-preview channel and remains a manual checksum-verified install.
 
 ## Manual archive install
@@ -30,7 +32,7 @@ The currently published owner-only internal tag is not a strict public-preview c
 5. Generate completion directly from that exact installed binary: `amsftp completion bash`, `amsftp completion zsh`, or `amsftp completion fish`. Store only the selected script in the shell's user completion directory; regeneration after upgrade prevents binary/completion drift. The generated script completes saved names only after `--workspace` by invoking the same installed binary's bounded read-only workspace query; it does not start the daemon or create a missing state directory.
 6. Run `amsftp --version`, then `amsftp daemon start --format json` and `amsftp daemon status --format json`. The reported version/commit must match `VERSION.json` and the release record.
 
-For an in-place binary upgrade, follow the complete [upgrade and rollback procedure](UPGRADE.md): stop the daemon, extract the new archive into a separate directory, verify its checksum/signing evidence and version metadata, and replace only the installed binary, man page, and generated completion files. Start the new daemon and confirm Jobs/state health before deleting the previous extraction. An older binary encountering a newer database must not be used for mutation; retain the state and use the current binary or the documented read-only diagnosis/restore path.
+For an unsupported custom layout or a manual in-place binary upgrade, follow the complete [upgrade and rollback procedure](UPGRADE.md): stop the daemon, extract the new archive into a separate directory, verify its checksum/signing evidence and version metadata, and replace only the installed binary, man page, and generated completion files. Start the new daemon and confirm Jobs/state health before deleting the previous extraction. An older binary encountering a newer database must not be used for mutation; retain the state and use the current binary or the documented read-only diagnosis/restore path.
 
 The application/package ID is `io.github.tyrantlucifer.amsftp`. If a final channel installs a user service, its only accepted identifiers are launchd label `io.github.tyrantlucifer.amsftp.daemon` and systemd user unit `amsftp-daemon.service`. The Homebrew formula name is `amsftp`. A public preview archive and formula do not claim that protected signing/notarization is complete.
 

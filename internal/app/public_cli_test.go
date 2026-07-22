@@ -10,7 +10,7 @@ import (
 func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 	help := Usage()
 	man := RenderManPage()
-	for _, command := range []string{"--workspace", "daemon", "job", "helper", "config", "doctor", "support-bundle", "completion", "--help", "--version"} {
+	for _, command := range []string{"--workspace", "daemon", "job", "helper", "config", "doctor", "upgrade", "support-bundle", "completion", "--help", "--version"} {
 		if !strings.Contains(help, command) {
 			t.Fatalf("help does not contain %q:\n%s", command, help)
 		}

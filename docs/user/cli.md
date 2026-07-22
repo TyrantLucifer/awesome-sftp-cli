@@ -13,6 +13,7 @@ amsftp helper <status|disable> <SSH-host> [--format human|json]
 amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]
 amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]
 amsftp doctor [--endpoint <SSH-host>] [--format human|json]
+amsftp upgrade [--format human|json]
 amsftp support-bundle preview [--format human|json]
 amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]
 amsftp completion <bash|zsh|fish>
@@ -31,6 +32,20 @@ Daemon JSON success has a stable v1 shape:
 ```json
 {"output_version":1,"daemon":{"running":true,"state":"running","daemon_version":"1.0.0","protocol":"1.0"}}
 ```
+
+## Automatic upgrade
+
+`amsftp upgrade` supports release builds installed on macOS or Linux through Homebrew or the repository standalone installer. It rejects development builds, unsupported executable layouts, non-release versions, and downgrades. Homebrew installations run `brew update`, read the stable formula version, and delegate replacement to `brew upgrade TyrantLucifer/tap/amsftp`. Standalone installations resolve the latest strict `X.Y.Z` tag, download the versioned `checksums.txt` and `install.sh`, require one exact lowercase SHA-256 entry for the installer, and then invoke that verified installer for the existing prefix.
+
+The command checks for an available update before disturbing the daemon. If the daemon was stopped, it remains stopped. If it was running, AMSFTP sends an authenticated upgrade-shutdown RPC that atomically blocks new Job execution and rejects the upgrade while a Job is active; queued, waiting, and paused Jobs remain durable for the next daemon. After replacement, the command starts the daemon from the new installation path, verifies the binary version and the restarted daemon build, and reports partial completion if replacement succeeded but restart or verification did not. If package replacement fails, it attempts to restore daemon availability without claiming upgrade success.
+
+Upgrade JSON success has a stable v1 shape:
+
+```json
+{"output_version":1,"command":"upgrade","status":"upgraded","channel":"homebrew","previous_version":"0.1.7","version":"0.1.8","daemon_restarted":true}
+```
+
+An already-current result uses `status: "already_current"` and does not probe or stop the daemon. To clear an active-Job conflict, inspect `amsftp job list`, wait for completion or pause the important Job, prove it reached a non-running state, and retry.
 
 ## Helper status and release-gated lifecycle
 

@@ -78,12 +78,16 @@ type Manager struct {
 
 	mu               sync.Mutex
 	started          bool
+	upgradePrepared  bool
+	activeExecutions int
 	waiters          map[domain.JobID][]chan struct{}
 	leases           map[domain.JobID]func()
 	queueLeases      map[domain.JobID]*ResourceLease
 	transitionErrors map[domain.JobID]error
 	workers          int
 }
+
+var ErrActiveJobs = errors.New("transfer manager has active Jobs")
 
 func NewManager(config ManagerConfig) (*Manager, error) {
 	if config.Store == nil || config.Resolver == nil || config.Generator == nil {
@@ -206,6 +210,26 @@ func (manager *Manager) Close() {
 	manager.cancel()
 	manager.wg.Wait()
 	manager.releaseAllLeases()
+}
+
+// PrepareUpgrade atomically prevents new execution admission and proves that
+// no Job is already executing. Queued Jobs remain durable for the next daemon.
+func (manager *Manager) PrepareUpgrade() error {
+	if manager == nil {
+		return errors.New("prepare transfer manager upgrade: manager is unavailable")
+	}
+	manager.queueMu.Lock()
+	defer manager.queueMu.Unlock()
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.upgradePrepared {
+		return nil
+	}
+	if manager.activeExecutions != 0 {
+		return ErrActiveJobs
+	}
+	manager.upgradePrepared = true
+	return nil
 }
 
 func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore.Snapshot, error) {
@@ -733,10 +757,18 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	manager.queueMu.Lock()
 	manager.releaseQueueLease(jobID)
 	snapshot, err := manager.store.Get(manager.ctx, jobID)
+	admitted := false
+	manager.mu.Lock()
+	if err == nil && snapshot.State == job.StateQueued && !manager.upgradePrepared {
+		manager.activeExecutions++
+		admitted = true
+	}
+	manager.mu.Unlock()
 	manager.queueMu.Unlock()
-	if err != nil || snapshot.State != job.StateQueued {
+	if !admitted {
 		return
 	}
+	defer manager.finishExecution()
 	record, err := manager.store.GetPlan(manager.ctx, jobID)
 	if err != nil {
 		manager.fail(snapshot, fmt.Errorf("execute Job: load durable plan: %w", err))
@@ -1223,7 +1255,15 @@ func (manager *Manager) removeWaiter(jobID domain.JobID, target chan struct{}) {
 func (manager *Manager) isStarted() bool {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
-	return manager.started
+	return manager.started && !manager.upgradePrepared
+}
+
+func (manager *Manager) finishExecution() {
+	manager.mu.Lock()
+	if manager.activeExecutions > 0 {
+		manager.activeExecutions--
+	}
+	manager.mu.Unlock()
 }
 
 func (manager *Manager) queueCapacity() int {

@@ -2,14 +2,22 @@
 
 This procedure applies to immutable archives. A package manager may automate exact file placement, but it must preserve the same identity checks, daemon ordering, and state safety.
 
-For a strict `X.Y.Z` public preview installed by the repository installer, rerun the same command to resolve and install the latest release:
+For a strict `X.Y.Z` public preview installed by Homebrew or the repository installer, use the channel-aware command:
+
+```sh
+amsftp upgrade
+```
+
+It checks the target version before daemon disruption, refuses to interrupt active Jobs, preserves queued/waiting/paused Jobs, stops through the authenticated owner-only RPC, delegates Homebrew replacement to `brew upgrade`, or verifies the published standalone installer checksum before execution. It restarts the daemon only when it was running before the upgrade and verifies the new binary plus daemon build before reporting success.
+
+For standalone recovery, the repository installer can still be rerun directly:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
 ```
 
-The installer verifies the new archive before replacement, stops only a daemon whose state the current installed binary can prove, retains the previous executable as `$HOME/.local/bin/amsftp.previous`, regenerates completions, and verifies the new daemon. A checksum, version, daemon-state, or startup failure stops the automated path instead of pretending the upgrade succeeded. For Homebrew installs use `brew update && brew upgrade TyrantLucifer/tap/amsftp`. The manual and uncertain-state procedures below remain authoritative for recovery and rollback.
+The installer verifies the new archive before replacement, stops only a daemon whose state the current installed binary can prove, retains the previous executable as `$HOME/.local/bin/amsftp.previous`, regenerates completions, and verifies the new daemon. A checksum, version, daemon-state, or startup failure stops the automated path instead of pretending the upgrade succeeded. For Homebrew recovery use `brew update && brew upgrade TyrantLucifer/tap/amsftp`. The manual and uncertain-state procedures below remain authoritative for recovery and rollback.
 
 ## Prepare
 

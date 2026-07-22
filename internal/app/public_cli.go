@@ -25,6 +25,7 @@ var publicCLIContract = []cliCommandFact{
 	{name: "helper", syntax: "amsftp helper <status|disable> <SSH-host> [--format human|json] | amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]", description: "Inspect or disable Helper state, or request release-admitted install/upgrade/exact removal; lifecycle remains fail-closed until protected composition exists.", children: []string{"status", "install", "upgrade", "disable", "remove"}, childArguments: map[string][]string{"status": {"--format"}, "install": {"--accept-shared-session-stable-home", "--format"}, "upgrade": {"--accept-shared-session-stable-home", "--format"}, "disable": {"--format"}, "remove": {"--accept-shared-session-stable-home", "--format"}}},
 	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
 	{name: "doctor", syntax: "amsftp doctor [--endpoint <SSH-host>] [--format human|json]", description: "Run bounded read-only local checks and optionally test one SSH endpoint without prompting for credentials.", arguments: []string{"--endpoint", "--format"}},
+	{name: "upgrade", syntax: "amsftp upgrade [--format human|json]", description: "Upgrade a Homebrew or standalone macOS/Linux installation and safely preserve daemon state.", arguments: []string{"--format"}},
 	{name: "support-bundle", syntax: "amsftp support-bundle preview [--format human|json] | amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]", description: "Preview the exact reviewed diagnostic archive, then explicitly publish it to a private no-replace local file.", children: []string{"preview", "create"}, childArguments: map[string][]string{"preview": {"--format"}, "create": {"--consent", "--output", "--format"}}},
 	{name: "completion", syntax: "amsftp completion <bash|zsh|fish>", description: "Print a shell completion script with saved-workspace completion.", children: []string{"bash", "zsh", "fish"}},
 	{syntax: "amsftp [client|askpass|helper] [arguments...]", description: "Run an explicit client or restricted internal role.", internal: true},
@@ -82,7 +83,7 @@ func RenderCompletion(shell string) (string, error) {
 	helper := strings.Join(childrenFor("helper"), " ")
 	helperStatus := strings.Join(childArgumentsFor("helper", "status"), " ")
 	helperInstall := strings.Join(childArgumentsFor("helper", "install"), " ")
-	helperUpgrade := strings.Join(childArgumentsFor("helper", "upgrade"), " ")
+	helperUpgrade := strings.TrimSpace(strings.Join(argumentsFor("upgrade"), " ") + " " + strings.Join(childArgumentsFor("helper", "upgrade"), " "))
 	helperDisable := strings.Join(childArgumentsFor("helper", "disable"), " ")
 	helperRemove := strings.Join(childArgumentsFor("helper", "remove"), " ")
 	doctor := strings.Join(argumentsFor("doctor"), " ")
@@ -182,6 +183,9 @@ _amsftp
 		}
 		for _, word := range argumentsFor("doctor") {
 			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from doctor' -a %q\n", word)
+		}
+		for _, word := range argumentsFor("upgrade") {
+			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from upgrade' -a %q\n", word)
 		}
 		for _, word := range childrenFor("support-bundle") {
 			fmt.Fprintf(&builder, "complete -c amsftp -n '__fish_seen_subcommand_from support-bundle' -a %q\n", word)

@@ -19,16 +19,20 @@ import (
 )
 
 type fakeDaemonControlClient struct {
-	info      daemon.ClientInfo
-	calls     int
-	callName  string
-	callError error
-	closed    int
+	info            daemon.ClientInfo
+	calls           int
+	callName        string
+	callError       error
+	closed          int
+	shutdownRequest daemon.ShutdownRequest
 }
 
-func (fake *fakeDaemonControlClient) Call(_ context.Context, name string, _ any, response any) error {
+func (fake *fakeDaemonControlClient) Call(_ context.Context, name string, request any, response any) error {
 	fake.calls++
 	fake.callName = name
+	if shutdown, ok := request.(daemon.ShutdownRequest); ok {
+		fake.shutdownRequest = shutdown
+	}
 	if fake.callError != nil {
 		return fake.callError
 	}
