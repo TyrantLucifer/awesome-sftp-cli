@@ -83,6 +83,34 @@ func TestConnectDaemonAfterLossRetriesStartupRace(t *testing.T) {
 	}
 }
 
+func TestConnectDaemonAfterLossWaitsForPriorDaemonShutdown(t *testing.T) {
+	want := &daemon.Client{}
+	attempts := 0
+	var sleeps []time.Duration
+	policy := reconnectPolicy{
+		Delays:              []time.Duration{time.Millisecond},
+		DaemonShutdownGrace: 51 * time.Millisecond,
+		Sleep: func(_ context.Context, delay time.Duration) error {
+			sleeps = append(sleeps, delay)
+			return nil
+		},
+	}
+	got, err := connectDaemonAfterLoss(context.Background(), policy, func(context.Context) (*daemon.Client, error) {
+		attempts++
+		if attempts < 4 {
+			return nil, errDaemonControlSocketStillPresent
+		}
+		return want, nil
+	})
+	if err != nil || got != want || attempts != 4 {
+		t.Fatalf("connect daemon after slow shutdown = (%p, %v), attempts=%d, want (%p, nil), attempts=4", got, err, attempts, want)
+	}
+	wantSleeps := []time.Duration{time.Millisecond, 25 * time.Millisecond, 25 * time.Millisecond}
+	if !reflect.DeepEqual(sleeps, wantSleeps) {
+		t.Fatalf("slow shutdown sleeps = %v, want %v", sleeps, wantSleeps)
+	}
+}
+
 func TestProviderCallFailureSeparatesEndpointAndDaemonLoss(t *testing.T) {
 	code, retry, daemonLost := providerCallFailure(remoteRetryError(domain.RetryAfterReconnect))
 	if code != domain.CodeTransportInterrupted || retry != domain.RetryAfterReconnect || daemonLost {

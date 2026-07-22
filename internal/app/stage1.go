@@ -532,7 +532,7 @@ func requireAbsentControlSocketForAutostart(path string, connectErr error) error
 	if inspectErr != nil {
 		return fmt.Errorf("inspect control socket after connection failure: %w", inspectErr)
 	}
-	return fmt.Errorf("control socket still exists after connection failure: %w", connectErr)
+	return fmt.Errorf("%w: %w", errDaemonControlSocketStillPresent, connectErr)
 }
 
 func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
@@ -561,6 +561,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	previewRenderLimits, previewImageLimits := runtimePreviewLimits(applicationConfig.Preview)
 	filenameSearchBudget, contentSearchBudget := runtimeSearchBudgets(applicationConfig.Search)
 	clientReconnectPolicy, _ := runtimeRetrySettings(applicationConfig.Retry)
+	daemonRecoveryPolicy := clientReconnectPolicy
+	daemonRecoveryPolicy.DaemonShutdownGrace = daemonReadyTimeout
 	directPolicy := runtimeDirectPolicy(applicationConfig.Integrity, applicationConfig.DirectTransfer)
 	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
 	reprobeTerminalImages := func() {
@@ -1239,7 +1241,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		go func() {
 			result := daemonRecoveryResult{}
-			result.client, result.err = connectDaemonAfterLoss(runCtx, clientReconnectPolicy, func(ctx context.Context) (*daemon.Client, error) {
+			result.client, result.err = connectDaemonAfterLoss(runCtx, daemonRecoveryPolicy, func(ctx context.Context) (*daemon.Client, error) {
 				return connectDaemon(ctx, paths, purpose)
 			})
 			if result.err == nil {

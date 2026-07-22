@@ -503,8 +503,9 @@ func TestDaemonAutostartRequiresProvenSocketAbsence(t *testing.T) {
 		t.Fatal(err)
 	}
 	connectErr := errors.New("existing daemon handshake failed")
-	if err := requireAbsentControlSocketForAutostart(existing, connectErr); !errors.Is(err, connectErr) {
-		t.Fatalf("existing socket error = %v, want wrapped connect failure", err)
+	existingErr := requireAbsentControlSocketForAutostart(existing, connectErr)
+	if !errors.Is(existingErr, connectErr) || !errors.Is(existingErr, errDaemonControlSocketStillPresent) {
+		t.Fatalf("existing socket error = %v, want wrapped connect failure and shutdown-in-progress classification", existingErr)
 	}
 	content, err := os.ReadFile(existing) //nolint:gosec // exact test-owned path proves failed autostart preserves bytes
 	if err != nil {
