@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -522,6 +523,134 @@ func TestDaemonAutostartRequiresProvenSocketAbsence(t *testing.T) {
 	uninspectable := filepath.Join(root, strings.Repeat("x", 5000))
 	if err := requireAbsentControlSocketForAutostart(uninspectable, connectErr); err == nil || errors.Is(err, connectErr) {
 		t.Fatalf("uninspectable socket error = %v, want independent inspection failure", err)
+	}
+}
+
+func TestDaemonLossRecoveryWaitsForInstanceLockBeforeStaleSocketTakeover(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "amsftp-daemon-handoff-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	if err := os.Chmod(base, 0o700); err != nil { // #nosec G302 -- owner-only runtime directories are required.
+		t.Fatal(err)
+	}
+	paths := platform.Paths{
+		RuntimeDir:    base,
+		ControlSocket: filepath.Join(base, "control-v1.sock"),
+		LockFile:      filepath.Join(base, "daemon.lock"),
+	}
+	purpose := platform.ValidateRuntimeFallback
+	lock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: paths.ControlSocket, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	listener.SetUnlinkOnClose(false)
+	if err := os.Chmod(paths.ControlSocket, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	socketBefore, err := os.Lstat(paths.ControlSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { done <- waitForDaemonAutostartTakeover(ctx, paths, purpose) }()
+	select {
+	case err := <-done:
+		t.Fatalf("daemon takeover returned while prior lock was held: %v", err)
+	case <-time.After(75 * time.Millisecond):
+	}
+	if err := lock.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("daemon takeover after lock release: %v", err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("daemon takeover did not observe lock release: %v", ctx.Err())
+	}
+	socketAfter, err := os.Lstat(paths.ControlSocket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !os.SameFile(socketBefore, socketAfter) {
+		t.Fatal("recovery launcher replaced the stale control socket")
+	}
+	replacementLock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
+	if err != nil {
+		t.Fatalf("recovery launcher retained the instance lock: %v", err)
+	}
+	if err := replacementLock.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDaemonLossRecoveryRejectsUnsafeStaleSocket(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "amsftp-daemon-handoff-unsafe-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	if err := os.Chmod(base, 0o700); err != nil { // #nosec G302 -- owner-only runtime directories are required.
+		t.Fatal(err)
+	}
+	paths := platform.Paths{
+		RuntimeDir:    base,
+		ControlSocket: filepath.Join(base, "control-v1.sock"),
+		LockFile:      filepath.Join(base, "daemon.lock"),
+	}
+	if err := os.WriteFile(paths.ControlSocket, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	err = waitForDaemonAutostartTakeover(context.Background(), paths, platform.ValidateRuntimeFallback)
+	if err == nil {
+		t.Fatal("daemon recovery accepted a non-socket control path")
+	}
+	content, readErr := os.ReadFile(paths.ControlSocket) //nolint:gosec // exact test-owned path proves unsafe input is preserved
+	if readErr != nil {
+		t.Fatal(readErr)
+	}
+	if string(content) != "preserve" {
+		t.Fatalf("unsafe control path changed to %q", content)
+	}
+}
+
+func TestDaemonLossRecoveryStopsWaitingWhenContextEnds(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "amsftp-daemon-handoff-timeout-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(base)
+	if err := os.Chmod(base, 0o700); err != nil { // #nosec G302 -- owner-only runtime directories are required.
+		t.Fatal(err)
+	}
+	paths := platform.Paths{
+		RuntimeDir:    base,
+		ControlSocket: filepath.Join(base, "control-v1.sock"),
+		LockFile:      filepath.Join(base, "daemon.lock"),
+	}
+	lock, err := platform.AcquireInstanceLock(paths.LockFile, platform.ValidateRuntimeFallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Millisecond)
+	defer cancel()
+	err = waitForDaemonAutostartTakeover(ctx, paths, platform.ValidateRuntimeFallback)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("daemon takeover timeout = %v, want deadline exceeded", err)
 	}
 }
 

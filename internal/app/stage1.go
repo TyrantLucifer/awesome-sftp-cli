@@ -51,6 +51,8 @@ import (
 )
 
 const daemonReadyTimeout = 5 * time.Second
+const daemonRecoveryTimeout = 30 * time.Second
+const daemonTakeoverPollInterval = 25 * time.Millisecond
 const authenticationTimeout = 2 * time.Minute
 const durableLocalEndpointID domain.EndpointID = "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
@@ -470,10 +472,18 @@ func connectionFailureState(model tui.Model, pane tui.PaneID, switching bool) do
 }
 
 func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
-	return connectDaemonWithExecutable(ctx, paths, purpose, "")
+	return connectDaemonWithExecutableMode(ctx, paths, purpose, "", false)
+}
+
+func connectDaemonRecovering(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
+	return connectDaemonWithExecutableMode(ctx, paths, purpose, "", true)
 }
 
 func connectDaemonWithExecutable(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, executable string) (*daemon.Client, error) {
+	return connectDaemonWithExecutableMode(ctx, paths, purpose, executable, false)
+}
+
+func connectDaemonWithExecutableMode(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, executable string, recovering bool) (*daemon.Client, error) {
 	connect := func() (*daemon.Client, error) {
 		connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
 		if err != nil {
@@ -485,7 +495,19 @@ func connectDaemonWithExecutable(ctx context.Context, paths platform.Paths, purp
 	if connectErr == nil {
 		return client, nil
 	}
-	if err := requireAbsentControlSocketForAutostart(paths.ControlSocket, connectErr); err != nil {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	var autostartErr error
+	if recovering {
+		autostartErr = waitForDaemonAutostartTakeover(ctx, paths, purpose)
+	} else {
+		autostartErr = requireAbsentControlSocketForAutostart(paths.ControlSocket, connectErr)
+	}
+	if autostartErr != nil {
+		return nil, autostartErr
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	if executable == "" {
@@ -533,6 +555,43 @@ func requireAbsentControlSocketForAutostart(path string, connectErr error) error
 		return fmt.Errorf("inspect control socket after connection failure: %w", inspectErr)
 	}
 	return fmt.Errorf("control socket still exists after connection failure: %w", connectErr)
+}
+
+func waitForDaemonAutostartTakeover(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) error {
+	if err := validateDaemonAutostartSocket(paths.ControlSocket, purpose); err != nil {
+		return err
+	}
+	for {
+		lock, err := platform.AcquireInstanceLock(paths.LockFile, purpose)
+		if err == nil {
+			validateErr := validateDaemonAutostartSocket(paths.ControlSocket, purpose)
+			return errors.Join(validateErr, lock.Close())
+		}
+		if !errors.Is(err, platform.ErrInstanceLocked) {
+			return fmt.Errorf("prove daemon instance lock availability: %w", err)
+		}
+		timer := time.NewTimer(daemonTakeoverPollInterval)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			_ = timer.Stop()
+			return fmt.Errorf("wait for prior daemon instance lock: %w", ctx.Err())
+		}
+	}
+}
+
+func validateDaemonAutostartSocket(path string, purpose platform.ValidationPurpose) error {
+	_, inspectErr := os.Lstat(path)
+	if errors.Is(inspectErr, os.ErrNotExist) {
+		return nil
+	}
+	if inspectErr != nil {
+		return fmt.Errorf("inspect control socket for daemon recovery: %w", inspectErr)
+	}
+	if err := platform.ValidatePrivateSocket(path, purpose); err != nil {
+		return fmt.Errorf("validate control socket for daemon recovery: %w", err)
+	}
+	return nil
 }
 
 func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
@@ -670,6 +729,20 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		return err
 	}
 	runCtx, stop := context.WithCancel(ctx)
+	daemonLosses := make(chan *daemon.Client, 4)
+	watchDaemonConnection := func(activeClient *daemon.Client) {
+		go func() {
+			select {
+			case <-activeClient.Done():
+				select {
+				case daemonLosses <- activeClient:
+				case <-runCtx.Done():
+				}
+			case <-runCtx.Done():
+			}
+		}()
+	}
+	watchDaemonConnection(client)
 	authClient, err := connectDaemon(runCtx, paths, purpose)
 	if err != nil {
 		stop()
@@ -1225,9 +1298,11 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		go func() {
 			result := daemonRecoveryResult{}
-			result.client, result.err = connectDaemonAfterLoss(runCtx, clientReconnectPolicy, func(ctx context.Context) (*daemon.Client, error) {
-				return connectDaemon(ctx, paths, purpose)
+			recoveryCtx, cancelRecovery := context.WithTimeout(runCtx, daemonRecoveryTimeout)
+			result.client, result.err = connectDaemonAfterLoss(recoveryCtx, clientReconnectPolicy, func(ctx context.Context) (*daemon.Client, error) {
+				return connectDaemonRecovering(ctx, paths, purpose)
 			})
+			cancelRecovery()
 			if result.err == nil {
 				result.local, result.err = daemonLocalEndpoint(runCtx, result.client)
 			}
@@ -1306,6 +1381,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			if err := editFlow.Heartbeat(runCtx); err != nil {
 				model.Notice = "cache lease heartbeat failed; durable edit recovery remains retained: " + clientErrorMessage(err)
 			}
+		case lostClient := <-daemonLosses:
+			if lostClient == client {
+				startDaemonRecovery()
+			}
 		case err := <-authErrors:
 			if authFailureLostDaemon(err, func() error {
 				probeCtx, cancel := context.WithTimeout(runCtx, daemonReadyTimeout)
@@ -1351,6 +1430,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			oldClient := client
 			client = result.client
+			watchDaemonConnection(client)
 			localEndpoint = result.local
 			editFlow.client = client
 			editFlow.localEndpoint = localEndpoint.ID

@@ -110,6 +110,14 @@ func (c *Client) Info() ClientInfo {
 	}
 }
 
+// Done is closed when the daemon connection ends or the client is closed.
+func (c *Client) Done() <-chan struct{} {
+	if c == nil {
+		return nil
+	}
+	return c.closed
+}
+
 func (c *Client) Call(ctx context.Context, name string, request, response any) error {
 	id, err := domain.NewRequestID(&c.generator)
 	if err != nil {
