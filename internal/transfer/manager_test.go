@@ -64,6 +64,57 @@ func TestManagerContinuesCreatedJobAfterClientContextCancellation(t *testing.T) 
 	}
 }
 
+func TestManagerPrepareUpgradeRejectsActiveExecutionThenClosesAdmission(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("upgrade-admission"), ConflictAsk)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	gatedSource := &gatedReadProvider{Provider: fixture.source, started: started, release: release}
+	resolver := MapResolver{
+		fixture.source.Descriptor().ID:      gatedSource,
+		fixture.destination.Descriptor().ID: fixture.destination,
+	}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager := newStartedTestManager(t, store, resolver, 1_800_000_101)
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: fixture.plan.Source,
+		DestinationDirectory: fixture.plan.DestinationDirectory,
+		Name:                 fixture.plan.RequestedName, ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("worker did not reach active execution")
+	}
+	if err := manager.PrepareUpgrade(); !errors.Is(err, ErrActiveJobs) {
+		t.Fatalf("PrepareUpgrade() error = %v, want ErrActiveJobs", err)
+	}
+	if manager.upgradePrepared {
+		t.Fatal("failed preparation left manager prepared")
+	}
+	close(release)
+	if completed := waitForTerminal(t, manager, created.JobID); completed.State != job.StateCompleted {
+		t.Fatalf("completed state = %q", completed.State)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := manager.PrepareUpgrade()
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, ErrActiveJobs) || time.Now().After(deadline) {
+			t.Fatalf("PrepareUpgrade() after completion = %v", err)
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if _, err := manager.CreateCopy(context.Background(), Intent{}); err == nil || !strings.Contains(err.Error(), "not started") {
+		t.Fatalf("CreateCopy() after upgrade preparation = %v", err)
+	}
+}
+
 func TestManagerDoesNotPersistQueuedJobWhenQueueAdmissionIsExhausted(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("queue admission"), ConflictAsk)
 	ctx := context.Background()

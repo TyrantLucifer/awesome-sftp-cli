@@ -24,7 +24,9 @@ const (
 	RequestShutdown = "daemon.shutdown"
 )
 
-type ShutdownRequest struct{}
+type ShutdownRequest struct {
+	ForUpgrade bool `json:"for_upgrade,omitempty"`
+}
 
 type ShutdownResponse struct {
 	Accepted bool `json:"accepted"`
@@ -51,6 +53,7 @@ type ServerConfig struct {
 	VerifyPeer       func(net.Conn) error
 	Logger           *slog.Logger
 	Shutdown         func()
+	PrepareUpgrade   func() error
 }
 
 type Server struct {
@@ -65,6 +68,7 @@ type Server struct {
 	verifyPeer       func(net.Conn) error
 	logger           *slog.Logger
 	shutdown         func()
+	prepareUpgrade   func() error
 	shutdownOnce     sync.Once
 }
 
@@ -109,6 +113,7 @@ func NewServer(config ServerConfig) (*Server, error) {
 		verifyPeer:       config.VerifyPeer,
 		logger:           config.Logger,
 		shutdown:         config.Shutdown,
+		prepareUpgrade:   config.PrepareUpgrade,
 	}, nil
 }
 
@@ -228,7 +233,23 @@ func (s *Server) ServeConn(parent context.Context, conn net.Conn) error {
 				_ = writer.writeError(selected, request, invalidArgument("decode daemon shutdown request", err))
 				continue
 			}
+			prepared := false
+			if shutdownRequest.ForUpgrade && s.prepareUpgrade != nil {
+				if err := s.prepareUpgrade(); err != nil {
+					_ = writer.writeError(selected, request, &domain.OpError{
+						Code:    domain.CodeConflict,
+						Message: "daemon has active Jobs",
+						Retry:   domain.RetryAdvice{Kind: domain.RetryAfterConflict},
+						Effect:  domain.EffectNone,
+					})
+					continue
+				}
+				prepared = true
+			}
 			if err := writer.writePayload(selected, request, ShutdownResponse{Accepted: true}); err != nil {
+				if prepared {
+					s.shutdownOnce.Do(s.shutdown)
+				}
 				return fmt.Errorf("serve daemon connection: acknowledge shutdown: %w", err)
 			}
 			s.shutdownOnce.Do(s.shutdown)

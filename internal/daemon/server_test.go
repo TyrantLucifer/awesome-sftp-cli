@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"net"
@@ -304,6 +305,38 @@ func TestServeConnAcknowledgesShutdownBeforeRequestingItOnce(t *testing.T) {
 	}
 	if !repeated.Accepted {
 		t.Fatalf("repeated shutdown response = %#v", repeated)
+	}
+	_ = client.Close()
+	<-done
+}
+
+func TestServeConnRejectsUpgradeShutdownWhenPreparationFindsActiveJobs(t *testing.T) {
+	shutdowns := 0
+	preparations := 0
+	server := newTestServer(t, sessionFactory(func() Session { return &testSession{} }))
+	server.shutdown = func() { shutdowns++ }
+	server.prepareUpgrade = func() error {
+		preparations++
+		return errors.New("active execution")
+	}
+
+	serverConn, clientConn := net.Pipe()
+	done := make(chan error, 1)
+	go func() { done <- server.ServeConn(context.Background(), serverConn) }()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	client, err := NewClient(ctx, clientConn, "test-client", "client-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response ShutdownResponse
+	err = client.Call(ctx, RequestShutdown, ShutdownRequest{ForUpgrade: true}, &response)
+	var remote *RemoteError
+	if !errors.As(err, &remote) || remote.RPC.Code != domain.CodeConflict || remote.RPC.Message != "daemon has active Jobs" {
+		t.Fatalf("upgrade shutdown error = %#v", err)
+	}
+	if preparations != 1 || shutdowns != 0 || response.Accepted {
+		t.Fatalf("preparations = %d, shutdowns = %d, response = %#v", preparations, shutdowns, response)
 	}
 	_ = client.Close()
 	<-done

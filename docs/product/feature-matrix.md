@@ -57,7 +57,7 @@
 | REL-009 | 用户与运维文档 | Implemented | README 覆盖安装、首次运行、操作、架构、限制和恢复路径。 | [README](../../README.md)与[文档导航](../README.md) |
 | REL-010 | 公开 release 零缺口 | In Progress | 公开发布前所有非终态能力必须关闭或以明确决定延期。 | [RC 门禁](../release/RC-GATES.md) |
 | REL-012 | 发布撤回与回滚 | In Progress | 公开渠道完成已发布字节的升级、回滚和撤回演练后才能关闭。 | [升级与回滚](../release/UPGRADE.md)与[路线图](roadmap.md) |
-| REL-013 | 一键安装与升级 | Implemented | 严格公开预览 patch 已通过 checksum 验证安装脚本与 Homebrew formula 发布；包管理器入口会先冻结到真实二进制，再执行 owner、mode、ACL 与祖先路径校验。 | [安装说明](../release/INSTALL.md)、[可执行文件回归测试](../../internal/platform/executable_unix_test.go)与[发布 workflow](../../.github/workflows/release.yml) |
+| REL-013 | 一键安装与升级 | Implemented | `amsftp upgrade` 在 macOS/Linux 识别 Homebrew 与独立安装；有新版本时通过 authenticated RPC 原子拒绝活动 Job、停止旧 daemon、执行渠道升级、仅恢复原本运行的 daemon，并验证新 binary/daemon。独立渠道在执行发布 installer 前校验其 checksum，Homebrew 渠道不直接改写 Cellar。 | [安装说明](../release/INSTALL.md)、[升级编排测试](../../internal/app/upgrade_command_test.go)、[渠道与 checksum 测试](../../internal/selfupdate/selfupdate_test.go)与[升级停机测试](../../internal/daemon/server_test.go) |
 
 ## 更新规则
 

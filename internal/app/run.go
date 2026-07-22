@@ -18,6 +18,7 @@ type Handlers struct {
 	Job           Handler
 	Config        Handler
 	Doctor        Handler
+	Upgrade       Handler
 	SupportBundle Handler
 	Completion    Handler
 }
@@ -80,6 +81,8 @@ func (h Handlers) handler(role Role) Handler {
 		return h.Config
 	case RoleDoctor:
 		return h.Doctor
+	case RoleUpgrade:
+		return h.Upgrade
 	case RoleSupportBundle:
 		return h.SupportBundle
 	case RoleCompletion:

@@ -55,7 +55,7 @@ const authenticationTimeout = 2 * time.Minute
 const durableLocalEndpointID domain.EndpointID = "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa"
 
 func DefaultHandlers() Handlers {
-	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: runHelper, Job: runJob, Config: runConfig, Doctor: runDoctor, SupportBundle: runSupportBundle, Completion: runCompletion}
+	return Handlers{Client: runClient, Daemon: runDaemon, Askpass: runAskpass, Helper: runHelper, Job: runJob, Config: runConfig, Doctor: runDoctor, Upgrade: runUpgrade, SupportBundle: runSupportBundle, Completion: runCompletion}
 }
 
 func runHelper(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
@@ -324,6 +324,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return connectEndpoint(connectCtx, domain.Endpoint{ID: remoteEndpointID, Kind: domain.EndpointSSH, DisplayName: hostAlias, SSHHostAlias: hostAlias})
 	})
 	sessions.SetEndpointConnector(connectEndpoint)
+	var transferManager *transfer.Manager
 	if jobStore != nil {
 		maxConcurrent, maxQueued, schedulerPolicy := runtimeTransferLimits(applicationConfig.Transfer)
 		_, jobRetryDelay := runtimeRetrySettings(applicationConfig.Retry)
@@ -339,11 +340,17 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 			return err
 		}
 		defer manager.Close()
+		transferManager = manager
 		sessions.SetTransferService(manager)
 	}
 	serveCtx, requestShutdown := context.WithCancel(ctx)
 	defer requestShutdown()
-	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, MaxFrameBytes: applicationConfig.IPC.MaxFrameBytes, HandshakeTimeout: 2 * time.Second, Logger: logger, Shutdown: requestShutdown, VerifyPeer: func(conn net.Conn) error {
+	server, err := daemon.NewServer(daemon.ServerConfig{BuildVersion: buildinfo.Current().String(), Epoch: string(sessionID), Sessions: sessions, MaxInFlight: 16, MaxFrameBytes: applicationConfig.IPC.MaxFrameBytes, HandshakeTimeout: 2 * time.Second, Logger: logger, Shutdown: requestShutdown, PrepareUpgrade: func() error {
+		if transferManager == nil {
+			return nil
+		}
+		return transferManager.PrepareUpgrade()
+	}, VerifyPeer: func(conn net.Conn) error {
 		unix, ok := conn.(*net.UnixConn)
 		if !ok {
 			return fmt.Errorf("unexpected peer connection %T", conn)
@@ -463,6 +470,10 @@ func connectionFailureState(model tui.Model, pane tui.PaneID, switching bool) do
 }
 
 func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
+	return connectDaemonWithExecutable(ctx, paths, purpose, "")
+}
+
+func connectDaemonWithExecutable(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, executable string) (*daemon.Client, error) {
 	connect := func() (*daemon.Client, error) {
 		connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
 		if err != nil {
@@ -477,16 +488,19 @@ func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.V
 	if err := requireAbsentControlSocketForAutostart(paths.ControlSocket, connectErr); err != nil {
 		return nil, err
 	}
-	executable, err := os.Executable()
-	if err != nil {
-		return nil, err
+	if executable == "" {
+		var err error
+		executable, err = os.Executable()
+		if err != nil {
+			return nil, err
+		}
 	}
-	executable, err = platform.ResolveTrustedExecutable(executable)
+	trustedExecutable, err := platform.ResolveTrustedExecutable(executable)
 	if err != nil {
 		return nil, fmt.Errorf("validate daemon executable: %w", err)
 	}
 	// #nosec G204 -- the canonical executable passed trust validation and no user command is accepted.
-	command := exec.Command(executable, "daemon")
+	command := exec.Command(trustedExecutable, "daemon")
 	configureDaemonAutostart(command)
 	command.Stdin, command.Stdout, command.Stderr = nil, nil, nil
 	if err := command.Start(); err != nil {
