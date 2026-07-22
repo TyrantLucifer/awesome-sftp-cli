@@ -3,11 +3,12 @@
 AMSFTP 是一个面向 macOS 和 Linux 终端用户的 Vim-first 双栏文件工作台。任一栏都可以指向本地目录或 `~/.ssh/config` 中的远端主机；浏览、预览、编辑、搜索和传输统一通过本地 daemon 协调，认证与主机策略继续由系统 OpenSSH 负责。
 
 > [!WARNING]
-> `v0.1.11` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
+> `v0.1.12` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
 
 ## 主要能力
 
 - Vim-first 双栏 TUI，本地和远端位置可以自由组合。
+- 选中文件或目录后，底部动作栏按对象类型、焦点和有效 keymap 就地提示可用快捷键，并持续标识当前 AMSFTP 版本。
 - 复用系统 OpenSSH 的密钥、Agent、Kerberos/GSSAPI、ProxyJump 和 ProxyCommand 配置。
 - 复制、移动、重命名和删除统一生成持久 Job；退出 TUI 不会隐式取消后台任务。
 - 目标端先写 Job 专属临时文件，验证并提交后才暴露最终文件；跨端点移动在目标确认完成前不删除来源。
@@ -28,7 +29,7 @@ AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为
 
 ## 安装与升级
 
-公开预览发布页：[`v0.1.11`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.11)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
+公开预览发布页：[`v0.1.12`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.12)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
 
 严格 `X.Y.Z` 的公开预览发布后，可直接使用下面任一渠道。安装脚本默认安装到 `$HOME/.local`，会校验归档 SHA-256、原子替换 binary、保存上一版为 `amsftp.previous`，并重新生成 man page 与 shell completion：
 
@@ -114,6 +115,7 @@ amsftp /absolute/local/path work:/absolute/remote/path
 | `q` | 退出当前 TUI；不隐式取消后台 Job |
 
 可用 `amsftp config print-effective-keymap` 查看实际键位。完整说明见[键位参考](docs/user/keymap.md)。
+主界面底部动作栏会优先显示当前选中对象可执行的操作：普通文件包含编辑、外部打开、预览、复制、移动、删除和重命名，目录只显示适用操作，Visual 模式收敛为批量操作；自定义键位会同步反映在提示中。动作栏右侧固定显示当前构建版本。
 
 ## 安全传输与 Job
 

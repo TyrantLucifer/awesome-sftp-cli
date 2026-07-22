@@ -171,6 +171,20 @@ func (m Map) Lookup(context Context, input string) (Action, bool) {
 	return action, ok
 }
 
+// InputForAction returns the effective input assigned to one action in a context.
+func (m Map) InputForAction(context Context, target Action) (string, bool) {
+	mapping, ok := m.contexts[context]
+	if !ok {
+		return "", false
+	}
+	for input, action := range mapping {
+		if action == target {
+			return input, true
+		}
+	}
+	return "", false
+}
+
 func DefaultSnapshotText() string {
 	lines := make([]string, 0, len(defaults))
 	for _, item := range defaults {

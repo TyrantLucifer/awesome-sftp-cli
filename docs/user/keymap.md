@@ -44,6 +44,8 @@ Digits remain count prefixes before keymap lookup. Counts are accepted only for 
 
 When the Jobs drawer has focus, its header describes only the controls that are available for the selected Job. Queued or active Jobs show `C` cancel and `P` pause; paused Jobs show `C` cancel and `U` resume; authentication or retry waits show `C` cancel and `U` retry. Conflict waits show the single-item `w`/`x`/`a` choices and the `W`/`X`/`A` apply-all choices. Terminal Jobs omit the empty action message while retaining `j`/`k` selection guidance, and all action hints disappear when focus returns to a file pane so they never advertise inactive keys.
 
+When a file pane has focus, the action bar above the main status line describes the controls that apply to the selected object. Regular files show edit, external open, preview, copy, move, delete, and rename; directories omit file-only actions; Visual modes show only safe multi-item operations. The bar is ordered so primary actions survive narrow terminals, reads the effective Normal/Visual keymap after overrides, and disappears when a drawer or modal owns input. Its right edge identifies the running `AMSFTP <version>` build; drawer-focused views keep that identity in the main status line.
+
 ## Deliberate 1.0 exclusions
 
 AMSFTP 1.0 does not implement Vim macros or named registers. There are no `macro_record`, `macro_play`, or named-register actions in the schema or default map; unknown attempts fail validation. Clipboard operations use the single durable AMSFTP clipboard and repeat only replays already frozen operations under their original confirmation rules.

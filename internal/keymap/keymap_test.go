@@ -63,6 +63,12 @@ func TestNewSupportsContextRemapWithoutChangingOtherContexts(t *testing.T) {
 	if got, ok := mapping.Lookup(ContextNormal, "j"); !ok || got != ActionDown {
 		t.Fatalf("normal j = %q, %v", got, ok)
 	}
+	if got, ok := mapping.InputForAction(ContextVisual, ActionDown); !ok || got != "q" {
+		t.Fatalf("visual down input = %q, %v", got, ok)
+	}
+	if got, ok := mapping.InputForAction(ContextNormal, ActionDown); !ok || got != "j" {
+		t.Fatalf("normal down input = %q, %v", got, ok)
+	}
 }
 
 func TestNewRejectsConflictReservedDangerousAndUnreachableOverrides(t *testing.T) {

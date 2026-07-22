@@ -1345,7 +1345,7 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 			}
 			model.clearDirectoryJump()
 			model.Mode = ModeNormal
-			model.Notice = "entry selected; press l or → to open"
+			model.Notice = "entry selected; available actions are shown below"
 		}
 		model.Panes[model.Active] = pane
 		return model, nil
