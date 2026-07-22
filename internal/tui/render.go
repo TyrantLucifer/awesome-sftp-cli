@@ -513,7 +513,7 @@ func renderDrawer(surface Surface, model Model, y, width, rows int) {
 	if model.Drawer.Focus == FocusDrawer {
 		style = StyleActiveTab
 	}
-	header := drawerTabLabel(model.Drawer.Mode)
+	header := drawerHeaderLabel(model.Drawer, model.Jobs, model.JobCursor)
 	surface.Fill(0, y, width, style)
 	surface.PutClipped(0, y, width, header, style)
 	if rows <= 1 {
@@ -567,10 +567,10 @@ func renderLogDrawer(surface Surface, records []diagnostic.Record, y, width, row
 
 func drawerTabLabel(active DrawerMode) string {
 	if active == DrawerSearch {
-		return "[Files]  Content  — f/g/ search; Esc pane"
+		return "[Files]  Content"
 	}
 	if active == DrawerContentSearch {
-		return "Files  [Content]  — f/g/ search; Esc pane"
+		return "Files  [Content]"
 	}
 	labels := []struct {
 		mode DrawerMode
@@ -584,7 +584,42 @@ func drawerTabLabel(active DrawerMode) string {
 			parts = append(parts, label.name)
 		}
 	}
-	return strings.Join(parts, "  ") + "  — K/J/L switch; Esc pane"
+	return strings.Join(parts, "  ")
+}
+
+func drawerHeaderLabel(drawer DrawerState, jobs []transfer.JobView, cursor int) string {
+	header := drawerTabLabel(drawer.Mode)
+	if drawer.Mode == DrawerSearch || drawer.Mode == DrawerContentSearch {
+		return header + "  — f/g/ search; Esc pane"
+	}
+	if drawer.Mode == DrawerJobs && drawer.Focus == FocusDrawer {
+		if controls := selectedJobControls(jobs, cursor); controls != "" {
+			return header + "  — " + controls + " · j/k select; Esc pane"
+		}
+	}
+	return header + "  — K/J/L switch; Esc pane"
+}
+
+func selectedJobControls(jobs []transfer.JobView, cursor int) string {
+	if cursor < 0 || cursor >= len(jobs) {
+		return ""
+	}
+	switch jobs[cursor].Snapshot.State {
+	case job.StateDraft, job.StateAwaitingConfirmation:
+		return "C cancel"
+	case job.StateQueued, job.StateRunning, job.StateVerifying:
+		return "C cancel · P pause"
+	case job.StatePaused:
+		return "C cancel · U resume"
+	case job.StateWaitingAuth, job.StateRetryWait:
+		return "C cancel · U retry"
+	case job.StateWaitingConflict:
+		return "C cancel · w overwrite · x skip · a rename · W/X/A apply all"
+	case job.StateCompleted, job.StateCompletedWithSourceRetained, job.StateFailed, job.StateCanceled:
+		return "No actions"
+	default:
+		return ""
+	}
 }
 
 func renderSearchDrawer(surface Surface, state SearchState, y, width, rows int) {
