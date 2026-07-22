@@ -7,7 +7,7 @@
 - PR #6 已合并到 `main`，合并提交为 `1f8bef8c3055150c6e47d05eab30f79d02396e04`。
 - 一键安装与发布自动化 PR #9 已合并到 `main`，合并提交为 `7e6f6986af45712ae81d826001f0dc2454804a15`。
 - 内部预览版 [`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1) 已发布；候选提交为 `541c3c7434d05bc5366950c53c8b1f1774d72e38`。
-- 公开预览版 [`v0.1.8`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.8) 新增 macOS/Linux 的 `amsftp upgrade` 渠道感知升级、活动 Job 原子拒绝和 daemon 状态恢复；沿用四平台归档、checksum、SBOM、一键安装脚本与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
+- 公开预览版 [`v0.1.10`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.10) 修复 `Space`、`v`、`V` 多选复制的异步捕获和并发 Job 持久化竞态；沿用 macOS/Linux 渠道感知升级、四平台归档、checksum、SBOM、一键安装脚本与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
 - Stage 0–6 的实现阶段已经结束；历史计划和验证流水从活动文档中移除，通过 Git 历史追溯。
 - 仓库现在进入“内部预览反馈与下一阶段迭代准备”状态，不宣称公开 1.0 已完成。
 - 内部预览反馈已修复 Preview drawer 的逐行滚动、小文件 EOF range 越界与空文件零长度读取问题。
@@ -15,6 +15,7 @@
 - 内部预览反馈已为登录后的 Normal/Visual 浏览补齐方向键；`←/↓/↑/→` 与 `h/j/k/l` 使用相同的返回上级、下移、上移和进入语义。
 - 内部预览反馈已修复复制、移动、重命名和删除 Job 成功完成后可见文件列表不及时更新的问题；后台只在存在非终态 Job 时继续有界轮询，并对受影响目录去重刷新。
 - 内部预览反馈已修复 `Space`、`v`、`V` 多选后快速 `y`/`p` 会复用上一次单文件剪贴板的问题；新捕获立即使旧引用失效，提前到达的粘贴按捕获代次排队，迟到的旧结果不会覆盖当前选择。
+- 内部预览反馈已修复同一次多选粘贴并发创建多个 Job 时只有一个能进入 WAL 的问题；共享状态写批次现在覆盖事务和提交后 checkpoint 串行准入，每个已冻结剪贴板项都独立持久化为 Job。
 - 内部预览反馈已简化 TUI Jobs 展示：内部路由证据不再挤占默认摘要，容量自动切换单位，传输中显示采样速度，选中任务分行展示来源与目标并在窄终端明确省略路径中段。
 - 内部预览反馈已为获得焦点的 TUI Jobs 抽屉补充选中任务的状态感知快捷键提示；取消、暂停、恢复/重试和冲突选择只在对应状态可操作时展示，终态任务明确显示无可用操作。
 - 内部预览反馈已重排 TUI 主状态栏：恢复入口和连接状态改为用户可读文案并前置，默认模式、capability generation、raw Helper 原因和默认 hidden 状态不再挤占主视图；缓存策略保留显示但使用 automatic/temporary/offline 语义。
@@ -37,6 +38,6 @@
 
 ## 下一步
 
-`v0.1.8` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
+`v0.1.10` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
 
 开发前阅读根目录 [AGENTS.md](../../AGENTS.md)，并只运行与改动风险相称的定向测试。公开 release 仍必须单独通过 [RC 门禁](../release/RC-GATES.md)。
