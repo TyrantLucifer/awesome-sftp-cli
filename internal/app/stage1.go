@@ -842,7 +842,10 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 					}
 					result = tui.RenamePrepared{Reference: reference, Message: message}
 				default:
-					result = tui.ClipboardCaptured{Clipboard: intent.Clipboard, References: references, Message: message}
+					result = tui.ClipboardCaptured{
+						Clipboard: intent.Clipboard, References: references,
+						Generation: intent.ClipboardGeneration, Message: message,
+					}
 				}
 				select {
 				case actions <- result:
