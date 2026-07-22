@@ -111,6 +111,8 @@ func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
 		`"error_code":"auth_required"`,
 		`(failed)`,
 		`-exact "failed" {}`,
+		`set synchronized_update_end "\033\[?2026l"`,
+		`-exact $synchronized_update_end {}`,
 		`set stty_init "rows 30 columns 200"`,
 		`log_file -a -noappend $env(AMSFTP_OUTPUT)`,
 		`vt-observer`,
