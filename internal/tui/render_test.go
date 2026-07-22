@@ -8,6 +8,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/keymap"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 )
@@ -146,8 +147,138 @@ func TestRendererStatusPrioritizesPlainLanguageActions(t *testing.T) {
 	model.Panes[Left] = left
 	local := newMemorySurface(120, 8)
 	Render(local, model, RenderOptions{Overscan: 1})
-	if got = local.String(); strings.Contains(got, "SFTP") || strings.Contains(got, "Helper") {
+	if got = local.String(); strings.Contains(got, "Standard SFTP") || strings.Contains(got, "Helper") {
 		t.Fatalf("local pane displayed an SSH connection mode:\n%s", got)
+	}
+}
+
+func TestRendererShowsSelectedFileActionsAndVersion(t *testing.T) {
+	model := testModel(t)
+	left := model.Panes[Left]
+	left.Cursor = 1
+	model.Panes[Left] = left
+	mapping, err := NewKeymap(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface := newMemorySurface(140, 8)
+
+	Render(surface, model, RenderOptions{Overscan: 1, Keymap: mapping, Version: "0.1.12"})
+	got := surface.String()
+	for _, want := range []string{
+		"e Edit", "o Open", "K Preview", "y Copy", "d Move", "D Delete", "r Rename",
+		"AMSFTP 0.1.12",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("selected-file guidance missing %q:\n%s", want, got)
+		}
+	}
+}
+
+func TestRendererShowsOnlyApplicableDirectoryActions(t *testing.T) {
+	model := testModel(t)
+	mapping, err := NewKeymap(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface := newMemorySurface(140, 8)
+
+	Render(surface, model, RenderOptions{Overscan: 1, Keymap: mapping, Version: "0.1.12"})
+	got := surface.String()
+	for _, want := range []string{"l Open", "y Copy", "d Move", "D Delete", "r Rename"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("selected-directory guidance missing %q:\n%s", want, got)
+		}
+	}
+	for _, unavailable := range []string{"e Edit", "o Open", "K Preview"} {
+		if strings.Contains(got, unavailable) {
+			t.Fatalf("selected-directory guidance exposed unavailable action %q:\n%s", unavailable, got)
+		}
+	}
+}
+
+func TestRendererActionGuidanceUsesEffectiveKeymap(t *testing.T) {
+	model := testModel(t)
+	left := model.Panes[Left]
+	left.Cursor = 1
+	model.Panes[Left] = left
+	mapping, err := NewKeymap([]keymap.Override{{Context: keymap.ContextNormal, Input: "z", Action: keymap.ActionEdit}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface := newMemorySurface(140, 8)
+
+	Render(surface, model, RenderOptions{Overscan: 1, Keymap: mapping, Version: "0.1.12"})
+	got := surface.String()
+	if !strings.Contains(got, "z Edit") || strings.Contains(got, "e Edit") {
+		t.Fatalf("guidance did not reflect the effective keymap:\n%s", got)
+	}
+}
+
+func TestRendererHidesFileActionsWhenDrawerHasFocus(t *testing.T) {
+	model := testModel(t)
+	left := model.Panes[Left]
+	left.Cursor = 1
+	model.Panes[Left] = left
+	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}
+	mapping, err := NewKeymap(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface := newMemorySurface(140, 12)
+
+	Render(surface, model, RenderOptions{Overscan: 1, Keymap: mapping, Version: "0.1.12"})
+	got := surface.String()
+	for _, inactive := range []string{"e Edit", "o Open", "y Copy", "D Delete", "r Rename"} {
+		if strings.Contains(got, inactive) {
+			t.Fatalf("drawer focus exposed inactive file action %q:\n%s", inactive, got)
+		}
+	}
+	if !strings.Contains(got, "AMSFTP 0.1.12") {
+		t.Fatalf("drawer view omitted version identity:\n%s", got)
+	}
+}
+
+func TestRendererUsesSelectionActionsInVisualMode(t *testing.T) {
+	model := testModel(t)
+	model.Mode = ModeVisual
+	mapping, err := NewKeymap(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface := newMemorySurface(80, 8)
+
+	Render(surface, model, RenderOptions{Overscan: 1, Keymap: mapping, Version: "0.1.12"})
+	got := surface.String()
+	for _, want := range []string{"y Copy", "d Move", "D Delete", "AMSFTP 0.1.12"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("visual guidance missing %q:\n%s", want, got)
+		}
+	}
+	for _, singleItem := range []string{"e Edit", "o Open", "r Rename"} {
+		if strings.Contains(got, singleItem) {
+			t.Fatalf("visual guidance exposed single-item action %q:\n%s", singleItem, got)
+		}
+	}
+}
+
+func TestRendererKeepsPrimaryFileActionAndVersionAtNarrowWidth(t *testing.T) {
+	model := testModel(t)
+	left := model.Panes[Left]
+	left.Cursor = 1
+	model.Panes[Left] = left
+	mapping, err := NewKeymap(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	surface := newMemorySurface(44, 8)
+
+	Render(surface, model, RenderOptions{Overscan: 1, Keymap: mapping, Version: "0.1.12"})
+	got := surface.String()
+	for _, want := range []string{"e Edit", "AMSFTP 0.1.12"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("narrow guidance missing %q:\n%s", want, got)
+		}
 	}
 }
 

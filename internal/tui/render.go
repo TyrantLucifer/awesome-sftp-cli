@@ -52,6 +52,8 @@ type Surface interface {
 
 type RenderOptions struct {
 	Overscan int
+	Keymap   Keymap
+	Version  string
 }
 
 type RenderStats struct {
@@ -165,7 +167,12 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	}
 
 	drawerRows := drawerRows(model.Drawer, height)
-	listRows := max(0, height-2-drawerRows)
+	actionLine := shouldRenderActionLine(model)
+	footerRows := 1
+	if actionLine {
+		footerRows++
+	}
+	listRows := max(0, height-1-footerRows-drawerRows)
 	leftWidth := width / 2
 	rightX := leftWidth + 1
 	rightWidth := width - rightX
@@ -177,11 +184,20 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Left], model.Active == Left, 0, leftWidth, 1, listRows, options.Overscan)
 	stats.VisitedEntries += renderPaneRows(surface, model.Panes[Right], model.Active == Right, rightX, rightWidth, 1, listRows, options.Overscan)
 
-	for y := 0; y < height-drawerRows-1; y++ {
+	statusY := height - drawerRows - 1
+	listBottom := statusY
+	if actionLine {
+		listBottom--
+	}
+	for y := 0; y < listBottom; y++ {
 		surface.PutClipped(leftWidth, y, 1, "│", StyleBorder)
 	}
-	statusY := height - drawerRows - 1
-	renderStatusLine(surface, model, statusY, width)
+	statusVersion := options.Version
+	if actionLine {
+		renderActionLine(surface, model, statusY-1, width, options)
+		statusVersion = ""
+	}
+	renderStatusLine(surface, model, statusY, width, statusVersion)
 
 	if drawerRows != 0 {
 		renderDrawer(surface, model, statusY+1, width, drawerRows)
@@ -228,7 +244,106 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	return stats
 }
 
-func renderStatusLine(surface Surface, model Model, y, width int) {
+type actionHint struct {
+	input string
+	label string
+}
+
+type mappedActionHint struct {
+	action Key
+	label  string
+}
+
+func shouldRenderActionLine(model Model) bool {
+	return model.Drawer.Focus == FocusPane && (model.Mode == ModeNormal || model.Mode == ModeVisual || model.Mode == ModeVisualLine)
+}
+
+func renderActionLine(surface Surface, model Model, y, width int, options RenderOptions) {
+	if width <= 0 {
+		return
+	}
+	surface.Fill(0, y, width, StyleStatus)
+	version := SanitizeTerminalText(options.Version)
+	if version == "" {
+		version = "dev"
+	}
+	identity := "AMSFTP " + version
+	identityWidth := len([]rune(identity))
+	identityX := max(0, width-identityWidth-1)
+	if identityWidth < width {
+		surface.PutClipped(identityX, y, min(identityWidth, width), identity, StyleStatusAccent)
+	}
+
+	keymap := options.Keymap
+	if !keymap.configured {
+		keymap, _ = NewKeymap(nil)
+	}
+	hints := contextualActionHints(model, keymap)
+	available := max(0, identityX-1)
+	if available == 0 || len(hints) == 0 {
+		return
+	}
+	segments := make([]string, 0, len(hints))
+	for _, hint := range hints {
+		segments = append(segments, hint.input+" "+hint.label)
+	}
+	surface.PutClipped(1, y, max(0, available-1), strings.Join(segments, " · "), StyleStatus)
+}
+
+func contextualActionHints(model Model, mapping Keymap) []actionHint {
+	if model.Drawer.Focus != FocusPane || model.Mode != ModeNormal && model.Mode != ModeVisual && model.Mode != ModeVisualLine {
+		return nil
+	}
+	if model.Mode == ModeVisual || model.Mode == ModeVisualLine {
+		return appendMappedHints(nil, mapping, model.Mode,
+			mappedHint(KeyCopy, "Copy"), mappedHint(KeyCut, "Move"), mappedHint(KeyDelete, "Delete"),
+		)
+	}
+
+	pane := model.Panes[model.Active]
+	entry := pane.visibleEntry(pane.Cursor)
+	hints := make([]actionHint, 0, 12)
+	switch entry.Kind {
+	case domain.EntryFile:
+		hints = appendMappedHints(hints, mapping, model.Mode,
+			mappedHint(KeyEdit, "Edit"), mappedHint(KeyOpenExternal, "Open"), mappedHint(KeyPreviewDrawer, "Preview"),
+			mappedHint(KeyCopy, "Copy"), mappedHint(KeyCut, "Move"), mappedHint(KeyDelete, "Delete"), mappedHint(KeyRename, "Rename"),
+		)
+	case domain.EntryDirectory:
+		hints = appendMappedHints(hints, mapping, model.Mode,
+			mappedHint(KeyOpen, "Open"), mappedHint(KeyCopy, "Copy"), mappedHint(KeyCut, "Move"), mappedHint(KeyDelete, "Delete"), mappedHint(KeyRename, "Rename"),
+		)
+	case domain.EntrySymlink:
+		hints = appendMappedHints(hints, mapping, model.Mode,
+			mappedHint(KeyOpen, "Preview"), mappedHint(KeyCopy, "Copy"), mappedHint(KeyCut, "Move"), mappedHint(KeyDelete, "Delete"), mappedHint(KeyRename, "Rename"),
+		)
+	}
+	hints = appendMappedHints(hints, mapping, model.Mode, mappedHint(KeyMark, "Select"))
+	return append(hints,
+		actionHint{input: "Tab", label: "Pane"},
+		actionHint{input: "q", label: "Quit"},
+	)
+}
+
+func mappedHint(action Key, label string) mappedActionHint {
+	return mappedActionHint{action: action, label: label}
+}
+
+func appendMappedHints(hints []actionHint, mapping Keymap, mode Mode, values ...mappedActionHint) []actionHint {
+	for _, value := range values {
+		input, ok := mapping.inputFor(mode, value.action)
+		if !ok {
+			continue
+		}
+		if input == " " {
+			input = "Space"
+		}
+		hints = append(hints, actionHint{input: input, label: value.label})
+	}
+	return hints
+}
+
+func renderStatusLine(surface Surface, model Model, y, width int, version string) {
 	if width <= 0 {
 		return
 	}
@@ -238,9 +353,14 @@ func renderStatusLine(surface Surface, model Model, y, width int) {
 	leftX := len([]rune(badge)) + 1
 	primary := renderStatusBar(model)
 	right := renderStatusOptions(model.Panes[model.Active], model.CachePolicy)
+	pinnedVersion := false
+	if version = SanitizeTerminalText(version); version != "" {
+		right = "AMSFTP " + version
+		pinnedVersion = true
+	}
 	rightWidth := len([]rune(right))
 	rightX := width - rightWidth - 1
-	if right == "" || rightX <= leftX+12 || len([]rune(primary)) > rightX-leftX-1 {
+	if right == "" || rightX <= leftX+12 || !pinnedVersion && len([]rune(primary)) > rightX-leftX-1 {
 		rightX = width
 	} else {
 		surface.PutClipped(rightX, y, rightWidth, right, StyleStatus)

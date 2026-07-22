@@ -17,12 +17,12 @@
 | CONN-003 | 双位置启动 | Verified | 支持本地路径和 `host:/absolute/path` 的任意两栏组合。 | [CLI 参考](../user/cli.md) |
 | CONN-005 | 多远端隔离 | Verified | 不同远端的连接、能力、错误和认证提示不会串线。 | [daemon Provider 路由测试](../../internal/daemon/provider_router_test.go) |
 | CONN-006 | 断线与重连 | Verified | 只读请求可安全恢复，写任务交给持久状态机判断。 | [SFTP Provider 测试](../../internal/provider/sftp/provider_test.go)与[运维手册](../operations/runbook.md) |
-| PANE-001 | 平等双栏 | Verified | 左右栏拥有独立 Endpoint、路径、光标、选择和加载状态；显式语义主题区分活动/非活动栏、光标、多选与连接状态，文件元数据按栏宽渐进收缩；活动栏支持有界模糊 Host 选择和已加载目录项模糊跳转，目录跳转可选择、确认并恢复完整列表或取消回原位置；主状态栏优先显示可操作恢复入口和用户可读连接/缓存状态，不暴露 capability generation 等内部标识。 | [TUI model 测试](../../internal/tui/model_test.go)、[目录跳转测试](../../internal/tui/jump_test.go)、[渲染测试](../../internal/tui/render_test.go)、[终端样式测试](../../internal/tui/tcell_test.go)与[Picker 测试](../../internal/tui/picker_test.go) |
+| PANE-001 | 平等双栏 | Verified | 左右栏拥有独立 Endpoint、路径、光标、选择和加载状态；显式语义主题区分活动/非活动栏、光标、多选与连接状态，文件元数据按栏宽渐进收缩；活动栏支持有界模糊 Host 选择和已加载目录项模糊跳转，目录跳转可选择、确认并恢复完整列表或取消回原位置；选中对象的动作栏按文件类型、焦点、模式和有效 keymap 提示真实可用操作，并在主界面持续显示构建版本；主状态栏优先显示可操作恢复入口和用户可读连接/缓存状态，不暴露 capability generation 等内部标识。 | [TUI model 测试](../../internal/tui/model_test.go)、[目录跳转测试](../../internal/tui/jump_test.go)、[渲染测试](../../internal/tui/render_test.go)、[终端样式测试](../../internal/tui/tcell_test.go)与[Picker 测试](../../internal/tui/picker_test.go) |
 | PANE-004 | 增量目录加载 | Verified | 首屏不等待完整目录读取，列表可取消并报告 partial。 | [Provider listing](../../internal/provider/listing.go)与[TUI 测试](../../internal/tui/render_test.go) |
 | PANE-005 | 窗口化渲染 | Verified | 大目录只构造可见行与有界 overscan。 | [渲染测试](../../internal/tui/render_test.go) |
 | WORK-001 | 持久工作区 | Verified | 保存两栏位置和视图策略，不保存认证秘密。 | [workspace 路由测试](../../internal/daemon/workspace_router_test.go) |
 | WORK-006 | 工作区兼容迁移 | Verified | 历史 schema 确定迁移并保留原始备份，失败不覆盖来源。 | [兼容性边界](compatibility-boundaries.md) |
-| VIM-001 | Vim-first 模式 | Verified | 默认 Normal 模式，导航、选择、计数与危险动作分层。 | [键位测试](../../internal/tui/keymap_test.go)与[键位参考](../user/keymap.md) |
+| VIM-001 | Vim-first 模式 | Verified | 默认 Normal 模式，导航、选择、计数与危险动作分层；上下文动作栏使用有效 Normal/Visual 映射，不把默认键位误报给已配置 remap 的用户。 | [键位测试](../../internal/tui/keymap_test.go)、[渲染测试](../../internal/tui/render_test.go)与[键位参考](../user/keymap.md) |
 | VIM-002 | `h/j/k/l`、方向键与双栏操作 | Verified | Normal/Visual 浏览同时支持 Vim 键与方向键，核心浏览和选择不依赖鼠标。 | [终端键位测试](../../internal/tui/tcell_test.go)与[TUI reducer](../../internal/tui/reducer.go) |
 | DAEMON-001 | owner-only daemon | Verified | daemon 只为当前用户服务，TUI 退出不隐式取消 Job。 | [daemon server 测试](../../internal/daemon/server_test.go) |
 | DAEMON-002 | 安全 IPC 与生命周期 | Verified | socket、peer UID、协议和停止确认 fail closed。 | [daemon command 测试](../../internal/app/daemon_command_test.go) |

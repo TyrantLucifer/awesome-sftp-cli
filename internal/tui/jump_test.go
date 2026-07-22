@@ -33,6 +33,9 @@ func TestDirectoryFilterFuzzyRanksAndAcceptsSelectedEntry(t *testing.T) {
 	if model.Mode != ModeNormal || len(intents) != 0 || model.Panes[Left].Filter != "" || model.Panes[Left].VisibleCount() != 4 || model.Panes[Left].visibleEntry(model.Panes[Left].Cursor).Name != "documentation" {
 		t.Fatalf("accepted jump = mode %q pane %#v intents %#v", model.Mode, model.Panes[Left], intents)
 	}
+	if model.Notice != "entry selected; available actions are shown below" {
+		t.Fatalf("accepted jump notice = %q", model.Notice)
+	}
 
 	model, intents = Reduce(model, KeyPress{Key: KeyOpen})
 	if len(intents) != 1 || intents[0].Kind != IntentList || string(intents[0].Location.Path) != "/left/documentation" {

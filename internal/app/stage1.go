@@ -552,6 +552,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return fmt.Errorf("resolve keymap: %w", err)
 	}
+	clientVersion := buildinfo.Current().Version
 	environment := append([]string(nil), os.Environ()...)
 	externalRuntime, err := resolveExternalRuntimeConfig(applicationConfig.External, environment)
 	if err != nil {
@@ -1265,7 +1266,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	defer leaseHeartbeatTicker.Stop()
 	var pendingTerminalImage *tui.PreviewTerminalImage
 	for {
-		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8})
+		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8, Keymap: userKeymap, Version: clientVersion})
 		screen.Show()
 		if pendingTerminalImage != nil {
 			if err := writeTerminalImage(pendingTerminalImage.Data); err != nil {

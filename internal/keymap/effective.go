@@ -30,7 +30,7 @@ func WriteEffective(w io.Writer, overrides []Override) error {
 	bindings := make([]EffectiveBinding, 0, 2*len(defaults))
 	for _, context := range []Context{ContextNormal, ContextVisual} {
 		for _, item := range defaults {
-			input := inputForAction(mapping.contexts[context], item.action)
+			input, _ := mapping.InputForAction(context, item.action)
 			bindings = append(bindings, EffectiveBinding{
 				Context: context, Input: input, Action: item.action, DefaultInput: item.input,
 				Remappable: item.remappable, Overridden: input != item.input,
@@ -44,13 +44,4 @@ func WriteEffective(w io.Writer, overrides []Override) error {
 		return fmt.Errorf("encode effective keymap: %w", err)
 	}
 	return nil
-}
-
-func inputForAction(mapping map[string]Action, target Action) string {
-	for input, action := range mapping {
-		if action == target {
-			return input
-		}
-	}
-	return ""
 }
