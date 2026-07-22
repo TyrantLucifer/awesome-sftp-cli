@@ -87,8 +87,6 @@ type reconnectPolicy struct {
 	Jitter func(time.Duration) time.Duration
 }
 
-var errDaemonControlSocketStillPresent = errors.New("control socket still exists after connection failure")
-
 func defaultReconnectPolicy() reconnectPolicy {
 	return newReconnectPolicy(retrypolicy.DefaultReconnectDelays())
 }

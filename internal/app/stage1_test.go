@@ -503,9 +503,8 @@ func TestDaemonAutostartRequiresProvenSocketAbsence(t *testing.T) {
 		t.Fatal(err)
 	}
 	connectErr := errors.New("existing daemon handshake failed")
-	existingErr := requireAbsentControlSocketForAutostart(existing, connectErr)
-	if !errors.Is(existingErr, connectErr) || !errors.Is(existingErr, errDaemonControlSocketStillPresent) {
-		t.Fatalf("existing socket error = %v, want wrapped connect failure and shutdown-in-progress classification", existingErr)
+	if err := requireAbsentControlSocketForAutostart(existing, connectErr); !errors.Is(err, connectErr) {
+		t.Fatalf("existing socket error = %v, want wrapped connect failure", err)
 	}
 	content, err := os.ReadFile(existing) //nolint:gosec // exact test-owned path proves failed autostart preserves bytes
 	if err != nil {
@@ -523,33 +522,6 @@ func TestDaemonAutostartRequiresProvenSocketAbsence(t *testing.T) {
 	uninspectable := filepath.Join(root, strings.Repeat("x", 5000))
 	if err := requireAbsentControlSocketForAutostart(uninspectable, connectErr); err == nil || errors.Is(err, connectErr) {
 		t.Fatalf("uninspectable socket error = %v, want independent inspection failure", err)
-	}
-}
-
-func TestDaemonLossRecoveryDelegatesStaleSocketRemovalToLockedDaemon(t *testing.T) {
-	root := testkit.PersistentTempDir(t)
-	existing := filepath.Join(root, "stale-control.sock")
-	if err := os.WriteFile(existing, []byte("preserve"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	connectErr := errors.New("lost daemon connection")
-	if err := verifyDaemonAutostartPath(existing, connectErr, false); !errors.Is(err, errDaemonControlSocketStillPresent) {
-		t.Fatalf("cold start socket check = %v, want stale socket refusal", err)
-	}
-	if err := verifyDaemonAutostartPath(existing, connectErr, true); err != nil {
-		t.Fatalf("loss recovery socket check = %v, want locked daemon cleanup", err)
-	}
-	content, err := os.ReadFile(existing) //nolint:gosec // recovery launcher must leave cleanup to the locked daemon
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(content) != "preserve" {
-		t.Fatalf("recovery launcher changed stale socket stand-in to %q", content)
-	}
-
-	uninspectable := filepath.Join(root, strings.Repeat("x", 5000))
-	if err := verifyDaemonAutostartPath(uninspectable, connectErr, true); err == nil {
-		t.Fatal("loss recovery accepted an uninspectable control socket path")
 	}
 }
 

@@ -470,18 +470,10 @@ func connectionFailureState(model tui.Model, pane tui.PaneID, switching bool) do
 }
 
 func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
-	return connectDaemonWithExecutableMode(ctx, paths, purpose, "", false)
-}
-
-func connectDaemonRecovering(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
-	return connectDaemonWithExecutableMode(ctx, paths, purpose, "", true)
+	return connectDaemonWithExecutable(ctx, paths, purpose, "")
 }
 
 func connectDaemonWithExecutable(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, executable string) (*daemon.Client, error) {
-	return connectDaemonWithExecutableMode(ctx, paths, purpose, executable, false)
-}
-
-func connectDaemonWithExecutableMode(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, executable string, recovering bool) (*daemon.Client, error) {
 	connect := func() (*daemon.Client, error) {
 		connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
 		if err != nil {
@@ -493,7 +485,7 @@ func connectDaemonWithExecutableMode(ctx context.Context, paths platform.Paths, 
 	if connectErr == nil {
 		return client, nil
 	}
-	if err := verifyDaemonAutostartPath(paths.ControlSocket, connectErr, recovering); err != nil {
+	if err := requireAbsentControlSocketForAutostart(paths.ControlSocket, connectErr); err != nil {
 		return nil, err
 	}
 	if executable == "" {
@@ -540,15 +532,7 @@ func requireAbsentControlSocketForAutostart(path string, connectErr error) error
 	if inspectErr != nil {
 		return fmt.Errorf("inspect control socket after connection failure: %w", inspectErr)
 	}
-	return fmt.Errorf("%w: %w", errDaemonControlSocketStillPresent, connectErr)
-}
-
-func verifyDaemonAutostartPath(path string, connectErr error, recovering bool) error {
-	err := requireAbsentControlSocketForAutostart(path, connectErr)
-	if recovering && errors.Is(err, errDaemonControlSocketStillPresent) {
-		return nil
-	}
-	return err
+	return fmt.Errorf("control socket still exists after connection failure: %w", connectErr)
 }
 
 func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
@@ -686,20 +670,6 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		return err
 	}
 	runCtx, stop := context.WithCancel(ctx)
-	daemonLosses := make(chan *daemon.Client, 4)
-	watchDaemonConnection := func(activeClient *daemon.Client) {
-		go func() {
-			select {
-			case <-activeClient.Done():
-				select {
-				case daemonLosses <- activeClient:
-				case <-runCtx.Done():
-				}
-			case <-runCtx.Done():
-			}
-		}()
-	}
-	watchDaemonConnection(client)
 	authClient, err := connectDaemon(runCtx, paths, purpose)
 	if err != nil {
 		stop()
@@ -1256,7 +1226,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		go func() {
 			result := daemonRecoveryResult{}
 			result.client, result.err = connectDaemonAfterLoss(runCtx, clientReconnectPolicy, func(ctx context.Context) (*daemon.Client, error) {
-				return connectDaemonRecovering(ctx, paths, purpose)
+				return connectDaemon(ctx, paths, purpose)
 			})
 			if result.err == nil {
 				result.local, result.err = daemonLocalEndpoint(runCtx, result.client)
@@ -1336,10 +1306,6 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			if err := editFlow.Heartbeat(runCtx); err != nil {
 				model.Notice = "cache lease heartbeat failed; durable edit recovery remains retained: " + clientErrorMessage(err)
 			}
-		case lostClient := <-daemonLosses:
-			if lostClient == client {
-				startDaemonRecovery()
-			}
 		case err := <-authErrors:
 			if authFailureLostDaemon(err, func() error {
 				probeCtx, cancel := context.WithTimeout(runCtx, daemonReadyTimeout)
@@ -1385,7 +1351,6 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			}
 			oldClient := client
 			client = result.client
-			watchDaemonConnection(client)
 			localEndpoint = result.local
 			editFlow.client = client
 			editFlow.localEndpoint = localEndpoint.ID

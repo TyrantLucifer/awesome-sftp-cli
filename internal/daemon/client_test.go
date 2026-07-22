@@ -47,34 +47,5 @@ func TestClientNegotiatesCallsAndCancels(t *testing.T) {
 		t.Fatal("server request was not canceled")
 	}
 	_ = client.Close()
-	select {
-	case <-client.Done():
-	case <-time.After(time.Second):
-		t.Fatal("client Done did not close after client shutdown")
-	}
-	<-serveDone
-}
-
-func TestClientDoneClosesWhenDaemonConnectionEnds(t *testing.T) {
-	server := newTestServer(t, sessionFactory(func() Session { return &testSession{} }))
-	serverConn, clientConn := net.Pipe()
-	serveDone := make(chan error, 1)
-	go func() { serveDone <- server.ServeConn(context.Background(), serverConn) }()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	client, err := NewClient(ctx, clientConn, "test-client", "client-loss")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := serverConn.Close(); err != nil {
-		t.Fatal(err)
-	}
-	select {
-	case <-client.Done():
-	case <-time.After(time.Second):
-		t.Fatal("client Done did not close after daemon connection loss")
-	}
-	_ = client.Close()
 	<-serveDone
 }

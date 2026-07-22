@@ -157,21 +157,6 @@ def single_daemon(exclude=None):
     return processes[0]
 
 
-def runtime_socket_inode():
-    path = os.path.join(os.environ["XDG_RUNTIME_DIR"], "amsftp", "control-v1.sock")
-    try:
-        return os.stat(path, follow_symlinks=False).st_ino
-    except FileNotFoundError:
-        return None
-
-
-def replacement_runtime_socket(old_inode):
-    inode = runtime_socket_inode()
-    if inode is None or inode == old_inode:
-        return None
-    return inode
-
-
 def set_size(fd, columns, rows):
     fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
 
@@ -387,9 +372,9 @@ def main():
 
     fresh_picker = PtyApp([])
     try:
-        fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "↑/↓ select · Enter open · Esc quit")
+        fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "Type an SSH alias;")
         fresh_picker.send("\x1b[B\x1b[B")
-        fresh_picker.wait_for_screen("▌ host       recovery-picker")
+        fresh_picker.wait_for_screen("> host       recovery-picker")
         fresh_picker.send("\r")
         fresh_picker.wait_for_screen(os.path.basename(PICKER_MARKER))
         fresh_picker.close()
@@ -413,9 +398,9 @@ def main():
     try:
         workspace_picker.wait_for_screen("Open workspace or SSH host", "recovery-stage1")
         workspace_picker.send("recovery-stage1")
-        workspace_picker.wait_for_screen("SSH › recovery-stage1")
+        workspace_picker.wait_for_screen("Host: recovery-stage1")
         workspace_picker.send("\x1b[B")
-        workspace_picker.wait_for_screen("▌ workspace  recovery-stage1")
+        workspace_picker.wait_for_screen("> workspace  recovery-stage1")
         workspace_picker.send("\r")
         workspace_picker.wait_for_screen("a-parent-marker.txt", "b-stage1-marker.txt")
         workspace_picker.close()
@@ -448,26 +433,20 @@ def main():
         app.resize(200)
 
         old_daemon = wait_until(single_daemon, "single daemon PID")
-        old_socket_inode = wait_until(runtime_socket_inode, "daemon control socket")
         os.kill(old_daemon, signal.SIGTERM)
         wait_until(lambda: old_daemon not in daemon_pids(), "old daemon exit")
         with open(os.path.join(A_ROOT, "a-daemon-marker.txt"), "w", encoding="utf-8") as handle:
             handle.write("a-daemon\n")
         with open(os.path.join(B_ROOT, "b-daemon-marker.txt"), "w", encoding="utf-8") as handle:
             handle.write("b-daemon\n")
-        new_socket_inode = wait_until(
-            lambda: replacement_runtime_socket(old_socket_inode),
-            "replacement daemon control socket",
-            timeout=30,
-        )
-        if new_socket_inode == old_socket_inode:
-            raise RuntimeError("daemon control socket inode did not change")
+        new_daemon = wait_until(lambda: single_daemon(old_daemon), "replacement daemon", timeout=30)
+        if new_daemon == old_daemon:
+            raise RuntimeError("daemon PID did not change")
         app.wait_for_screen("a-daemon-marker.txt", "b-daemon-marker.txt", timeout=30)
         assert_private_runtime()
         app.close()
 
-        for daemon_pid in daemon_pids():
-            terminate_if_running(daemon_pid)
+        terminate_if_running(new_daemon)
         wait_until(lambda: not daemon_pids(), "final daemon exit")
     except Exception:
         app._drain()

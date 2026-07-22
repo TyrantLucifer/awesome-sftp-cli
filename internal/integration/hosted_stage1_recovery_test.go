@@ -56,16 +56,16 @@ func TestHostedStage1RecoveryExercisesNoArgumentPicker(t *testing.T) {
 	}
 	for _, required := range []string{
 		`fresh_picker = PtyApp([])`,
-		`fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "↑/↓ select · Enter open · Esc quit")`,
+		`fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "Type an SSH alias;`,
 		`fresh_picker.send("\x1b[B\x1b[B")`,
-		`fresh_picker.wait_for_screen("▌ host       recovery-picker")`,
+		`fresh_picker.wait_for_screen("> host       recovery-picker")`,
 		`fresh_picker.send("\r")`,
 		`fresh_picker.wait_for_screen(os.path.basename(PICKER_MARKER))`,
 		`workspace_picker = PtyApp([])`,
 		`workspace_picker.send("recovery-stage1")`,
-		`workspace_picker.wait_for_screen("SSH › recovery-stage1")`,
+		`workspace_picker.wait_for_screen("Host: recovery-stage1")`,
 		`workspace_picker.send("\x1b[B")`,
-		`workspace_picker.wait_for_screen("▌ workspace  recovery-stage1")`,
+		`workspace_picker.wait_for_screen("> workspace  recovery-stage1")`,
 		`workspace_picker.wait_for_screen("a-parent-marker.txt", "b-stage1-marker.txt")`,
 	} {
 		if !strings.Contains(string(script), required) {
