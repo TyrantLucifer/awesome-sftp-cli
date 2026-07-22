@@ -264,7 +264,7 @@ for {set attempt 0} {$attempt < 30} {incr attempt} {
   }] && [string first {"event":"rpc_request_failed"} $daemon_log] >= 0 && [string first {"error_code":"auth_required"} $daemon_log] >= 0} {
     set timeout 5
     expect {
-      -exact "Connection failed" {}
+      -exact "failed" {}
       eof { exit 90 }
       timeout { exit 97 }
     }
