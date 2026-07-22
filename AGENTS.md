@@ -4,9 +4,9 @@
 
 ## 当前状态
 
-- 主线已经包含公开预览渠道自动化；当前严格版本候选为 `v0.1.0`，历史内部预览仍可追溯。
+- 主线已经包含公开预览渠道自动化；当前公开预览版本线以 [README](README.md) 与[项目状态](docs/development/status.md)为准，历史严格版本与内部预览仍可追溯。
 - 规范仓库名与 Go module 均为 `awesome-sftp-cli` / `github.com/TyrantLucifer/awesome-sftp-cli`。
-- 项目许可证为 Apache License 2.0；`v0.1.0` 候选仍是 unsigned public preview，不是公开 1.0。
+- 项目许可证为 Apache License 2.0；当前公开预览仍未签名，不是公开 1.0。
 - Level 0 SFTP 可用；production Helper 和 production Level 2 保持 CLOSED。
 - 当前迭代入口是[项目状态](docs/development/status.md)与[路线图](docs/product/roadmap.md)，不是历史 Stage 文档。
 
@@ -105,6 +105,48 @@ make ci
 - 保留用户已有改动，不覆盖、不 reset、不清理不相关文件。
 - 构建、coverage、临时 fixture 和 `.superpowers/` 不是持久事实源，不应提交。
 - 提交保持单一意图；提交前检查 `git status`、`git diff --check` 和相称的测试结果。
+
+### Bugfix / Feature 完整交付闭环
+
+用户明确要求实施 bugfix 或 feature，且没有限定“只分析”“只修改本地”或“只提交 PR”时，默认目标不是停在代码完成，而是交付一个可安装的新版本。Agent 必须连续完成下面的闭环；仓库权限、必要 secret 或外部服务确实不可用时才停止，并明确报告已经完成的步骤和唯一阻塞点。
+
+纯文档、测试整理、重构、CI 或一般维护改动不自动触发产品发版，除非用户明确要求发布；不要为了满足流程形式制造无意义版本。
+
+1. **同步并建分支**
+   - 先检查 `git status -sb`，保留并隔离用户已有改动。
+   - `git fetch origin main --tags`，确认本地基线来自最新 `origin/main`。
+   - 创建语义明确的 `codex/fix-<description>` 或 `codex/feat-<description>` 分支；不得直接在 `main` 开发或提交。
+2. **先证明问题或契约**
+   - bugfix 先补能复现问题的失败测试，再做最小修复。
+   - feature 先补用户可观察的验收测试或契约测试，再实现最小完整行为。
+   - 同时检查安全、不变量、有界资源、恢复语义和跨包边界；不得用 UI fixture 绕过 daemon/Provider/transfer 契约。
+3. **同步产品事实**
+   - 用户可见行为或能力状态变化必须在同一分支更新相关用户文档、`docs/product/feature-matrix.md` 和 `docs/development/status.md`。
+   - 若本 change 将直接发布，PR 中同时把 README、状态和其他版本化入口准备为目标版本；禁止在 tag 推送后再补版本文档。
+4. **完成本地验证**
+   - 先运行受影响包和直接契约测试，再按“开发与验证”规则扩大到 `make check`、race 或 `make ci`。
+   - 提交前必须通过 `git diff --check`，并再次检查 `git status` 与实际 diff；不得把 coverage、构建产物或无关改动带入提交。
+5. **提交并创建 PR**
+   - 只显式 stage 本 change 的文件，使用下方 Conventional Commit 规范提交。
+   - 推送当前分支并创建面向 `main` 的 PR。需要继续合并发布时创建 ready-for-review PR，而不是停在 draft。
+   - PR 正文至少说明 `What changed`、`Why`、用户/开发者影响、根因（bugfix）和实际验证命令。
+6. **等待检查并合并**
+   - 等待仓库要求的 PR checks 完成；失败时先读取日志、修复、重新验证并推送，不得绕过或把 pending/failed 描述成成功。
+   - 处理所有会影响正确性、安全性或发布的 review feedback。
+   - 只有 PR 可合并且必需检查通过后才能合并；合并后记录 PR 号、功能提交和 merge commit，并确认功能提交是 merge commit 的祖先。
+7. **选择并推送新 tag**
+   - 每次 bugfix/feature 发布都使用未出现过的严格 `vX.Y.Z` tag。当前 `0.1` public-preview 版本线默认递增 patch；minor/major 或兼容性变化必须遵循明确的发布计划或用户决定。
+   - 合并后重新执行 `git fetch origin main --tags`，确认目标 merge commit 已在 `origin/main`，且本地与远端都不存在目标 tag。
+   - 创建与既有发布一致的 annotated tag，例如 `git tag -a vX.Y.Z <merge-commit> -m "amsftp vX.Y.Z"`；校验 `vX.Y.Z^{commit}` 精确等于预期发布提交后，只推送该 tag ref。
+   - 禁止在 PR 分支提交上提前打 tag，也禁止移动、覆盖、删除后重建已经发布的版本 tag。
+8. **确认自动发布结果**
+   - tag 推送后只跟踪 `.github/workflows/release.yml` 的 `Public Preview Release`；按下方 Release 规则，不以独立 Release Gates 作为普通发布阻断条件。
+   - 必须确认构建与发布 job 成功、GitHub Release 指向正确 tag/commit、预期归档与 `checksums.txt`、`install.sh`、SBOM/provenance 已发布，并确认 Homebrew formula 已更新为同一版本和 checksum。
+   - 将本地 `main` fast-forward 到已发布的 `origin/main`，确认工作区干净。
+9. **失败处理与最终反馈**
+   - workflow 的瞬时故障可以在同一不可变 tag/commit 上安全重跑；若需要改代码或产物输入，必须走新 PR 并使用下一个新版本 tag，不能重写旧 tag。
+   - 在 PR 合并、tag 推送、release workflow、GitHub Release 和渠道更新全部成功前，不得宣称“完整闭环已完成”。
+   - 最终反馈应列出分支、提交、PR、merge commit、tag、release/workflow 链接、验证结果和渠道状态；任何未完成项必须单独标明。
 
 ### Commit message 规范
 
