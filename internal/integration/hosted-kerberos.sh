@@ -264,7 +264,7 @@ for {set attempt 0} {$attempt < 30} {incr attempt} {
   }] && [string first {"event":"rpc_request_failed"} $daemon_log] >= 0 && [string first {"error_code":"auth_required"} $daemon_log] >= 0} {
     set timeout 5
     expect {
-      -exact "failed" {}
+      -exact "Connection failed" {}
       eof { exit 90 }
       timeout { exit 97 }
     }
@@ -350,7 +350,7 @@ run_case() {
       sed -n '1,120p' "${daemon_log}" >&2 || true
       exit 1
     fi
-    if ! "${vt_observer}" -columns 200 -rows 30 '(failed)' <"${output}"; then
+    if ! "${vt_observer}" -columns 200 -rows 30 'Connection failed' <"${output}"; then
       printf 'Kerberos case %s did not render its authentication failure\n' "${name}" >&2
       /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,160p' >&2 || true
       exit 1

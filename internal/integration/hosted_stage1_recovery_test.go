@@ -109,8 +109,8 @@ func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
 	for _, required := range []string{
 		`"event":"rpc_request_failed"`,
 		`"error_code":"auth_required"`,
-		`(failed)`,
-		`-exact "failed" {}`,
+		`Connection failed`,
+		`-exact "Connection failed" {}`,
 		`set synchronized_update_end "\033\[?2026l"`,
 		`-exact $synchronized_update_end {}`,
 		`set stty_init "rows 30 columns 200"`,
