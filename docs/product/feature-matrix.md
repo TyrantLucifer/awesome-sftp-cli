@@ -28,7 +28,7 @@
 | DAEMON-002 | 安全 IPC 与生命周期 | Verified | socket、peer UID、协议和停止确认 fail closed。 | [daemon command 测试](../../internal/app/daemon_command_test.go) |
 | JOB-001 | 持久 Job | Verified | 复制、移动和删除拥有稳定状态、事件、检查点和控制命令；TUI 使用用户可读状态、自动容量单位、采样速度和选中项分行路径，并在 Jobs 抽屉获得焦点时按选中任务状态提示可用控制键；成功终态会精确刷新当前可见的受影响目录。 | [Job manager 测试](../../internal/transfer/manager_test.go)、[TUI reducer 与渲染测试](../../internal/tui/model_test.go)、[Jobs drawer 测试](../../internal/tui/render_test.go)、[键位参考](../user/keymap.md)与[CLI 参考](../user/cli.md) |
 | JOB-002 | 重启恢复 | Verified | daemon 重启后只跨越安全边界恢复，不把未知结果标记成功。 | [Job journal 测试](../../internal/transfer/job_journal_test.go) |
-| COPY-001 | 流式安全复制 | Verified | 先写 part，验证和提交后再暴露最终目标；TUI 多选引用异步冻结期间会按代次排队粘贴，不复用旧剪贴板。 | [worker 测试](../../internal/transfer/worker_test.go)、[TUI 多选回归测试](../../internal/tui/model_test.go)与[持久传输指南](../user/durable-transfers.md) |
+| COPY-001 | 流式安全复制 | Verified | 先写 part，验证和提交后再暴露最终目标；TUI 多选引用异步冻结期间会按代次排队粘贴，不复用旧剪贴板；同一粘贴产生的多个 Job 在共享 WAL 写入门禁内逐个持久化，不因并发创建丢项。 | [worker 测试](../../internal/transfer/worker_test.go)、[TUI 多选回归测试](../../internal/tui/model_test.go)、[并发 Job 持久化测试](../../internal/state/jobstore/store_test.go)与[持久传输指南](../user/durable-transfers.md) |
 | MOVE-001 | 安全移动 | Verified | 目标验证并提交前不删除来源。 | [move 实现](../../internal/transfer/move.go)与[持久传输指南](../user/durable-transfers.md) |
 | DELETE-001 | 显式删除 | Verified | 删除与剪切分离，不可逆递归删除需要独立确认。 | [delete 实现](../../internal/transfer/delete.go)与[持久传输指南](../user/durable-transfers.md) |
 | CONFLICT-001 | 冲突和并发修改 | Verified | overwrite、skip、rename 与编辑回传冲突都有明确选择，不静默覆盖。 | [Plan 测试](../../internal/transfer/plan_test.go)与[编辑测试](../../internal/tui/edit_session_test.go) |
