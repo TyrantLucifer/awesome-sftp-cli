@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"path/filepath"
@@ -41,6 +42,75 @@ type trustValidator struct {
 	euid       int
 	filesystem trustFilesystem
 	acls       aclValidator
+}
+
+func (v trustValidator) validatePrivateCreatePath(path string, purpose ValidationPurpose) error {
+	if err := validatePurpose(purpose); err != nil {
+		return err
+	}
+	resolved, err := v.resolveTrustedSystemAlias(path, purpose)
+	if err != nil {
+		return err
+	}
+	components, err := absolutePathComponents(resolved)
+	if err != nil {
+		return err
+	}
+	for index, component := range components {
+		metadata, err := v.filesystem.lstat(component)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %q: %w", component, err)
+		}
+		if index == len(components)-1 {
+			if err := v.validatePrivateDirectoryMetadata(component, metadata); err != nil {
+				return err
+			}
+			if err := v.acls.validateACL(component, aclOwnerPrivate, purpose != ValidatePersistent); err != nil {
+				return fmt.Errorf("validate owner-private ACL for %q: %w", component, err)
+			}
+			return nil
+		}
+		if err := v.validateAncestorMetadata(component, metadata, purpose); err != nil {
+			return err
+		}
+		if err := v.acls.validateACL(component, aclIntegrityOnly, purpose != ValidatePersistent); err != nil {
+			return fmt.Errorf("validate integrity ACL for %q: %w", component, err)
+		}
+	}
+	return nil
+}
+
+func (v trustValidator) validateIntegrityCreatePath(path string, purpose ValidationPurpose) error {
+	if err := validatePurpose(purpose); err != nil {
+		return err
+	}
+	resolved, err := v.resolveTrustedSystemAlias(path, purpose)
+	if err != nil {
+		return err
+	}
+	components, err := absolutePathComponents(resolved)
+	if err != nil {
+		return err
+	}
+	for _, component := range components {
+		metadata, err := v.filesystem.lstat(component)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("inspect %q: %w", component, err)
+		}
+		if err := v.validateAncestorMetadata(component, metadata, purpose); err != nil {
+			return err
+		}
+		if err := v.acls.validateACL(component, aclIntegrityOnly, purpose != ValidatePersistent); err != nil {
+			return fmt.Errorf("validate integrity ACL for %q: %w", component, err)
+		}
+	}
+	return nil
 }
 
 func (v trustValidator) validatePrivateDirectory(path string, purpose ValidationPurpose) error {

@@ -132,6 +132,7 @@ expect_script="${root}/auth.expect"
 cat >"${expect_script}" <<'EXPECT'
 set timeout 35
 match_max 200000
+set stty_init "rows 30 columns 200"
 log_user 0
 log_file -noappend $env(AMSFTP_OUTPUT)
 

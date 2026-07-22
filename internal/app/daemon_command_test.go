@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -377,6 +378,36 @@ func TestDaemonJSONFailureUsesStableMachineErrorChannel(t *testing.T) {
 	}
 	if envelope.OutputVersion != PublicCLIContractVersion || envelope.Error.ExitCode != int(ExitNetwork) || envelope.Error.Class != "network" || strings.Contains(stderr.String(), "amsftp:") {
 		t.Fatalf("machine error = %#v, stderr = %q", envelope, stderr.String())
+	}
+}
+
+func TestDaemonStartClassifiesUntrustedExecutableAsConfigurationIntegrity(t *testing.T) {
+	runtime := daemonCommandRuntime{
+		probe: func(context.Context) (daemonControlClient, bool, error) {
+			return nil, false, nil
+		},
+		start: func(context.Context) (daemonControlClient, error) {
+			return nil, fmt.Errorf("validate daemon executable: %w", platform.ErrUntrustedExecutable)
+		},
+	}
+	handler := func(ctx context.Context, args []string, stdout, _ io.Writer) error {
+		return runDaemonCommandWithRuntime(ctx, args, stdout, runtime)
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	code := Run(t.Context(), []string{"daemon", "start", "--format", "json"}, &stdout, &stderr, Handlers{Daemon: handler})
+	if code != int(ExitConfig) || stdout.Len() != 0 {
+		t.Fatalf("exit = %d stdout = %q stderr = %q", code, stdout.String(), stderr.String())
+	}
+	var envelope cliErrorEnvelope
+	if err := json.Unmarshal(stderr.Bytes(), &envelope); err != nil {
+		t.Fatalf("stderr is not one JSON object: %q: %v", stderr.String(), err)
+	}
+	if envelope.Error.Class != "configuration" || envelope.Error.ErrorCode != domain.CodeIntegrityFailed {
+		t.Fatalf("machine error = %#v", envelope)
+	}
+	if strings.Contains(stderr.String(), "/data00") {
+		t.Fatalf("machine error leaked a local path: %q", stderr.String())
 	}
 }
 

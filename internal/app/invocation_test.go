@@ -30,6 +30,7 @@ func TestParseInvocation(t *testing.T) {
 		{name: "upgrade", args: []string{"upgrade", "--format", "json"}, want: app.Invocation{Role: app.RoleUpgrade}},
 		{name: "support bundle", args: []string{"support-bundle", "preview"}, want: app.Invocation{Role: app.RoleSupportBundle}},
 		{name: "completion", args: []string{"completion", "zsh"}, want: app.Invocation{Role: app.RoleCompletion}},
+		{name: "internal install", args: []string{"__install", "preflight"}, want: app.Invocation{Role: app.RoleInstall}},
 		{name: "help", args: []string{"--help"}, want: app.Invocation{Role: app.RoleClient, ShowHelp: true}},
 		{name: "version", args: []string{"--version"}, want: app.Invocation{Role: app.RoleClient, ShowVersion: true}},
 	}

@@ -25,7 +25,7 @@
 | VIM-001 | Vim-first 模式 | Verified | 默认 Normal 模式，导航、选择、计数与危险动作分层；上下文动作栏使用有效 Normal/Visual 映射，不把默认键位误报给已配置 remap 的用户。 | [键位测试](../../internal/tui/keymap_test.go)、[渲染测试](../../internal/tui/render_test.go)与[键位参考](../user/keymap.md) |
 | VIM-002 | `h/j/k/l`、方向键与双栏操作 | Verified | Normal/Visual 浏览同时支持 Vim 键与方向键，核心浏览和选择不依赖鼠标。 | [终端键位测试](../../internal/tui/tcell_test.go)与[TUI reducer](../../internal/tui/reducer.go) |
 | DAEMON-001 | owner-only daemon | Verified | daemon 只为当前用户服务，TUI 退出不隐式取消 Job。 | [daemon server 测试](../../internal/daemon/server_test.go) |
-| DAEMON-002 | 安全 IPC 与生命周期 | Verified | socket、peer UID、协议和停止确认 fail closed。 | [daemon command 测试](../../internal/app/daemon_command_test.go) |
+| DAEMON-002 | 安全 IPC 与生命周期 | Verified | socket、peer UID、协议和停止确认 fail closed；TUI 发现本地控制连接结束后有界等待实例锁交接，只由新锁持有者复验或接管残留 socket。 | [daemon command 测试](../../internal/app/daemon_command_test.go)、[接管测试](../../internal/app/stage1_test.go)与[真实 PTY 恢复矩阵](../../internal/integration/hosted-stage1-recovery.py) |
 | JOB-001 | 持久 Job | Verified | 复制、移动和删除拥有稳定状态、事件、检查点和控制命令；TUI 的有界 Jobs 抽屉按宽度切换左右主从或列表加单行详情布局，每个任务行显示文件身份和状态化进度，删除不使用字节百分比，并只提示选中任务实际可用的控制键；成功终态会精确刷新当前可见的受影响目录。 | [Job manager 测试](../../internal/transfer/manager_test.go)、[TUI reducer 与渲染测试](../../internal/tui/model_test.go)、[Jobs drawer 测试](../../internal/tui/render_test.go)、[键位参考](../user/keymap.md)与[CLI 参考](../user/cli.md) |
 | JOB-002 | 重启恢复 | Verified | daemon 重启后只跨越安全边界恢复，不把未知结果标记成功。 | [Job journal 测试](../../internal/transfer/job_journal_test.go) |
 | COPY-001 | 流式安全复制 | Verified | 先写 part，验证和提交后再暴露最终目标；TUI 多选引用异步冻结期间会按代次排队粘贴，不复用旧剪贴板；同一粘贴产生的多个 Job 在共享 WAL 写入门禁内逐个持久化，不因并发创建丢项。 | [worker 测试](../../internal/transfer/worker_test.go)、[TUI 多选回归测试](../../internal/tui/model_test.go)、[并发 Job 持久化测试](../../internal/state/jobstore/store_test.go)与[持久传输指南](../user/durable-transfers.md) |
@@ -57,7 +57,7 @@
 | REL-009 | 用户与运维文档 | Implemented | README 覆盖安装、首次运行、操作、架构、限制和恢复路径。 | [README](../../README.md)与[文档导航](../README.md) |
 | REL-010 | 公开 release 零缺口 | In Progress | 公开发布前所有非终态能力必须关闭或以明确决定延期。 | [RC 门禁](../release/RC-GATES.md) |
 | REL-012 | 发布撤回与回滚 | In Progress | 公开渠道完成已发布字节的升级、回滚和撤回演练后才能关闭。 | [升级与回滚](../release/UPGRADE.md)与[路线图](roadmap.md) |
-| REL-013 | 一键安装与升级 | Implemented | `amsftp upgrade` 在 macOS/Linux 识别 Homebrew 与独立安装；有新版本时通过 authenticated RPC 原子拒绝活动 Job、停止旧 daemon、执行渠道升级、仅恢复原本运行的 daemon，并验证新 binary/daemon。独立渠道在执行发布 installer 前校验其 checksum，Homebrew 渠道不直接改写 Cellar。 | [安装说明](../release/INSTALL.md)、[升级编排测试](../../internal/app/upgrade_command_test.go)、[渠道与 checksum 测试](../../internal/selfupdate/selfupdate_test.go)与[升级停机测试](../../internal/daemon/server_test.go) |
+| REL-013 | 一键安装与升级 | Implemented | `amsftp upgrade` 在 macOS/Linux 识别 Homebrew 与独立安装；独立 installer 在任何目标变更前预检 executable/config/state/cache 信任链，默认 HOME 不可信时自动复用已预置的 owner-private managed root，缺失时零目标变更并给出一次性管理员初始化命令；managed marker 保持后续启动和升级路径一致。有新版本时升级仍通过 authenticated RPC 原子拒绝活动 Job、停止旧 daemon、执行渠道升级、仅恢复原本运行的 daemon，并验证精确的新 binary/daemon 版本。 | [ADR-0019](../architecture/adr/0019-managed-install-root-preflight.md)、[安装说明](../release/INSTALL.md)、[安装器测试](../../internal/installscript/install_test.go)、[路径测试](../../internal/platform/paths_test.go)、[升级编排测试](../../internal/app/upgrade_command_test.go)与[渠道测试](../../internal/selfupdate/selfupdate_test.go) |
 
 ## 更新规则
 

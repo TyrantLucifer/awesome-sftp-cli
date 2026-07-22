@@ -90,6 +90,51 @@ func TestResolvePathsLinuxUsesAbsoluteXDGDirectories(t *testing.T) {
 	}
 }
 
+func TestResolvePathsManagedInstallRootPinsPersistentPaths(t *testing.T) {
+	sources := pathSources{
+		goos:          "linux",
+		euid:          1000,
+		homeDir:       "/untrusted/home/alice",
+		userConfigDir: "/untrusted/home/alice/.config",
+		userCacheDir:  "/untrusted/home/alice/.cache",
+		installRoot:   "/var/lib/amsftp-users/1000",
+		environment: map[string]string{
+			"XDG_CONFIG_HOME": "/ignored/config",
+			"XDG_STATE_HOME":  "/ignored/../state",
+			"XDG_CACHE_HOME":  "/ignored/cache",
+			"XDG_RUNTIME_DIR": "/run/user/1000",
+		},
+	}
+
+	got, diagnostics, err := resolvePaths(sources, Overrides{})
+	if err != nil {
+		t.Fatalf("resolvePaths(): %v", err)
+	}
+	if len(diagnostics) != 0 {
+		t.Fatalf("diagnostics = %#v, want none", diagnostics)
+	}
+
+	checks := map[string]string{
+		"config":   got.ConfigFile,
+		"state":    got.StateDir,
+		"database": got.DatabaseFile,
+		"log":      got.LogFile,
+		"cache":    got.CacheDir,
+	}
+	wants := map[string]string{
+		"config":   "/var/lib/amsftp-users/1000/config/config.json",
+		"state":    "/var/lib/amsftp-users/1000/state",
+		"database": "/var/lib/amsftp-users/1000/state/amsftp.db",
+		"log":      "/var/lib/amsftp-users/1000/state/log/daemon.jsonl",
+		"cache":    "/var/lib/amsftp-users/1000/cache",
+	}
+	for name, value := range checks {
+		if value != wants[name] {
+			t.Errorf("%s = %q, want %q", name, value, wants[name])
+		}
+	}
+}
+
 func TestResolvePathsTreatsRelativeXDGValuesAsUnset(t *testing.T) {
 	sources := pathSources{
 		goos:          "linux",

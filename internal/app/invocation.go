@@ -15,6 +15,7 @@ const (
 	RoleUpgrade       Role = "upgrade"
 	RoleSupportBundle Role = "support-bundle"
 	RoleCompletion    Role = "completion"
+	RoleInstall       Role = "__install"
 )
 
 type Invocation struct {
@@ -56,6 +57,8 @@ func ParseInvocation(args []string) (Invocation, error) {
 		return Invocation{Role: RoleSupportBundle}, nil
 	case string(RoleCompletion):
 		return Invocation{Role: RoleCompletion}, nil
+	case string(RoleInstall):
+		return Invocation{Role: RoleInstall}, nil
 	case "--help":
 		return Invocation{Role: RoleClient, ShowHelp: true}, nil
 	case "--version":

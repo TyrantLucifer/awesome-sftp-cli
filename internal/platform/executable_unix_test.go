@@ -76,6 +76,48 @@ func TestResolveTrustedExecutableFreezesValidatedSymlinkTarget(t *testing.T) {
 	}
 }
 
+func TestDiscoverManagedInstallRootPinsPersistentLayout(t *testing.T) {
+	root := privateTemporaryDirectory(t)
+	bin := filepath.Join(root, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	executable := filepath.Join(bin, "amsftp")
+	if err := os.WriteFile(executable, []byte("fake"), 0o700); err != nil { // #nosec G306 -- executable fixture intentionally requires execute permission.
+		t.Fatal(err)
+	}
+	marker := filepath.Join(root, ManagedInstallRootMarker)
+	if err := os.WriteFile(marker, []byte(ManagedInstallRootMarkerContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	got, err := discoverManagedInstallRoot(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != root {
+		t.Fatalf("managed root = %q, want %q", got, root)
+	}
+
+	if err := os.WriteFile(marker, []byte("unknown\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverManagedInstallRoot(executable); err == nil {
+		t.Fatal("invalid marker accepted")
+	}
+}
+
+func TestPreflightInstallationAcceptsProvisionedManagedRootWithoutMutation(t *testing.T) {
+	root := privateTemporaryDirectory(t)
+	if err := PreflightInstallation(root, true); err != nil {
+		t.Fatal(err)
+	}
+	for _, child := range []string{"bin", "config", "state", "cache", ManagedInstallRootMarker} {
+		if _, err := os.Lstat(filepath.Join(root, child)); !os.IsNotExist(err) {
+			t.Fatalf("preflight created %s: %v", child, err)
+		}
+	}
+}
+
 func TestSameExecutableIdentityRejectsSameInodeRewrite(t *testing.T) {
 	directory := privateTemporaryDirectory(t)
 	path := filepath.Join(directory, "ssh")

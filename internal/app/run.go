@@ -21,6 +21,7 @@ type Handlers struct {
 	Upgrade       Handler
 	SupportBundle Handler
 	Completion    Handler
+	Install       Handler
 }
 
 func Run(
@@ -87,6 +88,8 @@ func (h Handlers) handler(role Role) Handler {
 		return h.SupportBundle
 	case RoleCompletion:
 		return h.Completion
+	case RoleInstall:
+		return h.Install
 	default:
 		return nil
 	}

@@ -4,7 +4,7 @@ AMSFTP exposes stable doctor and domain codes without persisting raw error cause
 
 | Kind | Code | Meaning | Bounded action |
 |---|---|---|---|
-| doctor | `config` | Configuration could not be validated or is not usable. | Run `amsftp config print-effective`; correct the reported configuration source without replacing unrelated settings. |
+| doctor | `config` | Configuration or the current AMSFTP installation path could not be validated. `install_path_untrusted` means the executable has a symlink, foreign-owned ancestor, unsafe mode/ACL, or invalid managed-root marker. | Re-run the verified installer. If it requests a managed root, have an administrator provision the printed owner-private path and rerun; do not widen permissions or trust another UID. Otherwise run `amsftp config print-effective` and correct only the reported configuration source. |
 | doctor | `runtime_directory` | The per-user runtime directory is absent, unsafe, or inaccessible. | Restore ownership and private permissions for the reported runtime directory, then rerun `amsftp doctor`. |
 | doctor | `socket` | The daemon socket is absent, stale, unsafe, or unreachable. | Check `amsftp daemon status`; start the daemon normally and do not delete an active socket by hand. |
 | doctor | `daemon` | The daemon health probe did not return a valid healthy response. | Run `amsftp daemon status`; restart only your own AMSFTP daemon if the status remains unhealthy. |

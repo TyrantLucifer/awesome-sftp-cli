@@ -26,12 +26,14 @@ const doctorLowDiskBytes = uint64(64 * 1024 * 1024)
 type doctorRuntime struct {
 	paths              platform.Paths
 	purpose            platform.ValidationPurpose
+	selfExecutable     string
 	pathExists         func(string) (bool, error)
 	loadConfig         func(string) (config.Config, error)
 	validateDirectory  func(string, platform.ValidationPurpose) error
 	validateSocket     func(string, platform.ValidationPurpose) error
 	dialDaemon         func(context.Context, string, platform.ValidationPurpose) error
 	validateExecutable func(string) error
+	resolveExecutable  func(string) (string, error)
 	inspectDatabase    func(context.Context, string) (uint64, error)
 	availableBytes     func(string) (uint64, error)
 	inspectOpenSSH     func(context.Context, string) (openssh.ConfigInspection, error)
@@ -53,8 +55,9 @@ func runDoctor(ctx context.Context, args []string, stdout io.Writer, _ io.Writer
 
 func systemDoctorRuntime(paths platform.Paths) doctorRuntime {
 	purpose := platform.RuntimeValidationPurpose(paths)
+	selfExecutable, _ := os.Executable()
 	return doctorRuntime{
-		paths: paths, purpose: purpose,
+		paths: paths, purpose: purpose, selfExecutable: selfExecutable,
 		pathExists: func(path string) (bool, error) {
 			_, err := os.Lstat(path)
 			if errors.Is(err, os.ErrNotExist) {
@@ -75,6 +78,7 @@ func systemDoctorRuntime(paths platform.Paths) doctorRuntime {
 			return connection.Close()
 		},
 		validateExecutable: platform.ValidateExecutable,
+		resolveExecutable:  platform.ResolveTrustedExecutable,
 		inspectDatabase:    statefs.InspectDatabase,
 		availableBytes:     statefs.AvailableFilesystemBytes,
 		inspectOpenSSH: func(ctx context.Context, alias string) (openssh.ConfigInspection, error) {
@@ -144,6 +148,13 @@ func doctorProbes(runtime doctorRuntime, endpoint string) map[doctor.Code]doctor
 		configOnce.Do(func() { applicationConfig, configErr = runtime.loadConfig(runtime.paths.ConfigFile) })
 		return applicationConfig, configErr
 	}
+	installPathTrusted := func() bool {
+		if runtime.selfExecutable == "" || runtime.resolveExecutable == nil {
+			return false
+		}
+		_, err := runtime.resolveExecutable(runtime.selfExecutable)
+		return err == nil
+	}
 
 	var endpointOnce sync.Once
 	var endpointConfig openssh.ConfigInspection
@@ -155,6 +166,9 @@ func doctorProbes(runtime doctorRuntime, endpoint string) map[doctor.Code]doctor
 
 	return map[doctor.Code]doctor.Probe{
 		doctor.CheckConfig: func(context.Context) (doctor.Observation, error) {
+			if !installPathTrusted() {
+				return doctorObservation(doctor.Fail, "install_path_untrusted"), nil
+			}
 			exists, err := runtime.pathExists(runtime.paths.ConfigFile)
 			if err != nil {
 				return doctor.Observation{}, err

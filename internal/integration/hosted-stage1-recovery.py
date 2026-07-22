@@ -85,9 +85,11 @@ VT_OBSERVER = os.environ["AMSFTP_RECOVERY_VT_OBSERVER"]
 PICKER_MARKER = os.environ["AMSFTP_RECOVERY_PICKER_MARKER"]
 
 
-def wait_until(predicate, description, timeout=20):
+def wait_until(predicate, description, timeout=20, on_poll=None):
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
+        if on_poll is not None:
+            on_poll()
         value = predicate()
         if value:
             return value
@@ -155,6 +157,45 @@ def single_daemon(exclude=None):
     if len(processes) != 1 or processes[0] == exclude:
         return None
     return processes[0]
+
+
+def runtime_socket_inode():
+    path = os.path.join(os.environ["XDG_RUNTIME_DIR"], "amsftp", "control-v1.sock")
+    try:
+        return os.stat(path, follow_symlinks=False).st_ino
+    except FileNotFoundError:
+        return None
+
+
+def replacement_runtime_socket(old_inode):
+    inode = runtime_socket_inode()
+    if inode is None or inode == old_inode:
+        return None
+    return inode
+
+
+def report_daemon_recovery_state():
+    runtime_dir = os.path.join(os.environ["XDG_RUNTIME_DIR"], "amsftp")
+    lock_path = os.path.join(runtime_dir, "daemon.lock")
+    socket_inode = runtime_socket_inode()
+    lock_state = "absent"
+    if os.path.exists(lock_path):
+        try:
+            lock_fd = os.open(lock_path, os.O_RDWR)
+        except FileNotFoundError:
+            pass
+        else:
+            try:
+                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                lock_state = "available"
+            except BlockingIOError:
+                lock_state = "held"
+            finally:
+                os.close(lock_fd)
+    sys.stderr.write(
+        f"daemon recovery state: daemon_pids={daemon_pids()} "
+        f"socket_inode={socket_inode} instance_lock={lock_state}\n"
+    )
 
 
 def set_size(fd, columns, rows):
@@ -372,9 +413,9 @@ def main():
 
     fresh_picker = PtyApp([])
     try:
-        fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "Type an SSH alias;")
+        fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "↑/↓ select · Enter open · Esc quit")
         fresh_picker.send("\x1b[B\x1b[B")
-        fresh_picker.wait_for_screen("> host       recovery-picker")
+        fresh_picker.wait_for_screen("▌ host       recovery-picker")
         fresh_picker.send("\r")
         fresh_picker.wait_for_screen(os.path.basename(PICKER_MARKER))
         fresh_picker.close()
@@ -398,9 +439,9 @@ def main():
     try:
         workspace_picker.wait_for_screen("Open workspace or SSH host", "recovery-stage1")
         workspace_picker.send("recovery-stage1")
-        workspace_picker.wait_for_screen("Host: recovery-stage1")
+        workspace_picker.wait_for_screen("SSH › recovery-stage1")
         workspace_picker.send("\x1b[B")
-        workspace_picker.wait_for_screen("> workspace  recovery-stage1")
+        workspace_picker.wait_for_screen("▌ workspace  recovery-stage1")
         workspace_picker.send("\r")
         workspace_picker.wait_for_screen("a-parent-marker.txt", "b-stage1-marker.txt")
         workspace_picker.close()
@@ -432,26 +473,34 @@ def main():
         app.wait_for("a-recovered-marker.txt", "b-unaffected-marker.txt", start=checkpoint)
         app.resize(200)
 
-        old_daemon = wait_until(single_daemon, "single daemon PID")
+        old_daemon = wait_until(single_daemon, "single daemon PID", on_poll=app._drain)
+        old_socket_inode = wait_until(runtime_socket_inode, "daemon control socket", on_poll=app._drain)
         os.kill(old_daemon, signal.SIGTERM)
-        wait_until(lambda: old_daemon not in daemon_pids(), "old daemon exit")
         with open(os.path.join(A_ROOT, "a-daemon-marker.txt"), "w", encoding="utf-8") as handle:
             handle.write("a-daemon\n")
         with open(os.path.join(B_ROOT, "b-daemon-marker.txt"), "w", encoding="utf-8") as handle:
             handle.write("b-daemon\n")
-        new_daemon = wait_until(lambda: single_daemon(old_daemon), "replacement daemon", timeout=30)
-        if new_daemon == old_daemon:
-            raise RuntimeError("daemon PID did not change")
+        wait_until(lambda: old_daemon not in daemon_pids(), "old daemon exit", on_poll=app._drain)
+        new_socket_inode = wait_until(
+            lambda: replacement_runtime_socket(old_socket_inode),
+            "replacement daemon control socket",
+            timeout=30,
+            on_poll=app._drain,
+        )
+        if new_socket_inode == old_socket_inode:
+            raise RuntimeError("daemon control socket inode did not change")
         app.wait_for_screen("a-daemon-marker.txt", "b-daemon-marker.txt", timeout=30)
         assert_private_runtime()
         app.close()
 
-        terminate_if_running(new_daemon)
+        for daemon_pid in daemon_pids():
+            terminate_if_running(daemon_pid)
         wait_until(lambda: not daemon_pids(), "final daemon exit")
     except Exception:
         app._drain()
         printable = bytes(byte for byte in app.output[-12000:] if byte in b"\n\r\t" or 32 <= byte < 127)
         sys.stderr.write(printable.decode(errors="replace")[-4000:] + "\n")
+        report_daemon_recovery_state()
         app.abort()
         raise
     finally:

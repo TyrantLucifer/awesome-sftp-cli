@@ -56,20 +56,47 @@ func TestHostedStage1RecoveryExercisesNoArgumentPicker(t *testing.T) {
 	}
 	for _, required := range []string{
 		`fresh_picker = PtyApp([])`,
-		`fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "Type an SSH alias;`,
+		`fresh_picker.wait_for_screen("Open workspace or SSH host", "recovery-a", "recovery-b", "recovery-picker", "↑/↓ select · Enter open · Esc quit")`,
 		`fresh_picker.send("\x1b[B\x1b[B")`,
-		`fresh_picker.wait_for_screen("> host       recovery-picker")`,
+		`fresh_picker.wait_for_screen("▌ host       recovery-picker")`,
 		`fresh_picker.send("\r")`,
 		`fresh_picker.wait_for_screen(os.path.basename(PICKER_MARKER))`,
 		`workspace_picker = PtyApp([])`,
 		`workspace_picker.send("recovery-stage1")`,
-		`workspace_picker.wait_for_screen("Host: recovery-stage1")`,
+		`workspace_picker.wait_for_screen("SSH › recovery-stage1")`,
 		`workspace_picker.send("\x1b[B")`,
-		`workspace_picker.wait_for_screen("> workspace  recovery-stage1")`,
+		`workspace_picker.wait_for_screen("▌ workspace  recovery-stage1")`,
 		`workspace_picker.wait_for_screen("a-parent-marker.txt", "b-stage1-marker.txt")`,
+		`def wait_until(predicate, description, timeout=20, on_poll=None):`,
+		`old_socket_inode = wait_until(runtime_socket_inode, "daemon control socket", on_poll=app._drain)`,
+		`wait_until(lambda: old_daemon not in daemon_pids(), "old daemon exit", on_poll=app._drain)`,
+		`replacement_runtime_socket(old_socket_inode)`,
+		`on_poll=app._drain,`,
+		`report_daemon_recovery_state()`,
 	} {
 		if !strings.Contains(string(script), required) {
 			t.Fatalf("Stage 1 recovery harness does not require %q", required)
+		}
+	}
+	markerWrite := strings.Index(string(script), `with open(os.path.join(A_ROOT, "a-daemon-marker.txt")`)
+	oldExitWait := strings.Index(string(script), `wait_until(lambda: old_daemon not in daemon_pids(), "old daemon exit", on_poll=app._drain)`)
+	if markerWrite < 0 || oldExitWait < 0 || markerWrite > oldExitWait {
+		t.Fatal("Stage 1 recovery markers must be frozen before waiting for old daemon teardown")
+	}
+}
+
+func TestHostedAuthPinsExpectTerminalGeometry(t *testing.T) {
+	script, err := os.ReadFile("hosted-auth.sh")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		`match_max 200000`,
+		`set stty_init "rows 30 columns 200"`,
+		`log_file -noappend $env(AMSFTP_OUTPUT)`,
+	} {
+		if !strings.Contains(string(script), required) {
+			t.Fatalf("hosted authentication harness does not require %q", required)
 		}
 	}
 }
@@ -82,8 +109,10 @@ func TestHostedKerberosFailureKeepsTUIResponsive(t *testing.T) {
 	for _, required := range []string{
 		`"event":"rpc_request_failed"`,
 		`"error_code":"auth_required"`,
-		`(failed)`,
+		`Connection failed`,
 		`-exact "failed" {}`,
+		`set synchronized_update_end "\033\[?2026l"`,
+		`-exact $synchronized_update_end {}`,
 		`set stty_init "rows 30 columns 200"`,
 		`log_file -a -noappend $env(AMSFTP_OUTPUT)`,
 		`vt-observer`,

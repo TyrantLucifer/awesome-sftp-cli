@@ -236,6 +236,7 @@ match_max 200000
 log_user 0
 log_file -a -noappend $env(AMSFTP_OUTPUT)
 set stty_init "rows 30 columns 200"
+set synchronized_update_end "\033\[?2026l"
 spawn -noecho /bin/sh -c {exec "$AMSFTP_INSTALLED" "$AMSFTP_LOCATION" /tmp 2>"$AMSFTP_STDERR"}
 if {$env(AMSFTP_EXPECT_SUCCESS) == "yes"} {
   expect {
@@ -266,6 +267,11 @@ for {set attempt 0} {$attempt < 30} {incr attempt} {
       -exact "failed" {}
       eof { exit 90 }
       timeout { exit 97 }
+    }
+    expect {
+      -exact $synchronized_update_end {}
+      eof { exit 90 }
+      timeout { exit 98 }
     }
     send -- "q"
     expect {
@@ -344,7 +350,7 @@ run_case() {
       sed -n '1,120p' "${daemon_log}" >&2 || true
       exit 1
     fi
-    if ! "${vt_observer}" -columns 200 -rows 30 '(failed)' <"${output}"; then
+    if ! "${vt_observer}" -columns 200 -rows 30 'Connection failed' <"${output}"; then
       printf 'Kerberos case %s did not render its authentication failure\n' "${name}" >&2
       /usr/bin/strings "${output}" 2>/dev/null | sed -n '1,160p' >&2 || true
       exit 1

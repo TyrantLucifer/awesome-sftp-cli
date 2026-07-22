@@ -7,7 +7,7 @@
 - PR #6 已合并到 `main`，合并提交为 `1f8bef8c3055150c6e47d05eab30f79d02396e04`。
 - 一键安装与发布自动化 PR #9 已合并到 `main`，合并提交为 `7e6f6986af45712ae81d826001f0dc2454804a15`。
 - 内部预览版 [`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1) 已发布；候选提交为 `541c3c7434d05bc5366950c53c8b1f1774d72e38`。
-- 公开预览版 [`v0.1.12`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.12) 为 TUI 增加选中对象的上下文动作栏和常驻构建版本标识；沿用 macOS/Linux 渠道感知升级、四平台归档、checksum、SBOM、一键安装脚本与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
+- 公开预览版 [`v0.1.13`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.13) 为独立安装增加目标发布前路径预检和 owner-private managed root：默认 HOME 含 symlink、foreign-owner ancestor 或不安全权限时自动复用已预置 `/var/lib/amsftp-users/<uid>`，缺失时保持目标零变更并给出一次性管理员初始化命令；布局标记让后续 daemon、配置、状态、缓存和升级保持同一可信根。沿用 macOS/Linux 渠道感知升级、四平台归档、checksum、SBOM 与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
 - Stage 0–6 的实现阶段已经结束；历史计划和验证流水从活动文档中移除，通过 Git 历史追溯。
 - 仓库现在进入“内部预览反馈与下一阶段迭代准备”状态，不宣称公开 1.0 已完成。
 - 内部预览反馈已修复 Preview drawer 的逐行滚动、小文件 EOF range 越界与空文件零长度读取问题。
@@ -22,6 +22,7 @@
 - 内部预览反馈已重排 TUI 主状态栏：恢复入口和连接状态改为用户可读文案并前置，默认模式、capability generation、raw Helper 原因和默认 hidden 状态不再挤占主视图；缓存策略保留显示但使用 automatic/temporary/offline 语义。
 - 内部预览反馈已让 Preview 抽屉按终端高度在 6–16 行内自适应，常见 24 行终端可显示 10 行内容；Jobs 与 Log 继续保持固定有界高度。
 - 内部预览反馈已将 `/` 改为当前已加载目录项的模糊跳转：方向键选择，Enter 定位后恢复完整列表，Esc 恢复搜索前位置，不产生递归远端读取。
+- 内部预览反馈已修复 TUI 在 daemon 退出后若没有新的 RPC 错误便停留在旧视图的问题；客户端现在订阅控制连接结束，最多等待 30 秒完成 owner-only 实例锁交接，再由新 daemon 持锁复验或接管 control socket 并重建两栏。
 - TUI 已采用显式 Graphite/Cyan 语义主题：活动与非活动栏、光标、多选、连接状态、抽屉和弹窗拥有独立层级；文件元数据按栏宽渐进收缩，主状态栏优先保留恢复、失败和当前动作，同时继续维持大目录窗口化渲染。
 - CI 已拆为普通 PR/main 使用的影响感知 `Fast CI`、release 分支/tag/手动触发的完整 `Release Gates`，以及定时 `Nightly`；普通改动不再重复运行发布矩阵。
 - 严格 `X.Y.Z` 公开预览的一键安装/升级脚本、Homebrew formula 生成器与 tag 发布 workflow 已进入主线；脚本校验 checksum、原子替换 binary、保留上一版并按 daemon 契约完成启停验证。
@@ -39,6 +40,6 @@
 
 ## 下一步
 
-`v0.1.12` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
+`v0.1.13` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
 
 开发前阅读根目录 [AGENTS.md](../../AGENTS.md)，并只运行与改动风险相称的定向测试。公开 release 仍必须单独通过 [RC 门禁](../release/RC-GATES.md)。
