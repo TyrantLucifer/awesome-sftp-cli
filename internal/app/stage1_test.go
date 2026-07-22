@@ -526,6 +526,33 @@ func TestDaemonAutostartRequiresProvenSocketAbsence(t *testing.T) {
 	}
 }
 
+func TestDaemonLossRecoveryDelegatesStaleSocketRemovalToLockedDaemon(t *testing.T) {
+	root := testkit.PersistentTempDir(t)
+	existing := filepath.Join(root, "stale-control.sock")
+	if err := os.WriteFile(existing, []byte("preserve"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	connectErr := errors.New("lost daemon connection")
+	if err := verifyDaemonAutostartPath(existing, connectErr, false); !errors.Is(err, errDaemonControlSocketStillPresent) {
+		t.Fatalf("cold start socket check = %v, want stale socket refusal", err)
+	}
+	if err := verifyDaemonAutostartPath(existing, connectErr, true); err != nil {
+		t.Fatalf("loss recovery socket check = %v, want locked daemon cleanup", err)
+	}
+	content, err := os.ReadFile(existing) //nolint:gosec // recovery launcher must leave cleanup to the locked daemon
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(content) != "preserve" {
+		t.Fatalf("recovery launcher changed stale socket stand-in to %q", content)
+	}
+
+	uninspectable := filepath.Join(root, strings.Repeat("x", 5000))
+	if err := verifyDaemonAutostartPath(uninspectable, connectErr, true); err == nil {
+		t.Fatal("loss recovery accepted an uninspectable control socket path")
+	}
+}
+
 func TestDaemonRejectsInvalidConfigurationBeforePersistentStateMutation(t *testing.T) {
 	runtimeRoot := t.TempDir()
 	persistent := testkit.PersistentTempDir(t)

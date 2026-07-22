@@ -470,10 +470,18 @@ func connectionFailureState(model tui.Model, pane tui.PaneID, switching bool) do
 }
 
 func connectDaemon(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
-	return connectDaemonWithExecutable(ctx, paths, purpose, "")
+	return connectDaemonWithExecutableMode(ctx, paths, purpose, "", false)
+}
+
+func connectDaemonRecovering(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose) (*daemon.Client, error) {
+	return connectDaemonWithExecutableMode(ctx, paths, purpose, "", true)
 }
 
 func connectDaemonWithExecutable(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, executable string) (*daemon.Client, error) {
+	return connectDaemonWithExecutableMode(ctx, paths, purpose, executable, false)
+}
+
+func connectDaemonWithExecutableMode(ctx context.Context, paths platform.Paths, purpose platform.ValidationPurpose, executable string, recovering bool) (*daemon.Client, error) {
 	connect := func() (*daemon.Client, error) {
 		connection, err := platform.DialControlSocket(ctx, paths.ControlSocket, purpose)
 		if err != nil {
@@ -485,7 +493,7 @@ func connectDaemonWithExecutable(ctx context.Context, paths platform.Paths, purp
 	if connectErr == nil {
 		return client, nil
 	}
-	if err := requireAbsentControlSocketForAutostart(paths.ControlSocket, connectErr); err != nil {
+	if err := verifyDaemonAutostartPath(paths.ControlSocket, connectErr, recovering); err != nil {
 		return nil, err
 	}
 	if executable == "" {
@@ -535,6 +543,14 @@ func requireAbsentControlSocketForAutostart(path string, connectErr error) error
 	return fmt.Errorf("%w: %w", errDaemonControlSocketStillPresent, connectErr)
 }
 
+func verifyDaemonAutostartPath(path string, connectErr error, recovering bool) error {
+	err := requireAbsentControlSocketForAutostart(path, connectErr)
+	if recovering && errors.Is(err, errDaemonControlSocketStillPresent) {
+		return nil
+	}
+	return err
+}
+
 func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) error {
 	invocation, err := parseClientInvocation(args)
 	if err != nil {
@@ -561,8 +577,6 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	previewRenderLimits, previewImageLimits := runtimePreviewLimits(applicationConfig.Preview)
 	filenameSearchBudget, contentSearchBudget := runtimeSearchBudgets(applicationConfig.Search)
 	clientReconnectPolicy, _ := runtimeRetrySettings(applicationConfig.Retry)
-	daemonRecoveryPolicy := clientReconnectPolicy
-	daemonRecoveryPolicy.DaemonShutdownGrace = daemonReadyTimeout
 	directPolicy := runtimeDirectPolicy(applicationConfig.Integrity, applicationConfig.DirectTransfer)
 	terminalImageCapability := newTerminalImageCapabilityState(probeTerminalImageCapability(environment))
 	reprobeTerminalImages := func() {
@@ -1241,8 +1255,8 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		}
 		go func() {
 			result := daemonRecoveryResult{}
-			result.client, result.err = connectDaemonAfterLoss(runCtx, daemonRecoveryPolicy, func(ctx context.Context) (*daemon.Client, error) {
-				return connectDaemon(ctx, paths, purpose)
+			result.client, result.err = connectDaemonAfterLoss(runCtx, clientReconnectPolicy, func(ctx context.Context) (*daemon.Client, error) {
+				return connectDaemonRecovering(ctx, paths, purpose)
 			})
 			if result.err == nil {
 				result.local, result.err = daemonLocalEndpoint(runCtx, result.client)

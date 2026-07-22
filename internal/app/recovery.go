@@ -82,13 +82,10 @@ func (r *paneRecovery) listingCompleted(page tui.ListingPage) bool {
 }
 
 type reconnectPolicy struct {
-	Delays              []time.Duration
-	DaemonShutdownGrace time.Duration
-	Sleep               func(context.Context, time.Duration) error
-	Jitter              func(time.Duration) time.Duration
+	Delays []time.Duration
+	Sleep  func(context.Context, time.Duration) error
+	Jitter func(time.Duration) time.Duration
 }
-
-const daemonLossShutdownPollInterval = 25 * time.Millisecond
 
 var errDaemonControlSocketStillPresent = errors.New("control socket still exists after connection failure")
 
@@ -155,10 +152,7 @@ func connectDaemonAfterLoss(
 	if policy.Sleep == nil {
 		policy.Sleep = defaultReconnectPolicy().Sleep
 	}
-	var (
-		lastErr error
-		waited  time.Duration
-	)
+	var lastErr error
 	for index := 0; index <= len(policy.Delays); index++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
@@ -169,7 +163,7 @@ func connectDaemonAfterLoss(
 		}
 		lastErr = err
 		if index == len(policy.Delays) {
-			break
+			return nil, lastErr
 		}
 		delay := policy.Delays[index]
 		if policy.Jitter != nil {
@@ -178,23 +172,6 @@ func connectDaemonAfterLoss(
 		if err := policy.Sleep(ctx, delay); err != nil {
 			return nil, err
 		}
-		waited += delay
-	}
-	remaining := policy.DaemonShutdownGrace - waited
-	for errors.Is(lastErr, errDaemonControlSocketStillPresent) && remaining > 0 {
-		delay := min(daemonLossShutdownPollInterval, remaining)
-		if err := policy.Sleep(ctx, delay); err != nil {
-			return nil, err
-		}
-		remaining -= delay
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		client, err := connect(ctx)
-		if err == nil {
-			return client, nil
-		}
-		lastErr = err
 	}
 	return nil, lastErr
 }
