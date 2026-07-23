@@ -7,7 +7,7 @@
 - PR #6 已合并到 `main`，合并提交为 `1f8bef8c3055150c6e47d05eab30f79d02396e04`。
 - 一键安装与发布自动化 PR #9 已合并到 `main`，合并提交为 `7e6f6986af45712ae81d826001f0dc2454804a15`。
 - 内部预览版 [`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1) 已发布；候选提交为 `541c3c7434d05bc5366950c53c8b1f1774d72e38`。
-- 公开预览版 [`v0.1.16`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.16) 修复 durable 256 KiB 进度与 500 ms 轮询共同造成的速度阶梯抖动：TUI 改用有界四秒滚动平均；relay checkpoint、Job JSON 和选中任务详情同时提供不含路径的 read/write/sync/stat/checkpoint 累计阶段耗时，用于区分网络、目标同步和状态持久化瓶颈。它不改变每块 sync、checkpoint、最终可见性或恢复语义，并沿用 `v0.1.15` 的可诊断升级流程、四平台归档、checksum、SBOM 与 Homebrew formula 渠道，历史严格版本 tag 保持不可变。
+- 公开预览版 [`v0.1.17`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.17) 修复标准 SFTP 下载在高延迟链路上每 256 KiB 等待一轮响应造成的持续吞吐损失：未限速 relay 在 Provider 内保持最多 1 MiB、32 个 32 KiB 请求的有界读取窗口，Worker 仍只按 256 KiB durable 块写入、同步和 checkpoint；启用 global、Endpoint 或 Job 限速时自动回到精确计量读取。请求窗口、内存和 goroutine 均纳入硬资源账本，暂停、恢复、最终可见性与验证语义不变。
 - Stage 0–6 的实现阶段已经结束；历史计划和验证流水从活动文档中移除，通过 Git 历史追溯。
 - 仓库现在进入“内部预览反馈与下一阶段迭代准备”状态，不宣称公开 1.0 已完成。
 - 内部预览反馈已修复 Preview drawer 的逐行滚动、小文件 EOF range 越界与空文件零长度读取问题。
@@ -40,6 +40,6 @@
 
 ## 下一步
 
-`v0.1.16` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
+`v0.1.17` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
 
-开发前阅读根目录 [AGENTS.md](../../AGENTS.md)，并只运行与改动风险相称的定向测试。公开 release 仍必须单独通过 [RC 门禁](../release/RC-GATES.md)。
+开发前阅读根目录 [AGENTS.md](../../AGENTS.md)，并只运行与改动风险相称的定向测试。普通公开预览由不可变 tag 触发发布 workflow；历史 [RC 门禁](../release/RC-GATES.md)不作为严格 patch 的发布阻断条件。

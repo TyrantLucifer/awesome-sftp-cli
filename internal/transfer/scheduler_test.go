@@ -13,6 +13,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
@@ -50,6 +51,37 @@ func TestHardResourceCeilingsAreExactAndCannotBeExpanded(t *testing.T) {
 	expanded.FileDescriptors++
 	if _, err := TightenResourceLimits(expanded); !errors.Is(err, ErrResourceLimitExpansion) {
 		t.Fatalf("expansion error = %v, want ErrResourceLimitExpansion", err)
+	}
+}
+
+func TestTransferSchedulerAllowsReadAheadOnlyWithoutRateControl(t *testing.T) {
+	request := BandwidthRequest{
+		JobID: "job-read-ahead", EndpointID: "source", PeerEndpointID: "destination", Class: ScheduleBulk,
+		Bytes: TransferScheduleQuantum,
+	}
+	tests := []struct {
+		name    string
+		policy  SchedulerPolicy
+		request BandwidthRequest
+		want    bool
+	}{
+		{name: "unlimited", request: request, want: true},
+		{name: "global rate", policy: SchedulerPolicy{GlobalBytesPerSecond: 1}, request: request},
+		{name: "endpoint rate", policy: SchedulerPolicy{EndpointBytesPerSecond: 1}, request: request},
+		{name: "default job rate", policy: SchedulerPolicy{JobBytesPerSecond: 1}, request: request},
+		{name: "frozen job rate", request: func() BandwidthRequest {
+			rated := request
+			rated.JobBytesPerSecond = 1
+			return rated
+		}()},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(1_000, 0)), test.policy)
+			if got := scheduler.AllowsReadAhead(test.request); got != test.want {
+				t.Fatalf("AllowsReadAhead() = %t, want %t", got, test.want)
+			}
+		})
 	}
 }
 
@@ -687,6 +719,24 @@ func TestExecutionResourceUsageAccountsSSHConnectionsAndDirectHelper(t *testing.
 	if usage.ActiveJobs != 1 || usage.Connections != 2 || usage.SSHProcesses != 2 ||
 		usage.HelperProcesses != 1 || usage.FileDescriptors != 8 || usage.Goroutines != 2 || usage.MemoryBytes != 4096 {
 		t.Fatalf("execution resource usage = %+v", usage)
+	}
+}
+
+func TestExecutionResourceUsageAccountsBoundedSFTPReadAhead(t *testing.T) {
+	t.Parallel()
+
+	usage := executionResourceUsage(Plan{
+		Route:          RouteSFTPRelay,
+		BufferBytes:    4096,
+		SourceEndpoint: domain.Endpoint{Kind: domain.EndpointSSH},
+	})
+	wantGoroutines := 2 + providerapi.MaxReadAheadBytes/(32<<10) + 2
+	if usage.Goroutines != wantGoroutines {
+		t.Fatalf("Goroutines = %d, want %d", usage.Goroutines, wantGoroutines)
+	}
+	wantMemory := uint64(4096 + providerapi.MaxReadAheadBytes)
+	if usage.MemoryBytes != wantMemory {
+		t.Fatalf("MemoryBytes = %d, want %d", usage.MemoryBytes, wantMemory)
 	}
 }
 
