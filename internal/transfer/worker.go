@@ -88,11 +88,16 @@ type relayReadResult struct {
 	err      error
 }
 
+type relayReadRequest struct {
+	buffer         []byte
+	readAheadBytes uint32
+}
+
 type relayReader struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	handle   providerapi.ReadHandle
-	requests chan []byte
+	requests chan relayReadRequest
 	results  chan relayReadResult
 	done     chan struct{}
 }
@@ -101,7 +106,7 @@ func newRelayReader(ctx context.Context, handle providerapi.ReadHandle) *relayRe
 	readContext, cancel := context.WithCancel(ctx)
 	reader := &relayReader{
 		ctx: readContext, cancel: cancel, handle: handle,
-		requests: make(chan []byte, 1), results: make(chan relayReadResult, 1), done: make(chan struct{}),
+		requests: make(chan relayReadRequest, 1), results: make(chan relayReadResult, 1), done: make(chan struct{}),
 	}
 	go reader.run()
 	return reader
@@ -110,28 +115,34 @@ func newRelayReader(ctx context.Context, handle providerapi.ReadHandle) *relayRe
 func (reader *relayReader) run() {
 	defer close(reader.done)
 	for {
-		var buffer []byte
+		var request relayReadRequest
 		select {
 		case <-reader.ctx.Done():
 			return
-		case buffer = <-reader.requests:
+		case request = <-reader.requests:
 		}
 		startedAt := time.Now()
-		bytesRead, err := reader.handle.Read(reader.ctx, buffer)
+		var bytesRead int
+		var err error
+		if handle, ok := reader.handle.(providerapi.ReadAheadHandle); ok && len(request.buffer) < int(request.readAheadBytes) {
+			bytesRead, err = handle.ReadAhead(reader.ctx, request.buffer, request.readAheadBytes)
+		} else {
+			bytesRead, err = reader.handle.Read(reader.ctx, request.buffer)
+		}
 		duration := time.Since(startedAt)
 		select {
 		case <-reader.ctx.Done():
 			return
-		case reader.results <- relayReadResult{bytes: bytesRead, limit: len(buffer), duration: duration, err: err}:
+		case reader.results <- relayReadResult{bytes: bytesRead, limit: len(request.buffer), duration: duration, err: err}:
 		}
 	}
 }
 
-func (reader *relayReader) Start(buffer []byte) error {
+func (reader *relayReader) Start(buffer []byte, readAheadBytes uint32) error {
 	select {
 	case <-reader.done:
 		return reader.stoppedError()
-	case reader.requests <- buffer:
+	case reader.requests <- relayReadRequest{buffer: buffer, readAheadBytes: readAheadBytes}:
 		return nil
 	}
 }
@@ -220,6 +231,10 @@ type Worker struct {
 type bandwidthScheduler interface {
 	Wait(context.Context, BandwidthRequest) error
 	QuantumBytes() uint32
+}
+
+type bandwidthReadAheadPolicy interface {
+	AllowsReadAhead(BandwidthRequest) bool
 }
 
 func NewWorker(resolver Resolver, journal Journal) *Worker {
@@ -519,7 +534,19 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 				readBuffer = readBuffer[:quantum]
 			}
 		}
-		if err := reader.Start(readBuffer); err != nil {
+		bandwidthRequest := BandwidthRequest{
+			JobID: plan.JobID, EndpointID: plan.SourceEndpoint.ID, PeerEndpointID: plan.DestinationEndpoint.ID,
+			JobBytesPerSecond: plan.Bandwidth.JobBytesPerSecond, Class: ScheduleBulk,
+		}
+		readAheadBytes := uint32(0)
+		if !plan.Bandwidth.requiresControl() {
+			if worker.scheduler == nil {
+				readAheadBytes = providerapi.MaxReadAheadBytes
+			} else if policy, ok := worker.scheduler.(bandwidthReadAheadPolicy); ok && policy.AllowsReadAhead(bandwidthRequest) {
+				readAheadBytes = providerapi.MaxReadAheadBytes
+			}
+		}
+		if err := reader.Start(readBuffer, readAheadBytes); err != nil {
 			return err
 		}
 		readPending = true

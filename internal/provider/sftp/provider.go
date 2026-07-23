@@ -419,21 +419,89 @@ func (p *Provider) opError(code domain.Code, operation string, location *domain.
 }
 
 type readHandle struct {
-	mu       sync.Mutex
-	provider *Provider
-	file     *pkgsftp.File
-	location domain.Location
-	info     providerapi.ReadInfo
-	offset   int64
-	limit    *int64
-	read     int64
-	closed   bool
+	mu            sync.Mutex
+	provider      *Provider
+	file          *pkgsftp.File
+	location      domain.Location
+	info          providerapi.ReadInfo
+	offset        int64
+	limit         *int64
+	read          int64
+	readAhead     *io.PipeReader
+	readAheadDone chan struct{}
+	readAheadStop context.CancelFunc
+	closed        bool
 }
 
 func (h *readHandle) Info() providerapi.ReadInfo { return h.info }
 func (h *readHandle) Read(ctx context.Context, buffer []byte) (int, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.stopReadAheadLocked()
+	return h.readAtLocked(ctx, buffer)
+}
+
+func (h *readHandle) ReadAhead(ctx context.Context, buffer []byte, maxBytes uint32) (int, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if maxBytes < 2*sftpReadAheadPacketBytes || h.limit != nil || h.info.Fingerprint.Size == nil {
+		h.stopReadAheadLocked()
+		return h.readAtLocked(ctx, buffer)
+	}
+	if h.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, h.provider.mapError("read", &h.location, err)
+	}
+	if len(buffer) == 0 {
+		return 0, nil
+	}
+	size := int64(*h.info.Fingerprint.Size) //nolint:gosec // Overflow remains negative and is rejected before the pipeline starts.
+	if size >= 0 && h.offset+h.read >= size {
+		return 0, io.EOF
+	}
+	if h.readAhead == nil {
+		if err := h.startReadAheadLocked(maxBytes); err != nil {
+			return 0, err
+		}
+	}
+
+	type readResult struct {
+		bytes int
+		err   error
+	}
+	result := make(chan readResult, 1)
+	go func() {
+		bytesRead, err := io.ReadFull(h.readAhead, buffer)
+		result <- readResult{bytes: bytesRead, err: err}
+	}()
+
+	var read readResult
+	select {
+	case read = <-result:
+	case <-ctx.Done():
+		_ = h.readAhead.CloseWithError(ctx.Err())
+		read = <-result
+		h.stopReadAheadLocked()
+		h.read += int64(read.bytes)
+		return read.bytes, h.provider.mapError("read", &h.location, ctx.Err())
+	}
+	if errors.Is(read.err, io.ErrUnexpectedEOF) {
+		read.err = io.EOF
+	}
+	if read.bytes == 0 && read.err != nil && !errors.Is(read.err, io.EOF) {
+		h.stopReadAheadLocked()
+		return h.readAtLocked(ctx, buffer)
+	}
+	h.read += int64(read.bytes)
+	if read.err != nil && !errors.Is(read.err, io.EOF) {
+		return read.bytes, h.provider.mapError("read", &h.location, read.err)
+	}
+	return read.bytes, read.err
+}
+
+func (h *readHandle) readAtLocked(ctx context.Context, buffer []byte) (int, error) {
 	if h.closed {
 		return 0, io.ErrClosedPipe
 	}
@@ -459,6 +527,37 @@ func (h *readHandle) Read(ctx context.Context, buffer []byte) (int, error) {
 	}
 	return n, nil
 }
+
+func (h *readHandle) startReadAheadLocked(maxBytes uint32) error {
+	start := h.offset + h.read
+	size := int64(*h.info.Fingerprint.Size) //nolint:gosec // SFTP size was validated into the domain's uint64 fingerprint.
+	if start < 0 || uint64(start) > *h.info.Fingerprint.Size || size < 0 {
+		return h.provider.invalid("read", &h.location, "read offset exceeds supported size")
+	}
+	windowBytes := min(maxBytes, providerapi.MaxReadAheadBytes)
+	windowPackets := max(2, int(windowBytes/sftpReadAheadPacketBytes))
+	reader, writer := io.Pipe()
+	done := make(chan struct{})
+	streamContext, stop := context.WithCancel(context.Background())
+	h.readAhead = reader
+	h.readAheadDone = done
+	h.readAheadStop = stop
+	go streamReadAhead(streamContext, h.file, start, size, windowPackets, writer, done)
+	return nil
+}
+
+func (h *readHandle) stopReadAheadLocked() {
+	if h.readAhead == nil {
+		return
+	}
+	h.readAheadStop()
+	_ = h.readAhead.CloseWithError(io.ErrClosedPipe)
+	<-h.readAheadDone
+	h.readAhead = nil
+	h.readAheadDone = nil
+	h.readAheadStop = nil
+}
+
 func (h *readHandle) Close(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -466,6 +565,7 @@ func (h *readHandle) Close(ctx context.Context) error {
 		return nil
 	}
 	h.closed = true
+	h.stopReadAheadLocked()
 	if err := ctx.Err(); err != nil {
 		return h.provider.mapError("close_read", &h.location, err)
 	}
@@ -473,4 +573,138 @@ func (h *readHandle) Close(ctx context.Context) error {
 		return h.provider.mapError("close_read", &h.location, err)
 	}
 	return nil
+}
+
+const sftpReadAheadPacketBytes uint32 = 32 << 10
+
+type readAheadJob struct {
+	sequence int64
+	offset   int64
+	bytes    int
+}
+
+type readAheadResult struct {
+	job    readAheadJob
+	buffer []byte
+	bytes  int
+	err    error
+}
+
+func streamReadAhead(
+	ctx context.Context,
+	file *pkgsftp.File,
+	start int64,
+	size int64,
+	windowPackets int,
+	writer *io.PipeWriter,
+	done chan<- struct{},
+) {
+	defer close(done)
+	remaining := size - start
+	if remaining <= 0 {
+		_ = writer.Close()
+		return
+	}
+	packetCount := (remaining + int64(sftpReadAheadPacketBytes) - 1) / int64(sftpReadAheadPacketBytes)
+	workerCount := min(windowPackets, int(packetCount))
+	jobs := make(chan readAheadJob, workerCount)
+	results := make(chan readAheadResult, workerCount)
+	buffers := make(chan []byte, workerCount)
+	for range workerCount {
+		buffers <- make([]byte, sftpReadAheadPacketBytes)
+	}
+
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case job, ok := <-jobs:
+					if !ok {
+						return
+					}
+					var buffer []byte
+					select {
+					case <-ctx.Done():
+						return
+					case buffer = <-buffers:
+					}
+					n, err := file.ReadAt(buffer[:job.bytes], job.offset)
+					select {
+					case <-ctx.Done():
+						return
+					case results <- readAheadResult{job: job, buffer: buffer, bytes: n, err: err}:
+					}
+				}
+			}
+		}()
+	}
+
+	nextDispatch := int64(0)
+	dispatch := func() bool {
+		if nextDispatch >= packetCount {
+			return false
+		}
+		offset := start + nextDispatch*int64(sftpReadAheadPacketBytes)
+		bytes := int(min(int64(sftpReadAheadPacketBytes), size-offset))
+		job := readAheadJob{sequence: nextDispatch, offset: offset, bytes: bytes}
+		select {
+		case <-ctx.Done():
+			return false
+		case jobs <- job:
+			nextDispatch++
+			return true
+		}
+	}
+	for range workerCount {
+		if !dispatch() {
+			break
+		}
+	}
+
+	pending := make(map[int64]readAheadResult, workerCount)
+	nextWrite := int64(0)
+	var streamErr error
+	for nextWrite < packetCount && streamErr == nil {
+		select {
+		case <-ctx.Done():
+			streamErr = ctx.Err()
+		case result := <-results:
+			pending[result.job.sequence] = result
+			for {
+				ordered, ok := pending[nextWrite]
+				if !ok {
+					break
+				}
+				delete(pending, nextWrite)
+				if ordered.bytes > 0 {
+					if _, err := writer.Write(ordered.buffer[:ordered.bytes]); err != nil {
+						streamErr = err
+					}
+				}
+				buffers <- ordered.buffer
+				if streamErr == nil && ordered.err != nil && !errors.Is(ordered.err, io.EOF) {
+					streamErr = ordered.err
+				}
+				nextWrite++
+				if streamErr == nil {
+					dispatch()
+				}
+				if streamErr != nil {
+					break
+				}
+			}
+		}
+	}
+	close(jobs)
+	workers.Wait()
+	if streamErr != nil {
+		_ = writer.CloseWithError(streamErr)
+		return
+	}
+	_ = writer.Close()
 }

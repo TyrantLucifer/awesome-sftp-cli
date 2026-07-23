@@ -6,6 +6,12 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
+// MaxReadAheadBytes bounds optional Provider-owned request windows. The
+// standard SFTP implementation uses this budget for at most 32 concurrent
+// 32 KiB protocol reads while callers continue consuming durable 256 KiB
+// chunks.
+const MaxReadAheadBytes uint32 = 1 << 20
+
 // Provider is the minimum read-only endpoint contract. Descriptor must remain
 // stable for the provider's lifetime. Implementations must honor context
 // cancellation and return contextual *domain.OpError values.
@@ -51,4 +57,13 @@ type ReadHandle interface {
 	Info() ReadInfo
 	Read(context.Context, []byte) (int, error)
 	Close(context.Context) error
+}
+
+// ReadAheadHandle is an optional high-latency streaming facet. ReadAhead
+// returns at most len(destination) bytes while allowing the implementation to
+// keep a bounded remote request window no larger than maxBytes. Callers must
+// fall back to Read when the facet is absent.
+type ReadAheadHandle interface {
+	ReadHandle
+	ReadAhead(context.Context, []byte, uint32) (int, error)
 }

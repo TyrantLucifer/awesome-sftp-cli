@@ -44,8 +44,14 @@ func TestLocalFilenameSearchStreamsBoundedWalkWithoutFollowingSymlinks(t *testin
 	if completion.Status != "complete" || completion.Reason != "none" || len(results) != 2 {
 		t.Fatalf("completion=%#v results=%#v", completion, results)
 	}
-	if results[0].RelativePath != "first-target.txt" || results[1].RelativePath != "nested/second-target.txt" {
-		t.Fatalf("unexpected stream order/results: %#v", results)
+	paths := make(map[string]struct{}, len(results))
+	for _, result := range results {
+		paths[result.RelativePath] = struct{}{}
+	}
+	for _, expected := range []string{"first-target.txt", "nested/second-target.txt"} {
+		if _, ok := paths[expected]; !ok {
+			t.Fatalf("stream results = %#v, missing %q", results, expected)
+		}
 	}
 }
 

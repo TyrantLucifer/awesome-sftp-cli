@@ -1,6 +1,7 @@
 package sftp
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -106,6 +107,258 @@ func TestMapErrorClassifiesRemoteStatusAndConnectionLoss(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestReadAheadKeepsADeepSFTPRequestWindow(t *testing.T) {
+	const (
+		payloadBytes = 2 << 20
+		chunkBytes   = 256 << 10
+		readAhead    = providerapi.MaxReadAheadBytes
+	)
+	payload := make([]byte, payloadBytes)
+	for index := range payload {
+		payload[index] = byte(index % 251)
+	}
+
+	handlers := pkgsftp.InMemHandler()
+	delayedReader := &delayedFileReader{
+		delegate: handlers.FileGet,
+		delay:    10 * time.Millisecond,
+	}
+	handlers.FileGet = delayedReader
+	serverConnection, clientConnection := net.Pipe()
+	server := pkgsftp.NewRequestServer(serverConnection, handlers)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve() }()
+	window := newRequestWindowTracker()
+	client, err := pkgsftp.NewClientPipe(
+		trackedSFTPReader{Reader: clientConnection, window: window},
+		trackedSFTPWriter{WriteCloser: clientConnection, window: window},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+		_ = clientConnection.Close()
+		select {
+		case <-serveDone:
+		case <-time.After(time.Second):
+		}
+	})
+
+	file, err := client.Create("/latency.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(payload); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	implementation, err := New(Config{
+		Endpoint:  domain.Endpoint{ID: testEndpointID, Kind: domain.EndpointSSH, DisplayName: "test", SSHHostAlias: "test-host"},
+		SessionID: testSessionID,
+		Client:    client,
+		Root:      "/",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	location := domain.Location{EndpointID: testEndpointID, Path: "/latency.bin"}
+	plainHandle, err := implementation.OpenRead(context.Background(), providerapi.OpenReadRequest{Location: location})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainBytes := readHandleToEOF(t, plainHandle, make([]byte, chunkBytes), 0)
+	if err := plainHandle.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if plainBytes != payloadBytes {
+		t.Fatalf("plain bytes = %d, want %d", plainBytes, payloadBytes)
+	}
+	if max := window.maximum(); max > 12 {
+		t.Fatalf("plain max in-flight reads = %d, want the shallow 256 KiB baseline", max)
+	}
+
+	window.reset()
+	aheadHandle, err := implementation.OpenRead(context.Background(), providerapi.OpenReadRequest{Location: location})
+	if err != nil {
+		t.Fatal(err)
+	}
+	aheadBytes := readHandleToEOF(t, aheadHandle, make([]byte, chunkBytes), readAhead)
+	if err := aheadHandle.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if aheadBytes != payloadBytes {
+		t.Fatalf("read-ahead bytes = %d, want %d", aheadBytes, payloadBytes)
+	}
+	if max := window.maximum(); max < 24 {
+		t.Fatalf("read-ahead max in-flight reads = %d, want a deep window of at least 24", max)
+	}
+
+	switchHandle, err := implementation.OpenRead(context.Background(), providerapi.OpenReadRequest{Location: location})
+	if err != nil {
+		t.Fatal(err)
+	}
+	switchAhead := switchHandle.(providerapi.ReadAheadHandle)
+	got := make([]byte, 0, payloadBytes)
+	buffer := make([]byte, chunkBytes)
+	n, err := switchAhead.ReadAhead(context.Background(), buffer, readAhead)
+	got = append(got, buffer[:n]...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for {
+		n, err = switchHandle.Read(context.Background(), buffer)
+		got = append(got, buffer[:n]...)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := switchHandle.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatal("switching from read-ahead to shallow reads changed the byte stream")
+	}
+}
+
+func readHandleToEOF(t *testing.T, handle providerapi.ReadHandle, buffer []byte, readAheadBytes uint32) int {
+	t.Helper()
+	readAhead, supportsReadAhead := handle.(interface {
+		ReadAhead(context.Context, []byte, uint32) (int, error)
+	})
+	if readAheadBytes != 0 && !supportsReadAhead {
+		t.Fatal("SFTP read handle does not expose bounded read-ahead")
+	}
+	total := 0
+	for {
+		var (
+			n   int
+			err error
+		)
+		if readAheadBytes == 0 {
+			n, err = handle.Read(context.Background(), buffer)
+		} else {
+			n, err = readAhead.ReadAhead(context.Background(), buffer, readAheadBytes)
+		}
+		total += n
+		if errors.Is(err, io.EOF) {
+			return total
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+type delayedFileReader struct {
+	delegate pkgsftp.FileReader
+	delay    time.Duration
+}
+
+func (reader *delayedFileReader) Fileread(request *pkgsftp.Request) (io.ReaderAt, error) {
+	delegate, err := reader.delegate.Fileread(request)
+	if err != nil {
+		return nil, err
+	}
+	return delayedReaderAt{ReaderAt: delegate, owner: reader}, nil
+}
+
+type delayedReaderAt struct {
+	io.ReaderAt
+	owner *delayedFileReader
+}
+
+func (reader delayedReaderAt) ReadAt(buffer []byte, offset int64) (int, error) {
+	time.Sleep(reader.owner.delay)
+	return reader.ReaderAt.ReadAt(buffer, offset)
+}
+
+type requestWindowTracker struct {
+	mu       sync.Mutex
+	pending  map[uint32]struct{}
+	maximumN int
+	response []byte
+}
+
+func newRequestWindowTracker() *requestWindowTracker {
+	return &requestWindowTracker{pending: make(map[uint32]struct{})}
+}
+
+func (tracker *requestWindowTracker) observeRequest(packet []byte) {
+	if len(packet) < 9 || packet[4] != 5 {
+		return
+	}
+	requestID := uint32(packet[5])<<24 | uint32(packet[6])<<16 | uint32(packet[7])<<8 | uint32(packet[8])
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	tracker.pending[requestID] = struct{}{}
+	tracker.maximumN = max(tracker.maximumN, len(tracker.pending))
+}
+
+func (tracker *requestWindowTracker) observeResponse(data []byte) {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	tracker.response = append(tracker.response, data...)
+	for len(tracker.response) >= 4 {
+		packetBytes := int(uint32(tracker.response[0])<<24 |
+			uint32(tracker.response[1])<<16 |
+			uint32(tracker.response[2])<<8 |
+			uint32(tracker.response[3]))
+		if packetBytes < 5 || len(tracker.response) < 4+packetBytes {
+			return
+		}
+		packet := tracker.response[4 : 4+packetBytes]
+		if packet[0] == 101 || packet[0] == 103 {
+			requestID := uint32(packet[1])<<24 | uint32(packet[2])<<16 | uint32(packet[3])<<8 | uint32(packet[4])
+			delete(tracker.pending, requestID)
+		}
+		tracker.response = tracker.response[4+packetBytes:]
+	}
+}
+
+func (tracker *requestWindowTracker) maximum() int {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	return tracker.maximumN
+}
+
+func (tracker *requestWindowTracker) reset() {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	clear(tracker.pending)
+	tracker.maximumN = 0
+	tracker.response = nil
+}
+
+type trackedSFTPReader struct {
+	io.Reader
+	window *requestWindowTracker
+}
+
+func (reader trackedSFTPReader) Read(buffer []byte) (int, error) {
+	n, err := reader.Reader.Read(buffer)
+	reader.window.observeResponse(buffer[:n])
+	return n, err
+}
+
+type trackedSFTPWriter struct {
+	io.WriteCloser
+	window *requestWindowTracker
+}
+
+func (writer trackedSFTPWriter) Write(buffer []byte) (int, error) {
+	n, err := writer.WriteCloser.Write(buffer)
+	writer.window.observeRequest(buffer[:n])
+	return n, err
 }
 
 func TestSFTPMetadataReportsProtocolSecondPrecision(t *testing.T) {

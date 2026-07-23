@@ -15,6 +15,7 @@ import (
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
 	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 )
@@ -51,6 +52,35 @@ func TestWorkerPublishesOnlyAfterDestinationVerification(t *testing.T) {
 	}
 	if journal.maxBufferBytes > int(fixture.plan.BufferBytes) {
 		t.Fatalf("observed buffer = %d, budget = %d", journal.maxBufferBytes, fixture.plan.BufferBytes)
+	}
+}
+
+func TestWorkerUsesReadAheadOnlyWhenBandwidthIsUnlimited(t *testing.T) {
+	tests := []struct {
+		name   string
+		policy SchedulerPolicy
+		want   uint32
+	}{
+		{name: "unlimited", want: providerapi.MaxReadAheadBytes},
+		{name: "rate controlled", policy: SchedulerPolicy{GlobalBytesPerSecond: 1 << 20}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fixture := newWorkerFixture(t, make([]byte, 128<<10), ConflictAsk)
+			source := &recordingReadAheadProvider{Provider: fixture.source}
+			fixture.resolver[fixture.source.Descriptor().ID] = source
+			scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(2_000, 0)), test.policy)
+			worker := NewWorker(fixture.resolver, newMemoryJournal())
+			worker.scheduler = scheduler
+
+			result, err := worker.Execute(context.Background(), fixture.plan, nil)
+			if err != nil || result.Outcome != OutcomeCompleted {
+				t.Fatalf("Execute() = (%#v, %v)", result, err)
+			}
+			if got := source.maximum(); got != test.want {
+				t.Fatalf("read-ahead bytes = %d, want %d", got, test.want)
+			}
+		})
 	}
 }
 
@@ -1263,6 +1293,45 @@ func (handle *syntheticSparseReadHandle) Read(ctx context.Context, buffer []byte
 }
 
 func (handle *syntheticSparseReadHandle) Close(context.Context) error { return nil }
+
+type recordingReadAheadProvider struct {
+	providerapi.Provider
+	mu               sync.Mutex
+	maximumReadAhead uint32
+}
+
+func (provider *recordingReadAheadProvider) OpenRead(
+	ctx context.Context,
+	request providerapi.OpenReadRequest,
+) (providerapi.ReadHandle, error) {
+	handle, err := provider.Provider.OpenRead(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &recordingReadAheadHandle{ReadHandle: handle, provider: provider}, nil
+}
+
+func (provider *recordingReadAheadProvider) maximum() uint32 {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	return provider.maximumReadAhead
+}
+
+type recordingReadAheadHandle struct {
+	providerapi.ReadHandle
+	provider *recordingReadAheadProvider
+}
+
+func (handle *recordingReadAheadHandle) ReadAhead(
+	ctx context.Context,
+	buffer []byte,
+	maxBytes uint32,
+) (int, error) {
+	handle.provider.mu.Lock()
+	handle.provider.maximumReadAhead = max(handle.provider.maximumReadAhead, maxBytes)
+	handle.provider.mu.Unlock()
+	return handle.Read(ctx, buffer)
+}
 
 func uint64Pointer(value uint64) *uint64 { return &value }
 

@@ -3,7 +3,7 @@
 AMSFTP 是一个面向 macOS 和 Linux 终端用户的 Vim-first 双栏文件工作台。任一栏都可以指向本地目录或 `~/.ssh/config` 中的远端主机；浏览、预览、编辑、搜索和传输统一通过本地 daemon 协调，认证与主机策略继续由系统 OpenSSH 负责。
 
 > [!WARNING]
-> `v0.1.16` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
+> `v0.1.17` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
 
 ## 主要能力
 
@@ -11,6 +11,7 @@ AMSFTP 是一个面向 macOS 和 Linux 终端用户的 Vim-first 双栏文件工
 - 选中文件或目录后，底部动作栏按对象类型、焦点和有效 keymap 就地提示可用快捷键，并持续标识当前 AMSFTP 版本。
 - 复用系统 OpenSSH 的密钥、Agent、Kerberos/GSSAPI、ProxyJump 和 ProxyCommand 配置。
 - 复制、移动、重命名和删除统一生成持久 Job；退出 TUI 不会隐式取消后台任务。
+- 未限速的标准 SFTP 下载使用有界 1 MiB / 32 请求读取窗口，减少高延迟链路在每个 256 KiB durable 块之间的空等。
 - Jobs 使用四秒滚动平均展示传输速度；选中 relay Job 时可查看 read、write、sync、stat 和 checkpoint 的累计阶段耗时。
 - 目标端先写 Job 专属临时文件，验证并提交后才暴露最终文件；跨端点移动在目标确认完成前不删除来源。
 - 有界目录浏览、预览、搜索、缓存和传输调度，避免把完整大目录、整棵树或完整大文件载入内存。
@@ -30,7 +31,7 @@ AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为
 
 ## 安装与升级
 
-公开预览发布页：[`v0.1.16`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.16)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
+公开预览发布页：[`v0.1.17`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.17)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
 
 严格 `X.Y.Z` 的公开预览发布后，可直接使用下面任一渠道。安装脚本默认安装到 `$HOME/.local`，会校验归档 SHA-256、原子替换 binary、保存上一版为 `amsftp.previous`，并重新生成 man page 与 shell completion：
 

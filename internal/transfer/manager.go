@@ -12,6 +12,7 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/job"
+	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/retrypolicy"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 )
@@ -1208,14 +1209,20 @@ func executionResourceUsage(plan Plan) ResourceUsage {
 	if plan.Route == RouteHelperSameHost || plan.Route == RouteLevel2Direct {
 		helperProcesses = 1
 	}
+	readAheadMemory := uint64(0)
+	readAheadGoroutines := uint32(0)
+	if plan.SourceEndpoint.Kind == domain.EndpointSSH && plan.Route != RouteHelperSameHost {
+		readAheadMemory = uint64(providerapi.MaxReadAheadBytes)
+		readAheadGoroutines = providerapi.MaxReadAheadBytes/(32<<10) + 2
+	}
 	return ResourceUsage{
 		ActiveJobs:      1,
 		Connections:     connections,
 		SSHProcesses:    connections,
 		HelperProcesses: helperProcesses,
 		FileDescriptors: 2 + 3*connections,
-		Goroutines:      2,
-		MemoryBytes:     uint64(plan.BufferBytes),
+		Goroutines:      2 + readAheadGoroutines,
+		MemoryBytes:     uint64(plan.BufferBytes) + readAheadMemory,
 	}
 }
 

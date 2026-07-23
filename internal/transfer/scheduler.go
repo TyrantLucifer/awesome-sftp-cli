@@ -342,6 +342,25 @@ func (scheduler *TransferScheduler) QuantumBytes() uint32 {
 	return scheduler.policy.QuantumBytes
 }
 
+// AllowsReadAhead reports whether fetching a bounded source window can bypass
+// no active token bucket. It is checked before every source request so a hot
+// policy update disables subsequent read-ahead without changing durable
+// checkpoint or scheduler quantum semantics.
+func (scheduler *TransferScheduler) AllowsReadAhead(request BandwidthRequest) bool {
+	if scheduler == nil {
+		return false
+	}
+	scheduler.mu.Lock()
+	defer scheduler.mu.Unlock()
+	jobRate := request.JobBytesPerSecond
+	if jobRate == 0 {
+		jobRate = scheduler.policy.JobBytesPerSecond
+	}
+	return scheduler.policy.GlobalBytesPerSecond == 0 &&
+		scheduler.policy.EndpointBytesPerSecond == 0 &&
+		jobRate == 0
+}
+
 func normalizeSchedulerPolicy(policy SchedulerPolicy) (SchedulerPolicy, error) {
 	if policy.QuantumBytes == 0 {
 		policy.QuantumBytes = TransferScheduleQuantum

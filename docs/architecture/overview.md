@@ -129,7 +129,7 @@ TUI 发出带 pane generation 的列表请求；daemon 从 Provider 分页读取
 
 ### 复制与移动
 
-Planner 读取来源指纹和目标能力，冻结冲突与完整性策略。Worker 使用同一有界缓冲区写入目标 part；当前块完成写入和 SHA-256 消费后，至多让下一块来源读取与当前块的目标同步、身份检查和 durable checkpoint 持久化重叠。只有已同步并写入 checkpoint 的 offset 才形成可恢复进度，预读内容不会提前推进进度或暴露 final。每个 relay checkpoint 同时保存不含路径的 read、write、sync、stat 和 checkpoint 累计阶段耗时；阶段可以重叠，因此不能把它们相加当作总耗时。Worker 随后重读验证 part 并提交最终名称。move 只有在目标提交并满足验证等级后才执行来源删除；否则以“目标完成但来源保留”收尾。
+Planner 读取来源指纹和目标能力，冻结冲突与完整性策略。Worker 使用同一有界缓冲区写入目标 part；当前块完成写入和 SHA-256 消费后，至多让下一块来源读取与当前块的目标同步、身份检查和 durable checkpoint 持久化重叠。未启用带宽 token bucket 时，SFTP Provider 可以在 Worker 消费的 256 KiB 块之外维护最多 1 MiB、32 个 32 KiB 请求的有界读取窗口；Provider 仍只向 Worker 返回当前块，限速策略热更新会停止并丢弃尚未交付的预读内容，再从已交付 offset 继续。只有已同步并写入 checkpoint 的 offset 才形成可恢复进度，预读内容不会提前推进进度或暴露 final。每个 relay checkpoint 同时保存不含路径的 read、write、sync、stat 和 checkpoint 累计阶段耗时；阶段可以重叠，因此不能把它们相加当作总耗时。Worker 随后重读验证 part 并提交最终名称。move 只有在目标提交并满足验证等级后才执行来源删除；否则以“目标完成但来源保留”收尾。
 
 ### 编辑与外部打开
 
