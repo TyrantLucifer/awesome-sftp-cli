@@ -541,11 +541,23 @@ type Model struct {
 	Height         int
 }
 
+const (
+	jobSpeedWindow     = 4 * time.Second
+	maxJobSpeedSamples = 16
+)
+
+type jobProgressPoint struct {
+	bytes      uint64
+	observedAt time.Time
+}
+
 type jobProgressSample struct {
 	bytes          uint64
 	observedAt     time.Time
 	bytesPerSecond uint64
 	rateKnown      bool
+	points         [maxJobSpeedSamples]jobProgressPoint
+	pointCount     uint8
 }
 
 type ClipboardState struct {

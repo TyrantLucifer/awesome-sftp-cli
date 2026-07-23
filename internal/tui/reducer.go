@@ -721,17 +721,46 @@ func sampleJobProgress(previous map[domain.JobID]jobProgressSample, jobs []trans
 			samples[jobID] = prior
 			continue
 		}
-		sample := jobProgressSample{bytes: view.Bytes, observedAt: observedAt}
-		if hadPrior && !prior.observedAt.IsZero() && view.Bytes >= prior.bytes {
-			elapsed := observedAt.Sub(prior.observedAt)
-			if elapsed > 0 {
-				sample.bytesPerSecond = uint64(float64(view.Bytes-prior.bytes) / elapsed.Seconds())
-				sample.rateKnown = true
-			}
-		}
+		sample := appendJobProgressPoint(prior, hadPrior, view.Bytes, observedAt)
 		samples[jobID] = sample
 	}
 	return samples
+}
+
+func appendJobProgressPoint(prior jobProgressSample, hadPrior bool, bytes uint64, observedAt time.Time) jobProgressSample {
+	sample := jobProgressSample{bytes: bytes, observedAt: observedAt}
+	if !hadPrior || prior.observedAt.IsZero() || bytes < prior.bytes {
+		sample.points[0] = jobProgressPoint{bytes: bytes, observedAt: observedAt}
+		sample.pointCount = 1
+		return sample
+	}
+
+	sample.points = prior.points
+	count := int(prior.pointCount)
+	if count == 0 {
+		sample.points[0] = jobProgressPoint{bytes: prior.bytes, observedAt: prior.observedAt}
+		count = 1
+	}
+	if count == len(sample.points) {
+		copy(sample.points[:], sample.points[1:])
+		count--
+	}
+	sample.points[count] = jobProgressPoint{bytes: bytes, observedAt: observedAt}
+	count++
+
+	cutoff := observedAt.Add(-jobSpeedWindow)
+	for count > 2 && sample.points[0].observedAt.Before(cutoff) {
+		copy(sample.points[:], sample.points[1:count])
+		count--
+	}
+	sample.pointCount = uint8(count) //nolint:gosec // count is bounded by the fixed sample array.
+	first := sample.points[0]
+	elapsed := observedAt.Sub(first.observedAt)
+	if elapsed > 0 && bytes >= first.bytes {
+		sample.bytesPerSecond = uint64(float64(bytes-first.bytes) / elapsed.Seconds())
+		sample.rateKnown = true
+	}
+	return sample
 }
 
 func successfulJobState(state job.State) bool {

@@ -62,6 +62,9 @@ func TestManagerContinuesCreatedJobAfterClientContextCancellation(t *testing.T) 
 		views[0].Final.Path != "/final" || views[0].Phase != PhaseCommitted || views[0].Bytes != uint64(len("client-independent")) {
 		t.Fatalf("JobViews() = %#v", views)
 	}
+	if views[0].Performance == nil || views[0].Performance.Chunks == 0 {
+		t.Fatalf("JobViews() performance = %#v, want persisted relay stage timings", views[0].Performance)
+	}
 }
 
 func TestManagerPrepareUpgradeRejectsActiveExecutionThenClosesAdmission(t *testing.T) {

@@ -414,6 +414,37 @@ func TestReducerSamplesJobSpeedFromSuccessiveBoundedRefreshes(t *testing.T) {
 	}
 }
 
+func TestReducerSmoothsCheckpointQuantizedJobSpeedOverFourSeconds(t *testing.T) {
+	model := testModel(t)
+	jobID := domain.JobID("job_aaaaaaaaaaaaaaaaaaaaaaaaaa")
+	view := transfer.JobView{
+		Snapshot: jobstore.Snapshot{JobID: jobID, State: job.StateRunning},
+	}
+	observedAt := time.Unix(100, 0)
+	model, _ = Reduce(model, JobsLoaded{Jobs: []transfer.JobView{view}, ObservedAt: observedAt})
+
+	// A steady 1 MiB/s transfer can expose alternating 256 KiB and 768 KiB
+	// durable progress jumps to the 500 ms TUI poller. Adjacent-sample speed
+	// therefore oscillates between 0.5 and 1.5 MiB/s even though the four-second
+	// rate is exactly 1 MiB/s.
+	for index := 1; index <= 8; index++ {
+		if index%2 == 1 {
+			view.Bytes += 256 << 10
+		} else {
+			view.Bytes += 768 << 10
+		}
+		model, _ = Reduce(model, JobsLoaded{
+			Jobs:       []transfer.JobView{view},
+			ObservedAt: observedAt.Add(time.Duration(index) * 500 * time.Millisecond),
+		})
+	}
+
+	sample := model.jobProgress[jobID]
+	if !sample.rateKnown || sample.bytesPerSecond != 1<<20 {
+		t.Fatalf("smoothed Job speed = %#v, want exactly 1 MiB/s", sample)
+	}
+}
+
 func TestReducerControlsSelectedDurableJob(t *testing.T) {
 	model := testModel(t)
 	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}

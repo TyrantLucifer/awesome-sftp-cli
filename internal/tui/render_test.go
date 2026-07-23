@@ -478,6 +478,41 @@ func TestRendererUsesReadableProgressSpeedAndSelectedJobDetails(t *testing.T) {
 	}
 }
 
+func TestJobDetailsShowTransferStageTimings(t *testing.T) {
+	view := transfer.JobView{
+		Snapshot: jobstore.Snapshot{JobID: "job_aaaaaaaaaaaaaaaaaaaaaaaaaa", State: job.StateRunning},
+		Kind:     transfer.OperationCopy,
+		Source:   domain.Location{Path: "/source"},
+		Final:    domain.Location{Path: "/final"},
+		Phase:    transfer.PhaseStreaming,
+		Performance: &transfer.TransferPerformance{
+			Chunks:                8,
+			ReadNanoseconds:       2_000_000_000,
+			WriteNanoseconds:      500_000_000,
+			SyncNanoseconds:       1_000_000_000,
+			StatNanoseconds:       125_000_000,
+			CheckpointNanoseconds: 250_000_000,
+		},
+	}
+	details := jobDetailLines(view, jobProgressSample{})
+	var rendered []string
+	for _, detail := range details {
+		rendered = append(rendered, detail.label+detail.value)
+	}
+	got := strings.Join(rendered, "\n")
+	for _, want := range []string{
+		"Stages: read 2s",
+		"write 500ms",
+		"sync 1s",
+		"stat 125ms",
+		"checkpoint 250ms",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("Job details missing %q:\n%s", want, got)
+		}
+	}
+}
+
 func TestRendererSeparatesWideJobsListFromSelectedDetails(t *testing.T) {
 	model := testModel(t)
 	model.Drawer = DrawerState{Mode: DrawerJobs, Focus: FocusDrawer, Rows: 6}

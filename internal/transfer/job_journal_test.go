@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -106,6 +107,47 @@ func TestJobJournalPersistsDirectIdentityAcrossDatabaseRestart(t *testing.T) {
 	}
 	if got == nil || got.DirectFormatVersion != want.DirectFormatVersion || got.DirectNonce != want.DirectNonce {
 		t.Fatalf("direct identity after restart = %#v, want format=%d nonce=%q", got, want.DirectFormatVersion, want.DirectNonce)
+	}
+}
+
+func TestJobJournalRoundTripsTransferPerformance(t *testing.T) {
+	ctx := context.Background()
+	fixture := newWorkerFixture(t, []byte("performance-payload"), ConflictAsk)
+	root := testkit.PersistentTempDir(t)
+	if err := os.Chmod(root, 0o700); err != nil { //nolint:gosec // state root must be owner-private
+		t.Fatal(err)
+	}
+	store, database := openTransferStore(t, ctx, filepath.Join(root, "state.sqlite3"), true)
+	defer database.Close()
+	if _, _, err := store.Create(ctx, fixture.create); err != nil {
+		t.Fatalf("create durable Job: %v", err)
+	}
+	expected := &TransferPerformance{
+		Chunks:                7,
+		ReadNanoseconds:       11,
+		WriteNanoseconds:      13,
+		SyncNanoseconds:       17,
+		StatNanoseconds:       19,
+		CheckpointNanoseconds: 23,
+	}
+	journal := JobJournal{Store: store, StepIndex: 0}
+	if err := journal.Save(ctx, Checkpoint{
+		JobID:             fixture.plan.JobID,
+		Phase:             PhaseStreaming,
+		Offset:            42,
+		SourceFingerprint: fixture.plan.Source.Fingerprint,
+		Part:              fixture.plan.Part,
+		Final:             fixture.plan.Final,
+		Performance:       expected,
+	}); err != nil {
+		t.Fatalf("Save(): %v", err)
+	}
+	loaded, err := journal.Load(ctx, fixture.plan.JobID)
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if loaded == nil || !reflect.DeepEqual(loaded.Performance, expected) {
+		t.Fatalf("performance after round trip = %#v, want %#v", loaded, expected)
 	}
 }
 

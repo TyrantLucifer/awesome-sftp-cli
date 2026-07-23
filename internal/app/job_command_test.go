@@ -64,6 +64,14 @@ func TestJobListUsesBoundedRPCAndVersionedJSON(t *testing.T) {
 			Kind:     transfer.OperationCopy,
 			Route:    transfer.RouteSFTPRelay,
 			Bytes:    12,
+			Performance: &transfer.TransferPerformance{
+				Chunks:                2,
+				ReadNanoseconds:       3,
+				WriteNanoseconds:      5,
+				SyncNanoseconds:       7,
+				StatNanoseconds:       11,
+				CheckpointNanoseconds: 13,
+			},
 		}}
 	}
 
@@ -78,8 +86,9 @@ func TestJobListUsesBoundedRPCAndVersionedJSON(t *testing.T) {
 				JobID domain.JobID `json:"job_id"`
 				State job.State    `json:"state"`
 			} `json:"snapshot"`
-			Kind  transfer.OperationKind `json:"kind"`
-			Route transfer.Route         `json:"route"`
+			Kind        transfer.OperationKind        `json:"kind"`
+			Route       transfer.Route                `json:"route"`
+			Performance *transfer.TransferPerformance `json:"performance"`
 		} `json:"jobs"`
 	}
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
@@ -87,6 +96,9 @@ func TestJobListUsesBoundedRPCAndVersionedJSON(t *testing.T) {
 	}
 	if output.OutputVersion != JobCLIOutputVersion || len(output.Jobs) != 1 || output.Jobs[0].Snapshot.JobID != testJobID || output.Jobs[0].Snapshot.State != job.StateRunning || output.Jobs[0].Kind != transfer.OperationCopy || output.Jobs[0].Route != transfer.RouteSFTPRelay {
 		t.Fatalf("output = %#v", output)
+	}
+	if output.Jobs[0].Performance == nil || output.Jobs[0].Performance.CheckpointNanoseconds != 13 {
+		t.Fatalf("performance output = %#v", output.Jobs[0].Performance)
 	}
 	if strings.Contains(stdout.String(), `"JobID"`) {
 		t.Fatalf("machine output leaked Go field names: %s", stdout.String())

@@ -157,22 +157,32 @@ type jobLocationOutput struct {
 	Path       string            `json:"path"`
 }
 
+type jobPerformanceOutput struct {
+	Chunks                uint64 `json:"chunks"`
+	ReadNanoseconds       uint64 `json:"read_nanoseconds"`
+	WriteNanoseconds      uint64 `json:"write_nanoseconds"`
+	SyncNanoseconds       uint64 `json:"sync_nanoseconds"`
+	StatNanoseconds       uint64 `json:"stat_nanoseconds"`
+	CheckpointNanoseconds uint64 `json:"checkpoint_nanoseconds"`
+}
+
 type jobViewOutput struct {
-	Snapshot       jobSnapshotOutput `json:"snapshot"`
-	Kind           string            `json:"kind"`
-	Route          string            `json:"route"`
-	PlannedRoute   string            `json:"planned_route"`
-	DowngradedFrom string            `json:"downgraded_from"`
-	RouteReason    string            `json:"route_reason"`
-	Source         jobLocationOutput `json:"source"`
-	Final          jobLocationOutput `json:"final"`
-	Phase          string            `json:"phase"`
-	Bytes          uint64            `json:"bytes"`
-	BytesTotal     *uint64           `json:"bytes_total"`
-	Items          uint64            `json:"items"`
-	WaitingReason  string            `json:"waiting_reason"`
-	RecentError    string            `json:"recent_error"`
-	RecoveryResult string            `json:"recovery_result"`
+	Snapshot       jobSnapshotOutput     `json:"snapshot"`
+	Kind           string                `json:"kind"`
+	Route          string                `json:"route"`
+	PlannedRoute   string                `json:"planned_route"`
+	DowngradedFrom string                `json:"downgraded_from"`
+	RouteReason    string                `json:"route_reason"`
+	Source         jobLocationOutput     `json:"source"`
+	Final          jobLocationOutput     `json:"final"`
+	Phase          string                `json:"phase"`
+	Bytes          uint64                `json:"bytes"`
+	BytesTotal     *uint64               `json:"bytes_total"`
+	Items          uint64                `json:"items"`
+	WaitingReason  string                `json:"waiting_reason"`
+	RecentError    string                `json:"recent_error"`
+	RecoveryResult string                `json:"recovery_result"`
+	Performance    *jobPerformanceOutput `json:"performance,omitempty"`
 }
 
 type jobEventOutput struct {
@@ -204,6 +214,20 @@ func newJobLocationOutput(location domain.Location) jobLocationOutput {
 	return jobLocationOutput{EndpointID: location.EndpointID, Path: string(location.Path)}
 }
 
+func newJobPerformanceOutput(performance *transfer.TransferPerformance) *jobPerformanceOutput {
+	if performance == nil {
+		return nil
+	}
+	return &jobPerformanceOutput{
+		Chunks:                performance.Chunks,
+		ReadNanoseconds:       performance.ReadNanoseconds,
+		WriteNanoseconds:      performance.WriteNanoseconds,
+		SyncNanoseconds:       performance.SyncNanoseconds,
+		StatNanoseconds:       performance.StatNanoseconds,
+		CheckpointNanoseconds: performance.CheckpointNanoseconds,
+	}
+}
+
 func jobViewOutputs(views []transfer.JobView) []jobViewOutput {
 	outputs := make([]jobViewOutput, 0, len(views))
 	for _, view := range views {
@@ -223,6 +247,7 @@ func jobViewOutputs(views []transfer.JobView) []jobViewOutput {
 			WaitingReason:  view.WaitingReason,
 			RecentError:    view.RecentError,
 			RecoveryResult: view.RecoveryResult,
+			Performance:    newJobPerformanceOutput(view.Performance),
 		})
 	}
 	return outputs
