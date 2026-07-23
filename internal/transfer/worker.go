@@ -53,24 +53,25 @@ const (
 )
 
 type Checkpoint struct {
-	JobID               domain.JobID       `json:"job_id"`
-	Phase               Phase              `json:"phase"`
-	Offset              uint64             `json:"offset"`
-	SourceFingerprint   domain.Fingerprint `json:"source_fingerprint"`
-	Part                domain.Location    `json:"part"`
-	PartFingerprint     domain.Fingerprint `json:"part_fingerprint"`
-	ChecksumState       []byte             `json:"checksum_state,omitempty"`
-	ChecksumHex         string             `json:"checksum_hex,omitempty"`
-	Final               domain.Location    `json:"final"`
-	Outcome             Outcome            `json:"outcome,omitempty"`
-	Items               uint64             `json:"items,omitempty"`
-	CurrentPath         string             `json:"current_path,omitempty"`
-	DirectoryRootOwned  bool               `json:"directory_root_owned,omitempty"`
-	ActualRoute         Route              `json:"actual_route,omitempty"`
-	DowngradedFrom      Route              `json:"downgraded_from,omitempty"`
-	RouteReason         RouteReason        `json:"route_reason,omitempty"`
-	DirectFormatVersion uint16             `json:"direct_format_version,omitempty"`
-	DirectNonce         string             `json:"direct_nonce,omitempty"`
+	JobID               domain.JobID         `json:"job_id"`
+	Phase               Phase                `json:"phase"`
+	Offset              uint64               `json:"offset"`
+	SourceFingerprint   domain.Fingerprint   `json:"source_fingerprint"`
+	Part                domain.Location      `json:"part"`
+	PartFingerprint     domain.Fingerprint   `json:"part_fingerprint"`
+	ChecksumState       []byte               `json:"checksum_state,omitempty"`
+	ChecksumHex         string               `json:"checksum_hex,omitempty"`
+	Final               domain.Location      `json:"final"`
+	Outcome             Outcome              `json:"outcome,omitempty"`
+	Items               uint64               `json:"items,omitempty"`
+	CurrentPath         string               `json:"current_path,omitempty"`
+	DirectoryRootOwned  bool                 `json:"directory_root_owned,omitempty"`
+	ActualRoute         Route                `json:"actual_route,omitempty"`
+	DowngradedFrom      Route                `json:"downgraded_from,omitempty"`
+	RouteReason         RouteReason          `json:"route_reason,omitempty"`
+	DirectFormatVersion uint16               `json:"direct_format_version,omitempty"`
+	DirectNonce         string               `json:"direct_nonce,omitempty"`
+	Performance         *TransferPerformance `json:"performance,omitempty"`
 }
 
 type Journal interface {
@@ -81,9 +82,10 @@ type Journal interface {
 type bufferObserver interface{ ObserveBuffer(int) }
 
 type relayReadResult struct {
-	bytes int
-	limit int
-	err   error
+	bytes    int
+	limit    int
+	duration time.Duration
+	err      error
 }
 
 type relayReader struct {
@@ -114,11 +116,13 @@ func (reader *relayReader) run() {
 			return
 		case buffer = <-reader.requests:
 		}
+		startedAt := time.Now()
 		bytesRead, err := reader.handle.Read(reader.ctx, buffer)
+		duration := time.Since(startedAt)
 		select {
 		case <-reader.ctx.Done():
 			return
-		case reader.results <- relayReadResult{bytes: bytesRead, limit: len(buffer), err: err}:
+		case reader.results <- relayReadResult{bytes: bytesRead, limit: len(buffer), duration: duration, err: err}:
 		}
 	}
 }
@@ -503,6 +507,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 
 	reader := newRelayReader(ctx, readHandle)
 	defer reader.Stop()
+	if current.Performance == nil {
+		current.Performance = &TransferPerformance{}
+	}
 	readPending := false
 	startNextRead := func() error {
 		readBuffer := buffer
@@ -546,6 +553,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		readResult := reader.Wait()
 		readPending = false
 		n, readErr := readResult.bytes, readResult.err
+		addPerformanceDuration(&current.Performance.ReadNanoseconds, readResult.duration)
 		if n < 0 || n > readResult.limit {
 			return Result{}, errors.New("execute transfer: provider returned invalid read count")
 		}
@@ -559,8 +567,11 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 					return Result{}, err
 				}
 			}
-			if err := writeAll(ctx, writeHandle, buffer[:n]); err != nil {
-				return Result{}, err
+			writeStartedAt := time.Now()
+			writeErr := writeAll(ctx, writeHandle, buffer[:n])
+			addPerformanceDuration(&current.Performance.WriteNanoseconds, time.Since(writeStartedAt))
+			if writeErr != nil {
+				return Result{}, writeErr
 			}
 			if _, err := hasher.Write(buffer[:n]); err != nil {
 				return Result{}, fmt.Errorf("execute transfer: hash source: %w", err)
@@ -572,11 +583,16 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 					return Result{}, err
 				}
 			}
-			if err := writeHandle.Sync(ctx); err != nil {
-				return Result{}, err
+			syncStartedAt := time.Now()
+			syncErr := writeHandle.Sync(ctx)
+			addPerformanceDuration(&current.Performance.SyncNanoseconds, time.Since(syncStartedAt))
+			if syncErr != nil {
+				return Result{}, syncErr
 			}
 			current.Offset += uint64(n)
+			statStartedAt := time.Now()
 			partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+			addPerformanceDuration(&current.Performance.StatNanoseconds, time.Since(statStartedAt))
 			if statErr != nil {
 				return Result{}, statErr
 			}
@@ -588,8 +604,12 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 			if err != nil {
 				return Result{}, err
 			}
-			if err := worker.journal.Save(ctx, current); err != nil {
-				return Result{}, fmt.Errorf("execute transfer: save streaming checkpoint: %w", err)
+			current.Performance.Chunks++
+			checkpointStartedAt := time.Now()
+			checkpointErr := worker.journal.Save(ctx, current)
+			addPerformanceDuration(&current.Performance.CheckpointNanoseconds, time.Since(checkpointStartedAt))
+			if checkpointErr != nil {
+				return Result{}, fmt.Errorf("execute transfer: save streaming checkpoint: %w", checkpointErr)
 			}
 		}
 		if readErr != nil {
@@ -1171,6 +1191,7 @@ func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
 	checkpoint.SourceFingerprint = cloneFingerprint(checkpoint.SourceFingerprint)
 	checkpoint.PartFingerprint = cloneFingerprint(checkpoint.PartFingerprint)
 	checkpoint.ChecksumState = append([]byte(nil), checkpoint.ChecksumState...)
+	checkpoint.Performance = cloneTransferPerformance(checkpoint.Performance)
 	return checkpoint
 }
 

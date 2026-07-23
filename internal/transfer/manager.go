@@ -38,22 +38,23 @@ type ManagerConfig struct {
 }
 
 type JobView struct {
-	Snapshot       jobstore.Snapshot `json:"snapshot"`
-	Kind           OperationKind     `json:"kind"`
-	Route          Route             `json:"route"`
-	PlannedRoute   Route             `json:"planned_route"`
-	DowngradedFrom Route             `json:"downgraded_from,omitempty"`
-	RouteReason    RouteReason       `json:"route_reason,omitempty"`
-	RouteEvidence  *RouteEvidence    `json:"route_evidence,omitempty"`
-	Source         domain.Location   `json:"source"`
-	Final          domain.Location   `json:"final"`
-	Phase          Phase             `json:"phase,omitempty"`
-	Bytes          uint64            `json:"bytes"`
-	BytesTotal     *uint64           `json:"bytes_total,omitempty"`
-	Items          uint64            `json:"items"`
-	WaitingReason  string            `json:"waiting_reason,omitempty"`
-	RecentError    string            `json:"recent_error,omitempty"`
-	RecoveryResult string            `json:"recovery_result,omitempty"`
+	Snapshot       jobstore.Snapshot    `json:"snapshot"`
+	Kind           OperationKind        `json:"kind"`
+	Route          Route                `json:"route"`
+	PlannedRoute   Route                `json:"planned_route"`
+	DowngradedFrom Route                `json:"downgraded_from,omitempty"`
+	RouteReason    RouteReason          `json:"route_reason,omitempty"`
+	RouteEvidence  *RouteEvidence       `json:"route_evidence,omitempty"`
+	Source         domain.Location      `json:"source"`
+	Final          domain.Location      `json:"final"`
+	Phase          Phase                `json:"phase,omitempty"`
+	Bytes          uint64               `json:"bytes"`
+	BytesTotal     *uint64              `json:"bytes_total,omitempty"`
+	Items          uint64               `json:"items"`
+	WaitingReason  string               `json:"waiting_reason,omitempty"`
+	RecentError    string               `json:"recent_error,omitempty"`
+	RecoveryResult string               `json:"recovery_result,omitempty"`
+	Performance    *TransferPerformance `json:"performance,omitempty"`
 }
 
 // Manager owns transfer execution independently from any client connection.
@@ -636,6 +637,7 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			}
 			view.DowngradedFrom = checkpoint.DowngradedFrom
 			view.RouteReason = checkpoint.RouteReason
+			view.Performance = checkpoint.Performance
 			if plan.Source.Kind == domain.EntryDirectory {
 				view.Items = checkpoint.Items
 			}

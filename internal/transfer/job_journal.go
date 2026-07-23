@@ -21,19 +21,20 @@ type JobJournal struct {
 }
 
 type checkpointLocationPayload struct {
-	Part                domain.Location    `json:"part"`
-	PartFingerprint     domain.Fingerprint `json:"part_fingerprint"`
-	Final               domain.Location    `json:"final"`
-	ChecksumHex         string             `json:"checksum_hex,omitempty"`
-	Outcome             Outcome            `json:"outcome,omitempty"`
-	Items               uint64             `json:"items,omitempty"`
-	CurrentPath         string             `json:"current_path,omitempty"`
-	DirectoryRootOwned  bool               `json:"directory_root_owned,omitempty"`
-	ActualRoute         Route              `json:"actual_route,omitempty"`
-	DowngradedFrom      Route              `json:"downgraded_from,omitempty"`
-	RouteReason         RouteReason        `json:"route_reason,omitempty"`
-	DirectFormatVersion uint16             `json:"direct_format_version,omitempty"`
-	DirectNonce         string             `json:"direct_nonce,omitempty"`
+	Part                domain.Location      `json:"part"`
+	PartFingerprint     domain.Fingerprint   `json:"part_fingerprint"`
+	Final               domain.Location      `json:"final"`
+	ChecksumHex         string               `json:"checksum_hex,omitempty"`
+	Outcome             Outcome              `json:"outcome,omitempty"`
+	Items               uint64               `json:"items,omitempty"`
+	CurrentPath         string               `json:"current_path,omitempty"`
+	DirectoryRootOwned  bool                 `json:"directory_root_owned,omitempty"`
+	ActualRoute         Route                `json:"actual_route,omitempty"`
+	DowngradedFrom      Route                `json:"downgraded_from,omitempty"`
+	RouteReason         RouteReason          `json:"route_reason,omitempty"`
+	DirectFormatVersion uint16               `json:"direct_format_version,omitempty"`
+	DirectNonce         string               `json:"direct_nonce,omitempty"`
+	Performance         *TransferPerformance `json:"performance,omitempty"`
 }
 
 func (journal JobJournal) Load(ctx context.Context, jobID domain.JobID) (*Checkpoint, error) {
@@ -74,6 +75,7 @@ func (journal JobJournal) Load(ctx context.Context, jobID domain.JobID) (*Checkp
 		RouteReason:         location.RouteReason,
 		DirectFormatVersion: location.DirectFormatVersion,
 		DirectNonce:         location.DirectNonce,
+		Performance:         location.Performance,
 	}, nil
 }
 
@@ -99,6 +101,7 @@ func (journal JobJournal) Save(ctx context.Context, checkpoint Checkpoint) error
 		RouteReason:         checkpoint.RouteReason,
 		DirectFormatVersion: checkpoint.DirectFormatVersion,
 		DirectNonce:         checkpoint.DirectNonce,
+		Performance:         checkpoint.Performance,
 	})
 	if err != nil {
 		return fmt.Errorf("save transfer checkpoint: encode part identity: %w", err)

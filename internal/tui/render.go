@@ -2,8 +2,10 @@ package tui
 
 import (
 	"fmt"
+	"math"
 	"path"
 	"strings"
+	"time"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
@@ -979,7 +981,45 @@ func jobDetailLines(view transfer.JobView, sample jobProgressSample) []jobDetail
 	if label, value := jobDetailProgress(view, sample); value != "" {
 		details = append(details, jobDetail{label: label, value: value})
 	}
+	if value := jobTransferStageSummary(view.Performance); value != "" {
+		details = append(details, jobDetail{label: "Stages: ", value: value})
+	}
 	return details
+}
+
+func jobTransferStageSummary(performance *transfer.TransferPerformance) string {
+	if performance == nil || performance.Chunks == 0 {
+		return ""
+	}
+	stages := []struct {
+		name        string
+		nanoseconds uint64
+	}{
+		{name: "read", nanoseconds: performance.ReadNanoseconds},
+		{name: "write", nanoseconds: performance.WriteNanoseconds},
+		{name: "sync", nanoseconds: performance.SyncNanoseconds},
+		{name: "stat", nanoseconds: performance.StatNanoseconds},
+		{name: "checkpoint", nanoseconds: performance.CheckpointNanoseconds},
+	}
+	parts := make([]string, 0, len(stages))
+	for _, stage := range stages {
+		if stage.nanoseconds == 0 {
+			continue
+		}
+		parts = append(parts, stage.name+" "+formatStageDuration(stage.nanoseconds))
+	}
+	return strings.Join(parts, " · ")
+}
+
+func formatStageDuration(nanoseconds uint64) string {
+	if nanoseconds > uint64(math.MaxInt64) {
+		nanoseconds = uint64(math.MaxInt64)
+	}
+	duration := time.Duration(nanoseconds)
+	if duration < time.Millisecond {
+		return "<1ms"
+	}
+	return duration.Round(time.Millisecond).String()
 }
 
 func fitJobDetail(label, value string, width int) string {

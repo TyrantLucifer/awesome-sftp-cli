@@ -127,6 +127,44 @@ func TestWorkerOverlapsNextReadWithDurableCheckpoint(t *testing.T) {
 	}
 }
 
+func TestWorkerPersistsTransferPerformance(t *testing.T) {
+	data := []byte("12345678")
+	fixture := newWorkerFixture(t, data, ConflictAsk)
+	fixture.plan.BufferBytes = 4
+	fixture.resolver[fixture.source.Descriptor().ID] = &latencyReadProvider{
+		Provider: fixture.source,
+		delay:    time.Millisecond,
+	}
+	journal := &latencyJournal{
+		memoryJournal: newMemoryJournal(),
+		delay:         time.Millisecond,
+	}
+
+	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+	if err != nil {
+		t.Fatalf("Execute(): %v", err)
+	}
+	if result.Outcome != OutcomeCompleted {
+		t.Fatalf("result = %#v", result)
+	}
+	checkpoint, err := journal.Load(context.Background(), fixture.plan.JobID)
+	if err != nil {
+		t.Fatalf("Load(): %v", err)
+	}
+	if checkpoint == nil || checkpoint.Performance == nil {
+		t.Fatalf("checkpoint performance = %#v, want stage timings", checkpoint)
+	}
+	performance := checkpoint.Performance
+	if performance.Chunks != 2 {
+		t.Fatalf("performance chunks = %d, want 2", performance.Chunks)
+	}
+	if performance.ReadNanoseconds == 0 || performance.WriteNanoseconds == 0 ||
+		performance.SyncNanoseconds == 0 || performance.StatNanoseconds == 0 ||
+		performance.CheckpointNanoseconds == 0 {
+		t.Fatalf("performance = %#v, want every relay stage to be timed", performance)
+	}
+}
+
 func TestWorkerCopiesDirectoryTreeWithBoundedRelayAndNoSymlinkTraversal(t *testing.T) {
 	sourceRoot := t.TempDir()
 	destinationRoot := t.TempDir()

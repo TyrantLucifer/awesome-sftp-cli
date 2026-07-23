@@ -89,7 +89,7 @@ Successful JSON uses `output_version: 1` and exactly one result member (the snap
 {"output_version":1,"snapshot":{"job_id":"job_aaaaaaaaaaaaaaaaaaaaaaaaaa","state":"paused"}}
 ```
 
-Snapshot, Job, Location, and event fields use explicit snake_case v1 names rather than Go implementation field names. Empty lists are encoded as `[]`, never `null`; event `payload` is embedded as a JSON value rather than a quoted storage string. Times use RFC 3339 JSON representation.
+Snapshot, Job, Location, and event fields use explicit snake_case v1 names rather than Go implementation field names. Relay Jobs with persisted data progress include an optional path-free `performance` object with `chunks` plus cumulative `read_nanoseconds`, `write_nanoseconds`, `sync_nanoseconds`, `stat_nanoseconds`, and `checkpoint_nanoseconds`; stages may overlap and are not total elapsed time. Empty lists are encoded as `[]`, never `null`; event `payload` is embedded as a JSON value rather than a quoted storage string. Times use RFC 3339 JSON representation.
 
 JSON failures are written only to stderr and retain the process exit status:
 
