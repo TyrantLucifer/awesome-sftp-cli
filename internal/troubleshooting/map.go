@@ -58,6 +58,7 @@ func Markdown() string {
 	var output strings.Builder
 	output.WriteString("# Troubleshooting Code Map\n\n")
 	output.WriteString("AMSFTP exposes stable doctor and domain codes without persisting raw error causes. Match the exact `kind/code` below, perform only the bounded action, and rerun the original read-only check before mutation. For additional evidence, run `amsftp doctor --format json` and preview a support bundle before creating it. The ordered [operations runbook](../operations/runbook.md) covers escalation, Job recovery, safe fallback, and rollback.\n\n")
+	output.WriteString("When `amsftp upgrade` says replacement completed but the new binary version check failed, first run `amsftp --version` and `amsftp doctor --format json`; preserve the previous binary and follow the documented rollback path if the installed version is unexpected. When the restarted daemon version check failed, run `amsftp daemon status --format json` and `amsftp doctor --format json`; do not delete the socket or kill an unverified process. The human progress lines show the last phase entered, while `--format json` intentionally suppresses progress for automation.\n\n")
 	output.WriteString("| Kind | Code | Meaning | Bounded action |\n")
 	output.WriteString("|---|---|---|---|\n")
 	for _, entry := range Entries() {

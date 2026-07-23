@@ -10,6 +10,8 @@ amsftp upgrade
 
 It checks the target version before daemon disruption, refuses to interrupt active Jobs, preserves queued/waiting/paused Jobs, stops through the authenticated owner-only RPC, delegates Homebrew replacement to `brew upgrade`, or verifies the published standalone installer checksum before execution. It restarts the daemon only when it was running before the upgrade and verifies the new binary plus daemon build before reporting success.
 
+Human output announces update discovery, daemon inspection and shutdown, channel replacement, restart, and verification before each phase begins. The channel-replacement message explicitly warns that the phase may take a few minutes. Progress is written to stderr; `--format json` suppresses it and preserves the single-document machine contract. If replacement completed but verification fails, the error distinguishes the new-binary check from the restarted-daemon check and points to the bounded version, daemon-status, and doctor commands needed before retry or rollback.
+
 For standalone recovery, the repository installer can still be rerun directly:
 
 ```sh

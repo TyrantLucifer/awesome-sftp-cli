@@ -22,7 +22,7 @@ func TestUpgradeCommandValidatesBeforeRuntimeActivity(t *testing.T) {
 				plans++
 				return upgradePlan{}, nil
 			}}
-			err := runUpgradeWithRuntime(t.Context(), args, &bytes.Buffer{}, runtime)
+			err := runUpgradeWithRuntime(t.Context(), args, &bytes.Buffer{}, &bytes.Buffer{}, runtime)
 			if err == nil || exitCode(err) != ExitUsage {
 				t.Fatalf("args %q error = %v, exit = %d", args, err, exitCode(err))
 			}
@@ -45,7 +45,7 @@ func TestUpgradeAlreadyCurrentDoesNotTouchDaemon(t *testing.T) {
 		},
 	}
 	var stdout bytes.Buffer
-	if err := runUpgradeWithRuntime(t.Context(), []string{"--format", "json"}, &stdout, runtime); err != nil {
+	if err := runUpgradeWithRuntime(t.Context(), []string{"--format", "json"}, &stdout, &bytes.Buffer{}, runtime); err != nil {
 		t.Fatal(err)
 	}
 	if probes != 0 {
@@ -57,6 +57,70 @@ func TestUpgradeAlreadyCurrentDoesNotTouchDaemon(t *testing.T) {
 	}
 	if output.Status != "already_current" || output.Channel != upgradeChannelStandalone || output.Version != "0.1.7" || output.DaemonRestarted {
 		t.Fatalf("output = %#v", output)
+	}
+}
+
+func TestUpgradeHumanOutputReportsBlockingPhasesInOrder(t *testing.T) {
+	client := &fakeDaemonControlClient{info: testDaemonInfo()}
+	started := &fakeDaemonControlClient{info: testDaemonInfo()}
+	runtime := upgradeCommandRuntime{
+		plan: func(context.Context) (upgradePlan, error) {
+			return upgradePlan{Channel: upgradeChannelStandalone, CurrentVersion: "0.1.7", TargetVersion: "0.1.8", Available: true}, nil
+		},
+		probe:       func(context.Context) (daemonControlClient, bool, error) { return client, true, nil },
+		waitStopped: func(context.Context) error { return nil },
+		apply:       func(context.Context, upgradePlan) error { return nil },
+		start:       func(context.Context) (daemonControlClient, error) { return started, nil },
+		verify:      func(context.Context, upgradePlan, daemonControlClient) error { return nil },
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := runUpgradeWithRuntime(t.Context(), nil, &stdout, &stderr, runtime); err != nil {
+		t.Fatal(err)
+	}
+	wantPhases := []string{
+		"Checking for AMSFTP updates",
+		"Update available: 0.1.7 -> 0.1.8 (standalone)",
+		"Checking daemon state",
+		"Stopping the running daemon safely",
+		"Upgrading AMSFTP to 0.1.8 via standalone",
+		"Restarting the daemon",
+		"Verifying the upgraded binary and daemon",
+	}
+	progress := stderr.String()
+	previous := -1
+	for _, phase := range wantPhases {
+		index := strings.Index(progress, phase)
+		if index < 0 {
+			t.Fatalf("progress %q does not contain %q", progress, phase)
+		}
+		if index <= previous {
+			t.Fatalf("progress phase %q is out of order in %q", phase, progress)
+		}
+		previous = index
+	}
+	if !strings.Contains(stdout.String(), "Upgraded amsftp from 0.1.7 to 0.1.8") {
+		t.Fatalf("stdout = %q", stdout.String())
+	}
+}
+
+func TestUpgradeJSONOutputRemainsSingleDocumentWithoutProgress(t *testing.T) {
+	runtime := upgradeCommandRuntime{
+		plan: func(context.Context) (upgradePlan, error) {
+			return upgradePlan{Channel: upgradeChannelStandalone, CurrentVersion: "0.1.7", TargetVersion: "0.1.7"}, nil
+		},
+	}
+	var stdout bytes.Buffer
+	var stderr bytes.Buffer
+	if err := runUpgradeWithRuntime(t.Context(), []string{"--format", "json"}, &stdout, &stderr, runtime); err != nil {
+		t.Fatal(err)
+	}
+	if stderr.Len() != 0 {
+		t.Fatalf("JSON upgrade wrote progress to stderr: %q", stderr.String())
+	}
+	var output upgradeCommandOutput
+	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -94,7 +158,7 @@ func TestUpgradeStopsAppliesRestartsAndVerifiesInOrder(t *testing.T) {
 		},
 	}
 	var stdout bytes.Buffer
-	if err := runUpgradeWithRuntime(t.Context(), nil, &stdout, runtime); err != nil {
+	if err := runUpgradeWithRuntime(t.Context(), nil, &stdout, &bytes.Buffer{}, runtime); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"plan", "probe", "wait_stopped", "apply", "start", "verify"}
@@ -127,7 +191,7 @@ func TestUpgradeLeavesStoppedDaemonStopped(t *testing.T) {
 			return nil
 		},
 	}
-	if err := runUpgradeWithRuntime(t.Context(), nil, &bytes.Buffer{}, runtime); err != nil {
+	if err := runUpgradeWithRuntime(t.Context(), nil, &bytes.Buffer{}, &bytes.Buffer{}, runtime); err != nil {
 		t.Fatal(err)
 	}
 	if starts != 0 || verifiedClient != nil {
@@ -151,7 +215,7 @@ func TestUpgradeRefusesActiveJobBeforePackageMutation(t *testing.T) {
 		probe: func(context.Context) (daemonControlClient, bool, error) { return client, true, nil },
 		apply: func(context.Context, upgradePlan) error { applies++; return nil },
 	}
-	err := runUpgradeWithRuntime(t.Context(), nil, &bytes.Buffer{}, runtime)
+	err := runUpgradeWithRuntime(t.Context(), nil, &bytes.Buffer{}, &bytes.Buffer{}, runtime)
 	if err == nil || exitCode(err) != ExitConflict || !strings.Contains(err.Error(), "active Jobs") {
 		t.Fatalf("error = %v, exit = %d", err, exitCode(err))
 	}
@@ -173,8 +237,55 @@ func TestUpgradeApplyFailureAttemptsDaemonRecovery(t *testing.T) {
 		apply:       func(context.Context, upgradePlan) error { return errors.New("package manager failed with secret path") },
 		start:       func(context.Context) (daemonControlClient, error) { starts++; return recovery, nil },
 	}
-	err := runUpgradeWithRuntime(t.Context(), []string{"--format", "json"}, &bytes.Buffer{}, runtime)
+	err := runUpgradeWithRuntime(t.Context(), []string{"--format", "json"}, &bytes.Buffer{}, &bytes.Buffer{}, runtime)
 	if err == nil || exitCode(err) != ExitInternal || starts != 1 || recovery.closed != 1 {
 		t.Fatalf("error = %v, exit = %d, starts = %d, recovery closes = %d", err, exitCode(err), starts, recovery.closed)
+	}
+}
+
+func TestUpgradeVerificationFailureNamesSafeFailedCheckAndRecovery(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want []string
+	}{
+		{
+			name: "binary",
+			err:  errUpgradeBinaryVerification,
+			want: []string{"new binary version check failed", "amsftp --version", "amsftp doctor --format json"},
+		},
+		{
+			name: "daemon",
+			err:  errUpgradeDaemonVerification,
+			want: []string{"restarted daemon version check failed", "amsftp daemon status --format json", "amsftp doctor --format json"},
+		},
+		{
+			name: "unknown",
+			err:  errors.New("secret raw verification cause"),
+			want: []string{"post-upgrade verification failed", "amsftp --version", "amsftp doctor --format json"},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			runtime := upgradeCommandRuntime{
+				plan: func(context.Context) (upgradePlan, error) {
+					return upgradePlan{Channel: upgradeChannelStandalone, CurrentVersion: "0.1.7", TargetVersion: "0.1.8", Available: true}, nil
+				},
+				probe:  func(context.Context) (daemonControlClient, bool, error) { return nil, false, nil },
+				apply:  func(context.Context, upgradePlan) error { return nil },
+				verify: func(context.Context, upgradePlan, daemonControlClient) error { return test.err },
+			}
+			err := runUpgradeWithRuntime(t.Context(), nil, &bytes.Buffer{}, &bytes.Buffer{}, runtime)
+			if err == nil || exitCode(err) != ExitPartial {
+				t.Fatalf("error = %v, exit = %d", err, exitCode(err))
+			}
+			for _, want := range test.want {
+				if !strings.Contains(err.Error(), want) {
+					t.Fatalf("error %q does not contain %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "secret raw verification cause") {
+				t.Fatalf("error exposed raw verification cause: %q", err)
+			}
+		})
 	}
 }

@@ -39,6 +39,8 @@ Daemon JSON success has a stable v1 shape:
 
 The command checks for an available update before disturbing the daemon. If the daemon was stopped, it remains stopped. If it was running, AMSFTP sends an authenticated upgrade-shutdown RPC that atomically blocks new Job execution and rejects the upgrade while a Job is active; queued, waiting, and paused Jobs remain durable for the next daemon. After replacement, the command starts the daemon from the new installation path, verifies the binary version and the restarted daemon build, and reports partial completion if replacement succeeded but restart or verification did not. If package replacement fails, it attempts to restore daemon availability without claiming upgrade success.
 
+Human output reports each potentially blocking phase before it starts: update discovery, daemon inspection and safe shutdown, channel replacement, daemon restart, and final binary/daemon verification. The replacement line warns that downloading and installing may take a few minutes. Progress goes to stderr while the final result remains on stdout. `--format json` suppresses progress and writes exactly one stable JSON document. A partial verification error identifies whether the safe binary check or daemon check failed and lists bounded follow-up commands without exposing the underlying process output, path, or command arguments.
+
 Upgrade JSON success has a stable v1 shape:
 
 ```json
