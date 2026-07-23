@@ -20,7 +20,7 @@ A counted paste such as `2p` repeats the already frozen clipboard batch, with a 
 
 ## Commit and move safety
 
-Files stream into a unique same-directory `.<final>.part-<job-id>`. The worker persists source identity, part identity, verified offset, SHA-256 state, and phase. It rereads and verifies the part before publishing the final name, then verifies the committed final. A failed or canceled transfer never reports the part as the final file.
+Files stream into a unique same-directory `.<final>.part-<job-id>`. After a chunk has been written and consumed by SHA-256, the worker may reuse the same bounded buffer to overlap at most one next source read with destination sync, identity checks, and durable checkpoint persistence for the current chunk. Only the synced, checkpointed offset is reported as resumable progress; prefetched bytes do not advance progress or become final data. The worker persists source identity, part identity, verified offset, SHA-256 state, and phase. It rereads and verifies the part before publishing the final name, then verifies the committed final. A failed or canceled transfer never reports the part as the final file.
 
 Directory discovery is streaming and bounded. The default Plan freezes 64 queued entries, 256 entries per Provider page, depth 128, and a 256 KiB transfer buffer. Symlinks are visible but directory copy does not follow or copy them.
 
