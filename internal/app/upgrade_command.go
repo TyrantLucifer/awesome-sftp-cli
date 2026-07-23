@@ -54,7 +54,17 @@ type upgradeCommandOutput struct {
 	DaemonRestarted bool           `json:"daemon_restarted"`
 }
 
-func runUpgrade(ctx context.Context, args []string, stdout io.Writer, _ io.Writer) error {
+var (
+	errUpgradeBinaryVerification = errors.New("upgraded binary verification failed")
+	errUpgradeDaemonVerification = errors.New("restarted daemon verification failed")
+)
+
+type upgradeProgress struct {
+	enabled bool
+	writer  io.Writer
+}
+
+func runUpgrade(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer) error {
 	options, err := parseUpgradeCommand(args)
 	if err != nil {
 		return machineCommandError(args, NewExitError(ExitUsage, err))
@@ -104,29 +114,38 @@ func runUpgrade(ctx context.Context, args []string, stdout io.Writer, _ io.Write
 		},
 		verify: func(ctx context.Context, plan upgradePlan, client daemonControlClient) error {
 			if err := updater.Verify(ctx, plan.raw); err != nil {
-				return err
+				return errUpgradeBinaryVerification
 			}
 			if client != nil && !strings.HasPrefix(client.Info().DaemonVersion, plan.TargetVersion+" ") {
-				return errors.New("restarted daemon reports an unexpected version")
+				return errUpgradeDaemonVerification
 			}
 			return nil
 		},
 	}
-	return executeUpgrade(ctx, options, args, stdout, runtime)
+	return executeUpgrade(ctx, options, args, stdout, stderr, runtime)
 }
 
-func runUpgradeWithRuntime(ctx context.Context, args []string, stdout io.Writer, runtime upgradeCommandRuntime) error {
+func runUpgradeWithRuntime(ctx context.Context, args []string, stdout io.Writer, stderr io.Writer, runtime upgradeCommandRuntime) error {
 	options, err := parseUpgradeCommand(args)
 	if err != nil {
 		return machineCommandError(args, NewExitError(ExitUsage, err))
 	}
-	return executeUpgrade(ctx, options, args, stdout, runtime)
+	return executeUpgrade(ctx, options, args, stdout, stderr, runtime)
 }
 
-func executeUpgrade(ctx context.Context, options upgradeCommandOptions, args []string, stdout io.Writer, runtime upgradeCommandRuntime) error {
+func executeUpgrade(
+	ctx context.Context,
+	options upgradeCommandOptions,
+	args []string,
+	stdout io.Writer,
+	stderr io.Writer,
+	runtime upgradeCommandRuntime,
+) error {
 	if runtime.plan == nil {
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("upgrade planner is not configured")))
 	}
+	progress := upgradeProgress{enabled: options.format == "human", writer: stderr}
+	progress.printf("Checking for AMSFTP updates...\n")
 	plan, err := runtime.plan(ctx)
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
@@ -146,9 +165,16 @@ func executeUpgrade(ctx context.Context, options upgradeCommandOptions, args []s
 			Channel: plan.Channel, PreviousVersion: plan.CurrentVersion, Version: plan.TargetVersion,
 		})
 	}
+	progress.printf(
+		"Update available: %s -> %s (%s).\n",
+		plan.CurrentVersion,
+		plan.TargetVersion,
+		plan.Channel,
+	)
 	if runtime.probe == nil || runtime.apply == nil {
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("upgrade runtime is incomplete")))
 	}
+	progress.printf("Checking daemon state...\n")
 	client, daemonWasRunning, probeErr := runtime.probe(ctx)
 	if probeErr != nil {
 		if client != nil {
@@ -163,6 +189,7 @@ func executeUpgrade(ctx context.Context, options upgradeCommandOptions, args []s
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("daemon probe returned an invalid running state")))
 	}
 	if daemonWasRunning {
+		progress.printf("Stopping the running daemon safely...\n")
 		var response daemon.ShutdownResponse
 		if err := client.Call(ctx, daemon.RequestShutdown, daemon.ShutdownRequest{ForUpgrade: true}, &response); err != nil {
 			_ = client.Close()
@@ -181,10 +208,18 @@ func executeUpgrade(ctx context.Context, options upgradeCommandOptions, args []s
 		if err := runtime.waitStopped(ctx); err != nil {
 			return machineCommandError(args, NewExitError(ExitInternal, errors.New("daemon shutdown could not be proven before upgrade")))
 		}
-	} else if client != nil {
-		_ = client.Close()
+	} else {
+		if client != nil {
+			_ = client.Close()
+		}
+		progress.printf("Daemon is not running; it will remain stopped.\n")
 	}
 
+	progress.printf(
+		"Upgrading AMSFTP to %s via %s; this may take a few minutes...\n",
+		plan.TargetVersion,
+		plan.Channel,
+	)
 	if err := runtime.apply(ctx, plan); err != nil {
 		recovered := recoverDaemonAfterUpgradeFailure(ctx, daemonWasRunning, runtime)
 		failureCode := ExitInternal
@@ -202,6 +237,7 @@ func executeUpgrade(ctx context.Context, options upgradeCommandOptions, args []s
 
 	var restarted daemonControlClient
 	if daemonWasRunning {
+		progress.printf("Restarting the daemon...\n")
 		if runtime.start == nil {
 			return machineCommandError(args, NewExitError(ExitPartial, errors.New("AMSFTP was upgraded but daemon restart is not configured")))
 		}
@@ -213,18 +249,52 @@ func executeUpgrade(ctx context.Context, options upgradeCommandOptions, args []s
 			return machineCommandError(args, NewExitError(ExitPartial, errors.New("AMSFTP was upgraded but the daemon did not restart")))
 		}
 		defer restarted.Close()
+	} else {
+		progress.printf("Daemon restart is not needed.\n")
 	}
 	if runtime.verify == nil {
 		return machineCommandError(args, NewExitError(ExitPartial, errors.New("AMSFTP was upgraded but post-upgrade verification is not configured")))
 	}
+	if daemonWasRunning {
+		progress.printf("Verifying the upgraded binary and daemon...\n")
+	} else {
+		progress.printf("Verifying the upgraded binary...\n")
+	}
 	if err := runtime.verify(ctx, plan, restarted); err != nil {
-		return machineCommandError(args, NewExitError(ExitPartial, errors.New("AMSFTP was upgraded but post-upgrade verification failed")))
+		return machineCommandError(args, classifyUpgradeVerificationError(err))
 	}
 	return writeUpgradeResult(stdout, options, upgradeCommandOutput{
 		OutputVersion: PublicCLIContractVersion, Command: "upgrade", Status: "upgraded",
 		Channel: plan.Channel, PreviousVersion: plan.CurrentVersion, Version: plan.TargetVersion,
 		DaemonRestarted: daemonWasRunning,
 	})
+}
+
+func (progress upgradeProgress) printf(format string, args ...any) {
+	if !progress.enabled || progress.writer == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(progress.writer, format, args...)
+}
+
+func classifyUpgradeVerificationError(err error) error {
+	switch {
+	case errors.Is(err, errUpgradeBinaryVerification):
+		return NewExitError(
+			ExitPartial,
+			errors.New("AMSFTP was upgraded, but the new binary version check failed; run `amsftp --version` and `amsftp doctor --format json` before retrying or rolling back"),
+		)
+	case errors.Is(err, errUpgradeDaemonVerification):
+		return NewExitError(
+			ExitPartial,
+			errors.New("AMSFTP was upgraded, but the restarted daemon version check failed; run `amsftp daemon status --format json` and `amsftp doctor --format json` before retrying or rolling back"),
+		)
+	default:
+		return NewExitError(
+			ExitPartial,
+			errors.New("AMSFTP was upgraded, but post-upgrade verification failed; run `amsftp --version` and `amsftp doctor --format json` before retrying or rolling back"),
+		)
+	}
 }
 
 func recoverDaemonAfterUpgradeFailure(ctx context.Context, daemonWasRunning bool, runtime upgradeCommandRuntime) bool {
