@@ -685,7 +685,7 @@ func TestExecutionResourceUsageAccountsSSHConnectionsAndDirectHelper(t *testing.
 	}
 	usage := executionResourceUsage(plan)
 	if usage.ActiveJobs != 1 || usage.Connections != 2 || usage.SSHProcesses != 2 ||
-		usage.HelperProcesses != 1 || usage.FileDescriptors != 8 || usage.Goroutines != 1 || usage.MemoryBytes != 4096 {
+		usage.HelperProcesses != 1 || usage.FileDescriptors != 8 || usage.Goroutines != 2 || usage.MemoryBytes != 4096 {
 		t.Fatalf("execution resource usage = %+v", usage)
 	}
 }

@@ -67,8 +67,9 @@ type OpenWriteRequest struct {
 	ExpectedFingerprint *domain.Fingerprint
 }
 
-// WriteHandle accepts short writes. Callers must retry unwritten bytes. Sync
-// reports durable-flush failures, and Close must be idempotent.
+// WriteHandle accepts short writes. Callers must retry unwritten bytes. Write
+// consumes the supplied bytes before returning and must not retain the slice.
+// Sync reports durable-flush failures, and Close must be idempotent.
 type WriteHandle interface {
 	Write(context.Context, []byte) (int, error)
 	Sync(context.Context) error

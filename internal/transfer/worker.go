@@ -80,6 +80,79 @@ type Journal interface {
 
 type bufferObserver interface{ ObserveBuffer(int) }
 
+type relayReadResult struct {
+	bytes int
+	limit int
+	err   error
+}
+
+type relayReader struct {
+	ctx      context.Context
+	cancel   context.CancelFunc
+	handle   providerapi.ReadHandle
+	requests chan []byte
+	results  chan relayReadResult
+	done     chan struct{}
+}
+
+func newRelayReader(ctx context.Context, handle providerapi.ReadHandle) *relayReader {
+	readContext, cancel := context.WithCancel(ctx)
+	reader := &relayReader{
+		ctx: readContext, cancel: cancel, handle: handle,
+		requests: make(chan []byte, 1), results: make(chan relayReadResult, 1), done: make(chan struct{}),
+	}
+	go reader.run()
+	return reader
+}
+
+func (reader *relayReader) run() {
+	defer close(reader.done)
+	for {
+		var buffer []byte
+		select {
+		case <-reader.ctx.Done():
+			return
+		case buffer = <-reader.requests:
+		}
+		bytesRead, err := reader.handle.Read(reader.ctx, buffer)
+		select {
+		case <-reader.ctx.Done():
+			return
+		case reader.results <- relayReadResult{bytes: bytesRead, limit: len(buffer), err: err}:
+		}
+	}
+}
+
+func (reader *relayReader) Start(buffer []byte) error {
+	select {
+	case <-reader.done:
+		return reader.stoppedError()
+	case reader.requests <- buffer:
+		return nil
+	}
+}
+
+func (reader *relayReader) Wait() relayReadResult {
+	select {
+	case result := <-reader.results:
+		return result
+	case <-reader.done:
+		return relayReadResult{err: reader.stoppedError()}
+	}
+}
+
+func (reader *relayReader) Stop() {
+	reader.cancel()
+	<-reader.done
+}
+
+func (reader *relayReader) stoppedError() error {
+	if err := reader.ctx.Err(); err != nil {
+		return err
+	}
+	return errors.New("execute transfer: source reader stopped")
+}
+
 type ControlAction uint8
 
 const (
@@ -428,21 +501,10 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	defer func() { _ = readHandle.Close(context.Background()) }()
 
-	for {
-		if control != nil {
-			switch control.Action(cloneCheckpoint(current)) {
-			case ControlPause:
-				if err := worker.closeAndRefreshCheckpoint(ctx, destinationProvider, writeHandle, &current); err != nil {
-					return Result{}, err
-				}
-				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrPaused
-			case ControlCancel:
-				if err := worker.closeAndRefreshCheckpoint(ctx, destinationProvider, writeHandle, &current); err != nil {
-					return Result{}, err
-				}
-				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrCanceled
-			}
-		}
+	reader := newRelayReader(ctx, readHandle)
+	defer reader.Stop()
+	readPending := false
+	startNextRead := func() error {
 		readBuffer := buffer
 		if worker.scheduler != nil {
 			quantum := worker.scheduler.QuantumBytes()
@@ -450,8 +512,41 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 				readBuffer = readBuffer[:quantum]
 			}
 		}
-		n, readErr := readHandle.Read(ctx, readBuffer)
-		if n < 0 || n > len(readBuffer) {
+		if err := reader.Start(readBuffer); err != nil {
+			return err
+		}
+		readPending = true
+		return nil
+	}
+
+	for {
+		if control != nil {
+			switch control.Action(cloneCheckpoint(current)) {
+			case ControlPause:
+				reader.Stop()
+				readPending = false
+				if err := worker.closeAndRefreshCheckpoint(ctx, destinationProvider, writeHandle, &current); err != nil {
+					return Result{}, err
+				}
+				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrPaused
+			case ControlCancel:
+				reader.Stop()
+				readPending = false
+				if err := worker.closeAndRefreshCheckpoint(ctx, destinationProvider, writeHandle, &current); err != nil {
+					return Result{}, err
+				}
+				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrCanceled
+			}
+		}
+		if !readPending {
+			if err := startNextRead(); err != nil {
+				return Result{}, err
+			}
+		}
+		readResult := reader.Wait()
+		readPending = false
+		n, readErr := readResult.bytes, readResult.err
+		if n < 0 || n > readResult.limit {
 			return Result{}, errors.New("execute transfer: provider returned invalid read count")
 		}
 		if n > 0 {
@@ -469,6 +564,13 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 			}
 			if _, err := hasher.Write(buffer[:n]); err != nil {
 				return Result{}, fmt.Errorf("execute transfer: hash source: %w", err)
+			}
+			// Write and hash have consumed the shared buffer. Reuse it now so
+			// the next bounded read can hide the current durable checkpoint.
+			if readErr == nil {
+				if err := startNextRead(); err != nil {
+					return Result{}, err
+				}
 			}
 			if err := writeHandle.Sync(ctx); err != nil {
 				return Result{}, err

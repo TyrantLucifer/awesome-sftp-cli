@@ -1212,7 +1212,7 @@ func executionResourceUsage(plan Plan) ResourceUsage {
 		SSHProcesses:    connections,
 		HelperProcesses: helperProcesses,
 		FileDescriptors: 2 + 3*connections,
-		Goroutines:      1,
+		Goroutines:      2,
 		MemoryBytes:     uint64(plan.BufferBytes),
 	}
 }

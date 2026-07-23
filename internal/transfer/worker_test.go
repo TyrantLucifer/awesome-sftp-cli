@@ -54,6 +54,79 @@ func TestWorkerPublishesOnlyAfterDestinationVerification(t *testing.T) {
 	}
 }
 
+func TestWorkerOverlapsNextReadWithDurableCheckpoint(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("three relay chunks"), ConflictAsk)
+	fixture.plan.BufferBytes = 4
+
+	secondReadStarted := make(chan struct{})
+	source := &readStartObserverProvider{
+		Provider: fixture.source,
+		target:   2,
+		started:  secondReadStarted,
+	}
+	fixture.resolver[fixture.source.Descriptor().ID] = source
+
+	checkpointSaveStarted := make(chan struct{})
+	releaseCheckpointSave := make(chan struct{})
+	var releaseSave sync.Once
+	releaseCheckpoint := func() {
+		releaseSave.Do(func() { close(releaseCheckpointSave) })
+	}
+	defer releaseCheckpoint()
+	journal := newMemoryJournal()
+	var blockSave sync.Once
+	journal.afterSave = func(checkpoint Checkpoint) {
+		if checkpoint.Phase == PhaseStreaming && checkpoint.Offset == uint64(fixture.plan.BufferBytes) {
+			blockSave.Do(func() {
+				close(checkpointSaveStarted)
+				<-releaseCheckpointSave
+			})
+		}
+	}
+
+	type executeResult struct {
+		result Result
+		err    error
+	}
+	resultChannel := make(chan executeResult, 1)
+	executionContext, cancelExecution := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancelExecution()
+	go func() {
+		result, err := NewWorker(fixture.resolver, journal).Execute(executionContext, fixture.plan, nil)
+		resultChannel <- executeResult{result: result, err: err}
+	}()
+
+	select {
+	case <-checkpointSaveStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first streaming checkpoint save did not start")
+	}
+
+	readOverlappedSave := false
+	select {
+	case <-secondReadStarted:
+		readOverlappedSave = true
+	case <-time.After(2 * time.Second):
+	}
+	releaseCheckpoint()
+
+	var execution executeResult
+	select {
+	case execution = <-resultChannel:
+	case <-executionContext.Done():
+		t.Fatal("worker did not finish after checkpoint save was released")
+	}
+	if execution.err != nil {
+		t.Fatalf("Execute(): %v", execution.err)
+	}
+	if execution.result.Outcome != OutcomeCompleted {
+		t.Fatalf("result = %#v", execution.result)
+	}
+	if !readOverlappedSave {
+		t.Fatal("next source read did not start while the prior durable checkpoint save was blocked")
+	}
+}
+
 func TestWorkerCopiesDirectoryTreeWithBoundedRelayAndNoSymlinkTraversal(t *testing.T) {
 	sourceRoot := t.TempDir()
 	destinationRoot := t.TempDir()
@@ -835,9 +908,47 @@ type shortReadProvider struct {
 	maxRead int
 }
 
+type readStartObserverProvider struct {
+	providerapi.Provider
+	target  int
+	started chan struct{}
+}
+
 type pathReadFailureProvider struct {
 	providerapi.Provider
 	denied domain.CanonicalPath
+}
+
+func (provider *readStartObserverProvider) OpenRead(ctx context.Context, request providerapi.OpenReadRequest) (providerapi.ReadHandle, error) {
+	handle, err := provider.Provider.OpenRead(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &readStartObserverHandle{
+		ReadHandle: handle,
+		target:     provider.target,
+		started:    provider.started,
+	}, nil
+}
+
+type readStartObserverHandle struct {
+	providerapi.ReadHandle
+	mu      sync.Mutex
+	count   int
+	target  int
+	started chan struct{}
+	once    sync.Once
+}
+
+func (handle *readStartObserverHandle) Read(ctx context.Context, data []byte) (int, error) {
+	handle.mu.Lock()
+	handle.count++
+	reachedTarget := handle.count == handle.target
+	handle.mu.Unlock()
+	if reachedTarget {
+		handle.once.Do(func() { close(handle.started) })
+	}
+	return handle.ReadHandle.Read(ctx, data)
 }
 
 func (provider *pathReadFailureProvider) OpenRead(ctx context.Context, request providerapi.OpenReadRequest) (providerapi.ReadHandle, error) {
@@ -978,7 +1089,7 @@ func (handle *closeTimestampHandle) Close(ctx context.Context) error {
 	return errors.Join(closeErr, handle.err)
 }
 
-func newWorkerFixture(t *testing.T, data []byte, policy ConflictPolicy) workerFixture {
+func newWorkerFixture(t testing.TB, data []byte, policy ConflictPolicy) workerFixture {
 	t.Helper()
 	sourceRoot := t.TempDir()
 	destinationRoot := t.TempDir()

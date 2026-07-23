@@ -381,7 +381,7 @@ type endpointKindProvider struct {
 
 func (p *endpointKindProvider) Descriptor() domain.Endpoint { return p.descriptor }
 
-func newPlanTestProvider(t *testing.T, endpointID domain.EndpointID, root string, kind domain.EndpointKind) *endpointKindProvider {
+func newPlanTestProvider(t testing.TB, endpointID domain.EndpointID, root string, kind domain.EndpointKind) *endpointKindProvider {
 	t.Helper()
 	base, err := localfs.New(localfs.Config{
 		Endpoint:  domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal, DisplayName: string(endpointID)},
@@ -400,7 +400,7 @@ func newPlanTestProvider(t *testing.T, endpointID domain.EndpointID, root string
 	return &endpointKindProvider{Provider: base, descriptor: descriptor}
 }
 
-func normalizePlanTest(t *testing.T, implementation providerapi.Provider, input string) domain.Location {
+func normalizePlanTest(t testing.TB, implementation providerapi.Provider, input string) domain.Location {
 	t.Helper()
 	location, err := implementation.Normalize(context.Background(), domain.NormalizeRequest{EndpointID: implementation.Descriptor().ID, Input: input})
 	if err != nil {
