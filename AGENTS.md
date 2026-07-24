@@ -129,11 +129,12 @@ make ci
 6. **等待检查并合并**
    - 等待仓库要求的 PR checks 完成；失败时先读取日志、修复、重新验证并推送，不得绕过或把 pending/failed 描述成成功。
    - 处理所有会影响正确性、安全性或发布的 review feedback。
-   - 只有 PR 可合并且必需检查通过后才能合并；合并后记录 PR 号、功能提交和 merge commit，并确认功能提交是 merge commit 的祖先。
+   - PR 分支落后于最新 `origin/main` 时，先 rebase 再重新验证；不得通过 merge `main` 到 PR 分支来更新基线。
+   - 只有 PR 可合并且必需检查通过后才能合并；GitHub 端统一使用 squash merge，禁止创建 merge commit。合并后记录 PR 号、PR head commit 和最终 squash commit，并确认 `origin/main` 包含该 squash commit。
 7. **选择并推送新 tag**
    - 每次 bugfix/feature 发布都使用未出现过的严格 `vX.Y.Z` tag。当前 `0.1` public-preview 版本线默认递增 patch；minor/major 或兼容性变化必须遵循明确的发布计划或用户决定。
-   - 合并后重新执行 `git fetch origin main --tags`，确认目标 merge commit 已在 `origin/main`，且本地与远端都不存在目标 tag。
-   - 创建与既有发布一致的 annotated tag，例如 `git tag -a vX.Y.Z <merge-commit> -m "amsftp vX.Y.Z"`；校验 `vX.Y.Z^{commit}` 精确等于预期发布提交后，只推送该 tag ref。
+   - 合并后重新执行 `git fetch origin main --tags`，确认目标 squash commit 已在 `origin/main`，且本地与远端都不存在目标 tag。
+   - 创建与既有发布一致的 annotated tag，例如 `git tag -a vX.Y.Z <squash-commit> -m "amsftp vX.Y.Z"`；校验 `vX.Y.Z^{commit}` 精确等于预期发布提交后，只推送该 tag ref。
    - 禁止在 PR 分支提交上提前打 tag，也禁止移动、覆盖、删除后重建已经发布的版本 tag。
 8. **确认自动发布结果**
    - tag 推送后只跟踪 `.github/workflows/release.yml` 的 `Public Preview Release`，并按下方 Release 规则确认发布结果。
@@ -142,7 +143,7 @@ make ci
 9. **失败处理与最终反馈**
    - workflow 的瞬时故障可以在同一不可变 tag/commit 上安全重跑；若需要改代码或产物输入，必须走新 PR 并使用下一个新版本 tag，不能重写旧 tag。
    - 在 PR 合并、tag 推送、release workflow、GitHub Release 和渠道更新全部成功前，不得宣称“完整闭环已完成”。
-   - 最终反馈应列出分支、提交、PR、merge commit、tag、release/workflow 链接、验证结果和渠道状态；任何未完成项必须单独标明。
+   - 最终反馈应列出分支、PR head commit、PR、squash commit、tag、release/workflow 链接、验证结果和渠道状态；任何未完成项必须单独标明。
 
 ### Commit message 规范
 
