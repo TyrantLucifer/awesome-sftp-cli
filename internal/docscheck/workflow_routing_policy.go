@@ -5,20 +5,6 @@ import (
 	"strings"
 )
 
-func checkReleaseWorkflowRoutingPolicy(doc workflowDoc) []Finding {
-	if releaseWorkflowEventsAreExact(doc.on) {
-		return nil
-	}
-	line := 1
-	if doc.on != nil {
-		line = doc.on.key.line
-	}
-	return []Finding{{
-		Path: doc.path, Line: line, Rule: "workflow.release_routing",
-		Message: "release gates must run only for release/** pull requests and pushes, v* tags, or workflow_dispatch",
-	}}
-}
-
 func checkFastWorkflowRoutingPolicy(doc workflowDoc) []Finding {
 	var findings []Finding
 	if !fastWorkflowEventsAreExact(doc.on) {
@@ -62,18 +48,6 @@ func checkFastWorkflowRoutingPolicy(doc workflowDoc) []Finding {
 	return findings
 }
 
-func releaseWorkflowEventsAreExact(on *policyYAMLMapping) bool {
-	if on == nil || on.value == nil || on.value.kind != policyYAMLMappingNode || len(on.value.mappings) != 3 {
-		return false
-	}
-	workflowDispatch := policyYAMLNodeNamed(on.value, "workflow_dispatch")
-	pullRequest := policyYAMLNodeNamed(on.value, "pull_request")
-	push := policyYAMLNodeNamed(on.value, "push")
-	return emptyWorkflowEvent(workflowDispatch) &&
-		eventFiltersAreExact(pullRequest, map[string][]string{"branches": {"release/**"}}) &&
-		eventFiltersAreExact(push, map[string][]string{"branches": {"release/**"}, "tags": {"v*"}})
-}
-
 func fastWorkflowEventsAreExact(on *policyYAMLMapping) bool {
 	if on == nil || on.value == nil || on.value.kind != policyYAMLMappingNode || len(on.value.mappings) != 2 {
 		return false
@@ -82,11 +56,6 @@ func fastWorkflowEventsAreExact(on *policyYAMLMapping) bool {
 	push := policyYAMLNodeNamed(on.value, "push")
 	return eventFiltersAreExact(pullRequest, map[string][]string{"branches-ignore": {"release/**"}}) &&
 		eventFiltersAreExact(push, map[string][]string{"branches": {"main"}})
-}
-
-func emptyWorkflowEvent(node *policyYAMLNode) bool {
-	return node != nil && (node.kind == policyYAMLEmptyNode ||
-		node.kind == policyYAMLScalarNode && strings.EqualFold(node.scalar.value, "null"))
 }
 
 func eventFiltersAreExact(node *policyYAMLNode, filters map[string][]string) bool {

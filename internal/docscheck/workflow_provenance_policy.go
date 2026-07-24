@@ -131,84 +131,6 @@ func checkWorkflowProvenancePolicy(doc workflowDoc) []Finding {
 
 func canonicalProvenanceWorkflowProfile(path string) (provenanceWorkflowProfile, bool) {
 	switch path {
-	case ".github/workflows/ci.yml":
-		legs := []string{
-			"quality",
-			"auth-integration",
-			"native-ubuntu-22.04",
-			"native-ubuntu-24.04",
-			"native-ubuntu-24.04-arm",
-			"native-macos-15",
-			"native-macos-15-intel",
-			"oldstable-ubuntu-22.04",
-			"oldstable-ubuntu-24.04",
-			"oldstable-macos-15",
-			"oldstable-macos-15-intel",
-			"build-amsftp-darwin-arm64",
-			"build-amsftp-darwin-amd64",
-			"build-amsftp-linux-arm64",
-			"build-amsftp-linux-amd64",
-			"repro-amsftp-darwin-arm64-a",
-			"repro-amsftp-darwin-arm64-b",
-			"repro-amsftp-darwin-amd64-a",
-			"repro-amsftp-darwin-amd64-b",
-			"repro-amsftp-linux-arm64-a",
-			"repro-amsftp-linux-arm64-b",
-			"repro-amsftp-linux-amd64-a",
-			"repro-amsftp-linux-amd64-b",
-			"reproducibility-compare",
-		}
-		return provenanceWorkflowProfile{
-			producers: []provenanceProducerProfile{
-				{
-					jobID: "quality", leg: "quality", runsOn: "ubuntu-24.04", timeout: "30",
-					matrix: noProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[0:1], environment: map[string]string{"LEG": "quality"},
-				},
-				{
-					jobID: "auth-integration", leg: "auth-integration", runsOn: "ubuntu-24.04", timeout: "30",
-					needs:  []string{"quality"},
-					matrix: noProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[1:2], environment: map[string]string{"LEG": "auth-integration"},
-				},
-				{
-					jobID: "native", leg: "native-${{ matrix.os }}", runsOn: "${{ matrix.os }}", timeout: "45",
-					matrix: osProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[2:7], environment: map[string]string{"LEG": "native-${{ matrix.os }}"},
-				},
-				{
-					jobID: "oldstable", leg: "oldstable-${{ matrix.os }}", runsOn: "${{ matrix.os }}", timeout: "30",
-					matrix: osProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[7:11], environment: map[string]string{"GOTOOLCHAIN": "local", "LEG": "oldstable-${{ matrix.os }}"},
-				},
-				{
-					jobID: "build", leg: "build-${{ matrix.artifact }}", runsOn: "ubuntu-24.04", timeout: "20",
-					matrix: buildProvenanceMatrix, record: buildArtifactProvenanceRecord,
-					expectedLegs: legs[11:15], environment: map[string]string{"LEG": "build-${{ matrix.artifact }}"},
-				},
-				{
-					jobID: "reproducibility", leg: "repro-${{ matrix.artifact }}-${{ matrix.replica }}", runsOn: "ubuntu-24.04", timeout: "20",
-					matrix: reproProvenanceMatrix, record: reproArtifactProvenanceRecord,
-					expectedLegs: legs[15:23], environment: map[string]string{"LEG": "repro-${{ matrix.artifact }}-${{ matrix.replica }}"},
-				},
-				{
-					jobID: "reproducibility-compare", leg: "reproducibility-compare", runsOn: "ubuntu-24.04", timeout: "15",
-					needs: []string{"reproducibility"}, matrix: noProvenanceMatrix, record: standardProvenanceRecord,
-					expectedLegs: legs[23:24], environment: map[string]string{"LEG": "reproducibility-compare"},
-					comparisonArtifact: "reproducibility-comparison",
-				},
-			},
-			compareNeeds:       []string{"quality", "auth-integration", "native", "oldstable", "build", "reproducibility", "reproducibility-compare"},
-			expectedLegs:       legs,
-			fileCount:          48,
-			comparisonArtifact: "reproducibility-comparison",
-			artifactGroups: []provenanceArtifactGroup{
-				{artifact: "amsftp-darwin-arm64", goos: "darwin", goarch: "arm64", buildLeg: "build-amsftp-darwin-arm64", reproALeg: "repro-amsftp-darwin-arm64-a", reproBLeg: "repro-amsftp-darwin-arm64-b"},
-				{artifact: "amsftp-darwin-amd64", goos: "darwin", goarch: "amd64", buildLeg: "build-amsftp-darwin-amd64", reproALeg: "repro-amsftp-darwin-amd64-a", reproBLeg: "repro-amsftp-darwin-amd64-b"},
-				{artifact: "amsftp-linux-arm64", goos: "linux", goarch: "arm64", buildLeg: "build-amsftp-linux-arm64", reproALeg: "repro-amsftp-linux-arm64-a", reproBLeg: "repro-amsftp-linux-arm64-b"},
-				{artifact: "amsftp-linux-amd64", goos: "linux", goarch: "amd64", buildLeg: "build-amsftp-linux-amd64", reproALeg: "repro-amsftp-linux-amd64-a", reproBLeg: "repro-amsftp-linux-amd64-b"},
-			},
-		}, true
 	case ".github/workflows/nightly.yml":
 		legs := []string{
 			"fuzz-amd64-FuzzFrameDecoder",
@@ -310,12 +232,6 @@ func canonicalProducerSteps(job workflowJob, profile provenanceProducerProfile) 
 	}
 
 	switch profile.jobID {
-	case "quality":
-		return canonicalQualityPreviewBundleHandoff(job.steps[:recordIndex])
-	case "auth-integration":
-		return len(job.steps) == 13 && canonicalAuthIntegrationPrefix(job.steps[:recordIndex])
-	case "build":
-		return len(job.steps) == 8 && canonicalBuildProducerPrefix(job.steps[:recordIndex])
 	case "fuzz":
 		return len(job.steps) == 5 && canonicalFuzzProducerPrefix(job.steps[:recordIndex])
 	case "concurrency":

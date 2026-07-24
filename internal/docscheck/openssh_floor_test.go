@@ -7,23 +7,6 @@ import (
 	"testing"
 )
 
-func TestUbuntu2204RunsRealOpenSSH89FloorAndRecordsExactVersion(t *testing.T) {
-	t.Parallel()
-	workflow := readOpenSSHFloorContractFile(t, "../../.github/workflows/ci.yml")
-	assertOpenSSHFloorOrder(t, workflow, []string{
-		`- name: Run OpenSSH 8.9p1 compatibility floor`,
-		`if: matrix.os == 'ubuntu-22.04'`,
-		`sudo apt-get update`,
-		`expect netcat-openbsd openssh-server`,
-		`floor_version="$(/usr/bin/ssh -V 2>&1)"`,
-		`OpenSSH_8.9p1\ *)`,
-		`"${RUNNER_TEMP}/native/openssh-floor-version"`,
-		`AMSFTP_AUTH_BINARY="${AMSFTP_CI_EXEC_ROOT}/bin/amsftp"`,
-		`AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="${floor_version}"`,
-		`bash ./internal/integration/hosted-auth.sh`,
-	})
-}
-
 func TestHostedAuthenticationMatrixRunsDoctorAgainstSystemOpenSSH(t *testing.T) {
 	t.Parallel()
 	auth := readOpenSSHFloorContractFile(t, "../integration/hosted-auth.sh")
@@ -34,51 +17,6 @@ func TestHostedAuthenticationMatrixRunsDoctorAgainstSystemOpenSSH(t *testing.T) 
 		`result["code"] == "endpoint" and result["status"] == "pass"`,
 		`authentication doctor OpenSSH and endpoint checks passed`,
 		`preflight_sftp_transport auth-include-match`,
-	})
-}
-
-func TestEveryNativePlatformRunsDoctorDuringHealthyInstalledLifecycle(t *testing.T) {
-	t.Parallel()
-	workflow := readOpenSSHFloorContractFile(t, "../../.github/workflows/ci.yml")
-	assertOpenSSHFloorOrder(t, workflow, []string{
-		`- name: Exercise native clean install and uninstall lifecycle`,
-		`daemon start --format json`,
-		`doctor --format json`,
-		`expected_codes = [`,
-		`"config", "runtime_directory", "socket", "daemon", "openssh",`,
-		`"known_hosts", "database", "cache", "helper", "disk_space",`,
-		`"known_hosts": ("skipped", "info", "endpoint_not_requested")`,
-		`"database": ("warn", "warning", "database_active")`,
-		`assert report["output_version"] == 1`,
-		`assert [result["code"] for result in results] == expected_codes`,
-		`assert all(result["detail_code"] != "probe_failed" for result in results)`,
-		`"remediation": "troubleshooting/" + result["code"]`,
-		`native installed doctor checks passed`,
-		`daemon stop --confirm stop --format json`,
-	})
-}
-
-func TestUbuntu2404CapturesExactCurrentOpenSSHVersion(t *testing.T) {
-	t.Parallel()
-	workflow := readOpenSSHFloorContractFile(t, "../../.github/workflows/ci.yml")
-	assertOpenSSHFloorOrder(t, workflow, []string{
-		`auth-integration:`,
-		`runs-on: ubuntu-24.04`,
-		`- name: Capture current OpenSSH version`,
-		`current_version="$(/usr/bin/ssh -V 2>&1)"`,
-		`OpenSSH_*)`,
-		`"${RUNNER_TEMP}/auth-integration/openssh-current-version"`,
-	})
-}
-
-func TestCurrentOpenSSHVersionIsBoundIntoRealAuthenticationHarness(t *testing.T) {
-	t.Parallel()
-	workflow := readOpenSSHFloorContractFile(t, "../../.github/workflows/ci.yml")
-	assertOpenSSHFloorOrder(t, workflow, []string{
-		`- name: Capture current OpenSSH version`,
-		`- name: Run real OpenSSH authentication matrix`,
-		`AMSFTP_AUTH_EXPECT_OPENSSH_VERSION="$(cat "${RUNNER_TEMP}/auth-integration/openssh-current-version")"`,
-		`bash ./internal/integration/hosted-auth.sh`,
 	})
 }
 

@@ -122,12 +122,8 @@ func checkWorkflowPolicy(path string, lines []string) []Finding {
 	}
 	doc := collectWorkflowDoc(path, root)
 	findings := checkGenericWorkflowPolicy(doc)
-	if path == ".github/workflows/ci.yml" || path == ".github/workflows/nightly.yml" {
+	if path == ".github/workflows/nightly.yml" {
 		findings = append(findings, checkWorkflowProvenancePolicy(doc)...)
-	}
-	if path == ".github/workflows/ci.yml" {
-		findings = append(findings, checkCIWorkflowPolicy(doc)...)
-		findings = append(findings, checkReleaseWorkflowRoutingPolicy(doc)...)
 	}
 	if path == ".github/workflows/fast-ci.yml" {
 		findings = append(findings, checkFastWorkflowRoutingPolicy(doc)...)

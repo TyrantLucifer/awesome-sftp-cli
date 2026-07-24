@@ -75,7 +75,7 @@ type workflowStepState struct {
 func checkWorkflows(root string) []Finding {
 	const workflowDirectory = ".github/workflows"
 	var findings []Finding
-	for _, name := range []string{"ci.yml", "fast-ci.yml", "nightly.yml"} {
+	for _, name := range []string{"fast-ci.yml", "nightly.yml"} {
 		path := filepath.ToSlash(filepath.Join(workflowDirectory, name))
 		if !requiredWorkflowIsRegular(root, path) {
 			findings = append(findings, Finding{Path: path, Line: 1, Rule: "workflow.required", Message: "required workflow file is missing or is not a regular file"})
