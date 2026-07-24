@@ -31,6 +31,7 @@ stays usable unless the new endpoint has connected and listed its first page.
 | `j` / `k`, `↓` / `↑` | Move down or up |
 | `h`, `←` | Open the parent directory |
 | `l`, `→` | Enter a directory or preview the selected file |
+| `gg` / `G` | Jump to the first / last loaded entry |
 | `g` | Enter an absolute path for the active pane |
 | `/` | Fuzzy-find an entry already loaded in this directory |
 | `s` | Cycle the sort order |

@@ -87,6 +87,42 @@ func TestDirectoryFilterStatusExplainsFuzzyJumpControls(t *testing.T) {
 	}
 }
 
+func TestDirectoryBoundaryKeysJumpToFirstAndLastVisibleEntry(t *testing.T) {
+	model := modelWithEntryCount(t, 20)
+	model.Panes[Left].Cursor = 9
+
+	model, _ = Reduce(model, KeyPress{Key: KeyPath})
+	model, intents := Reduce(model, TextInput{Text: "g"})
+	if len(intents) != 0 || model.Mode != ModeNormal || model.Panes[Left].Cursor != 0 {
+		t.Fatalf("gg = mode %q cursor %d intents %#v", model.Mode, model.Panes[Left].Cursor, intents)
+	}
+
+	model, intents = Reduce(model, KeyPress{Key: KeyBottom})
+	if len(intents) != 0 || model.Mode != ModeNormal || model.Panes[Left].Cursor != 19 {
+		t.Fatalf("G = mode %q cursor %d intents %#v", model.Mode, model.Panes[Left].Cursor, intents)
+	}
+}
+
+func TestDirectoryBoundaryKeysRefreshAnOpenPreview(t *testing.T) {
+	model := modelWithEntryCount(t, 20)
+	model.Panes[Left].Cursor = 9
+	model.Drawer = DrawerState{Mode: DrawerPreview, Focus: FocusPane}
+
+	model, _ = Reduce(model, KeyPress{Key: KeyPath})
+	model, intents := Reduce(model, TextInput{Text: "g"})
+	if len(intents) != 2 || intents[0].Kind != IntentPreviewCancel || intents[1].Kind != IntentPreview ||
+		intents[1].Location != model.Panes[Left].visibleEntry(0).Location {
+		t.Fatalf("gg preview refresh = cursor %d intents %#v", model.Panes[Left].Cursor, intents)
+	}
+
+	model, intents = Reduce(model, KeyPress{Key: KeyBottom})
+	last := model.Panes[Left].VisibleCount() - 1
+	if len(intents) != 2 || intents[0].Kind != IntentPreviewCancel || intents[1].Kind != IntentPreview ||
+		intents[1].Location != model.Panes[Left].visibleEntry(last).Location {
+		t.Fatalf("G preview refresh = cursor %d intents %#v", model.Panes[Left].Cursor, intents)
+	}
+}
+
 func visibleNames(pane PaneState) []string {
 	names := make([]string, 0, pane.VisibleCount())
 	for index := 0; index < pane.VisibleCount(); index++ {

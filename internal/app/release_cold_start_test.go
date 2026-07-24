@@ -86,12 +86,13 @@ func TestReleaseColdStartDefaultKeymapIsVimFirstAndUnmodified(t *testing.T) {
 	if err := json.Unmarshal(stdout.Bytes(), &output); err != nil {
 		t.Fatalf("decode effective keymap: %v\n%s", err, stdout.String())
 	}
-	if output.OutputVersion != 1 || len(output.Bindings) != 74 {
-		t.Fatalf("effective keymap version/bindings = %d/%d, want 1/74", output.OutputVersion, len(output.Bindings))
+	if output.OutputVersion != 1 || len(output.Bindings) != 76 {
+		t.Fatalf("effective keymap version/bindings = %d/%d, want 1/76", output.OutputVersion, len(output.Bindings))
 	}
 	want := map[string]string{
 		"normal:down": "j", "normal:up": "k", "normal:parent": "h", "normal:open": "l",
-		"normal:visual": "v", "normal:repeat": ".", "visual:down": "j", "visual:up": "k",
+		"normal:bottom": "G", "normal:visual": "v", "normal:repeat": ".", "visual:down": "j",
+		"visual:up": "k", "visual:bottom": "G",
 	}
 	for _, binding := range output.Bindings {
 		if binding.Overridden || binding.Input != binding.DefaultInput {

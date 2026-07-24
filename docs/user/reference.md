@@ -32,6 +32,7 @@ Local and remote paths must be absolute. The SSH alias comes from
 | --- | --- |
 | `h` / `j` / `k` / `l` | Parent / down / up / enter or preview |
 | `←` / `↓` / `↑` / `→` | Fixed aliases for the same navigation |
+| `gg` / `G` | Jump to the first / last loaded entry |
 | `Tab` | Switch active pane |
 | `g` | Enter an absolute path |
 | `c` | Choose `local` or an OpenSSH endpoint |
@@ -76,6 +77,7 @@ When Preview has focus:
 | --- | --- |
 | `j` / `k` | Scroll down / up |
 | `h` / `l` | Read the head / tail range |
+| `gg` / `G` | Jump to the head / tail range |
 | `r` | Cycle available preview views |
 | `Esc` | Return to the file pane |
 | `K` | Close Preview |

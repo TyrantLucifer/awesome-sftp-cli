@@ -72,6 +72,7 @@ func TestTranslateTCellEvents(t *testing.T) {
 		{name: "hidden", event: tcell.NewEventKey(tcell.KeyRune, "H", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyToggleHidden}},
 		{name: "refresh", event: tcell.NewEventKey(tcell.KeyRune, "R", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyRefresh}},
 		{name: "path", event: tcell.NewEventKey(tcell.KeyRune, "g", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyPath}},
+		{name: "bottom", event: tcell.NewEventKey(tcell.KeyRune, "G", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyBottom}},
 		{name: "path text", event: tcell.NewEventKey(tcell.KeyRune, "/", tcell.ModNone), mode: ModePath, want: TextInput{Text: "/"}},
 		{name: "path submit", event: tcell.NewEventKey(tcell.KeyEnter, "", tcell.ModNone), mode: ModePath, want: KeyPress{Key: KeySubmit}},
 		{name: "endpoint", event: tcell.NewEventKey(tcell.KeyRune, "c", tcell.ModNone), mode: ModeNormal, want: KeyPress{Key: KeyEndpoint}},

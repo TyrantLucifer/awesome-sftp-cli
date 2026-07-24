@@ -698,6 +698,8 @@ const (
 	KeyParent                Key = "parent"
 	KeyDown                  Key = "down"
 	KeyUp                    Key = "up"
+	KeyTop                   Key = "top"
+	KeyBottom                Key = "bottom"
 	KeyOpen                  Key = "open"
 	KeyVisual                Key = "visual"
 	KeyVisualLine            Key = "visual_line"
