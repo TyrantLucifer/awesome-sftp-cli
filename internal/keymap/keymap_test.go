@@ -11,6 +11,7 @@ normal A conflict_auto_rename_all reserved
 normal C job_cancel reserved
 normal D delete reserved
 normal E edit_recovery remappable
+normal G bottom reserved
 normal H toggle_hidden remappable
 normal J jobs remappable
 normal K preview_drawer remappable

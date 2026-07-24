@@ -88,6 +88,7 @@ startup picker, or `amsftp --workspace <name>` to reopen a saved workspace.
 | Key | Action |
 | --- | --- |
 | `h` / `j` / `k` / `l` or arrow keys | Parent / down / up / open |
+| `gg`, `G` | Jump to the first / last entry or Preview range |
 | `Tab` | Switch pane |
 | `c` | Change the active pane's endpoint |
 | `/` | Find an entry in the current directory |

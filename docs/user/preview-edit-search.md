@@ -18,6 +18,7 @@ Inside Preview:
 | --- | --- |
 | `j` / `k` | Scroll one rendered line |
 | `h` / `l` | Read the head or tail range |
+| `gg` / `G` | Jump to the head or tail range |
 | `r` | Cycle automatic, raw JSON when available, and metadata views |
 | `Esc` | Return focus to the file pane |
 | `K` | Close Preview while it has focus |

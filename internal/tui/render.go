@@ -715,6 +715,9 @@ func drawerHeaderLabel(drawer DrawerState, jobs []transfer.JobView, cursor int) 
 	if drawer.Mode == DrawerSearch || drawer.Mode == DrawerContentSearch {
 		return header + "  — f/g/ search; Esc pane"
 	}
+	if drawer.Mode == DrawerPreview && drawer.Focus == FocusDrawer {
+		return header + "  — gg/G head/tail · j/k scroll · r view; Esc pane"
+	}
 	if drawer.Mode == DrawerJobs && drawer.Focus == FocusDrawer {
 		if len(jobs) == 0 {
 			return header + "  — K/J/L switch; Esc pane"

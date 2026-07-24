@@ -218,6 +218,41 @@ func TestPreviewDrawerKeysEmitBoundedReadModesAndViewToggles(t *testing.T) {
 	}
 }
 
+func TestPreviewDrawerBoundaryKeysReadHeadAndTail(t *testing.T) {
+	model := testModel(t)
+	model, _ = Reduce(model, KeyPress{Key: KeyDown})
+	model, _ = Reduce(model, KeyPress{Key: KeyPreviewDrawer})
+	model.Preview = PreviewState{
+		Identity:   PreviewRequestIdentity{Mode: builtinpreview.ReadRange, Offset: 65536, RequestedLimit: 65536},
+		LineOffset: 8,
+		Truncated:  true,
+	}
+
+	model, _ = Reduce(model, KeyPress{Key: KeyPath})
+	if model.Mode != ModePath {
+		t.Fatalf("preview g mode = %q, want path prefix", model.Mode)
+	}
+	got, intents := Reduce(model, TextInput{Text: "g"})
+	if got.Mode != ModeNormal || len(intents) != 2 || intents[0].Kind != IntentPreviewCancel || intents[1].PreviewMode != builtinpreview.ReadHead {
+		t.Fatalf("preview gg = mode %q intents %#v", got.Mode, intents)
+	}
+
+	got, intents = Reduce(got, KeyPress{Key: KeyBottom})
+	if len(intents) != 2 || intents[0].Kind != IntentPreviewCancel || intents[1].PreviewMode != builtinpreview.ReadTail {
+		t.Fatalf("preview G intents = %#v", intents)
+	}
+}
+
+func TestPreviewDrawerHeaderShowsBoundaryNavigation(t *testing.T) {
+	drawer := DrawerState{Mode: DrawerPreview, Focus: FocusDrawer}
+	got := drawerHeaderLabel(drawer, nil, 0)
+	for _, want := range []string{"gg/G head/tail", "j/k scroll", "r view"} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("preview header %q missing %q", got, want)
+		}
+	}
+}
+
 func TestPreviewDrawerScrollsRenderedLinesBeforeRequestingAnotherRange(t *testing.T) {
 	model := testModel(t)
 	model, _ = Reduce(model, KeyPress{Key: KeyDown})

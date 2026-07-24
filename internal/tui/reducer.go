@@ -76,6 +76,9 @@ func Reduce(model Model, action Action) (Model, []Intent) {
 			return model, nil
 		}
 		if model.Mode == ModePath {
+			if len(model.pathInput) == 0 && action.Text == "g" {
+				return jumpToBoundary(model, KeyTop)
+			}
 			if len(model.pathInput) == 0 && action.Text == "/" {
 				model.Mode = ModeContentSearch
 				model.searchInput = nil
@@ -1271,6 +1274,11 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 	if drawerMode, ok := drawerModeForKey(key); ok {
 		return reduceDrawerToggle(model, drawerMode)
 	}
+	if model.Drawer.Focus == FocusDrawer && model.Drawer.Mode == DrawerPreview && key == KeyPath {
+		model.Mode = ModePath
+		model.pathInput = nil
+		return model, nil
+	}
 	if model.Drawer.Focus == FocusDrawer {
 		if key == KeyEscape {
 			model.Drawer.Focus = FocusPane
@@ -1501,6 +1509,8 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		}
 	case KeyUp:
 		pane.Cursor = max(pane.Cursor-steps, 0)
+	case KeyBottom:
+		pane.Cursor = max(len(pane.visible)-1, 0)
 	case KeyParent:
 		location, ok := parentLocation(pane.Location)
 		if ok {
@@ -1555,7 +1565,7 @@ func reduceKey(model Model, key Key) (Model, []Intent) {
 		model.Mode = ModeNormal
 	}
 	model.Panes[model.Active] = pane
-	if model.Drawer.Mode == DrawerPreview && (key == KeyDown || key == KeyUp) {
+	if model.Drawer.Mode == DrawerPreview && (key == KeyDown || key == KeyUp || key == KeyBottom) {
 		currentLocation, hasCurrentLocation := pane.currentLocation()
 		if hadPreviousLocation != hasCurrentLocation || currentLocation != previousLocation {
 			return model, previewRefreshIntents(model)
@@ -1727,10 +1737,10 @@ func reducePreviewKey(model Model, key Key) (Model, []Intent) {
 	intent.PreviewView = model.Preview.View
 	step := builtinpreview.ReadChunkBytes
 	switch key {
-	case KeyParent:
+	case KeyParent, KeyTop:
 		intent.PreviewMode = builtinpreview.ReadHead
 		intent.PreviewOffset = 0
-	case KeyOpen:
+	case KeyOpen, KeyBottom:
 		intent.PreviewMode = builtinpreview.ReadTail
 		intent.PreviewOffset = 0
 	case KeyDown:
@@ -1767,6 +1777,33 @@ func reducePreviewKey(model Model, key Key) (Model, []Intent) {
 		return model, nil
 	}
 	return model, []Intent{{Kind: IntentPreviewCancel}, intent}
+}
+
+func jumpToBoundary(model Model, key Key) (Model, []Intent) {
+	model.Mode = ModeNormal
+	model.pathInput = nil
+	if model.Drawer.Focus == FocusDrawer && model.Drawer.Mode == DrawerPreview {
+		return reducePreviewKey(model, key)
+	}
+
+	pane := model.Panes[model.Active].clone()
+	previousLocation, hadPreviousLocation := pane.currentLocation()
+	switch key {
+	case KeyTop:
+		pane.Cursor = 0
+	case KeyBottom:
+		pane.Cursor = max(len(pane.visible)-1, 0)
+	default:
+		return model, nil
+	}
+	model.Panes[model.Active] = pane
+	if model.Drawer.Mode == DrawerPreview {
+		currentLocation, hasCurrentLocation := pane.currentLocation()
+		if hadPreviousLocation != hasCurrentLocation || currentLocation != previousLocation {
+			return model, previewRefreshIntents(model)
+		}
+	}
+	return model, nil
 }
 
 func drawerModeForKey(key Key) (DrawerMode, bool) {

@@ -18,6 +18,7 @@ const (
 	ActionParent                Action = "parent"
 	ActionDown                  Action = "down"
 	ActionUp                    Action = "up"
+	ActionBottom                Action = "bottom"
 	ActionOpen                  Action = "open"
 	ActionVisual                Action = "visual"
 	ActionVisualLine            Action = "visual_line"
@@ -71,6 +72,7 @@ var defaults = []binding{
 	{input: "C", action: ActionJobCancel},
 	{input: "D", action: ActionDelete},
 	{input: "E", action: ActionEditRecovery, remappable: true},
+	{input: "G", action: ActionBottom},
 	{input: "H", action: ActionToggleHidden, remappable: true},
 	{input: "J", action: ActionJobs, remappable: true},
 	{input: "K", action: ActionPreviewDrawer, remappable: true},
