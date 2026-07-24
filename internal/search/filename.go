@@ -290,7 +290,7 @@ func runFilename(parent context.Context, implementation providerapi.Provider, id
 	if reason == StopCanceled {
 		status = StatusCanceled
 	}
-	state.events <- Event{
+	sendTerminalEvent(ctx, state.events, Event{
 		Identity: identity,
 		Kind:     EventTerminal,
 		Terminal: Terminal{
@@ -301,6 +301,21 @@ func runFilename(parent context.Context, implementation providerapi.Provider, id
 			OutputBytes: state.outputBytes,
 			ListCalls:   state.listCalls,
 		},
+	})
+}
+
+// sendTerminalEvent delivers the terminal event whenever a receiver or buffer
+// can accept it. Once the operation context is done, a full abandoned stream
+// must not keep the producer goroutine alive.
+func sendTerminalEvent[T any](ctx context.Context, events chan<- T, event T) {
+	select {
+	case events <- event:
+		return
+	default:
+	}
+	select {
+	case events <- event:
+	case <-ctx.Done():
 	}
 }
 

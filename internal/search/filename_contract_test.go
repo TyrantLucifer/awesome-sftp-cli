@@ -94,6 +94,31 @@ func TestLevel0FilenameSearchCancellationRetainsResultsAndReportsCanceled(t *tes
 	t.Logf("cancel latency=%s", cancelLatency)
 }
 
+func TestFilenameSearchProducerReturnsAfterTimeoutWhenTerminalBufferIsFull(t *testing.T) {
+	implementation := newFilenameContractProvider(t)
+	request := filenameContractRequest()
+	request.Identity.Budget.MaxDuration = 20 * time.Millisecond
+	events := make(chan Event, 1)
+	events <- Event{Kind: EventResult}
+
+	done := make(chan struct{})
+	go func() {
+		runFilename(context.Background(), implementation, request.Identity, events)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		return
+	case <-time.After(2 * time.Second):
+		// Unblock the old implementation before failing so the test itself does
+		// not leave a goroutine behind.
+		<-events
+		<-done
+		t.Fatal("filename search producer blocked sending its terminal event after its deadline")
+	}
+}
+
 func TestLevel0FilenameSearchStopsWhenEndpointGenerationChanges(t *testing.T) {
 	implementation := newFilenameContractProvider(t)
 	request := filenameContractRequest()

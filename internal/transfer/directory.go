@@ -251,13 +251,11 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 	var result Result
 	result.Outcome = OutcomeCompleted
 	result.Final = final
-	var ordinal uint64
 	var validationBuffer []byte
 	if resuming && checkpoint.DirectoryRootOwned {
 		validationBuffer = make([]byte, int(plan.BufferBytes))
 	}
 	for item := range items {
-		ordinal++
 		destinationLocation := childLocation(final, item.RelativePath)
 		if resuming && checkpoint.DirectoryRootOwned {
 			completed, bytes, err := validateOwnedDirectoryItem(ctx, source, destinationProvider, item, destinationLocation, validationBuffer)
@@ -308,7 +306,7 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 			itemPlan.DestinationDirectory = domain.Location{EndpointID: final.EndpointID, Path: domain.CanonicalPath(path.Dir(string(destinationLocation.Path)))}
 			itemPlan.RequestedName = path.Base(item.RelativePath)
 			itemPlan.Final = destinationLocation
-			itemPlan.Part = childLocation(itemPlan.DestinationDirectory, "."+itemPlan.RequestedName+".part-"+string(plan.JobID)+fmt.Sprintf("-%d", ordinal))
+			itemPlan.Part = childLocation(itemPlan.DestinationDirectory, "."+itemPlan.RequestedName+".part-"+string(plan.JobID))
 			itemPlan.Discovery = nil
 			freezeRouteEvidence(&itemPlan)
 			if resuming {

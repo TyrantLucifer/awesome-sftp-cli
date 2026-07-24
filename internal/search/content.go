@@ -186,7 +186,7 @@ func runContent(parent context.Context, implementation providerapi.Provider, ide
 	if reason == StopCanceled {
 		status = StatusCanceled
 	}
-	events <- ContentEvent{Identity: identity, Kind: ContentEventTerminal, Terminal: ContentTerminal{Status: status, StopReason: reason, Entries: state.entries, Files: state.files, Results: state.results, BytesRead: state.bytesRead, OutputBytes: state.outputBytes}}
+	sendTerminalEvent(ctx, events, ContentEvent{Identity: identity, Kind: ContentEventTerminal, Terminal: ContentTerminal{Status: status, StopReason: reason, Entries: state.entries, Files: state.files, Results: state.results, BytesRead: state.bytesRead, OutputBytes: state.outputBytes}})
 }
 
 func walkContent(ctx context.Context, implementation providerapi.Provider, directory domain.Location, depth uint32, state *contentRunState) (walkSignal, StopReason) {
@@ -342,18 +342,14 @@ func (state *contentRunState) emitContentMatches(ctx context.Context, location d
 		needle = asciiLower(needle)
 	}
 	var perFile uint64
+	lineCursor := newContentLineCursor(data)
 	for start := 0; start <= len(haystack)-len(needle); {
 		index := bytes.Index(haystack[start:], needle)
 		if index < 0 {
 			break
 		}
 		offset := start + index
-		lineStart := bytes.LastIndexByte(data[:offset], '\n') + 1
-		lineEndRelative := bytes.IndexByte(data[offset:], '\n')
-		lineEnd := len(data)
-		if lineEndRelative >= 0 {
-			lineEnd = offset + lineEndRelative
-		}
+		lineStart, lineEnd, line := lineCursor.span(offset)
 		snippet := data[lineStart:lineEnd]
 		if len(snippet) > int(state.identity.Budget.MaxSnippetBytes) {
 			snippet = snippet[:state.identity.Budget.MaxSnippetBytes]
@@ -365,7 +361,7 @@ func (state *contentRunState) emitContentMatches(ctx context.Context, location d
 		if resultBytes > state.identity.Budget.MaxOutputBytes-state.outputBytes {
 			return StopByteLimit
 		}
-		result := ContentResult{Location: location, RelativePath: relative, Line: uint64(bytes.Count(data[:offset], []byte{'\n'})) + 1, Offset: uint64(offset), Snippet: string(snippet)} // #nosec G115 -- slice indexes and bytes.Count results are non-negative.
+		result := ContentResult{Location: location, RelativePath: relative, Line: line, Offset: uint64(offset), Snippet: string(snippet)} // #nosec G115 -- validated search budgets keep offsets non-negative and within uint64.
 		select {
 		case state.events <- ContentEvent{Identity: state.identity, Kind: ContentEventResult, Result: result}:
 			state.results++
@@ -381,6 +377,33 @@ func (state *contentRunState) emitContentMatches(ctx context.Context, location d
 		start = offset + max(1, len(needle))
 	}
 	return StopNone
+}
+
+type contentLineCursor struct {
+	data      []byte
+	lineStart int
+	lineEnd   int
+	line      uint64
+}
+
+func newContentLineCursor(data []byte) contentLineCursor {
+	cursor := contentLineCursor{data: data, lineEnd: len(data), line: 1}
+	if newline := bytes.IndexByte(data, '\n'); newline >= 0 {
+		cursor.lineEnd = newline
+	}
+	return cursor
+}
+
+func (cursor *contentLineCursor) span(offset int) (lineStart int, lineEnd int, line uint64) {
+	for cursor.lineEnd < offset && cursor.lineEnd < len(cursor.data) {
+		cursor.lineStart = cursor.lineEnd + 1
+		cursor.line++
+		cursor.lineEnd = len(cursor.data)
+		if newline := bytes.IndexByte(cursor.data[cursor.lineStart:], '\n'); newline >= 0 {
+			cursor.lineEnd = cursor.lineStart + newline
+		}
+	}
+	return cursor.lineStart, cursor.lineEnd, cursor.line
 }
 
 func asciiLower(value []byte) []byte {
