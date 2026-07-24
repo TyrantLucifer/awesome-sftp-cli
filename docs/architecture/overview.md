@@ -53,6 +53,8 @@ flowchart TB
 
 daemon 只以当前 OS 用户运行，不监听 TCP，也不要求 root。
 
+客户端在 daemon 连接丢失后可以执行有界自动恢复，但恢复必须先观察 owner-private 升级门控。`amsftp upgrade` 从 daemon 探测前到新 binary/daemon 验证完成始终持有该门控，因此其他 TUI 只会在升级结束后重连，不会在包管理器替换期间用自身旧 executable 启动旧 daemon；并发升级也在任何 daemon 或安装变更前被拒绝。
+
 ### 系统 OpenSSH
 
 SFTP Provider 使用经过验证的绝对 `/usr/bin/ssh`，通过固定安全参数启动 SFTP subsystem，并在 stdin/stdout 上承载结构化 SFTP 协议。调用不经过 shell，host alias 不能被解释为命令行选项。

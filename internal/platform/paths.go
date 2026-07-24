@@ -14,6 +14,7 @@ const (
 	applicationSlug                  = "amsftp"
 	controlSocketName                = "control-v1.sock"
 	lockFileName                     = "daemon.lock"
+	upgradeLockFileName              = "upgrade.lock"
 	maxControlSocketBytes            = 100
 	DiagnosticUnsafePreferredRuntime = "unsafe_preferred_runtime"
 )
@@ -26,16 +27,17 @@ type Overrides struct {
 }
 
 type Paths struct {
-	ConfigDir     string
-	ConfigFile    string
-	StateDir      string
-	DatabaseFile  string
-	LogDir        string
-	LogFile       string
-	CacheDir      string
-	RuntimeDir    string
-	ControlSocket string
-	LockFile      string
+	ConfigDir       string
+	ConfigFile      string
+	StateDir        string
+	DatabaseFile    string
+	LogDir          string
+	LogFile         string
+	CacheDir        string
+	RuntimeDir      string
+	ControlSocket   string
+	LockFile        string
+	UpgradeLockFile string
 }
 
 type Diagnostic struct {
@@ -233,6 +235,7 @@ func resolvePaths(sources pathSources, overrides Overrides) (Paths, []Diagnostic
 	paths.RuntimeDir = preferredRuntime
 	paths.ControlSocket = filepath.Join(paths.RuntimeDir, controlSocketName)
 	paths.LockFile = filepath.Join(paths.RuntimeDir, lockFileName)
+	paths.UpgradeLockFile = filepath.Join(paths.RuntimeDir, upgradeLockFileName)
 
 	if err := validateControlSocketPath(paths.ControlSocket); err != nil {
 		if overrides.RuntimeDir != "" || paths.RuntimeDir == fallbackRuntime {
@@ -241,6 +244,7 @@ func resolvePaths(sources pathSources, overrides Overrides) (Paths, []Diagnostic
 		paths.RuntimeDir = fallbackRuntime
 		paths.ControlSocket = filepath.Join(paths.RuntimeDir, controlSocketName)
 		paths.LockFile = filepath.Join(paths.RuntimeDir, lockFileName)
+		paths.UpgradeLockFile = filepath.Join(paths.RuntimeDir, upgradeLockFileName)
 		diagnostics = []Diagnostic{unsafePreferredRuntimeDiagnostic()}
 		if err := validateControlSocketPath(paths.ControlSocket); err != nil {
 			return Paths{}, nil, err

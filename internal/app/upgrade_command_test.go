@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/platform"
 )
 
 func TestUpgradeCommandValidatesBeforeRuntimeActivity(t *testing.T) {
@@ -67,6 +69,7 @@ func TestUpgradeHumanOutputReportsBlockingPhasesInOrder(t *testing.T) {
 		plan: func(context.Context) (upgradePlan, error) {
 			return upgradePlan{Channel: upgradeChannelStandalone, CurrentVersion: "0.1.7", TargetVersion: "0.1.8", Available: true}, nil
 		},
+		hold:        testUpgradeHold,
 		probe:       func(context.Context) (daemonControlClient, bool, error) { return client, true, nil },
 		waitStopped: func(context.Context) error { return nil },
 		apply:       func(context.Context, upgradePlan) error { return nil },
@@ -137,6 +140,13 @@ func TestUpgradeStopsAppliesRestartsAndVerifiesInOrder(t *testing.T) {
 			events = append(events, "probe")
 			return client, true, nil
 		},
+		hold: func(context.Context) (io.Closer, error) {
+			events = append(events, "hold")
+			return upgradeTestCloser(func() error {
+				events = append(events, "release")
+				return nil
+			}), nil
+		},
 		waitStopped: func(context.Context) error {
 			events = append(events, "wait_stopped")
 			if client.closed != 1 {
@@ -161,7 +171,7 @@ func TestUpgradeStopsAppliesRestartsAndVerifiesInOrder(t *testing.T) {
 	if err := runUpgradeWithRuntime(t.Context(), nil, &stdout, &bytes.Buffer{}, runtime); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"plan", "probe", "wait_stopped", "apply", "start", "verify"}
+	want := []string{"plan", "hold", "probe", "wait_stopped", "apply", "start", "verify", "release"}
 	if !reflect.DeepEqual(events, want) {
 		t.Fatalf("events = %#v, want %#v", events, want)
 	}
@@ -173,6 +183,34 @@ func TestUpgradeStopsAppliesRestartsAndVerifiesInOrder(t *testing.T) {
 	}
 }
 
+func TestUpgradeRefusesCompetingRecoveryGateBeforeDaemonShutdown(t *testing.T) {
+	probes := 0
+	applies := 0
+	runtime := upgradeCommandRuntime{
+		plan: func(context.Context) (upgradePlan, error) {
+			return upgradePlan{Channel: upgradeChannelHomebrew, CurrentVersion: "0.1.17", TargetVersion: "0.1.18", Available: true}, nil
+		},
+		probe: func(context.Context) (daemonControlClient, bool, error) {
+			probes++
+			return nil, true, nil
+		},
+		hold: func(context.Context) (io.Closer, error) {
+			return nil, platform.ErrInstanceLocked
+		},
+		apply: func(context.Context, upgradePlan) error {
+			applies++
+			return nil
+		},
+	}
+	err := runUpgradeWithRuntime(t.Context(), nil, &bytes.Buffer{}, &bytes.Buffer{}, runtime)
+	if err == nil || exitCode(err) != ExitConflict || !strings.Contains(err.Error(), "another AMSFTP upgrade") {
+		t.Fatalf("error = %v, exit = %d", err, exitCode(err))
+	}
+	if probes != 0 || applies != 0 {
+		t.Fatalf("probes = %d, applies = %d", probes, applies)
+	}
+}
+
 func TestUpgradeLeavesStoppedDaemonStopped(t *testing.T) {
 	starts := 0
 	var verifiedClient daemonControlClient
@@ -180,6 +218,7 @@ func TestUpgradeLeavesStoppedDaemonStopped(t *testing.T) {
 		plan: func(context.Context) (upgradePlan, error) {
 			return upgradePlan{Channel: upgradeChannelStandalone, CurrentVersion: "0.1.7", TargetVersion: "0.1.8", Available: true}, nil
 		},
+		hold:  testUpgradeHold,
 		probe: func(context.Context) (daemonControlClient, bool, error) { return nil, false, nil },
 		apply: func(context.Context, upgradePlan) error { return nil },
 		start: func(context.Context) (daemonControlClient, error) {
@@ -212,6 +251,7 @@ func TestUpgradeRefusesActiveJobBeforePackageMutation(t *testing.T) {
 		plan: func(context.Context) (upgradePlan, error) {
 			return upgradePlan{Channel: upgradeChannelHomebrew, CurrentVersion: "0.1.7", TargetVersion: "0.1.8", Available: true}, nil
 		},
+		hold:  testUpgradeHold,
 		probe: func(context.Context) (daemonControlClient, bool, error) { return client, true, nil },
 		apply: func(context.Context, upgradePlan) error { applies++; return nil },
 	}
@@ -232,6 +272,7 @@ func TestUpgradeApplyFailureAttemptsDaemonRecovery(t *testing.T) {
 		plan: func(context.Context) (upgradePlan, error) {
 			return upgradePlan{Channel: upgradeChannelStandalone, CurrentVersion: "0.1.7", TargetVersion: "0.1.8", Available: true}, nil
 		},
+		hold:        testUpgradeHold,
 		probe:       func(context.Context) (daemonControlClient, bool, error) { return client, true, nil },
 		waitStopped: func(context.Context) error { return nil },
 		apply:       func(context.Context, upgradePlan) error { return errors.New("package manager failed with secret path") },
@@ -270,6 +311,7 @@ func TestUpgradeVerificationFailureNamesSafeFailedCheckAndRecovery(t *testing.T)
 				plan: func(context.Context) (upgradePlan, error) {
 					return upgradePlan{Channel: upgradeChannelStandalone, CurrentVersion: "0.1.7", TargetVersion: "0.1.8", Available: true}, nil
 				},
+				hold:   testUpgradeHold,
 				probe:  func(context.Context) (daemonControlClient, bool, error) { return nil, false, nil },
 				apply:  func(context.Context, upgradePlan) error { return nil },
 				verify: func(context.Context, upgradePlan, daemonControlClient) error { return test.err },
@@ -288,4 +330,14 @@ func TestUpgradeVerificationFailureNamesSafeFailedCheckAndRecovery(t *testing.T)
 			}
 		})
 	}
+}
+
+type upgradeTestCloser func() error
+
+func (closer upgradeTestCloser) Close() error {
+	return closer()
+}
+
+func testUpgradeHold(context.Context) (io.Closer, error) {
+	return upgradeTestCloser(func() error { return nil }), nil
 }

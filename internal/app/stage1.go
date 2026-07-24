@@ -500,6 +500,22 @@ func connectDaemonWithExecutableMode(ctx context.Context, paths platform.Paths, 
 	}
 	var autostartErr error
 	if recovering {
+		recoveryGate, waited, waitErr := holdDaemonRecoveryGate(ctx, paths, purpose)
+		if waitErr != nil {
+			return nil, waitErr
+		}
+		if recoveryGate != nil {
+			defer func() { _ = recoveryGate.Close() }()
+		}
+		if waited {
+			client, connectErr = connect()
+			if connectErr == nil {
+				return client, nil
+			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+		}
 		autostartErr = waitForDaemonAutostartTakeover(ctx, paths, purpose)
 	} else {
 		autostartErr = requireAbsentControlSocketForAutostart(paths.ControlSocket, connectErr)
@@ -544,6 +560,34 @@ func connectDaemonWithExecutableMode(ctx context.Context, paths platform.Paths, 
 		}
 	}
 	return nil, fmt.Errorf("daemon did not become ready: %w", lastErr)
+}
+
+func holdDaemonRecoveryGate(
+	ctx context.Context,
+	paths platform.Paths,
+	purpose platform.ValidationPurpose,
+) (io.Closer, bool, error) {
+	if paths.UpgradeLockFile == "" {
+		return nil, false, nil
+	}
+	waited := false
+	for {
+		lock, err := platform.AcquireInstanceLock(paths.UpgradeLockFile, purpose)
+		if err == nil {
+			return lock, waited, nil
+		}
+		if !errors.Is(err, platform.ErrInstanceLocked) {
+			return nil, false, errors.New("daemon upgrade recovery gate is unavailable")
+		}
+		waited = true
+		timer := time.NewTimer(daemonTakeoverPollInterval)
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			_ = timer.Stop()
+			return nil, false, fmt.Errorf("wait for daemon upgrade recovery gate: %w", ctx.Err())
+		}
+	}
 }
 
 func requireAbsentControlSocketForAutostart(path string, connectErr error) error {

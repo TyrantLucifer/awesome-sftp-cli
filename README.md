@@ -3,7 +3,7 @@
 AMSFTP 是一个面向 macOS 和 Linux 终端用户的 Vim-first 双栏文件工作台。任一栏都可以指向本地目录或 `~/.ssh/config` 中的远端主机；浏览、预览、编辑、搜索和传输统一通过本地 daemon 协调，认证与主机策略继续由系统 OpenSSH 负责。
 
 > [!WARNING]
-> `v0.1.17` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
+> `v0.1.18` 是当前公开预览版本线。macOS 产物未经签名或公证，它不是公开的 AMSFTP 1.0；标准 Level 0 SFTP 路径可用，production Helper 和 Level 2 跨主机直传仍为 **CLOSED**。
 
 ## 主要能力
 
@@ -31,7 +31,7 @@ AMSFTP 不接管密码、私钥、Agent 内容或 Kerberos 票据，也不会为
 
 ## 安装与升级
 
-公开预览发布页：[`v0.1.17`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.17)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
+公开预览发布页：[`v0.1.18`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.18)。历史 owner-only 内部预览仍可通过 Git 历史与旧 tag 追溯。
 
 严格 `X.Y.Z` 的公开预览发布后，可直接使用下面任一渠道。安装脚本默认安装到 `$HOME/.local`，会校验归档 SHA-256、原子替换 binary、保存上一版为 `amsftp.previous`，并重新生成 man page 与 shell completion：
 
@@ -53,7 +53,7 @@ brew upgrade TyrantLucifer/tap/amsftp
 amsftp upgrade
 ```
 
-该命令先检查渠道和目标版本；只有确有新版本时才通过 owner-only RPC 请求升级停机。Human 模式会在检查更新、检查/停止 daemon、渠道升级、重启和验证开始前持续输出阶段进度，耗时的下载与安装阶段也会明确提示可能需要几分钟；JSON 模式仍只输出一个稳定结果对象。Homebrew 安装委托给 `brew upgrade`，独立安装校验发布的 `install.sh` checksum 后复用安装器。升级前 daemon 若在运行，升级后才会恢复；若有正在执行的 Job，命令以 conflict 退出，不会静默中断任务。升级已经替换 binary、但最终验证失败时，错误会区分新 binary 或重启 daemon 的版本检查，并给出 `amsftp --version`、daemon status 和 doctor 等下一步。上面的 `curl` 与 `brew upgrade` 仍可用于恢复或手工维护。
+该命令先检查渠道和目标版本；只有确有新版本时才通过 owner-only RPC 请求升级停机。Human 模式会在检查更新、检查/停止 daemon、渠道升级、重启和验证开始前持续输出阶段进度，耗时的下载与安装阶段也会明确提示可能需要几分钟；JSON 模式仍只输出一个稳定结果对象。Homebrew 安装委托给 `brew upgrade`，独立安装校验发布的 `install.sh` checksum 后复用安装器。升级命令会在整个停机、替换、重启和验证期间持有 owner-private 升级门控；其他正在运行的 TUI 会等待门控释放后连接新 daemon，而不会在 Homebrew 下载期间用旧 binary 抢先恢复旧 daemon，同时第二个升级命令会以 conflict 退出。升级前 daemon 若在运行，升级后才会恢复；若有正在执行的 Job，命令以 conflict 退出，不会静默中断任务。升级已经替换 binary、但最终验证失败时，错误会区分新 binary 或重启 daemon 的版本检查，并给出 `amsftp --version`、daemon status 和 doctor 等下一步。上面的 `curl` 与 `brew upgrade` 仍可用于恢复或手工维护。
 
 历史 owner-only 内部版本不属于这个公开渠道，仍按下面的手工步骤安装：
 

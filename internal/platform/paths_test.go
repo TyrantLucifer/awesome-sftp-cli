@@ -26,16 +26,17 @@ func TestResolvePathsDarwinDefaults(t *testing.T) {
 	}
 
 	want := Paths{
-		ConfigDir:     "/Users/alice/Library/Application Support/io.github.tyrantlucifer.amsftp",
-		ConfigFile:    "/Users/alice/Library/Application Support/io.github.tyrantlucifer.amsftp/config.json",
-		StateDir:      "/Users/alice/Library/Application Support/io.github.tyrantlucifer.amsftp/state",
-		DatabaseFile:  "/Users/alice/Library/Application Support/io.github.tyrantlucifer.amsftp/state/amsftp.db",
-		LogDir:        "/Users/alice/Library/Logs/io.github.tyrantlucifer.amsftp",
-		LogFile:       "/Users/alice/Library/Logs/io.github.tyrantlucifer.amsftp/daemon.jsonl",
-		CacheDir:      "/Users/alice/Library/Caches/io.github.tyrantlucifer.amsftp",
-		RuntimeDir:    "/private/var/folders/ab/T/amsftp-501",
-		ControlSocket: "/private/var/folders/ab/T/amsftp-501/control-v1.sock",
-		LockFile:      "/private/var/folders/ab/T/amsftp-501/daemon.lock",
+		ConfigDir:       "/Users/alice/Library/Application Support/io.github.tyrantlucifer.amsftp",
+		ConfigFile:      "/Users/alice/Library/Application Support/io.github.tyrantlucifer.amsftp/config.json",
+		StateDir:        "/Users/alice/Library/Application Support/io.github.tyrantlucifer.amsftp/state",
+		DatabaseFile:    "/Users/alice/Library/Application Support/io.github.tyrantlucifer.amsftp/state/amsftp.db",
+		LogDir:          "/Users/alice/Library/Logs/io.github.tyrantlucifer.amsftp",
+		LogFile:         "/Users/alice/Library/Logs/io.github.tyrantlucifer.amsftp/daemon.jsonl",
+		CacheDir:        "/Users/alice/Library/Caches/io.github.tyrantlucifer.amsftp",
+		RuntimeDir:      "/private/var/folders/ab/T/amsftp-501",
+		ControlSocket:   "/private/var/folders/ab/T/amsftp-501/control-v1.sock",
+		LockFile:        "/private/var/folders/ab/T/amsftp-501/daemon.lock",
+		UpgradeLockFile: "/private/var/folders/ab/T/amsftp-501/upgrade.lock",
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("paths = %#v, want %#v", got, want)
@@ -64,24 +65,26 @@ func TestResolvePathsLinuxUsesAbsoluteXDGDirectories(t *testing.T) {
 	}
 
 	checks := map[string]string{
-		"config":   got.ConfigFile,
-		"state":    got.StateDir,
-		"database": got.DatabaseFile,
-		"log":      got.LogFile,
-		"cache":    got.CacheDir,
-		"runtime":  got.RuntimeDir,
-		"socket":   got.ControlSocket,
-		"lock":     got.LockFile,
+		"config":       got.ConfigFile,
+		"state":        got.StateDir,
+		"database":     got.DatabaseFile,
+		"log":          got.LogFile,
+		"cache":        got.CacheDir,
+		"runtime":      got.RuntimeDir,
+		"socket":       got.ControlSocket,
+		"lock":         got.LockFile,
+		"upgrade lock": got.UpgradeLockFile,
 	}
 	wants := map[string]string{
-		"config":   "/xdg/config/amsftp/config.json",
-		"state":    "/xdg/state/amsftp",
-		"database": "/xdg/state/amsftp/amsftp.db",
-		"log":      "/xdg/state/amsftp/log/daemon.jsonl",
-		"cache":    "/xdg/cache/amsftp",
-		"runtime":  "/run/user/1000/amsftp",
-		"socket":   "/run/user/1000/amsftp/control-v1.sock",
-		"lock":     "/run/user/1000/amsftp/daemon.lock",
+		"config":       "/xdg/config/amsftp/config.json",
+		"state":        "/xdg/state/amsftp",
+		"database":     "/xdg/state/amsftp/amsftp.db",
+		"log":          "/xdg/state/amsftp/log/daemon.jsonl",
+		"cache":        "/xdg/cache/amsftp",
+		"runtime":      "/run/user/1000/amsftp",
+		"socket":       "/run/user/1000/amsftp/control-v1.sock",
+		"lock":         "/run/user/1000/amsftp/daemon.lock",
+		"upgrade lock": "/run/user/1000/amsftp/upgrade.lock",
 	}
 	for name, value := range checks {
 		if value != wants[name] {
@@ -213,8 +216,10 @@ func TestResolvePathsAppliesExplicitOverrides(t *testing.T) {
 	if got.CacheDir != overrides.CacheDir || got.RuntimeDir != overrides.RuntimeDir {
 		t.Fatalf("cache/runtime = (%q, %q)", got.CacheDir, got.RuntimeDir)
 	}
-	if got.ControlSocket != "/secure/run/control-v1.sock" || got.LockFile != "/secure/run/daemon.lock" {
-		t.Fatalf("runtime children = (%q, %q)", got.ControlSocket, got.LockFile)
+	if got.ControlSocket != "/secure/run/control-v1.sock" ||
+		got.LockFile != "/secure/run/daemon.lock" ||
+		got.UpgradeLockFile != "/secure/run/upgrade.lock" {
+		t.Fatalf("runtime children = (%q, %q, %q)", got.ControlSocket, got.LockFile, got.UpgradeLockFile)
 	}
 }
 
