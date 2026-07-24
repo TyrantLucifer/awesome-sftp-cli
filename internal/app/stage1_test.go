@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -594,6 +595,65 @@ func TestDaemonLossRecoveryWaitsForInstanceLockBeforeStaleSocketTakeover(t *test
 	}
 	if err := replacementLock.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDaemonLossRecoveryWaitsForUpgradeGate(t *testing.T) {
+	base := testkit.PersistentTempDir(t)
+	paths := platform.Paths{
+		RuntimeDir:      base,
+		UpgradeLockFile: filepath.Join(base, "upgrade.lock"),
+	}
+	hold, err := platform.AcquireInstanceLock(paths.UpgradeLockFile, platform.ValidateRuntimeFallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	type result struct {
+		gate   io.Closer
+		waited bool
+		err    error
+	}
+	done := make(chan result, 1)
+	go func() {
+		recoveryGate, waited, waitErr := holdDaemonRecoveryGate(ctx, paths, platform.ValidateRuntimeFallback)
+		done <- result{gate: recoveryGate, waited: waited, err: waitErr}
+	}()
+	select {
+	case outcome := <-done:
+		t.Fatalf("upgrade gate wait returned while held: %#v", outcome)
+	case <-time.After(75 * time.Millisecond):
+	}
+	if err := hold.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case outcome := <-done:
+		if outcome.err != nil || !outcome.waited {
+			t.Fatalf("upgrade gate result = %#v", outcome)
+		}
+		if outcome.gate == nil {
+			t.Fatal("upgrade recovery returned no retained gate")
+		}
+		if competing, competingErr := platform.AcquireInstanceLock(paths.UpgradeLockFile, platform.ValidateRuntimeFallback); !errors.Is(competingErr, platform.ErrInstanceLocked) {
+			if competing != nil {
+				_ = competing.Close()
+			}
+			t.Fatalf("recovery gate was not retained: %v", competingErr)
+		}
+		if err := outcome.gate.Close(); err != nil {
+			t.Fatal(err)
+		}
+		replacement, err := platform.AcquireInstanceLock(paths.UpgradeLockFile, platform.ValidateRuntimeFallback)
+		if err != nil {
+			t.Fatalf("recovery gate was not released: %v", err)
+		}
+		if err := replacement.Close(); err != nil {
+			t.Fatal(err)
+		}
+	case <-ctx.Done():
+		t.Fatalf("upgrade gate wait did not observe release: %v", ctx.Err())
 	}
 }
 

@@ -33,6 +33,7 @@ type upgradePlan struct {
 
 type upgradeCommandRuntime struct {
 	plan        func(context.Context) (upgradePlan, error)
+	hold        func(context.Context) (io.Closer, error)
 	probe       func(context.Context) (daemonControlClient, bool, error)
 	waitStopped func(context.Context) error
 	apply       func(context.Context, upgradePlan) error
@@ -99,6 +100,12 @@ func runUpgrade(ctx context.Context, args []string, stdout io.Writer, stderr io.
 				Channel: plan.Channel, CurrentVersion: plan.CurrentVersion,
 				TargetVersion: plan.TargetVersion, Available: plan.Available, raw: plan,
 			}, nil
+		},
+		hold: func(ctx context.Context) (io.Closer, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			return platform.AcquireInstanceLock(paths.UpgradeLockFile, purpose)
 		},
 		probe: func(ctx context.Context) (daemonControlClient, bool, error) {
 			return probeDaemon(ctx, paths, purpose)
@@ -171,9 +178,17 @@ func executeUpgrade(
 		plan.TargetVersion,
 		plan.Channel,
 	)
-	if runtime.probe == nil || runtime.apply == nil {
+	if runtime.hold == nil || runtime.probe == nil || runtime.apply == nil {
 		return machineCommandError(args, NewExitError(ExitInternal, errors.New("upgrade runtime is incomplete")))
 	}
+	hold, holdErr := runtime.hold(ctx)
+	if holdErr != nil {
+		return machineCommandError(args, classifyUpgradeHoldError(holdErr))
+	}
+	if hold == nil {
+		return machineCommandError(args, NewExitError(ExitInternal, errors.New("upgrade recovery gate returned no lock")))
+	}
+	defer func() { _ = hold.Close() }()
 	progress.printf("Checking daemon state...\n")
 	client, daemonWasRunning, probeErr := runtime.probe(ctx)
 	if probeErr != nil {
@@ -294,6 +309,19 @@ func classifyUpgradeVerificationError(err error) error {
 			ExitPartial,
 			errors.New("AMSFTP was upgraded, but post-upgrade verification failed; run `amsftp --version` and `amsftp doctor --format json` before retrying or rolling back"),
 		)
+	}
+}
+
+func classifyUpgradeHoldError(err error) error {
+	switch {
+	case errors.Is(err, context.Canceled):
+		return NewExitError(ExitCanceled, errors.New("upgrade canceled before daemon coordination"))
+	case errors.Is(err, context.DeadlineExceeded):
+		return NewExitError(ExitNetwork, errors.New("upgrade daemon coordination timed out"))
+	case errors.Is(err, platform.ErrInstanceLocked):
+		return NewExitError(ExitConflict, errors.New("another AMSFTP upgrade is already coordinating daemon restart"))
+	default:
+		return NewExitError(ExitInternal, errors.New("cannot establish the daemon upgrade recovery gate"))
 	}
 }
 

@@ -1,13 +1,13 @@
 # 当前项目状态
 
-最后更新：2026-07-23。
+最后更新：2026-07-24。
 
 ## 当前结果
 
 - PR #6 已合并到 `main`，合并提交为 `1f8bef8c3055150c6e47d05eab30f79d02396e04`。
 - 一键安装与发布自动化 PR #9 已合并到 `main`，合并提交为 `7e6f6986af45712ae81d826001f0dc2454804a15`。
 - 内部预览版 [`v0.1.0-internal.20260719.1`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.0-internal.20260719.1) 已发布；候选提交为 `541c3c7434d05bc5366950c53c8b1f1774d72e38`。
-- 公开预览版 [`v0.1.17`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.17) 修复标准 SFTP 下载在高延迟链路上每 256 KiB 等待一轮响应造成的持续吞吐损失：未限速 relay 在 Provider 内保持最多 1 MiB、32 个 32 KiB 请求的有界读取窗口，Worker 仍只按 256 KiB durable 块写入、同步和 checkpoint；启用 global、Endpoint 或 Job 限速时自动回到精确计量读取。请求窗口、内存和 goroutine 均纳入硬资源账本，暂停、恢复、最终可见性与验证语义不变。
+- 公开预览版 [`v0.1.18`](https://github.com/TyrantLucifer/awesome-sftp-cli/releases/tag/v0.1.18) 修复升级期间旧 TUI 自动恢复 daemon 的竞态：升级命令在探测、停机、渠道替换、重启和验证期间持有 owner-private 门控，其他 TUI 等待完成后重连新 daemon，第二个升级命令在修改 daemon 或安装前以 conflict 退出。`v0.1.17` 的有界 SFTP 下载窗口保持不变。
 - Stage 0–6 的实现阶段已经结束；历史计划和验证流水从活动文档中移除，通过 Git 历史追溯。
 - 仓库现在进入“内部预览反馈与下一阶段迭代准备”状态，不宣称公开 1.0 已完成。
 - 内部预览反馈已修复 Preview drawer 的逐行滚动、小文件 EOF range 越界与空文件零长度读取问题。
@@ -26,7 +26,7 @@
 - TUI 已采用显式 Graphite/Cyan 语义主题：活动与非活动栏、光标、多选、连接状态、抽屉和弹窗拥有独立层级；文件元数据按栏宽渐进收缩，主状态栏优先保留恢复、失败和当前动作，同时继续维持大目录窗口化渲染。
 - CI 已拆为普通 PR/main 使用的影响感知 `Fast CI`、release 分支/tag/手动触发的完整 `Release Gates`，以及定时 `Nightly`；普通改动不再重复运行发布矩阵。
 - 严格 `X.Y.Z` 公开预览的一键安装/升级脚本、Homebrew formula 生成器与 tag 发布 workflow 已进入主线；脚本校验 checksum、原子替换 binary、保留上一版并按 daemon 契约完成启停验证。
-- `amsftp upgrade` 已进入主线：macOS/Linux 的 Homebrew 与独立安装统一使用渠道感知升级；命令只在存在新版本时申请升级停机，活动 Job 会原子拒绝停机，原本停止的 daemon 不会被意外启动。
+- `amsftp upgrade` 已进入主线：macOS/Linux 的 Homebrew 与独立安装统一使用渠道感知升级；命令只在存在新版本时申请升级停机，活动 Job 会原子拒绝停机，原本停止的 daemon 不会被意外启动；升级期门控阻止并发升级和旧 TUI 在渠道替换期间抢先恢复旧 daemon。
 - `v0.1.1` 已修复 `v0.1.0` Homebrew 符号链接入口被认证 helper 完整性检查拒绝的问题；包管理器入口会冻结到 Cellar 真实二进制并保持最终路径的 owner、mode、ACL 与祖先目录校验。
 
 ## 可用边界
@@ -40,6 +40,6 @@
 
 ## 下一步
 
-`v0.1.17` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
+`v0.1.18` 发布后继续从[产品路线图](../product/roadmap.md)的“内部预览反馈闭环”收集真实问题；每个严格 patch 使用新的不可变 tag，production Helper、Level 2 和公开 1.0 仍使用独立门禁。
 
 开发前阅读根目录 [AGENTS.md](../../AGENTS.md)，并只运行与改动风险相称的定向测试。普通公开预览由不可变 tag 触发发布 workflow；历史 [RC 门禁](../release/RC-GATES.md)不作为严格 patch 的发布阻断条件。

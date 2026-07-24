@@ -109,6 +109,7 @@ func PrepareRuntimeDirectory(paths Paths, allowFallback bool) (Paths, []Diagnost
 	paths.RuntimeDir = fallback
 	paths.ControlSocket = filepath.Join(fallback, controlSocketName)
 	paths.LockFile = filepath.Join(fallback, lockFileName)
+	paths.UpgradeLockFile = filepath.Join(fallback, upgradeLockFileName)
 	if err := PreparePrivateDirectory(fallback, ValidateRuntimeFallback); err != nil {
 		return Paths{}, nil, fmt.Errorf("prepare fallback runtime directory: %w", err)
 	}
