@@ -308,6 +308,73 @@ func TestWorkerResumesDirectoryAfterAbruptStopWithoutConflictingWithOwnedRoot(t 
 	}
 }
 
+func TestWorkerDirectoryResumeDoesNotLeavePartWhenListingOrderChanges(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, data := range map[string]string{
+		"alpha": "alpha-payload",
+		"bravo": "bravo-payload",
+	} {
+		if err := os.WriteFile(filepath.Join(sourceRoot, "tree", name), []byte(data), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointLocal)
+	reordered := &reorderableListProvider{Provider: source}
+	resolver := MapResolver{source.Descriptor().ID: reordered, destination.Descriptor().ID: destination}
+	planner := NewPlanner(MapResolver{source.Descriptor().ID: source, destination.Descriptor().ID: destination})
+	reference, err := planner.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request.Intent.Name = "copied"
+	plan, _, err := planner.FreezeCopy(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.BufferBytes = 4
+	plan.Discovery.PageItems = 16
+	journal := newMemoryJournal()
+	cancelAfterFirstChunk := ControlFunc(func(checkpoint Checkpoint) ControlAction {
+		if strings.Contains(string(checkpoint.Part.Path), ".part-") && checkpoint.Offset >= uint64(plan.BufferBytes) {
+			return ControlCancel
+		}
+		return ControlContinue
+	})
+	if _, err := NewWorker(resolver, journal).Execute(context.Background(), plan, cancelAfterFirstChunk); !errors.Is(err, ErrCanceled) {
+		t.Fatalf("first directory execution error = %v, want ErrCanceled", err)
+	}
+	partPattern := filepath.Join(destinationRoot, "copied", ".*.part-*")
+	parts, err := filepath.Glob(partPattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 1 {
+		t.Fatalf("interrupted directory parts = %v, want exactly one retained part", parts)
+	}
+
+	reordered.setReverse(true)
+	result, err := NewWorker(resolver, journal).Execute(context.Background(), plan, nil)
+	if err != nil {
+		t.Fatalf("resume directory: %v", err)
+	}
+	if result.Outcome != OutcomeCompleted || result.Items != 2 {
+		t.Fatalf("resumed directory result = %#v", result)
+	}
+	parts, err = filepath.Glob(partPattern)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(parts) != 0 {
+		t.Fatalf("directory resume left stale parts after listing order changed: %v", parts)
+	}
+}
+
 func TestWorkerRecordsBoundedPartialDirectoryManifestAndContinuesAfterPermissionFailure(t *testing.T) {
 	sourceRoot := t.TempDir()
 	destinationRoot := t.TempDir()
@@ -362,6 +429,37 @@ func TestWorkerRecordsBoundedPartialDirectoryManifestAndContinuesAfterPermission
 	if err != nil || retried.Outcome != OutcomeCompleted || retried.Items != 2 || retried.Succeeded != 2 || retried.Failed != 0 || retried.Bytes != 8 {
 		t.Fatalf("selective directory retry = (%#v, %v)", retried, err)
 	}
+}
+
+type reorderableListProvider struct {
+	providerapi.Provider
+
+	mu      sync.RWMutex
+	reverse bool
+}
+
+func (provider *reorderableListProvider) setReverse(reverse bool) {
+	provider.mu.Lock()
+	defer provider.mu.Unlock()
+	provider.reverse = reverse
+}
+
+func (provider *reorderableListProvider) List(ctx context.Context, request providerapi.ListRequest) (providerapi.ListPage, error) {
+	page, err := provider.Provider.List(ctx, request)
+	if err != nil {
+		return providerapi.ListPage{}, err
+	}
+	provider.mu.RLock()
+	reverse := provider.reverse
+	provider.mu.RUnlock()
+	if !reverse {
+		return page, nil
+	}
+	page.Entries = append([]domain.Entry(nil), page.Entries...)
+	for left, right := 0, len(page.Entries)-1; left < right; left, right = left+1, right-1 {
+		page.Entries[left], page.Entries[right] = page.Entries[right], page.Entries[left]
+	}
+	return page, nil
 }
 
 func TestWorkerRefreshesCheckpointAfterPauseClosesWriteHandle(t *testing.T) {
