@@ -30,66 +30,48 @@ func TestMissingRequiredDocumentationEntryPoint(t *testing.T) {
 		t.Fatalf("remove README fixture: %v", err)
 	}
 
-	assertExactCheckFindings(t, root, []Finding{{
-		Path: "README.md", Line: 1, Rule: "docs.required",
-		Message: "required documentation entry point is missing or is not a regular file",
-	}})
-}
-
-func TestFeatureMatrixAcceptsCurrentCapabilitySchema(t *testing.T) {
-	root := prepareFixture(t, "valid")
-	writePolicyFile(t, root, "docs/product/feature-matrix.md", `# Feature Matrix
-
-| ID | 能力 | 状态 | 用户契约 | 实现与测试依据 |
-|---|---|---|---|---|
-| CORE-001 | Foundation | Implemented | Works. | [guide](../guide.md) |
-| CORE-002 | Evidence | Verified | Verified. | [guide](../guide.md) |
-`)
-	if findings := checkFixture(root); len(findings) != 0 {
-		t.Fatalf("Check() returned unexpected findings:\n%s", formatFindings(findings))
-	}
+	assertExactCheckFindings(t, root, []Finding{
+		{
+			Path: "README.md", Line: 1, Rule: "docs.required",
+			Message: "required documentation entry point is missing or is not a regular file",
+		},
+		{
+			Path: "README.zh-CN.md", Line: 3, Rule: "link.missing",
+			Message: `relative link "README.md" does not resolve`,
+		},
+	})
 }
 
 func TestBrokenRelativeLink(t *testing.T) {
 	assertFixtureFindings(t, "broken-link", []expectedFinding{
-		{Path: "docs/guide.md", Line: 3, Rule: "link.missing"},
-		{Path: "docs/guide.md", Line: 4, Rule: "link.escape"},
+		{Path: "docs/user/getting-started.md", Line: 5, Rule: "link.missing"},
+		{Path: "docs/user/getting-started.md", Line: 6, Rule: "link.escape"},
 	})
 }
 
 func TestRelativeLinkRejectsFileSymlinkEscape(t *testing.T) {
 	root := prepareFixture(t, "symlink-file-escape")
 	target := writeOutsideFixtureFile(t, "outside.md")
-	if err := os.Symlink(target, filepath.Join(root, "docs", "outside-file.md")); err != nil {
+	if err := os.Symlink(target, filepath.Join(root, "docs", "user", "outside-file.md")); err != nil {
 		t.Fatalf("create file symlink: %v", err)
 	}
 
 	assertCheckFindings(t, root, []expectedFinding{
-		{Path: "docs/guide.md", Line: 3, Rule: "link.escape"},
+		{Path: "docs/user/getting-started.md", Line: 5, Rule: "link.escape"},
+		{Path: "docs/user/outside-file.md", Line: 1, Rule: "docs.layout"},
 	})
 }
 
 func TestRelativeLinkRejectsDirectorySymlinkEscape(t *testing.T) {
 	root := prepareFixture(t, "symlink-directory-escape")
 	target := writeOutsideFixtureFile(t, "outside.md")
-	if err := os.Symlink(filepath.Dir(target), filepath.Join(root, "docs", "outside-directory")); err != nil {
+	if err := os.Symlink(filepath.Dir(target), filepath.Join(root, "docs", "user", "outside-directory")); err != nil {
 		t.Fatalf("create directory symlink: %v", err)
 	}
 
 	assertCheckFindings(t, root, []expectedFinding{
-		{Path: "docs/guide.md", Line: 3, Rule: "link.escape"},
-	})
-}
-
-func TestFeatureEvidenceRejectsSymlinkEscape(t *testing.T) {
-	root := prepareFixture(t, "verification-symlink-escape")
-	target := writeOutsideFixtureFile(t, "record.md")
-	if err := os.Symlink(filepath.Dir(target), filepath.Join(root, "docs", "verification", "outside")); err != nil {
-		t.Fatalf("create verification directory symlink: %v", err)
-	}
-
-	assertCheckFindings(t, root, []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "link.escape"},
+		{Path: "docs/user/getting-started.md", Line: 5, Rule: "link.escape"},
+		{Path: "docs/user/outside-directory", Line: 1, Rule: "docs.layout"},
 	})
 }
 
@@ -98,10 +80,16 @@ func TestRepositoryTruthRejectsSymlinkEscapes(t *testing.T) {
 		root := prepareFixture(t, "valid")
 		replaceFixtureFileWithOutsideSymlink(t, root, "README.md")
 
-		assertExactCheckFindings(t, root, []Finding{{
-			Path: "README.md", Line: 1, Rule: "docs.required",
-			Message: "required documentation entry point is missing or is not a regular file",
-		}})
+		assertExactCheckFindings(t, root, []Finding{
+			{
+				Path: "README.md", Line: 1, Rule: "docs.required",
+				Message: "required documentation entry point is missing or is not a regular file",
+			},
+			{
+				Path: "README.zh-CN.md", Line: 3, Rule: "link.escape",
+				Message: `relative link "README.md" resolves outside the repository`,
+			},
+		})
 	})
 }
 
@@ -140,71 +128,59 @@ func TestRequiredWorkflowsRejectSymlinks(t *testing.T) {
 	})
 }
 
-func TestDuplicateFeatureID(t *testing.T) {
-	assertFixtureFindings(t, "duplicate-feature-id", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 6, Rule: "matrix.id_duplicate"},
-	})
-}
-
-func TestMalformedFeatureID(t *testing.T) {
-	assertFixtureFindings(t, "invalid-feature-id", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "matrix.id_format"},
-	})
-}
-
-func TestInvalidFeatureStatus(t *testing.T) {
-	assertFixtureFindings(t, "invalid-stage-status", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 6, Rule: "matrix.status"},
-	})
-}
-
-func TestMissingFeatureEvidence(t *testing.T) {
-	assertFixtureFindings(t, "missing-evidence", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "matrix.evidence_missing"},
-	})
-}
-
-func TestNonPlannedFeatureRejectsStaleEvidence(t *testing.T) {
-	assertFixtureFindings(t, "stale-evidence", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 5, Rule: "matrix.evidence_stale"},
-	})
-}
-
-func TestFeatureMatrixRequiresCanonicalHeader(t *testing.T) {
-	assertFixtureFindings(t, "matrix-missing-header", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 1, Rule: "matrix.schema"},
-	})
-}
-
-func TestFeatureMatrixRejectsMalformedHeader(t *testing.T) {
-	assertFixtureFindings(t, "matrix-malformed-header", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 3, Rule: "matrix.schema"},
-	})
-}
-
-func TestFeatureMatrixRejectsDuplicateHeader(t *testing.T) {
-	assertFixtureFindings(t, "matrix-duplicate-header", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 7, Rule: "matrix.schema"},
-	})
-}
-
-func TestFeatureMatrixRejectsEmptyTable(t *testing.T) {
-	assertFixtureFindings(t, "matrix-empty-table", []expectedFinding{
-		{Path: "docs/product/feature-matrix.md", Line: 3, Rule: "matrix.schema"},
-	})
-}
-
-func TestFeatureMatrixAllowsOneCanonicalTablePerSection(t *testing.T) {
-	root := prepareFixture(t, "matrix-sectioned-valid")
-	if findings := checkFixture(root); len(findings) != 0 {
-		t.Fatalf("Check() returned unexpected findings:\n%s", formatFindings(findings))
-	}
-}
-
 func TestDurableDocumentMarker(t *testing.T) {
 	assertFixtureFindings(t, "durable-marker", []expectedFinding{
-		{Path: "docs/guide.md", Line: 3, Rule: "docs.marker"},
+		{Path: "docs/user/getting-started.md", Line: 5, Rule: "docs.marker"},
 	})
+}
+
+func TestMissingTranslatedPage(t *testing.T) {
+	root := prepareFixture(t, "valid")
+	path := filepath.Join(root, "docs", "zh-CN", "help", "recovery.md")
+	if err := os.Remove(path); err != nil {
+		t.Fatalf("remove translated page fixture: %v", err)
+	}
+
+	assertExactCheckFindings(t, root, []Finding{
+		{
+			Path: "docs/help/recovery.md", Line: 3, Rule: "link.missing",
+			Message: `relative link "../zh-CN/help/recovery.md" does not resolve`,
+		},
+		{
+			Path: "docs/zh-CN/help/recovery.md", Line: 1, Rule: "docs.required",
+			Message: "required documentation entry point is missing or is not a regular file",
+		},
+	})
+}
+
+func TestTranslationPairRequiresReciprocalLinks(t *testing.T) {
+	root := prepareFixture(t, "valid")
+	writePolicyFile(t, root, "docs/user/transfers.md", "# Transfers\n")
+
+	assertExactCheckFindings(t, root, []Finding{{
+		Path: "docs/user/transfers.md", Line: 1, Rule: "docs.translation_link",
+		Message: `English page must link to its Chinese translation "../zh-CN/user/transfers.md"`,
+	}})
+}
+
+func TestTranslationPairRequiresMatchingHeadingStructure(t *testing.T) {
+	root := prepareFixture(t, "valid")
+	writePolicyFile(t, root, "docs/zh-CN/user/transfers.md", "# 传输\n\n[English](../../user/transfers.md)\n\n## 多余章节\n")
+
+	assertExactCheckFindings(t, root, []Finding{{
+		Path: "docs/zh-CN/user/transfers.md", Line: 1, Rule: "docs.translation_structure",
+		Message: "Chinese heading levels [1 2] must match English source [1]",
+	}})
+}
+
+func TestDocumentationTreeRejectsMachineMaterial(t *testing.T) {
+	root := prepareFixture(t, "valid")
+	writePolicyFile(t, root, "docs/user/runtime-dependencies.json", "{}\n")
+
+	assertExactCheckFindings(t, root, []Finding{{
+		Path: "docs/user/runtime-dependencies.json", Line: 1, Rule: "docs.layout",
+		Message: "docs may contain only the approved human-readable pages and docs/man/amsftp.1",
+	}})
 }
 
 func TestUnpinnedWorkflowAction(t *testing.T) {

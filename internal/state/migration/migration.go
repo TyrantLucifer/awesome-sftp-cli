@@ -21,7 +21,7 @@ type Migration struct {
 }
 
 // ValidateSet enforces a continuous forward-only history and the per-version
-// WAL declaration required by ADR-0008.
+// WAL declaration required by the persistent-state contract.
 func ValidateSet(migrations []Migration) error {
 	if len(migrations) == 0 {
 		return fmt.Errorf("validate migration set: empty set")

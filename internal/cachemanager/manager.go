@@ -1,5 +1,5 @@
 // Package cachemanager coordinates the cache filesystem and Version 2 catalog.
-// It preserves the crash ordering defined by ADR-0014: durable bytes first,
+// It preserves the crash-safe cache ordering: durable bytes first,
 // then one catalog transaction that makes an external handoff reachable and
 // leased. Reconciliation is report-only and never deletes uncertain bytes.
 package cachemanager

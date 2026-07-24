@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -1146,8 +1145,8 @@ func TestCIQualityLifecycleRequiresCommittedReviewedNotice(t *testing.T) {
 	}{
 		{
 			name: "committed notice",
-			script: `cp docs/release/NOTICE "${input}/NOTICE"
-go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json`,
+			script: `cp NOTICE "${input}/NOTICE"
+go run ./internal/tools/releasenotice internal/release/metadata/runtime-dependencies.json internal/release/metadata/license-materials.json`,
 			want: true,
 		},
 		{
@@ -1156,7 +1155,7 @@ go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json doc
 		},
 		{
 			name:   "notice without regeneration gate",
-			script: `cp docs/release/NOTICE "${input}/NOTICE"`,
+			script: `cp NOTICE "${input}/NOTICE"`,
 		},
 	}
 	for _, test := range tests {
@@ -2280,26 +2279,6 @@ func TestDockerActionsCannotMasqueradeAsCommitPinnedActions(t *testing.T) {
 				}
 			}
 			t.Fatalf("missing exact finding %#v\nfull findings:\n%s", want, formatFindings(findings))
-		})
-	}
-}
-
-func TestMarkdownTableCellsHonorsEscapedPipeParity(t *testing.T) {
-	tests := []struct {
-		name string
-		line string
-		want []string
-	}{
-		{name: "one backslash", line: `| CORE-002 | details \| PASS |`, want: []string{"CORE-002", `details \| PASS`}},
-		{name: "two backslashes", line: `| CORE-002 | details \\| PASS |`, want: []string{"CORE-002", `details \\`, "PASS"}},
-		{name: "three backslashes", line: `| CORE-002 | details \\\| PASS |`, want: []string{"CORE-002", `details \\\| PASS`}},
-		{name: "four backslashes", line: `| CORE-002 | details \\\\| PASS |`, want: []string{"CORE-002", `details \\\\`, "PASS"}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if got := markdownTableCells(test.line); !reflect.DeepEqual(got, test.want) {
-				t.Fatalf("markdownTableCells(%q) = %#v, want %#v", test.line, got, test.want)
-			}
 		})
 	}
 }

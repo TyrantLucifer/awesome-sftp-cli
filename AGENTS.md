@@ -4,23 +4,20 @@
 
 ## 当前状态
 
-- 主线已经包含公开预览渠道自动化；当前公开预览版本线以 [README](README.md) 与[项目状态](docs/development/status.md)为准，历史严格版本与内部预览仍可追溯。
+- 主线已经包含公开预览渠道自动化；当前用户能力与限制以 [README](README.md) 为准，具体版本历史以 GitHub Releases 为准。
 - 规范仓库名与 Go module 均为 `awesome-sftp-cli` / `github.com/TyrantLucifer/awesome-sftp-cli`。
 - 项目许可证为 Apache License 2.0；当前公开预览仍未签名，不是公开 1.0。
 - Level 0 SFTP 可用；production Helper 和 production Level 2 保持 CLOSED。
-- 当前迭代入口是[项目状态](docs/development/status.md)与[路线图](docs/product/roadmap.md)，不是历史 Stage 文档。
 
 ## 开始工作前
 
 按需阅读，不要先加载整个文档树：
 
-1. `README.md` 和 `docs/development/status.md`。
-2. `docs/product/roadmap.md` 中与任务相关的方向。
-3. `docs/architecture/overview.md` 与相关 ADR。
-4. 对应的 `docs/user/`、`docs/security/` 或 `docs/release/` 文档。
-5. 受影响包的实现和测试。
+1. `README.md` 与 `docs/README.md`。
+2. 对应的 `docs/user/`、`docs/help/` 或 `docs/architecture/` 英文文档。
+3. 受影响包的实现和测试。
 
-历史 Stage 计划、Verification 流水和一次性目标文件只通过 Git 历史查阅，不应重新复制回活动文档。
+英文文档是事实源，`README.zh-CN.md` 与 `docs/zh-CN/` 是对应的简体中文翻译。历史 Stage 计划、ADR、Verification 流水和一次性目标文件只通过 Git 历史查阅，不应重新复制回活动文档。
 
 ## 代码发现
 
@@ -89,15 +86,14 @@ make ci
 
 ## 文档规则
 
-- `README.md`：用户现在能做什么、如何开始、当前限制。
-- `docs/architecture/overview.md`：当前实现边界和核心数据流。
-- `docs/architecture/adr/`：不可逆或跨模块设计决策；ADR 追加而不是改写历史。
-- `docs/product/feature-matrix.md`：稳定能力 ID、状态、用户契约和实现/测试依据。
-- `docs/development/status.md`：简短当前状态，不记录每日命令流水。
-- `docs/product/roadmap.md`：未来方向，不伪装成已完成能力。
-- `docs/release/RC-GATES.md`：保留为历史门禁设计与后续稳定性专项的输入；当前不作为发布前置条件或发布阻断依据。
+- `README.md` 与 `README.zh-CN.md`：用户现在能做什么、如何开始、当前限制。
+- `docs/user/`：安装、入门、日常使用、传输、预览/编辑/搜索、配置和参考。
+- `docs/help/`：按用户症状组织的故障排查与恢复。
+- `docs/architecture/`：当前架构、安全边界和核心数据流。
+- `docs/zh-CN/`：与英文文档一一对应，目录和章节顺序保持一致。
+- `docs/man/amsftp.1`：由公开 CLI facts 生成并校验的英文 man 手册。
 
-功能或状态变化必须在同一 change 中更新相关用户文档、功能矩阵和状态。不要写入临时分支名、容易过期的 CI 运行号或聊天上下文。
+`docs/` 只保留上述人类可读 Markdown 与 `docs/man/amsftp.1`。英文是唯一事实源；用户可见行为变化必须在同一 change 中更新相关英文页面和中文翻译。不要重新引入状态账本、路线图、功能矩阵、ADR、发布门禁、测试证据流水、机器 registry 或发布元数据，也不要写入临时分支名、容易过期的 CI 运行号或聊天上下文。
 
 ## Git 与工作区
 
@@ -121,8 +117,8 @@ make ci
    - feature 先补用户可观察的验收测试或契约测试，再实现最小完整行为。
    - 同时检查安全、不变量、有界资源、恢复语义和跨包边界；不得用 UI fixture 绕过 daemon/Provider/transfer 契约。
 3. **同步产品事实**
-   - 用户可见行为或能力状态变化必须在同一分支更新相关用户文档、`docs/product/feature-matrix.md` 和 `docs/development/status.md`。
-   - 若本 change 将直接发布，PR 中同时把 README、状态和其他版本化入口准备为目标版本；禁止在 tag 推送后再补版本文档。
+   - 用户可见行为或能力状态变化必须在同一分支更新相关英文用户文档及其 `docs/zh-CN/` 中文翻译。
+   - 若本 change 将直接发布，PR 中同时把双语 README 和其他版本化入口准备为目标版本；禁止在 tag 推送后再补版本文档。
 4. **完成本地验证**
    - 先运行受影响包和直接契约测试，再按“开发与验证”规则扩大到 `make check`、race 或 `make ci`。
    - 提交前必须通过 `git diff --check`，并再次检查 `git status` 与实际 diff；不得把 coverage、构建产物或无关改动带入提交。
@@ -161,6 +157,6 @@ make ci
 ## Release 规则
 
 - 发布以不可变的语义化版本 tag 为入口，格式为 `vX.Y.Z`；确认 tag 指向目标提交后，将 tag 推送到远端即可触发 `.github/workflows/release.yml` 自动构建并发布 Release。
-- 普通发布不再要求预先运行 `docscheck --release`、关闭 `docs/release/RC-GATES.md`，或人工汇总额外 release-gate 证据；不要因 Release Gates workflow 的成功、失败或不稳定状态阻断 tag 发布。
+- 普通发布使用与日常开发相同的 `make docs-check`，不依赖独立的 Markdown 发布清单或人工汇总的 release-gate 文档。
 - `.github/workflows/ci.yml` 中的 Release Gates 当前不作为发布授权或发布完成的判断依据，也不要求 Agent 在发布前查看；其稳定性问题留待后续专项优化。
 - 不要手工复制自动发布流程的步骤或伪造发布结果；tag 推送后的构建、制品和 Release 创建由发布 workflow 负责。

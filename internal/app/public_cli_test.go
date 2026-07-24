@@ -24,7 +24,7 @@ func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RenderCompletion(%q): %v", shell, err)
 		}
-		for _, command := range []string{"daemon", "start", "status", "stop", "job", "list", "events", "pause", "resume", "cancel", "--limit", "--after", "--format", "--confirm", "helper", "install", "upgrade", "disable", "remove", "--accept-shared-session-stable-home", "config", "doctor", "--endpoint", "support-bundle", "preview", "create", "--consent", "--output", "completion", "validate", "print-effective", "print-effective-keymap", "reset-keymap", "--yes"} {
+		for _, command := range []string{"daemon", "start", "status", "stop", "job", "list", "events", "pause", "resume", "cancel", "--limit", "--after", "--format", "--confirm", "helper", "upgrade", "config", "doctor", "--endpoint", "support-bundle", "preview", "create", "--consent", "--output", "completion", "validate", "print-effective", "print-effective-keymap", "reset-keymap", "--yes"} {
 			if !strings.Contains(completion, command) {
 				t.Fatalf("%s completion does not contain %q:\n%s", shell, command, completion)
 			}
@@ -52,9 +52,25 @@ func TestPublicHelpManAndCompletionsShareCommandFacts(t *testing.T) {
 		if strings.Contains(completion, "%!") {
 			t.Fatalf("%s completion contains a formatting artifact:\n%s", shell, completion)
 		}
-		for _, forbidden := range []string{"/usr/bin/ssh", "ProxyCommand", "askpass", "helper serve"} {
+		for _, forbidden := range []string{"/usr/bin/ssh", "ProxyCommand", "askpass", "helper serve", "--accept-shared-session-stable-home", "disable", "remove"} {
 			if strings.Contains(completion, forbidden) {
 				t.Fatalf("%s completion contains forbidden runtime operation %q", shell, forbidden)
+			}
+		}
+	}
+}
+
+func TestPublicHelpAndManHideInternalAndClosedCommands(t *testing.T) {
+	for name, surface := range map[string]string{"help": Usage(), "man": RenderManPage()} {
+		for _, forbidden := range []string{
+			"askpass",
+			"release-admitted",
+			"protected composition",
+			"helper <install|upgrade|remove>",
+			"helper <status|disable>",
+		} {
+			if strings.Contains(surface, forbidden) {
+				t.Fatalf("%s advertises internal or closed command %q:\n%s", name, forbidden, surface)
 			}
 		}
 	}

@@ -73,8 +73,8 @@ jobs:
         run: |
           set -euo pipefail
           test -s LICENSE
-          test -s docs/release/project-license.spdx
-          spdx="$(tr -d '\r\n' < docs/release/project-license.spdx)"
+          test -s internal/release/metadata/project-license.spdx
+          spdx="$(tr -d '\r\n' < internal/release/metadata/project-license.spdx)"
           if [[ -z "${spdx}" || "${spdx}" == *" "* ]]; then
             echo "project-license.spdx must contain one SPDX identifier" >&2
             exit 1
@@ -112,13 +112,12 @@ jobs:
           output="${RUNNER_TEMP}/amsftp-release"
           tree="$(git rev-parse 'HEAD^{tree}')"
           source_epoch="$(git show -s --format=%ct HEAD)"
-          modules_json="$(tr -d '\n' < docs/release/runtime-dependencies.json)"
+          modules_json="$(tr -d '\n' < internal/release/metadata/runtime-dependencies.json)"
           mkdir -p "${stage}/bin"
           cp LICENSE "${stage}/LICENSE"
-          go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json > "${stage}/NOTICE"
-          cmp docs/release/NOTICE "${stage}/NOTICE"
-          cp docs/release/INSTALL.md "${stage}/INSTALL.md"
-          cp docs/release/UNINSTALL.md "${stage}/UNINSTALL.md"
+          go run ./internal/tools/releasenotice internal/release/metadata/runtime-dependencies.json internal/release/metadata/license-materials.json > "${stage}/NOTICE"
+          cmp NOTICE "${stage}/NOTICE"
+          cp docs/user/installation.md "${stage}/INSTALL.md"
           cp docs/man/amsftp.1 "${stage}/amsftp.1"
           for target in darwin-amd64 darwin-arm64 linux-amd64 linux-arm64; do
             cp "${RUNNER_TEMP}/amsftp-build/${target}/amsftp" "${stage}/bin/${target}"
@@ -130,7 +129,7 @@ jobs:
             "commit": "${COMMIT}",
             "tree": "${tree}",
             "source_date_epoch": ${source_epoch},
-            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","uninstall":"UNINSTALL.md","man":"amsftp.1"},
+            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","man":"amsftp.1"},
             "platforms": [
               {"os":"darwin","arch":"amd64","path":"bin/darwin-amd64"},
               {"os":"darwin","arch":"arm64","path":"bin/darwin-arm64"},

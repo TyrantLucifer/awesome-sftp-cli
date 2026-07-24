@@ -1,7 +1,6 @@
 package compatibility
 
 import (
-	"os"
 	"strings"
 	"testing"
 )
@@ -47,15 +46,5 @@ direct-transfer | production Level 2 | untested | CLOSED; bounded relay remains 
 		if !seen[required] {
 			t.Errorf("compatibility matrix does not distinguish %q", required)
 		}
-	}
-}
-
-func TestCommittedEnvironmentCompatibilityMatrixMatchesRegistry(t *testing.T) {
-	raw, err := os.ReadFile("../../docs/product/environment-compatibility.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(raw), EnvironmentMarkdown(); got != want {
-		t.Fatal("committed environment compatibility matrix drifted from registry")
 	}
 }

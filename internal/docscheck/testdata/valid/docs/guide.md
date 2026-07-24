@@ -1,3 +1,0 @@
-# Guide
-
-[Target](target.md)

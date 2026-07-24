@@ -34,7 +34,6 @@ type manifestMaterials struct {
 	License         string `json:"license"`
 	Notice          string `json:"notice"`
 	Install         string `json:"install"`
-	Uninstall       string `json:"uninstall"`
 	Man             string `json:"man"`
 	InternalPreview string `json:"internal_preview,omitempty"`
 	BashCompletion  string `json:"bash_completion,omitempty"`
@@ -166,10 +165,6 @@ func loadBundleRequest(root string, manifest inputManifest, inspect binaryInspec
 	if err != nil {
 		return releasepack.BundleRequest{}, fmt.Errorf("load INSTALL.md: %w", err)
 	}
-	uninstall, err := readConfinedMaterial(root, manifest.Materials.Uninstall)
-	if err != nil {
-		return releasepack.BundleRequest{}, fmt.Errorf("load UNINSTALL.md: %w", err)
-	}
 	man, err := readConfinedMaterial(root, manifest.Materials.Man)
 	if err != nil {
 		return releasepack.BundleRequest{}, fmt.Errorf("load amsftp.1: %w", err)
@@ -230,7 +225,7 @@ func loadBundleRequest(root string, manifest inputManifest, inspect binaryInspec
 	return releasepack.BundleRequest{
 		Version: manifest.Version, Commit: manifest.Commit, Tree: manifest.Tree, SourceDateEpoch: manifest.SourceDateEpoch,
 		Materials: releasepack.Materials{
-			License: license, Notice: notice, Install: install, Uninstall: uninstall, Man: man,
+			License: license, Notice: notice, Install: install, Man: man,
 			InternalPreview: internalPreview, BashCompletion: bashCompletion, ZshCompletion: zshCompletion, FishCompletion: fishCompletion,
 		},
 		Platforms: platforms, Modules: modules,

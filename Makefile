@@ -81,7 +81,7 @@ docs-check:
 
 notice-check:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)
-	"$(GO)" run ./internal/tools/releasenotice --check docs/release/runtime-dependencies.json docs/release/license-materials.json docs/release/NOTICE
+	"$(GO)" run ./internal/tools/releasenotice --check internal/release/metadata/runtime-dependencies.json internal/release/metadata/license-materials.json NOTICE
 
 mod-check:
 	+@: $(MAKE_CONTRACT_RECIPE_GUARD)

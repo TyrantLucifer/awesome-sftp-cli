@@ -296,12 +296,16 @@ func classifyRisk(path string, selected *plan) bool {
 		}
 	}
 	for _, prefix := range []string{
-		"internal/buildinfo/", "internal/release", "internal/tools/release", "docs/release/", "docs/man/",
+		"internal/buildinfo/", "internal/release", "internal/tools/release", "docs/man/",
 	} {
 		if strings.HasPrefix(path, prefix) {
 			selected.Release = true
 			known = true
 		}
+	}
+	if path == "NOTICE" || path == "docs/user/installation.md" {
+		selected.Release = true
+		known = true
 	}
 	if strings.HasPrefix(path, ".github/") || strings.HasPrefix(path, "internal/docscheck/") ||
 		strings.HasPrefix(path, "internal/tools/makecontract/") {

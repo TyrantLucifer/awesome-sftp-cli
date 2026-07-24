@@ -335,10 +335,9 @@ func canonicalArchiveEntries(target Target, binary []byte, mutate func([]release
 	root := "amsftp_4.0.0_" + target.OS + "_" + target.Arch
 	entries := []releaseArchiveEntry{
 		{name: root + "/", mode: 0o755, typeflag: tar.TypeDir},
-		{name: root + "/INSTALL.md", mode: 0o644, typeflag: tar.TypeReg, body: []byte("install\n")},
+		{name: root + "/INSTALL.md", mode: 0o644, typeflag: tar.TypeReg, body: []byte("install and uninstall\n")},
 		{name: root + "/LICENSE", mode: 0o644, typeflag: tar.TypeReg, body: []byte("license\n")},
 		{name: root + "/NOTICE", mode: 0o644, typeflag: tar.TypeReg, body: []byte("notice\n")},
-		{name: root + "/UNINSTALL.md", mode: 0o644, typeflag: tar.TypeReg, body: []byte("uninstall\n")},
 		{name: root + "/VERSION.json", mode: 0o644, typeflag: tar.TypeReg, body: []byte("{}\n")},
 		{name: root + "/amsftp", mode: 0o755, typeflag: tar.TypeReg, body: binary},
 		{name: root + "/share/", mode: 0o755, typeflag: tar.TypeDir},

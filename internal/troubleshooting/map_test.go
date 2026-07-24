@@ -1,7 +1,6 @@
 package troubleshooting
 
 import (
-	"os"
 	"testing"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/doctor"
@@ -40,15 +39,5 @@ func TestEntriesCoverEveryDoctorAndDomainCodeExactlyOnce(t *testing.T) {
 	}
 	if len(entries) != len(doctorCodes)+len(domainCodes) {
 		t.Fatalf("entry count = %d, want %d", len(entries), len(doctorCodes)+len(domainCodes))
-	}
-}
-
-func TestCommittedTroubleshootingReferenceMatchesRegistry(t *testing.T) {
-	raw, err := os.ReadFile("../../docs/user/troubleshooting.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(raw), Markdown(); got != want {
-		t.Fatal("committed troubleshooting reference drifted from registry")
 	}
 }

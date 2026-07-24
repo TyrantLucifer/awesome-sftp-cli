@@ -1,6 +1,6 @@
 .TH AMSFTP 1
 .SH NAME
-amsftp \- Vim-first two-pane SFTP commander
+amsftp \- two-pane terminal file manager for local files and SFTP
 .SH SYNOPSIS
 .TP
 \fBamsftp [<location> [<location>]]\fR
@@ -15,8 +15,8 @@ Start, inspect, or explicitly stop the local daemon.
 \fBamsftp job <list|events|pause|resume|cancel> [arguments]\fR
 Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.
 .TP
-\fBamsftp helper <status|disable> <SSH-host> [--format human|json] | amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]\fR
-Inspect or disable Helper state, or request release-admitted install/upgrade/exact removal; lifecycle remains fail-closed until protected composition exists.
+\fBamsftp helper status <SSH-alias> [--format human|json]\fR
+Report whether an endpoint is using standard SFTP or an available optional enhancement.
 .TP
 \fBamsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]\fR
 Validate configuration, print versioned effective output, or explicitly reset keymap overrides.
@@ -33,17 +33,33 @@ Preview the exact reviewed diagnostic archive, then explicitly publish it to a p
 \fBamsftp completion <bash|zsh|fish>\fR
 Print a shell completion script with saved-workspace completion.
 .TP
-\fBamsftp [client|askpass|helper] [arguments...]\fR
-Run an explicit client or restricted internal role.
-.TP
 \fBamsftp --help\fR
 Print command help.
 .TP
 \fBamsftp --version\fR
 Print version and build information.
 .SH DESCRIPTION
-AMSFTP delegates SSH authentication and host policy to the validated system OpenSSH, keeps standard SFTP as the baseline, and requires explicit confirmation for destructive operations.
+AMSFTP opens local and remote directories in a Vim-first, two-pane terminal workspace. It browses, previews, edits, searches, copies, moves, renames, and deletes files while long-running changes continue as durable background Jobs.
+.PP
+The local daemon owns provider sessions and Jobs. Leaving the TUI does not cancel background work; use the job commands to inspect or control it.
+.SH LOCATIONS
+.TP
+\fB/absolute/local/path\fR
+Open an absolute path on the local machine.
+.TP
+\fB<SSH-alias>:/absolute/remote/path\fR
+Open an absolute remote path through a concrete host alias from ssh_config(5).
+.PP
+With no locations, AMSFTP opens the startup picker. One location replaces the active default; two locations set both panes.
+.SH TRANSFERS AND JOBS
+Copy, move, rename, and delete requests are frozen into Jobs before execution. Copy data is verified before the final destination is published, and a move keeps its source until the destination is committed.
+.PP
+Remote-to-remote copies use a bounded relay in the local daemon. Current public builds use standard SFTP and do not enable a production remote Helper or direct server-to-server transfer.
+.SH SSH
+AMSFTP delegates SSH configuration, host-key policy, authentication, ProxyJump, ProxyCommand, Agent use, and Kerberos/GSSAPI to the validated system OpenSSH client. It does not store passwords, private keys, Agent contents, Kerberos tickets, or authentication answers.
 .SH EXIT STATUS
 0 success; 1 internal; 2 usage; 3 configuration; 4 authentication; 5 network; 6 conflict; 7 partial completion; 8 user cancellation.
 .SH FILES
-See the AMSFTP configuration reference for platform paths, schema version, precedence, and redaction.
+Configuration, state, cache, logs, and the daemon socket use platform-specific owner-private directories. Run \fBamsftp config print-effective\fR to inspect effective settings without printing secrets.
+.SH SEE ALSO
+ssh(1), ssh_config(5)

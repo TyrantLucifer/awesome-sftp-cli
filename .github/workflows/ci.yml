@@ -69,7 +69,7 @@ jobs:
           head="$(git rev-parse HEAD)"
           tree="$(git rev-parse 'HEAD^{tree}')"
           source_epoch="$(git show -s --format=%ct HEAD)"
-          modules_json="$(tr -d '\n' <docs/release/runtime-dependencies.json)"
+          modules_json="$(tr -d '\n' <internal/release/metadata/runtime-dependencies.json)"
           ldflags="-X github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo.version=0.1.0-internal -X github.com/TyrantLucifer/awesome-sftp-cli/internal/buildinfo.commit=${head}"
           mkdir -p "${input}/bin"
           for target in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
@@ -80,12 +80,11 @@ jobs:
           done
           printf '%s\n' 'Owner-only internal preview; no public distribution license is granted.' >"${input}/LICENSE"
           notice_check="${RUNNER_TEMP}/reviewed-third-party-NOTICE"
-          go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json >"${notice_check}"
-          cmp docs/release/NOTICE "${notice_check}"
-          cp docs/release/NOTICE "${input}/NOTICE"
-          cp docs/release/INSTALL.md "${input}/INSTALL.md"
-          cp docs/release/UNINSTALL.md "${input}/UNINSTALL.md"
-          cp docs/release/internal-preview.md "${input}/INTERNAL-PREVIEW.md"
+          go run ./internal/tools/releasenotice internal/release/metadata/runtime-dependencies.json internal/release/metadata/license-materials.json >"${notice_check}"
+          cmp NOTICE "${notice_check}"
+          cp NOTICE "${input}/NOTICE"
+          cp docs/user/installation.md "${input}/INSTALL.md"
+          cp internal/release/metadata/internal-preview.md "${input}/INTERNAL-PREVIEW.md"
           cp docs/man/amsftp.1 "${input}/amsftp.1"
           "${input}/bin/linux-amd64" completion bash >"${input}/amsftp.bash"
           "${input}/bin/linux-amd64" completion zsh >"${input}/_amsftp"
@@ -97,7 +96,7 @@ jobs:
             "commit": "${head}",
             "tree": "${tree}",
             "source_date_epoch": ${source_epoch},
-            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","uninstall":"UNINSTALL.md","man":"amsftp.1","internal_preview":"INTERNAL-PREVIEW.md","bash_completion":"amsftp.bash","zsh_completion":"_amsftp","fish_completion":"amsftp.fish"},
+            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","man":"amsftp.1","internal_preview":"INTERNAL-PREVIEW.md","bash_completion":"amsftp.bash","zsh_completion":"_amsftp","fish_completion":"amsftp.fish"},
             "platforms": [
               {"os":"darwin","arch":"amd64","path":"bin/darwin-amd64"},
               {"os":"darwin","arch":"arm64","path":"bin/darwin-arm64"},
@@ -908,7 +907,7 @@ jobs:
           head="$(git rev-parse HEAD)"
           tree="$(git rev-parse 'HEAD^{tree}')"
           source_epoch="$(git show -s --format=%ct HEAD)"
-          modules_json="$(tr -d '\n' <docs/release/runtime-dependencies.json)"
+          modules_json="$(tr -d '\n' <internal/release/metadata/runtime-dependencies.json)"
           mkdir -p "${preview_root}" "${asset_root}"
           build_preview_bundle() {
             version="$1"
@@ -923,9 +922,8 @@ jobs:
                 go build -trimpath -ldflags="${ldflags}" -o "${input}/bin/${goos}-${goarch}" ./cmd/amsftp
             done
             printf '%s\n' 'CI-only public packaging contract material; this is not the project license.' >"${input}/LICENSE"
-            cp docs/release/NOTICE "${input}/NOTICE"
-            cp docs/release/INSTALL.md "${input}/INSTALL.md"
-            cp docs/release/UNINSTALL.md "${input}/UNINSTALL.md"
+            cp NOTICE "${input}/NOTICE"
+            cp docs/user/installation.md "${input}/INSTALL.md"
             cp docs/man/amsftp.1 "${input}/amsftp.1"
             cat >"${input}/manifest.json" <<EOF
           {
@@ -934,7 +932,7 @@ jobs:
             "commit": "${head}",
             "tree": "${tree}",
             "source_date_epoch": ${source_epoch},
-            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","uninstall":"UNINSTALL.md","man":"amsftp.1"},
+            "materials": {"license":"LICENSE","notice":"NOTICE","install":"INSTALL.md","man":"amsftp.1"},
             "platforms": [
               {"os":"darwin","arch":"amd64","path":"bin/darwin-amd64"},
               {"os":"darwin","arch":"arm64","path":"bin/darwin-arm64"},

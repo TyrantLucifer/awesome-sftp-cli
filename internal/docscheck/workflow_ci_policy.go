@@ -126,8 +126,8 @@ func qualityLifecycleUsesReviewedNotice(job workflowJob) bool {
 			return false
 		}
 		script := step.run.value
-		return strings.Contains(script, `go run ./internal/tools/releasenotice docs/release/runtime-dependencies.json docs/release/license-materials.json`) &&
-			strings.Contains(script, `cp docs/release/NOTICE "${input}/NOTICE"`) &&
+		return strings.Contains(script, `go run ./internal/tools/releasenotice internal/release/metadata/runtime-dependencies.json internal/release/metadata/license-materials.json`) &&
+			strings.Contains(script, `cp NOTICE "${input}/NOTICE"`) &&
 			!strings.Contains(script, "CI-only dependency notice")
 	}
 	return true

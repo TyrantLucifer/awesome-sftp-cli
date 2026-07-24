@@ -22,7 +22,7 @@ var publicCLIContract = []cliCommandFact{
 	{name: "--workspace", syntax: "amsftp --workspace <name>", description: "Open a saved workspace."},
 	{name: "daemon", syntax: "amsftp daemon <start|status> [--format human|json] | amsftp daemon stop --confirm stop [--format human|json]", description: "Start, inspect, or explicitly stop the local daemon.", children: []string{"start", "status", "stop"}, childArguments: map[string][]string{"start": {"--format"}, "status": {"--format"}, "stop": {"--format", "--confirm"}}},
 	{name: "job", syntax: "amsftp job <list|events|pause|resume|cancel> [arguments]", description: "Query or control durable Jobs through the local daemon; cancellation requires exact Job ID confirmation.", children: []string{"list", "events", "pause", "resume", "cancel"}, childArguments: map[string][]string{"list": {"--limit", "--format"}, "events": {"--after", "--limit", "--format"}, "pause": {"--format"}, "resume": {"--format"}, "cancel": {"--format", "--confirm"}}},
-	{name: "helper", syntax: "amsftp helper <status|disable> <SSH-host> [--format human|json] | amsftp helper <install|upgrade|remove> <SSH-host> --accept-shared-session-stable-home [--format human|json]", description: "Inspect or disable Helper state, or request release-admitted install/upgrade/exact removal; lifecycle remains fail-closed until protected composition exists.", children: []string{"status", "install", "upgrade", "disable", "remove"}, childArguments: map[string][]string{"status": {"--format"}, "install": {"--accept-shared-session-stable-home", "--format"}, "upgrade": {"--accept-shared-session-stable-home", "--format"}, "disable": {"--format"}, "remove": {"--accept-shared-session-stable-home", "--format"}}},
+	{name: "helper", syntax: "amsftp helper status <SSH-alias> [--format human|json]", description: "Report whether an endpoint is using standard SFTP or an available optional enhancement.", children: []string{"status"}, childArguments: map[string][]string{"status": {"--format"}}},
 	{name: "config", syntax: "amsftp config <validate|print-effective|print-effective-keymap|reset-keymap> [arguments]", description: "Validate configuration, print versioned effective output, or explicitly reset keymap overrides.", children: []string{"validate", "print-effective", "print-effective-keymap", "reset-keymap"}, childArguments: map[string][]string{"reset-keymap": {"--yes"}}},
 	{name: "doctor", syntax: "amsftp doctor [--endpoint <SSH-host>] [--format human|json]", description: "Run bounded read-only local checks and optionally test one SSH endpoint without prompting for credentials.", arguments: []string{"--endpoint", "--format"}},
 	{name: "upgrade", syntax: "amsftp upgrade [--format human|json]", description: "Upgrade a Homebrew or standalone macOS/Linux installation and safely preserve daemon state.", arguments: []string{"--format"}},
@@ -37,6 +37,9 @@ func Usage() string {
 	var builder strings.Builder
 	builder.WriteString("Usage:\n")
 	for _, fact := range publicCLIContract {
+		if fact.internal {
+			continue
+		}
 		builder.WriteString("  ")
 		builder.WriteString(fact.syntax)
 		builder.WriteByte('\n')
@@ -48,9 +51,12 @@ func RenderManPage() string {
 	var builder strings.Builder
 	builder.WriteString(".TH AMSFTP 1\n")
 	builder.WriteString(".SH NAME\n")
-	builder.WriteString("amsftp \\- Vim-first two-pane SFTP commander\n")
+	builder.WriteString("amsftp \\- two-pane terminal file manager for local files and SFTP\n")
 	builder.WriteString(".SH SYNOPSIS\n")
 	for _, fact := range publicCLIContract {
+		if fact.internal {
+			continue
+		}
 		builder.WriteString(".TP\n\\fB")
 		builder.WriteString(fact.syntax)
 		builder.WriteString("\\fR\n")
@@ -58,11 +64,28 @@ func RenderManPage() string {
 		builder.WriteByte('\n')
 	}
 	builder.WriteString(".SH DESCRIPTION\n")
-	builder.WriteString("AMSFTP delegates SSH authentication and host policy to the validated system OpenSSH, keeps standard SFTP as the baseline, and requires explicit confirmation for destructive operations.\n")
+	builder.WriteString("AMSFTP opens local and remote directories in a Vim-first, two-pane terminal workspace. It browses, previews, edits, searches, copies, moves, renames, and deletes files while long-running changes continue as durable background Jobs.\n")
+	builder.WriteString(".PP\n")
+	builder.WriteString("The local daemon owns provider sessions and Jobs. Leaving the TUI does not cancel background work; use the job commands to inspect or control it.\n")
+	builder.WriteString(".SH LOCATIONS\n")
+	builder.WriteString(".TP\n\\fB/absolute/local/path\\fR\n")
+	builder.WriteString("Open an absolute path on the local machine.\n")
+	builder.WriteString(".TP\n\\fB<SSH-alias>:/absolute/remote/path\\fR\n")
+	builder.WriteString("Open an absolute remote path through a concrete host alias from ssh_config(5).\n")
+	builder.WriteString(".PP\n")
+	builder.WriteString("With no locations, AMSFTP opens the startup picker. One location replaces the active default; two locations set both panes.\n")
+	builder.WriteString(".SH TRANSFERS AND JOBS\n")
+	builder.WriteString("Copy, move, rename, and delete requests are frozen into Jobs before execution. Copy data is verified before the final destination is published, and a move keeps its source until the destination is committed.\n")
+	builder.WriteString(".PP\n")
+	builder.WriteString("Remote-to-remote copies use a bounded relay in the local daemon. Current public builds use standard SFTP and do not enable a production remote Helper or direct server-to-server transfer.\n")
+	builder.WriteString(".SH SSH\n")
+	builder.WriteString("AMSFTP delegates SSH configuration, host-key policy, authentication, ProxyJump, ProxyCommand, Agent use, and Kerberos/GSSAPI to the validated system OpenSSH client. It does not store passwords, private keys, Agent contents, Kerberos tickets, or authentication answers.\n")
 	builder.WriteString(".SH EXIT STATUS\n")
 	builder.WriteString("0 success; 1 internal; 2 usage; 3 configuration; 4 authentication; 5 network; 6 conflict; 7 partial completion; 8 user cancellation.\n")
 	builder.WriteString(".SH FILES\n")
-	builder.WriteString("See the AMSFTP configuration reference for platform paths, schema version, precedence, and redaction.\n")
+	builder.WriteString("Configuration, state, cache, logs, and the daemon socket use platform-specific owner-private directories. Run \\fBamsftp config print-effective\\fR to inspect effective settings without printing secrets.\n")
+	builder.WriteString(".SH SEE ALSO\n")
+	builder.WriteString("ssh(1), ssh_config(5)\n")
 	return builder.String()
 }
 
@@ -112,10 +135,7 @@ func RenderCompletion(shell string) (string, error) {
     reset-keymap) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     start) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     status) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
-	install) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
 	upgrade) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
-	disable) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
-	remove) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     stop) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     list) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
     events) COMPREPLY=( $(compgen -W %q -- "$current") ) ;;
@@ -128,7 +148,7 @@ func RenderCompletion(shell string) (string, error) {
   esac
 }
 complete -F _amsftp amsftp
-`, config, daemon, job, helper, doctor, supportBundle, completion, configReset, daemonStart, helperStatus, helperInstall, helperUpgrade, helperDisable, helperRemove, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, supportBundlePreview, supportBundleCreate, top), nil
+`, config, daemon, job, helper, doctor, supportBundle, completion, configReset, daemonStart, helperStatus, helperUpgrade, daemonStop, jobList, jobEvents, jobPause, jobResume, jobCancel, supportBundlePreview, supportBundleCreate, top), nil
 	case "zsh":
 		return fmt.Sprintf(`#compdef amsftp
 _amsftp() {

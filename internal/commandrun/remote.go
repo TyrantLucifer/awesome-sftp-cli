@@ -164,7 +164,7 @@ func buildRemoteBootstrap(rawCWD string) (string, error) {
 	return bootstrap, nil
 }
 
-// QuotePOSIXBytes applies the ADR-0001 POSIX byte single-quote encoder.
+// QuotePOSIXBytes applies the reviewed POSIX byte single-quote encoder.
 func QuotePOSIXBytes(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
 }
@@ -264,7 +264,7 @@ func RunRemoteCommand(ctx context.Context, plan RemotePlan, streamBytes int) (Re
 		runCtx, cancel = context.WithTimeout(ctx, plan.timeout)
 	}
 	defer cancel()
-	// #nosec G204 -- the executable has a validated absolute trust chain and argv is a frozen ADR-0001 plan.
+	// #nosec G204 -- the executable has a validated absolute trust chain and argv is a frozen remote-command plan.
 	command := exec.CommandContext(runCtx, plan.executable, plan.arguments...)
 	configureRemoteProcess(command)
 	command.WaitDelay = outputDrainWait

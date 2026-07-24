@@ -319,7 +319,6 @@ func canonicalReleaseEntries(root string, manifest Manifest) []releaseEntryExpec
 		{name: root + "/INSTALL.md", mode: 0o644, typeflag: tar.TypeReg, maximum: maxHelperReleaseMaterialBytes},
 		{name: root + "/LICENSE", mode: 0o644, typeflag: tar.TypeReg, maximum: maxHelperReleaseMaterialBytes},
 		{name: root + "/NOTICE", mode: 0o644, typeflag: tar.TypeReg, maximum: maxHelperReleaseMaterialBytes},
-		{name: root + "/UNINSTALL.md", mode: 0o644, typeflag: tar.TypeReg, maximum: maxHelperReleaseMaterialBytes},
 		{name: root + "/VERSION.json", mode: 0o644, typeflag: tar.TypeReg, maximum: maxHelperReleaseVersionEntryBytes},
 		{name: root + "/amsftp", mode: 0o755, typeflag: tar.TypeReg, size: int64(manifest.Size), binary: true}, // #nosec G115 -- manifest size is capped at 128 MiB.
 		{name: root + "/share/", mode: 0o755, typeflag: tar.TypeDir},

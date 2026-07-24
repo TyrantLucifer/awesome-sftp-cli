@@ -46,7 +46,7 @@ var probeShapes = map[string]probeShape{
 	"bench-scale":   {count: 1, prefixes: []string{"test "}},
 	"fuzz-smoke":    {count: 4, prefixes: []string{"test "}},
 	"docs-check":    {count: 1, prefixes: []string{"run ./internal/tools/docscheck ."}},
-	"notice-check":  {count: 1, prefixes: []string{"run ./internal/tools/releasenotice --check docs/release/runtime-dependencies.json docs/release/license-materials.json docs/release/NOTICE"}},
+	"notice-check":  {count: 1, prefixes: []string{"run ./internal/tools/releasenotice --check internal/release/metadata/runtime-dependencies.json internal/release/metadata/license-materials.json NOTICE"}},
 	"mod-check":     {count: 4, prefixes: []string{"mod ", "-C tools mod "}},
 	"supply-chain":  {count: 2, prefixes: []string{"tool -modfile=tools/go.mod "}},
 	"build-all":     {count: 4, prefixes: []string{"build "}},

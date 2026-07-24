@@ -84,7 +84,7 @@ func TestBuildPlanAddsRiskOverlays(t *testing.T) {
 		"internal/provider/sftp/provider.go",
 		"internal/platform/paths_darwin.go",
 		"internal/integration/hosted-auth.sh",
-		"docs/release/INSTALL.md",
+		"docs/user/installation.md",
 	}, packages)
 	if !got.Core || !got.Auth || !got.Native || !got.Release || !got.Docs || !got.Code {
 		t.Fatalf("buildPlan() = %#v, want all risk overlays", got)

@@ -1,4 +1,4 @@
-// Package wal owns the fixed online SQLite WAL budgets from ADR-0008.
+// Package wal owns the fixed online SQLite WAL budgets.
 package wal
 
 import (

@@ -89,7 +89,6 @@ type Materials struct {
 	License         []byte
 	Notice          []byte
 	Install         []byte
-	Uninstall       []byte
 	Man             []byte
 	InternalPreview []byte
 	BashCompletion  []byte
@@ -671,7 +670,6 @@ func validateMaterials(materials Materials, label string) error {
 		{name: "LICENSE", raw: materials.License},
 		{name: "NOTICE", raw: materials.Notice},
 		{name: "INSTALL.md", raw: materials.Install},
-		{name: "UNINSTALL.md", raw: materials.Uninstall},
 		{name: "share/man/man1/amsftp.1", raw: materials.Man},
 	} {
 		if len(material.raw) == 0 || len(material.raw) > 1<<20 || !utf8.Valid(material.raw) || material.raw[len(material.raw)-1] != '\n' || bytes.IndexByte(material.raw, 0) >= 0 || containsFixtureTrust(material.raw) {
@@ -731,7 +729,6 @@ func buildArchive(request BundleRequest, platform PlatformBinary) (Archive, erro
 		{name: "INSTALL.md", mode: 0o644, body: request.Materials.Install},
 		{name: "LICENSE", mode: 0o644, body: request.Materials.License},
 		{name: "NOTICE", mode: 0o644, body: request.Materials.Notice},
-		{name: "UNINSTALL.md", mode: 0o644, body: request.Materials.Uninstall},
 		{name: "VERSION.json", mode: 0o644, body: metadataBytes},
 		{name: "amsftp", mode: 0o755, body: platform.Bytes},
 	}

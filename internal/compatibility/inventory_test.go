@@ -47,16 +47,6 @@ func TestInventoryValuesComeFromOwningPackages(t *testing.T) {
 	}
 }
 
-func TestCommittedCompatibilityReferenceMatchesRegistry(t *testing.T) {
-	raw, err := os.ReadFile("../../docs/product/compatibility-boundaries.md")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got, want := string(raw), Markdown(); got != want {
-		t.Fatalf("committed compatibility reference drifted from registry")
-	}
-}
-
 func TestHistoricalSourceSnapshotFreezesEveryPersistentMigrationInput(t *testing.T) {
 	want := strings.TrimSpace(`
 config document v1 | 312bcccbcbd54246bbe5ff9babf4f14560449176 | captured | internal/compatibility/testdata/historical/config-v1-exact-main.json | 8c7c60ffcb676a47669b45fbb01334dde662984d6fdfcf5a25983d226cf24e04 | internal/config

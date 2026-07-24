@@ -46,7 +46,7 @@ func TestPublicBundleHasExactFourArchiveNamesAndRequiredDeterministicContents(t 
 		}
 		entries := readArchive(t, archive.Bytes)
 		root := strings.TrimSuffix(archive.Name, ".tar.gz")
-		wantEntries := []string{root + "/", root + "/INSTALL.md", root + "/LICENSE", root + "/NOTICE", root + "/UNINSTALL.md", root + "/VERSION.json", root + "/amsftp", root + "/share/", root + "/share/man/", root + "/share/man/man1/", root + "/share/man/man1/amsftp.1"}
+		wantEntries := []string{root + "/", root + "/INSTALL.md", root + "/LICENSE", root + "/NOTICE", root + "/VERSION.json", root + "/amsftp", root + "/share/", root + "/share/man/", root + "/share/man/man1/", root + "/share/man/man1/amsftp.1"}
 		if got := archiveEntryNames(entries); !reflect.DeepEqual(got, wantEntries) {
 			t.Fatalf("%s entries = %#v, want %#v", archive.Name, got, wantEntries)
 		}
@@ -70,7 +70,7 @@ func TestPublicBundleHasExactFourArchiveNamesAndRequiredDeterministicContents(t 
 			t.Fatalf("version metadata = %#v", metadata)
 		}
 		if metadata.ApplicationID != "io.github.tyrantlucifer.amsftp" || metadata.LaunchdLabel != "io.github.tyrantlucifer.amsftp.daemon" || metadata.SystemdUserUnit != "amsftp-daemon.service" || metadata.HomebrewFormula != "amsftp" {
-			t.Fatalf("ADR-0009 identifiers = %#v", metadata)
+			t.Fatalf("release identifiers = %#v", metadata)
 		}
 	}
 }
@@ -414,7 +414,7 @@ func releaseFixture(t *testing.T) BundleRequest {
 	}
 	return BundleRequest{
 		Version: "1.0.0", Commit: strings.Repeat("1", 40), Tree: strings.Repeat("2", 40), SourceDateEpoch: 1_700_000_000,
-		Materials: Materials{License: []byte("fixture project license\n"), Notice: []byte("fixture third-party notices\n"), Install: []byte("fixture install\n"), Uninstall: []byte("fixture uninstall\n"), Man: []byte(".TH AMSFTP 1\n")},
+		Materials: Materials{License: []byte("fixture project license\n"), Notice: []byte("fixture third-party notices\n"), Install: []byte("fixture install and uninstall\n"), Man: []byte(".TH AMSFTP 1\n")},
 		Platforms: platforms,
 		Modules:   modules,
 	}
