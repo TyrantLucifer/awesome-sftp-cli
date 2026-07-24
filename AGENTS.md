@@ -136,7 +136,7 @@ make ci
    - 创建与既有发布一致的 annotated tag，例如 `git tag -a vX.Y.Z <merge-commit> -m "amsftp vX.Y.Z"`；校验 `vX.Y.Z^{commit}` 精确等于预期发布提交后，只推送该 tag ref。
    - 禁止在 PR 分支提交上提前打 tag，也禁止移动、覆盖、删除后重建已经发布的版本 tag。
 8. **确认自动发布结果**
-   - tag 推送后只跟踪 `.github/workflows/release.yml` 的 `Public Preview Release`；按下方 Release 规则，不以独立 Release Gates 作为普通发布阻断条件。
+   - tag 推送后只跟踪 `.github/workflows/release.yml` 的 `Public Preview Release`，并按下方 Release 规则确认发布结果。
    - 必须确认构建与发布 job 成功、GitHub Release 指向正确 tag/commit、预期归档与 `checksums.txt`、`install.sh`、SBOM/provenance 已发布，并确认 Homebrew formula 已更新为同一版本和 checksum。
    - 将本地 `main` fast-forward 到已发布的 `origin/main`，确认工作区干净。
 9. **失败处理与最终反馈**
@@ -158,5 +158,4 @@ make ci
 
 - 发布以不可变的语义化版本 tag 为入口，格式为 `vX.Y.Z`；确认 tag 指向目标提交后，将 tag 推送到远端即可触发 `.github/workflows/release.yml` 自动构建并发布 Release。
 - 普通发布使用与日常开发相同的 `make docs-check`，不依赖独立的 Markdown 发布清单或人工汇总的 release-gate 文档。
-- `.github/workflows/ci.yml` 中的 Release Gates 当前不作为发布授权或发布完成的判断依据，也不要求 Agent 在发布前查看；其稳定性问题留待后续专项优化。
 - 不要手工复制自动发布流程的步骤或伪造发布结果；tag 推送后的构建、制品和 Release 创建由发布 workflow 负责。

@@ -97,7 +97,7 @@ func TestScanSourceAllowsGoAsDataAndApprovedReferences(t *testing.T) {
 		"\tprintf '%s\\n' go /usr/bin/go 'go version'",
 		"\t\"$(GO)\" version",
 		"\tMODE=test \"$(GO)\" test ./...",
-		"\t\"$(GO)\" tool -modfile=tools/go.mod actionlint .github/workflows/ci.yml",
+		"\t\"$(GO)\" tool -modfile=tools/go.mod actionlint .github/workflows/fast-ci.yml",
 		"",
 	}, "\n")
 
