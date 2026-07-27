@@ -4,8 +4,8 @@
 
 AMSFTP can inspect a remote file without downloading it in full, materialize a
 verified local copy for another program, and search a remote tree through standard
-SFTP. These workflows share a managed local cache, but none of them silently
-uploads a changed file.
+SFTP. These workflows share a managed local cache. None of them uploads a changed
+file without confirmation.
 
 ## Preview a file
 
@@ -53,8 +53,8 @@ Editor selection follows this order:
 The file path is passed as one final argument. AMSFTP does not build a shell command
 from the filename.
 
-After the editor exits, AMSFTP compares both the local materialization and the
-remote file with the original. Typical outcomes are:
+After the editor exits, AMSFTP compares the local materialized copy and the remote
+file with the original. Typical outcomes are:
 
 | Local file | Remote file | What AMSFTP offers |
 | --- | --- | --- |
@@ -64,9 +64,9 @@ remote file with the original. Typical outcomes are:
 | Changed | Changed/deleted/replaced | Review the conflict, overwrite explicitly, save as, skip, or retain |
 | Cannot be verified | Any state | No upload; retain or abandon explicitly |
 
-For an overwrite, AMSFTP preserves the observed remote original under a hidden,
-Job-owned sibling name before publishing the edited version. It does not
-automatically delete that safety copy. A second remote change causes another
+Before an overwrite, AMSFTP preserves the observed remote original under a hidden,
+Job-owned sibling name. It then publishes the edited version. AMSFTP does not
+automatically delete the safety copy. A second remote change causes another
 conflict instead of being overwritten.
 
 If an upload is interrupted, the dirty local copy and its baseline remain available
@@ -98,8 +98,8 @@ AMSFTP provides three different searches:
 | `f` | Recursively search filenames below the active directory |
 | `g/` | Recursively search file contents below the active directory |
 
-Filename and content results stream into a search view. You can open, preview, or
-copy a result using the normal file actions.
+Filename and content results appear in the search view as they arrive. You can
+open, preview, or copy a result using the normal file actions.
 
 Standard SFTP content search must read file ranges over the connection, so AMSFTP
 shows a warning and asks for confirmation before starting it. Binary files are
@@ -133,8 +133,8 @@ While the `g` path prompt is empty:
 Press `S` to persist the selected policy with the workspace.
 
 Offline content is a retained copy, not proof that the remote file is unchanged.
-AMSFTP will not authorize upload while it cannot recheck the endpoint. If more than
-one remote version could match, it refuses to guess.
+AMSFTP does not authorize an upload until it can recheck the endpoint. If more
+than one remote version could match, it refuses to guess.
 
 Cached content currently defaults to a 2 GiB global limit and 1 GiB per workspace.
 Files in active preview, edit, open, upload, or recovery sessions are protected
@@ -161,8 +161,9 @@ Use structured commands in `config.json`:
 }
 ```
 
-AMSFTP runs these commands directly, not through a shell. The materialized file
-path is appended automatically, so do not add a placeholder or shell quoting.
+AMSFTP runs these commands directly, not through a shell. It appends the
+materialized file path automatically, so do not add a placeholder or shell
+quoting.
 
 An editor, opener, or external previewer runs with your user permissions and can
 read anything that program normally can. AMSFTP does not pass it remote

@@ -4,7 +4,7 @@
 
 AMSFTP runs every copy, move, rename, and delete as a durable background Job. The
 file panes collect your choices and confirmations; the daemon records and performs
-the work. Closing the TUI does not silently cancel it.
+the work. Closing the TUI does not cancel these Jobs.
 
 ## Copy files
 
@@ -17,9 +17,9 @@ the work. Closing the TUI does not silently cancel it.
    confirm.
 6. Open `J` to follow the new Jobs.
 
-Each destination is written privately first. AMSFTP verifies the content and
-commits it before the final name becomes visible. A failed transfer is never
-reported as a complete final file.
+AMSFTP first writes each destination to private temporary content. It verifies and
+commits that content before the final name becomes visible. A failed transfer is
+never reported as a complete final file.
 
 Directory copies are walked incrementally. Symlinks are shown as symlinks; AMSFTP
 does not follow them while recursively copying a directory.
@@ -36,11 +36,11 @@ Use the same flow with `d` instead of `y`:
 Lowercase `d` only marks the selection as a cut. It does not remove anything by
 itself.
 
-When a safe same-endpoint rename is available, AMSFTP can use it. Otherwise a move
-is performed as copy, verify, commit, recheck the original, and then delete the
+When a safe same-endpoint rename is available, AMSFTP can use it. Otherwise, a move
+copies, verifies, and commits the destination before rechecking and deleting the
 original. If the original changed or its deletion cannot be proved, the Job keeps
-the verified destination and finishes with the source retained. This is deliberate
-and requires you to review the two copies.
+the verified destination and finishes with the source retained. Review both copies
+before taking further action.
 
 ## Rename one item
 
@@ -71,7 +71,7 @@ The available choices are:
 - **Overwrite**: replace the destination only after its recorded state is checked.
 - **Skip**: leave this source and destination unchanged.
 - **Auto-rename**: create a non-conflicting destination name.
-- **Ask**: pause the Job until you make one of those choices.
+- **Ask**: pause the Job until you choose overwrite, skip, or auto-rename.
 
 In the Jobs drawer, use:
 
@@ -107,9 +107,9 @@ amsftp job cancel job_aaaaaaaaaaaaaaaaaaaaaaaaaa \
   --confirm job_aaaaaaaaaaaaaaaaaaaaaaaaaa
 ```
 
-Cancellation requires the exact Job ID so a pasted or mistyped command cannot
-cancel unrelated work. Add `--format json` when a script needs stable structured
-output.
+Cancellation requires the exact Job ID, which prevents a pasted or mistyped
+command from canceling unrelated work. Add `--format json` when a script needs
+stable structured output.
 
 ## Understand common states
 
@@ -131,9 +131,9 @@ Byte totals may be unknown for part of a directory operation.
 
 ## Recovery after interruption
 
-The daemon records safe progress as data is written. After a restart it checks the
-source, partial destination, and final destination again before continuing.
-Anything uncertain pauses or fails visibly instead of being guessed.
+The daemon records safe progress as data is written. After a restart, it checks the
+source, partial destination, and final destination again before continuing. If the
+state is uncertain, the Job pauses or fails visibly instead of guessing.
 
 Pause normally keeps matching partial data for resume. Cancellation or failure may
 also leave Job-owned partial data or an edit safety copy when removing it would

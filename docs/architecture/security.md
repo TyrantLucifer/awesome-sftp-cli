@@ -3,13 +3,13 @@
 [简体中文](../zh-CN/architecture/security.md)
 
 AMSFTP moves data between filesystems, starts OpenSSH, and keeps resumable local
-state. Its security model is therefore built around clear ownership: OpenSSH
-owns SSH trust and authentication, the local daemon owns durable operations,
-and the user owns every destructive or externally executed action.
+state. Its security model assigns each responsibility to a clear owner:
+OpenSSH owns SSH trust and authentication, the local daemon owns durable
+operations, and the user owns every destructive or externally executed action.
 
-This page describes the guarantees the design aims to provide, the assumptions
-those guarantees rely on, and the limits users should understand. The component
-relationships are explained in [Architecture](overview.md).
+This page describes the intended guarantees, the assumptions behind them, and
+the limits of the model. [Architecture](overview.md) explains the component
+relationships.
 
 ## Trust boundaries
 
@@ -22,9 +22,8 @@ relationships are explained in [Architecture](overview.md).
 | Editor, opener, and shell | only the program or command the user explicitly configured or entered | argument structure and the data brought back into AMSFTP |
 | Installed release | bytes obtained from a documented channel and verified as that channel specifies | installation path ownership, permissions, symlinks, and runtime compatibility |
 
-Authentication proves which remote account answered; it does not make the
-remote filesystem's output safe to display, store, or interpret without
-validation.
+Authentication proves which remote account answered. It does not make remote
+filesystem output safe to display, store, or interpret without validation.
 
 ## SSH configuration and credentials
 
@@ -60,14 +59,14 @@ The protocol handshake rejects incompatible clients before dispatching an
 operation.
 
 Configuration, state, cache, logs, sockets, and upgrade locks live under
-private roots. Before using sensitive paths, AMSFTP checks the expected owner,
+private roots. Before using a sensitive path, AMSFTP checks its expected owner,
 mode, ACL where supported, and symbolic-link conditions. An unsafe root fails
 closed instead of being silently repaired with broader permissions.
 
-These checks protect one user's AMSFTP state from accidental sharing and common
+These checks protect a user's AMSFTP state from accidental sharing and common
 path-substitution attacks. They do not sandbox the daemon from the same
 operating-system account. A process already able to act fully as that user—or
-as root—can generally read that user's files and influence their sessions.
+as root—can generally read the user's files and influence their sessions.
 
 ## Remote data is untrusted input
 
@@ -96,14 +95,14 @@ The client cannot directly mutate a provider. It sends an operation intent to
 the daemon, which freezes the source, destination, route, conflict policy, and
 required confirmations into a persistent Job.
 
-For streamed copies, the destination is written under a Job-specific temporary
-name. AMSFTP records progress at durable boundaries, verifies the result, and
-only then publishes the final name. An incomplete transfer is not exposed as
-the intended final file.
+For a streamed copy, AMSFTP writes the destination under a Job-specific
+temporary name. It records progress at durable boundaries, verifies the
+result, and only then publishes the final name. An incomplete transfer is not
+exposed as the intended final file.
 
-Move adds one more rule: the source is deleted only after the destination has
-been verified and committed. If source deletion is uncertain, retaining an
-extra copy is safer than risking loss.
+A move adds one more rule: the source is deleted only after the destination has
+been verified and committed. If source deletion is uncertain, AMSFTP retains
+the extra copy rather than risk data loss.
 
 Overwrite, recursive deletion, conflict resolution, and other destructive
 choices require an explicit action. Retries cross only steps known to be
@@ -141,7 +140,7 @@ arguments, environment values, file contents, and authentication material.
 `doctor` is a read-only diagnostic command. It does not repair a database,
 change SSH trust, install remote software, or upload results.
 
-A support bundle is generated in two steps:
+A support bundle requires two steps:
 
 1. preview the exact file list, sensitivity labels, and consent digest;
 2. create a new owner-private archive using that matching digest.
@@ -171,12 +170,12 @@ use the bounded local relay unless a separately supported safe route is
 available.
 
 Do not install test artifacts, inject trust keys, delegate credentials, or
-weaken host-key policy to force a disabled path. Failure of an optional
-enhancement must remain isolated from the standard SFTP route.
+weaken host-key policy to force a disabled path. An optional enhancement must
+fail without affecting the standard SFTP route.
 
 ## User responsibilities
 
-AMSFTP relies on the user to:
+The security model relies on the user to:
 
 - protect the local account, terminal session, SSH configuration, Agent, and
   Kerberos ticket cache;

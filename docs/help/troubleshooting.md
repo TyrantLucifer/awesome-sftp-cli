@@ -2,8 +2,8 @@
 
 [简体中文](../zh-CN/help/troubleshooting.md)
 
-Most AMSFTP problems can be narrowed down without changing files or restarting
-anything. Start with these checks:
+Most AMSFTP problems can be isolated without changing files or restarting a
+process. Start with these read-only checks:
 
 ```sh
 amsftp --version
@@ -17,9 +17,9 @@ If the problem concerns one SSH host, add an endpoint check:
 amsftp doctor --endpoint work --format json
 ```
 
-`doctor` is read-only. It does not repair state, migrate data, change SSH trust,
-or upload a report. The endpoint check also avoids interactive authentication,
-so a successful manual SSH login can still be necessary.
+`doctor` does not repair state, migrate data, change SSH trust, or upload a
+report. The endpoint check also avoids interactive authentication, so a manual
+SSH login may still be necessary.
 
 ## AMSFTP refuses to start
 
@@ -31,10 +31,10 @@ amsftp config print-effective
 ```
 
 If the message mentions an untrusted installation path, runtime directory,
-owner, permissions, an ACL, or a symbolic link, do not work around it by making
-the directory world-writable. Re-run the verified installer. If it asks for a
-managed root, have an administrator create the exact private path printed by
-the installer, then run the installer again.
+owner, permissions, an ACL, or a symbolic link, do not make the directory
+world-writable to bypass the check. Re-run the verified installer. If it asks
+for a managed root, have an administrator create the exact private path printed
+by the installer, then run the installer again.
 
 An unknown configuration field is rejected intentionally. Correct or remove
 the named field rather than replacing the entire configuration. See
@@ -65,7 +65,7 @@ Common causes are:
 - a jump host, VPN, DNS record, agent, or Kerberos ticket is unavailable;
 - the server closed the connection or denied access.
 
-Fix the OpenSSH connection first. AMSFTP deliberately does not maintain a
+Resolve the OpenSSH connection first. AMSFTP deliberately does not maintain a
 second SSH configuration or credential store.
 
 ## OpenSSH reports a host-key problem
@@ -85,10 +85,10 @@ Complete any first-time or renewed authentication in a normal SSH session:
 /usr/bin/ssh work
 ```
 
-Check that the expected key is available to your agent, or that the relevant
+Check that the expected key is available to the SSH Agent, or that the relevant
 Kerberos ticket is current. If an AMSFTP Job needs an interactive answer while
 no trusted client is present, it waits instead of storing or guessing the
-answer. Open the TUI again, authenticate, and resume the Job if necessary.
+answer. Open the TUI, authenticate, and resume the Job if necessary.
 
 AMSFTP never writes passwords, private keys, agent contents, Kerberos tickets,
 or prompt answers to its configuration, database, Jobs, logs, or support
@@ -109,10 +109,10 @@ If it is stopped, start it normally:
 amsftp daemon start
 ```
 
-Do not delete the control socket by hand and do not kill an unknown process
-that appears to own it. AMSFTP validates the socket owner and the peer user
-before using it. During an upgrade, other clients may wait briefly for the old
-daemon to release ownership and for the new one to start.
+Do not delete the control socket by hand or kill an unknown process that
+appears to own it. AMSFTP validates the socket owner and peer user before using
+it. During an upgrade, other clients may wait briefly for the old daemon to
+release ownership and for the new one to start.
 
 If the client and daemon report incompatible versions, finish the upgrade or
 reinstall one current release so both come from the same installation.
@@ -126,7 +126,7 @@ amsftp job list --limit 50
 amsftp job events <job-id> --after 0 --limit 50
 ```
 
-The state usually points to the next action:
+Use the reported state to choose the next action:
 
 | State or message | What to do |
 | --- | --- |
@@ -137,8 +137,8 @@ The state usually points to the next action:
 | resource exhausted | Free the named disk, quota, or concurrency resource before resuming. |
 | capability lost or unsupported | Reconnect so AMSFTP can use the standard SFTP route or another supported path. |
 
-Do not start a second copy of the same transfer merely because the first one
-stopped. A Job records its safe progress and checks the source, temporary
+Do not start a second copy of the same transfer because the first one stopped.
+The existing Job records safe progress and checks the source, temporary
 destination, and final destination before continuing.
 
 For uncertain or destructive results, follow
@@ -146,9 +146,9 @@ For uncertain or destructive results, follow
 
 ## A copy or edit reports a conflict
 
-A conflict means the source or destination no longer matches what AMSFTP saw
-when it planned the operation. This can happen when another process edits,
-renames, replaces, or deletes the same file.
+A conflict means the source or destination no longer matches the state AMSFTP
+recorded when it planned the operation. Another process may have edited,
+renamed, replaced, or deleted the same file.
 
 Refresh both panes, inspect both versions, and choose explicitly. AMSFTP does
 not silently overwrite a concurrently changed file. For a remote edit, keep
@@ -157,9 +157,9 @@ name, replace the remote version, or discard it.
 
 ## A file is missing or permission is denied
 
-Refresh the parent directory and confirm that you are looking at the intended
-local or SSH endpoint. A `not_found` result can also mean that another process
-moved the item after it was listed.
+Refresh the parent directory and confirm that it belongs to the intended local
+or SSH endpoint. A `not_found` result can also mean that another process moved
+the item after it was listed.
 
 For `permission_denied`, check the local owner, mode, and ACL, or the remote
 account's access. Do not run AMSFTP as root to bypass the boundary; doing so
@@ -171,16 +171,15 @@ Directory loading, preview, and search have limits on time, bytes, results,
 and concurrency. When a limit is reached, AMSFTP shows a partial result instead
 of consuming unbounded memory or reading an entire remote tree.
 
-Narrow the directory or search expression and try again. Large remote content
-searches over standard SFTP can be slow because every examined byte crosses
-the SSH connection. A partial result is not evidence that no later match
-exists.
+Narrow the directory or search expression, then try again. Large remote content
+searches over standard SFTP can be slow because every examined byte crosses the
+SSH connection. A partial result does not prove that no later match exists.
 
 ## The local editor or opener fails
 
-Check the configured command and try it on a local file first. AMSFTP passes
-structured arguments to the configured program; it does not interpret a file
-name as a shell command.
+Check the configured command, then try it on a local file. AMSFTP passes
+structured arguments to the configured program; it does not interpret a
+filename as a shell command.
 
 When an editor returns, AMSFTP compares the cached starting version, your local
 changes, and the current remote version. If the remote file changed too, the
@@ -188,9 +187,8 @@ upload waits for an explicit conflict decision.
 
 ## Upgrade does not complete
 
-An upgrade is refused while a Job is actively changing data. Let those Jobs
-finish or pause them. Cancel only if you actually intend to cancel the work,
-then retry:
+AMSFTP refuses an upgrade while a Job is actively changing data. Let those Jobs
+finish or pause them. Cancel only if the work should be canceled, then retry:
 
 ```sh
 amsftp upgrade
@@ -214,8 +212,8 @@ state. Continue with [Upgrade recovery](recovery.md#recover-an-upgrade).
 comes from a version that cannot safely communicate with the others. Use one
 current installation and follow the documented upgrade path.
 
-`internal` means AMSFTP hid a lower-level cause that was not safe to expose.
-Run `doctor`, record the product version and stable error code, and prepare a
+`internal` means AMSFTP hid a lower-level cause that was unsafe to expose. Run
+`doctor`, record the product version and stable error code, and prepare a
 reviewed support bundle if the problem persists.
 
 ## Prepare information for a bug report

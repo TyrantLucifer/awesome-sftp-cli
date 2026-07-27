@@ -2,8 +2,8 @@
 
 [简体中文](../zh-CN/help/recovery.md)
 
-AMSFTP recovery is deliberately conservative. When it cannot prove whether a
-write completed, it preserves the evidence and asks for a decision instead of
+AMSFTP uses a conservative recovery policy. If it cannot prove whether a write
+completed, it preserves the evidence and waits for a decision instead of
 repeating a destructive step.
 
 Use this guide after a daemon crash, interrupted transfer, damaged workspace,
@@ -12,8 +12,7 @@ with [Troubleshooting](troubleshooting.md).
 
 ## Before changing anything
 
-1. Stop starting new copies, moves, deletes, or edits that touch the same
-   files.
+1. Do not start new copies, moves, deletes, or edits that touch the same files.
 2. Record the installed version, daemon status, and read-only diagnosis:
 
    ```sh
@@ -54,9 +53,9 @@ user, stop. Do not remove it or change its permissions. AMSFTP uses a private
 Unix socket and verifies the peer user; bypassing that check could send file
 operations to the wrong process.
 
-After a crash, a newly started daemon reads durable Job state and checks what
-exists on both sides of every incomplete operation. It does not assume that a
-request failed merely because the old connection disappeared.
+After a crash, the new daemon reads durable Job state and checks both sides of
+every incomplete operation. The disappearance of the old connection is not
+treated as proof that a request failed.
 
 If the daemon repeatedly exits, preserve the current state and preview a
 support bundle. Do not try to repair the SQLite database with unrelated tools.
@@ -75,7 +74,7 @@ Inspect the affected Job:
 amsftp job events <job-id> --after 0 --limit 100
 ```
 
-Resolve the condition named by the most recent event:
+Use the most recent event to identify and resolve the blocking condition:
 
 - restore network access or the remote server;
 - complete authentication through system OpenSSH;
@@ -83,7 +82,7 @@ Resolve the condition named by the most recent event:
 - choose a conflict result;
 - wait for another operation that owns the same resource.
 
-Then resume the existing Job:
+After resolving that condition, resume the existing Job:
 
 ```sh
 amsftp job resume <job-id>
@@ -108,7 +107,7 @@ recursively delete unknown files.
 ### If the result is uncertain
 
 Do not manually finish the move, overwrite the destination, or remove the
-source. Resume the recorded Job and let AMSFTP check:
+source. Resume the recorded Job so AMSFTP can check:
 
 - the source identity recorded when the Job was planned;
 - the durable offset and temporary destination;
@@ -116,8 +115,8 @@ source. Resume the recorded Job and let AMSFTP check:
 - whether a move source is still present.
 
 A move never deletes its source before the destination has been verified and
-committed. If the destination completed but source deletion could not be
-proved, AMSFTP keeps the source and reports that outcome rather than guessing.
+committed. If the destination completed but source deletion cannot be proved,
+AMSFTP keeps the source and reports that outcome instead of guessing.
 
 If both source and destination are present and the Job cannot proceed, preserve
 both. Include the stable status in a bug report; do not choose one copy based
@@ -159,7 +158,7 @@ under the same name.
 
 ## Recover an upgrade
 
-First determine how far the upgrade progressed:
+First determine the point at which the upgrade stopped:
 
 ```sh
 amsftp --version
@@ -176,14 +175,14 @@ AMSFTP makes no package change when:
 - installation or state paths fail their ownership and permission checks;
 - the release or installer cannot be verified.
 
-Resolve only the reported condition and retry. Do not loosen directory
+Resolve the reported condition, then retry. Do not loosen directory
 permissions, replace the control socket, or disable system security policy.
 
 ### The package changed but the daemon did not restart
 
-Run the new executable's `--version`, then check daemon status and `doctor`.
-Re-run the verified installer or package-manager upgrade if the executable is
-missing or inconsistent.
+Check the new executable's `--version`, daemon status, and `doctor` output. If
+the executable is missing or inconsistent, re-run the verified installer or
+package-manager upgrade.
 
 Do not immediately start a saved older executable. Persistent state may already
 use a newer format. A binary downgrade is safe only when the release
@@ -212,7 +211,7 @@ work, close it normally before clearing cache entries. Active items are
 protected by leases, and a failed edit can leave the only changed local copy in
 the cache.
 
-When `doctor` reports a cache integrity or permission problem:
+If `doctor` reports a cache integrity or permission problem:
 
 1. stop new previews and edits;
 2. preserve any edited local copy;
@@ -230,9 +229,8 @@ Preview the exact contents first:
 amsftp support-bundle preview --format json
 ```
 
-The preview returns a consent digest. After reviewing the file list and
-sensitivity labels, create a new archive in an existing owner-private
-directory:
+The preview returns a consent digest. Review the file list and sensitivity
+labels, then create a new archive in an existing owner-private directory:
 
 ```sh
 amsftp support-bundle create \
@@ -241,7 +239,7 @@ amsftp support-bundle create \
   --format json
 ```
 
-If the diagnostic state changes after preview, the digest no longer matches;
-preview again instead of reusing old consent. AMSFTP never uploads the bundle.
-Review the archive before sharing it, even though sensitive fields are
-redacted and publication uses a private, no-replace file.
+If the diagnostic state changes after preview, the digest no longer matches.
+Preview again instead of reusing old consent. AMSFTP never uploads the bundle.
+Review the archive before sharing it, even though sensitive fields are redacted
+and the archive is written as a private, no-replace file.

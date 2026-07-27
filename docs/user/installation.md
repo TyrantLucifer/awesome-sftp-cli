@@ -1,15 +1,15 @@
-# Install and Maintain AMSFTP
+# Install, Upgrade, and Remove AMSFTP
 
 [简体中文](https://github.com/TyrantLucifer/awesome-sftp-cli/blob/main/docs/zh-CN/user/installation.md)
 
-AMSFTP supports macOS on Intel and Apple silicon, and Linux on AMD64 and ARM64.
-Homebrew is the shortest installation path. The standalone installer is useful
-when you prefer a user-owned prefix without a package manager.
+AMSFTP supports macOS on Intel and Apple silicon, plus Linux on AMD64 and ARM64.
+Use Homebrew for a package-managed installation. Use the standalone installer
+for a user-owned prefix without a package manager.
 
 > [!WARNING]
-> The public macOS builds are not signed or notarized. Verify that downloads come
-> from the project release page and do not disable system-wide security controls
-> to run an unverified copy.
+> The public macOS builds are neither signed nor notarized. Download them only
+> from the project release page. Do not disable system-wide security controls to
+> run an unverified copy.
 
 ## Install with Homebrew
 
@@ -17,7 +17,7 @@ when you prefer a user-owned prefix without a package manager.
 brew install TyrantLucifer/tap/amsftp
 ```
 
-Verify the binary and start the user daemon:
+Then verify the binary and start the user daemon:
 
 ```sh
 amsftp --version
@@ -29,16 +29,17 @@ Homebrew installs the manual page and keeps the binary in its managed prefix.
 
 ## Install the standalone build
 
-The official installer defaults to `$HOME/.local` and does not use `sudo`:
+The official installer uses `$HOME/.local` by default and does not call `sudo`:
 
 ```sh
 curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
 ```
 
-It downloads the matching archive, verifies its SHA-256 checksum, checks the
-ownership and permissions of the installation and data paths, then replaces the
-binary atomically. It also installs the man page and generates shell completion.
+The installer downloads the matching archive and verifies its SHA-256 checksum.
+It then checks the ownership and permissions of the installation and data paths
+before replacing the binary atomically. It also installs the man page and
+generates shell completion.
 
 Make sure `$HOME/.local/bin` is on `PATH`:
 
@@ -46,19 +47,19 @@ Make sure `$HOME/.local/bin` is on `PATH`:
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-Add that line to the startup file for your shell if necessary.
+If necessary, add that line to the startup file for your shell.
 
 ### If the installer asks for a managed root
 
-AMSFTP refuses to place private state below a path with unsafe ownership,
-permissions, ACLs, or symlinks. When the normal home-directory layout cannot be
-trusted, the installer looks for a private root at
+AMSFTP refuses to place private state under a path with unsafe ownership,
+permissions, ACLs, or symlinks. If the normal home-directory layout fails these
+checks, the installer looks for a private root at
 `/var/lib/amsftp-users/<your-uid>`.
 
-If that directory does not exist, the installer stops before changing the target
-and prints the exact one-time administrator commands. Ask an administrator to run
-those commands, then run the installer again. Do not work around the check by
-making your home directory or AMSFTP data world-writable.
+If that directory does not exist, the installer stops without changing the
+target and prints the exact one-time administrator commands. Ask an administrator
+to run those commands, then rerun the installer. Do not bypass the check by making
+your home directory or AMSFTP data world-writable.
 
 You can also select a pre-created private root explicitly:
 
@@ -66,8 +67,8 @@ You can also select a pre-created private root explicitly:
 sh install.sh --root /absolute/private/path
 ```
 
-Run `install.sh --help` for the current `--prefix`, `--root`, `--version`, and
-daemon-start options.
+Run `install.sh --help` to list the current `--prefix`, `--root`, `--version`,
+and daemon-start options.
 
 ## Install an archive manually
 
@@ -115,24 +116,24 @@ GOTOOLCHAIN=local go build -trimpath -o ./amsftp ./cmd/amsftp
 ./amsftp --version
 ```
 
-A development build is suitable for local testing but is not part of the
-automatic release-upgrade channel.
+Development builds are for local testing and are not part of the automatic
+release-upgrade channel.
 
 ## Upgrade
 
-For both Homebrew and official standalone installations:
+Homebrew and official standalone installations both support:
 
 ```sh
 amsftp upgrade
 ```
 
-AMSFTP checks whether an update exists before stopping anything. If a Job is
-actively transferring data, the upgrade is refused so that the Job is not
-silently interrupted. Finish or pause important work, then try again.
+AMSFTP checks for an update before stopping anything. If a Job is transferring
+data, AMSFTP refuses the upgrade instead of silently interrupting the Job. Finish
+or pause important work, then try again.
 
-The command restarts the daemon only if it was running before the upgrade and
-checks that the new binary and daemon versions agree. If it reports a partial
-upgrade, do not delete the socket or state database. Instead run:
+The command restarts the daemon only if it was running before the upgrade. It
+also checks that the new binary and daemon versions agree. If it reports a
+partial upgrade, do not delete the socket or state database. Run:
 
 ```sh
 amsftp --version
@@ -147,12 +148,12 @@ brew update
 brew upgrade TyrantLucifer/tap/amsftp
 ```
 
-Standalone users can rerun the verified installer. It keeps the previous binary
-as `amsftp.previous` when a real earlier installation exists.
+Standalone users can rerun the verified installer. When a real earlier
+installation exists, the installer keeps its binary as `amsftp.previous`.
 
 ## Roll back after a failed upgrade
 
-If the new binary failed before it changed persistent state:
+If the new binary failed without changing persistent state:
 
 1. Stop the proven user daemon with
    `amsftp daemon stop --confirm stop`.
@@ -164,15 +165,15 @@ If the new binary failed before it changed persistent state:
 4. Open a representative workspace read-only before resuming transfers.
 
 If a database migration started, the state format is newer, or you cannot prove
-what changed, do not run an older binary against that state. Stop mutating files
-through AMSFTP, preserve the complete private state directory and any backup, and
-use the current binary's read-only `doctor` output to identify the safe recovery
-path. Never delete the control socket or copy/replace a live SQLite database to
-force a rollback.
+what changed, do not run an older binary against that state. Stop changing files
+through AMSFTP. Preserve the complete private state directory and any backup, then
+use the current binary's read-only `doctor` output to identify a safe recovery
+path. Never force a rollback by deleting the control socket or copying or
+replacing a live SQLite database.
 
 ## Uninstall
 
-First stop only your own daemon:
+First, stop only your own daemon:
 
 ```sh
 amsftp daemon stop --confirm stop
@@ -189,7 +190,8 @@ For a standalone installation, remove only the installed `amsftp` binary, its
 `amsftp.1` page, and the completion files you generated. User configuration,
 workspaces, Job history, recovery records, logs, and cache are intentionally kept.
 
-Removing that data is a separate destructive decision. Default locations are:
+Removing this retained data is a separate destructive decision. The default
+locations are:
 
 - macOS: `~/Library/Application Support/io.github.tyrantlucifer.amsftp`,
   `~/Library/Caches/io.github.tyrantlucifer.amsftp`, and
@@ -199,7 +201,7 @@ Removing that data is a separate destructive decision. Default locations are:
 - Managed installation: the `config`, `state`, and `cache` directories below the
   exact managed root.
 
-Back up anything you may need before deleting those paths. Never remove a broad
+Back up anything you may need before deleting these paths. Never remove a broad
 home, XDG, `/tmp`, or `/var/lib/amsftp-users` directory.
 
 Next: [make your first connection](https://github.com/TyrantLucifer/awesome-sftp-cli/blob/main/docs/user/getting-started.md).
