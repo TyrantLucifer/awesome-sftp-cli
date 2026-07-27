@@ -2,8 +2,8 @@
 
 [English](../../user/reference.md)
 
-本页用于快速查询默认 TUI 按键、位置写法和公开命令。运行 `amsftp --help` 和
-`man amsftp` 可以查看当前安装版本的准确命令表面。
+本页列出默认 TUI 按键、位置写法和公开命令。运行 `amsftp --help` 和
+`man amsftp` 可以查看当前版本实际安装的命令。
 
 ## 位置写法
 
@@ -88,7 +88,7 @@ Job 抽屉获得焦点时：
 | `w` / `x` / `a` | 覆盖 / 跳过 / 自动重命名单个冲突 |
 | `W` / `X` / `A` | 在当前 Job 中应用对应的冲突选择 |
 
-抽屉标题是最终依据：不适用于当前状态的动作不会显示。
+以抽屉标题为准：不适用于当前状态的动作不会显示。
 
 ## 启动和生命周期命令
 
@@ -141,7 +141,7 @@ amsftp helper status <SSH-alias> [--format human|json]
 amsftp support-bundle preview [--format human|json]
 ```
 
-预览会返回一个同意摘要。检查内容后，可以创建新的私有归档：
+预览会返回一个同意摘要。检查快照后，可以创建新的私有归档：
 
 ```text
 amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]
@@ -164,7 +164,7 @@ amsftp completion fish
 ## Human 和 JSON 输出
 
 默认输出适合人类阅读。支持 `--format json` 的命令会输出一个带版本的 JSON 文档。
-脚本应该使用 JSON，不要解析人类表格。
+脚本应该使用 JSON，不要解析供人阅读的表格。
 
 成功时 JSON 写到 stdout；失败时，带版本的错误写到 stderr，并保留有意义的进程
 退出码。

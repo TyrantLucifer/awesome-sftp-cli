@@ -2,15 +2,15 @@
 
 English | [简体中文](README.zh-CN.md)
 
-AMSFTP is a Vim-first, two-pane file manager for local files and SFTP servers. Each
-pane can point to a local directory or a host from `~/.ssh/config`, so browsing,
-previewing, editing, searching, and transferring all happen in one terminal workspace.
+AMSFTP is a Vim-first, two-pane file manager for local files and SFTP servers.
+Each pane opens either a local directory or a host from `~/.ssh/config`. You can
+browse, preview, edit, search, and transfer files without leaving the terminal
+workspace.
 
 > [!WARNING]
-> AMSFTP is a public preview, not a 1.0 release. The macOS builds are not signed or
-> notarized. Standard SFTP is the supported remote path; optional remote
-> acceleration and direct server-to-server transfer are not available in public
-> builds.
+> AMSFTP is a public preview, not a 1.0 release. The macOS builds are neither
+> signed nor notarized. Public builds support standard SFTP; optional remote
+> acceleration and direct server-to-server transfer remain unavailable.
 
 ## What it does
 
@@ -21,14 +21,16 @@ previewing, editing, searching, and transferring all happen in one terminal work
 - Verifies transferred content before publishing the destination.
 - Previews text and images and supports editing or opening remote files locally.
 - Searches by filename or content with clear limits on large searches.
-- Provides `doctor`, structured diagnostics, and consent-based support bundles.
+- Provides `doctor`, structured diagnostics, and support bundles that require
+  explicit consent.
 
 AMSFTP does not store passwords, private keys, agent contents, Kerberos tickets, or
 authentication answers.
 
 ## Requirements
 
-- macOS 15 or later, or Ubuntu 22.04/24.04; other Linux is best effort.
+- macOS 15 or later, or Ubuntu 22.04/24.04. Other Linux distributions are best
+  effort.
 - The system `/usr/bin/ssh` and an SFTP subsystem on each remote server.
 - A concrete host alias in `~/.ssh/config`.
 
@@ -47,9 +49,9 @@ curl --proto '=https' --tlsv1.2 -fsSL \
   https://github.com/TyrantLucifer/awesome-sftp-cli/releases/latest/download/install.sh | sh
 ```
 
-The installer verifies the release checksum before replacing the binary. If your
-home-directory layout does not pass its ownership and permission checks, it prints
-the exact commands needed to prepare a private managed installation root.
+The installer verifies the release checksum before replacing the binary. If the
+home-directory layout fails its ownership or permission checks, the installer
+prints the exact commands for preparing a private managed installation root.
 
 See the [installation guide](docs/user/installation.md) for manual installation,
 upgrades, shell completion, building from source, and uninstalling.
@@ -65,7 +67,7 @@ Host work
     IdentityFile ~/.ssh/id_ed25519
 ```
 
-Let OpenSSH handle the first host-key and authentication exchange, then check the
+Use OpenSSH for the first host-key and authentication exchange, then check the
 endpoint:
 
 ```sh
@@ -79,9 +81,9 @@ Open a local directory beside a remote directory:
 amsftp /absolute/local/path work:/absolute/remote/path
 ```
 
-Locations are either absolute local paths or
-`<SSH-alias>:<absolute-remote-path>`. Run `amsftp` without locations to use the
-startup picker, or `amsftp --workspace <name>` to reopen a saved workspace.
+A location is either an absolute local path or
+`<SSH-alias>:<absolute-remote-path>`. Run `amsftp` without locations to open the
+startup picker. Use `amsftp --workspace <name>` to reopen a saved workspace.
 
 ## Essential keys
 
@@ -104,11 +106,11 @@ startup picker, or `amsftp --workspace <name>` to reopen a saved workspace.
 The action bar shows the keys that apply to the current selection. Print the full
 effective map with `amsftp config print-effective-keymap`.
 
-Copy and cut only capture a selection. A paste shows its destination and required
-choices before creating Jobs. New content stays private until it is verified and
-committed, and a move keeps its source until the destination is complete.
-Remote-to-remote copies use the local daemon as a bounded relay without copying
-SSH credentials to either server.
+Copy and cut only capture a selection. Paste shows the destination and required
+choices before it creates Jobs. New content stays private until verification and
+commit complete. A move keeps its source until the destination is complete.
+Remote-to-remote copies use the local daemon as a bounded relay; SSH credentials
+are not copied to either server.
 
 ## Documentation
 

@@ -2,16 +2,15 @@
 
 [简体中文](../zh-CN/user/configuration.md)
 
-AMSFTP works without a configuration file. Create one only when you want to change
-resource limits, retry timing, integrity policy, external programs, or remappable
-keys.
+AMSFTP works without a configuration file. Create one only to change resource
+limits, retry timing, integrity policy, external programs, or remappable keys.
 
 The file is strict JSON with schema version `1`. Unknown fields and unsafe values
 are rejected instead of being ignored.
 
 ## Find the configuration file
 
-Default paths are:
+The default path depends on the platform and installation root:
 
 - macOS:
   `~/Library/Application Support/io.github.tyrantlucifer.amsftp/config.json`
@@ -61,9 +60,8 @@ amsftp config print-effective /absolute/path/to/config.json
 External command arguments are redacted in this output. The command does not
 connect to an endpoint or start a transfer.
 
-Configuration is read when the client or daemon starts. After changing the file,
-close affected TUI clients and restart your daemon when the changed group applies
-to it:
+The client and daemon read configuration at startup. After changing the file,
+close affected TUI clients. If the changed group applies to the daemon, restart it:
 
 ```sh
 amsftp daemon stop --confirm stop
@@ -153,11 +151,11 @@ absolute. AMSFTP appends the materialized file as the final argument.
 }
 ```
 
-External previewers are tried in order after the built-in preview. The
-`require_complete` setting decides whether a rule needs a complete
-materialization; input size and execution time remain bounded either way. Their
-output is not copied into the terminal, and a failed previewer falls back to the
-built-in result.
+External previewers are tried in order after the built-in preview.
+`require_complete` determines whether a rule needs the complete file to be
+materialized. Input size and execution time remain bounded either way. Previewer
+output is not copied into the terminal; a failure falls back to the built-in
+result.
 
 ### Remap a key
 
@@ -176,8 +174,8 @@ built-in result.
 }
 ```
 
-Keymaps have `normal` and `visual` contexts. A binding moves one remappable action
-to one single-character input; it does not create a second binding. Digits,
+Keymaps have `normal` and `visual` contexts. Each binding moves one remappable
+action to one single-character input; it does not create a second binding. Digits,
 dangerous actions, multi-key sequences, control characters, and conflicting
 inputs are reserved.
 
@@ -218,15 +216,15 @@ Use `amsftp config print-effective` to see all current defaults. Most numeric
 settings can only be reduced from those defaults; the validator explains values
 outside the accepted range.
 
-You may also see `helper.enabled` and `direct_transfer.enabled` in effective
-output. Both must remain `false` in public builds. Configuration cannot open the
-closed production acceleration or direct-transfer paths.
+Effective output may also include `helper.enabled` and `direct_transfer.enabled`.
+Both must remain `false` in public builds. Configuration cannot open the CLOSED
+production acceleration or direct-transfer paths.
 
 ## Precedence and privacy
 
-Startup locations or `--workspace` choose what to open. A workspace supplies pane
-locations and view state. The user configuration supplies application settings,
-and built-in defaults fill anything omitted.
+Startup locations or `--workspace` determine what opens. A workspace supplies pane
+locations and view state; the user configuration supplies application settings.
+Built-in defaults fill anything omitted.
 
 AMSFTP-specific environment variables are not a general configuration layer.
 `VISUAL`, `EDITOR`, `PATH`, and the environment inherited by the validated system

@@ -6,11 +6,11 @@ AMSFTP is a two-pane terminal workspace for local and SFTP files. Either pane
 can point to the local machine or to an SSH host, so the same interaction model
 works for local-to-local, local-to-remote, and remote-to-remote work.
 
-This page explains the shape of the system and why it is built this way. For
-the security boundary and the assumptions behind it, see
+This page explains the system boundaries and the design decisions behind them.
+For the security boundary and its assumptions, see
 [Security](security.md).
 
-## The problems the design addresses
+## Design constraints
 
 A file browser can be a single interactive process, but a dependable transfer
 tool has harder requirements:
@@ -24,8 +24,8 @@ tool has harder requirements:
 - directory listings, previews, searches, logs, and queues must remain usable
   when the remote tree is large.
 
-AMSFTP separates interaction from durable work and keeps each of those
-boundaries explicit.
+These constraints require AMSFTP to separate terminal interaction from durable
+work and to make the boundary between them explicit.
 
 ## System at a glance
 
@@ -42,11 +42,10 @@ flowchart LR
     C --> E["Editor, opener, or interactive shell"]
 ```
 
-AMSFTP is distributed as one executable, but it can take on several tightly
-defined roles. The normal TUI and CLI are short-lived clients. The local daemon
-owns connections and long-running work. Restricted internal roles support
-authentication and optional remote integration without becoming separate
-services.
+AMSFTP is distributed as one executable with several tightly defined roles.
+The TUI and CLI are short-lived clients. The local daemon owns connections and
+long-running work. Restricted internal roles handle authentication and optional
+remote integration without becoming separate services.
 
 The daemon runs as the current operating-system user. It does not listen on a
 TCP port, run as root, or provide a multi-user service.
@@ -67,10 +66,10 @@ The daemon owns:
 - workspace state, preview materialization, and cache leases;
 - bounded diagnostics.
 
-This split means that closing the TUI does not implicitly cancel a transfer.
-Pause, resume, and cancellation are explicit Job operations. It also gives
-recovery one owner: after a restart, the daemon can compare recorded progress
-with the current source and destination before doing more work.
+Closing the TUI therefore does not implicitly cancel a transfer. Pause, resume,
+and cancellation remain explicit Job operations. Recovery also has a single
+owner: after a restart, the daemon compares recorded progress with the current
+source and destination before doing more work.
 
 Client and daemon communicate over an owner-private Unix socket. The handshake
 checks the protocol version and peer user before a request reaches business
@@ -79,9 +78,10 @@ that can be correlated with a safe error report.
 
 ## Endpoints, locations, and providers
 
-An **Endpoint** identifies one filesystem boundary: the local machine or a
-particular SSH host. A **Location** combines an Endpoint with an absolute path.
-The same path on two Endpoints therefore refers to two different objects.
+An **Endpoint** identifies a filesystem boundary: the local machine or a
+particular SSH host. A **Location** combines that Endpoint with an absolute
+path. The same path on two Endpoints therefore identifies two different
+objects.
 
 A provider presents a common set of operations such as listing a directory,
 reading ranges, inspecting metadata, and applying supported changes. The main
@@ -100,10 +100,10 @@ flow through a bounded in-memory relay in the local daemon. The source is read
 and the destination is written in chunks; the whole file is not staged in
 memory or silently stored as a local copy.
 
-The codebase contains boundaries for an optional one-shot remote Helper and a
+The codebase defines boundaries for an optional one-shot remote Helper and a
 direct remote transfer path. Current public builds do not enable either path,
-so neither is required for normal browsing or transfer. Routing stays on
-standard SFTP or the local relay when an enhancement is unavailable.
+and normal browsing and transfer do not depend on them. When an enhancement is
+unavailable, routing remains on standard SFTP or the local relay.
 
 ## OpenSSH remains the SSH authority
 
@@ -147,10 +147,10 @@ recorded only after the corresponding data has crossed the durability boundary.
 AMSFTP then verifies the temporary result and publishes the final name.
 Incomplete content is never presented as the intended final file.
 
-A move is copy-and-commit followed by a separately checked source removal.
-The source is not deleted until the destination has been verified and
-committed. If destination publication succeeds but source removal cannot be
-proved, the safe result is to keep the source and report the remaining work.
+A move is copy-and-commit followed by a separately checked source removal. The
+source is not deleted until the destination has been verified and committed.
+If destination publication succeeds but source removal cannot be proved,
+AMSFTP keeps the source and reports the remaining work.
 
 Retries follow the same principle. AMSFTP repeats only steps that are known to
 be idempotent, or first checks whether a step such as rename, commit, or delete
@@ -192,12 +192,11 @@ The content cache is separate from transfer parts and persistent Job state.
 Entries have quotas and eviction policy, while active previews, edits, and
 openers hold leases that prevent their content from being reclaimed.
 
-State-format changes move forward through checked migrations. A migration
-validates the existing store and preserves the recovery material it needs
-before publishing a new state. If a result is uncertain, startup becomes
-read-only or stops with a stable diagnosis. Deleting the database is not an
-automatic repair strategy, and an older executable is not allowed to write a
-newer format blindly.
+State-format changes proceed through checked migrations. Before publishing new
+state, a migration validates the existing store and preserves the recovery
+material it needs. If the result is uncertain, startup becomes read-only or
+stops with a stable diagnosis. Deleting the database is not an automatic repair
+strategy, and an older executable cannot write a newer format blindly.
 
 During a self-upgrade, a private upgrade lock prevents a second upgrade or an
 old client from racing to restart the old daemon. Active Jobs block package
@@ -212,8 +211,8 @@ connections, and concurrent workers.
 
 These limits are part of the product behavior. Under pressure, AMSFTP applies
 backpressure, queues work, returns a partial result, or reports a stable
-resource error. It does not trade away integrity or silently enable a more
-privileged route to remain fast.
+resource error. It does not sacrifice integrity or silently enable a more
+privileged route to preserve performance.
 
 ## Errors and diagnostics
 
@@ -261,5 +260,4 @@ The implementation follows the same boundaries:
 - Optional enhancements must fail back to the standard path without weakening
   SSH or credential policy.
 
-These rules matter more than any individual optimization. New features fit the
-architecture only when they preserve them.
+Any optimization or new feature must preserve these rules.

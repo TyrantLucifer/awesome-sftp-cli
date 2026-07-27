@@ -2,9 +2,9 @@
 
 [简体中文](../zh-CN/user/everyday-use.md)
 
-AMSFTP keeps two independent file panes on screen. The highlighted pane is active;
-navigation and commands apply there unless an action explicitly uses the other
-pane as its destination.
+AMSFTP shows two independent file panes. The highlighted pane is active;
+navigation and commands apply to it unless an action explicitly uses the other
+pane as the destination.
 
 ## Open and switch locations
 
@@ -17,12 +17,12 @@ amsftp /left/path work:/remote/path
 amsftp host-a:/path/a host-b:/path/b
 ```
 
-Press `Tab` to switch panes. Press `c` to choose a new endpoint for only the active
-pane. The endpoint picker contains `local` and concrete OpenSSH aliases; type to
-filter it, use the arrow keys to select, and press `Enter`.
+Press `Tab` to switch panes. Press `c` to choose a new endpoint for the active pane
+only. The endpoint picker contains `local` and concrete OpenSSH aliases. Type to
+filter the list, use the arrow keys to select an endpoint, and press `Enter`.
 
-Changing an endpoint is transactional from the user's point of view: the old pane
-stays usable unless the new endpoint has connected and listed its first page.
+The old pane stays usable until the new endpoint connects and lists its first
+page. If either step fails, AMSFTP does not replace the pane.
 
 ## Navigate a directory
 
@@ -43,9 +43,9 @@ For `/`, type a query and use Up/Down to choose a match. `Enter` moves the curso
 to that entry in the complete listing; `Esc` returns to the previous cursor. This
 is a quick jump inside the current directory, not a recursive search.
 
-A numeric prefix works with safe navigation and selection actions. For example,
-`12j` moves down twelve entries. Counts never remove a confirmation from a
-destructive action.
+Safe navigation and selection actions accept a numeric prefix. For example, `12j`
+moves down twelve entries. A count never removes a confirmation from a destructive
+action.
 
 Directory listing and rendering are intentionally paged. Very large directories
 remain responsive instead of being loaded and rendered all at once.
@@ -69,8 +69,8 @@ See [Transfers](transfers.md) before moving or deleting important data.
 
 ## Use the action bar and drawers
 
-The action bar above the status line follows the selected object and your effective
-keymap. It is often the quickest way to discover what can be done next.
+The action bar above the status line reflects the selected object and your
+effective keymap. Check it to see which actions are currently available.
 
 | Key | Drawer |
 | --- | --- |
@@ -110,8 +110,8 @@ the problem and retries only failures that are safe to retry. The other pane sta
 available.
 
 After reconnecting, AMSFTP checks that the directory still exists. If necessary,
-it opens the nearest accessible parent and reports the fallback. Press `R` whenever
-you want an authoritative relist.
+it opens the nearest accessible parent and reports the fallback. Press `R` to
+request a fresh listing.
 
 If the local daemon restarts, the TUI waits for the private instance handoff,
 reconnects both panes, and ignores late results from the old connection. Durable
@@ -133,9 +133,9 @@ account's permissions and is not protected by AMSFTP's transfer confirmations.
 
 ## Leave AMSFTP
 
-Press `q` or `Ctrl-C` to restore the terminal and leave the client. This does not
-cancel background Jobs. Use the Jobs drawer or `amsftp job` commands when you
-intend to pause, resume, or cancel work.
+Press `q` or `Ctrl-C` to restore the terminal and leave the client. Background
+Jobs continue. To pause, resume, or cancel work, use the Jobs drawer or
+`amsftp job` commands.
 
 The minimum usable terminal is 20 columns by 5 rows; a larger terminal provides a
 much clearer two-pane view.

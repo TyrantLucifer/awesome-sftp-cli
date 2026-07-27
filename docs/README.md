@@ -2,9 +2,8 @@
 
 English | [简体中文](zh-CN/README.md)
 
-Choose the path that matches what you are trying to do. The English pages are the
-canonical documentation; the Chinese pages follow the same structure and are
-maintained alongside them.
+Start with the task you need to complete. The English pages are canonical. The
+Chinese pages follow the same structure and are updated with them.
 
 ## Use AMSFTP
 
@@ -30,5 +29,5 @@ maintained alongside them.
 
 - [`amsftp(1)`](man/amsftp.1)
 
-The manual page follows the installed command surface. For task-oriented guidance,
-start with the user guides above.
+The manual page documents the installed command surface. For step-by-step
+guidance, start with the user guides above.

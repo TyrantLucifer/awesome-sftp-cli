@@ -2,15 +2,15 @@
 
 [English](../../user/configuration.md)
 
-没有配置文件也可以直接使用 AMSFTP。只有在需要调整资源限制、重试时间、完整性
-策略、外部程序或可重映射按键时，才需要创建配置。
+AMSFTP 不需要配置文件也能运行。只有需要调整资源限制、重试时间、完整性策略、外部
+程序或可重映射按键时，才需要创建配置。
 
 配置是严格的 JSON，schema 版本为 `1`。未知字段和不安全的值会被拒绝，不会
 悄悄忽略。
 
 ## 找到配置文件
 
-默认路径：
+默认路径取决于平台和安装根目录：
 
 - macOS：
   `~/Library/Application Support/io.github.tyrantlucifer.amsftp/config.json`
@@ -57,8 +57,8 @@ amsftp config print-effective /absolute/path/to/config.json
 
 外部命令参数会在输出中隐藏。该命令不会连接端点，也不会启动传输。
 
-客户端或 daemon 启动时会读取配置。修改后，请关闭受影响的 TUI；如果修改项由
-daemon 使用，再重启 daemon：
+客户端和 daemon 会在启动时读取配置。修改后，请关闭受影响的 TUI；如果修改项由
+daemon 使用，还要重启 daemon：
 
 ```sh
 amsftp daemon stop --confirm stop
@@ -146,9 +146,9 @@ amsftp daemon start
 }
 ```
 
-外部预览器会在内置预览之后按顺序尝试。`require_complete` 决定某条规则是否必须
-拿到完整的本地 materialization；无论如何，输入大小和运行时间都有上限。预览器
-输出不会直接复制到终端，失败时会退回内置结果。
+外部预览器会在内置预览之后按顺序尝试。`require_complete` 决定某条规则是否需要
+完整落盘文件。无论如何，输入大小和运行时间都有上限。预览器输出不会直接复制到
+终端；执行失败时会退回内置结果。
 
 ### 重映射按键
 
@@ -167,7 +167,7 @@ amsftp daemon start
 }
 ```
 
-键位包含 `normal` 和 `visual` 两个上下文。一条配置会把一个可重映射动作移动到
+键位包含 `normal` 和 `visual` 两个上下文。每条配置会把一个可重映射动作移动到
 一个单字符输入，不会创建第二个绑定。数字、危险动作、多键序列、控制字符和冲突输入
 都保留给系统。
 
@@ -208,12 +208,12 @@ amsftp config reset-keymap --yes
 默认值基础上调小；超出允许范围时，validator 会给出说明。
 
 最终输出中可能还会看到 `helper.enabled` 和 `direct_transfer.enabled`。公开构建
-要求二者保持 `false`。配置无法打开尚未发布的生产加速或直传通道。
+要求二者保持 `false`。配置无法打开处于 CLOSED 状态的生产加速或直传路径。
 
 ## 优先级和隐私
 
-启动位置或 `--workspace` 决定打开什么。工作区提供文件栏位置和视图状态，用户配置
-提供应用设置，最后由内置默认值补全没有填写的内容。
+启动位置或 `--workspace` 决定打开什么。工作区提供文件栏位置和视图状态；用户配置
+提供应用设置。没有填写的内容由内置默认值补全。
 
 AMSFTP 专用环境变量不是通用配置层。`VISUAL`、`EDITOR`、`PATH` 和传给经过验证
 的系统 OpenSSH 的环境，只会用于各自明确的用途。

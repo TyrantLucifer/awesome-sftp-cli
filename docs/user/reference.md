@@ -2,9 +2,9 @@
 
 [简体中文](../zh-CN/user/reference.md)
 
-This page is a compact lookup for the default TUI keys, location syntax, and public
-commands. Run `amsftp --help` and `man amsftp` for the command surface installed
-with your exact version.
+Use this page to look up the default TUI keys, location syntax, and public
+commands. Run `amsftp --help` and `man amsftp` for the exact commands installed
+with your version.
 
 ## Location syntax
 
@@ -91,8 +91,8 @@ When Jobs has focus:
 | `w` / `x` / `a` | Overwrite / skip / auto-rename one conflict |
 | `W` / `X` / `A` | Apply the matching conflict choice within this Job |
 
-The drawer header is authoritative: it hides actions that are invalid for the
-selected state.
+Use the drawer header as the source of truth: actions that are invalid for the
+selected state are hidden.
 
 ## Launch and lifecycle commands
 
@@ -146,7 +146,8 @@ Preview the exact local diagnostic snapshot:
 amsftp support-bundle preview [--format human|json]
 ```
 
-The preview returns a consent digest. Review it, then create a new private archive:
+The preview returns a consent digest. Review the snapshot, then create a new
+private archive:
 
 ```text
 amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]
@@ -170,8 +171,8 @@ after upgrading a manual installation so that it matches the installed binary.
 ## Human and JSON output
 
 Human-readable output is the default. Commands that accept `--format json` write
-one versioned JSON document. Scripts should use JSON instead of parsing human
-tables.
+one versioned JSON document. Scripts should use JSON instead of parsing the
+human-readable tables.
 
 On success JSON is written to stdout. On failure the versioned error is written to
 stderr and the process keeps its meaningful exit status.
