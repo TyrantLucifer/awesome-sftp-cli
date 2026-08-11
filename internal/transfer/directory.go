@@ -268,7 +268,9 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 				result.Bytes += bytes
 				appendItemResult(&result, ItemResult{RelativePath: item.RelativePath, Source: item.Entry.Location, Destination: destinationLocation, Status: ItemSucceeded, Bytes: bytes})
 				checkpoint.Items = result.Items
-				checkpoint.Offset = result.Bytes
+				if result.Bytes > checkpoint.Offset {
+					checkpoint.Offset = result.Bytes
+				}
 				checkpoint.CurrentPath = item.RelativePath
 				if err := worker.journal.Save(ctx, checkpoint); err != nil {
 					return Result{}, err
@@ -319,7 +321,15 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 					return Result{}, statErr
 				}
 			}
-			itemResult, executeErr := worker.withJournal(&volatileJournal{}).Execute(ctx, itemPlan, control)
+			itemJournal := &directoryItemJournal{
+				parent:          worker.journal,
+				root:            &checkpoint,
+				baseOffset:      result.Bytes,
+				floorOffset:     checkpoint.Offset,
+				currentPath:     item.RelativePath,
+				basePerformance: cloneTransferPerformance(checkpoint.Performance),
+			}
+			itemResult, executeErr := worker.withJournal(itemJournal).Execute(ctx, itemPlan, control)
 			if executeErr != nil {
 				if code, ok := continuableDirectoryItemError(executeErr); ok {
 					itemResultRecord.Status = ItemFailed
@@ -346,7 +356,9 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 		appendItemResult(&result, itemResultRecord)
 		result.Items++
 		checkpoint.Items = result.Items
-		checkpoint.Offset = result.Bytes
+		if result.Bytes > checkpoint.Offset {
+			checkpoint.Offset = result.Bytes
+		}
 		if err := worker.journal.Save(ctx, checkpoint); err != nil {
 			return Result{}, err
 		}
@@ -502,6 +514,52 @@ func ensureDirectory(ctx context.Context, reader providerapi.Provider, writer pr
 type volatileJournal struct {
 	mu         sync.Mutex
 	checkpoint *Checkpoint
+}
+
+// directoryItemJournal keeps the child file's restart state isolated while
+// projecting its in-flight byte and performance counters onto the durable
+// directory checkpoint consumed by Job views.
+type directoryItemJournal struct {
+	child           volatileJournal
+	parent          Journal
+	root            *Checkpoint
+	baseOffset      uint64
+	floorOffset     uint64
+	currentPath     string
+	basePerformance *TransferPerformance
+}
+
+func (journal *directoryItemJournal) Load(ctx context.Context, jobID domain.JobID) (*Checkpoint, error) {
+	return journal.child.Load(ctx, jobID)
+}
+
+func (journal *directoryItemJournal) Save(ctx context.Context, child Checkpoint) error {
+	if err := journal.child.Save(ctx, child); err != nil {
+		return err
+	}
+	progress := cloneCheckpoint(*journal.root)
+	progress.Phase = PhaseStreaming
+	progress.Offset = saturatingAdd(journal.baseOffset, child.Offset, ^uint64(0))
+	if progress.Offset < journal.floorOffset {
+		progress.Offset = journal.floorOffset
+	}
+	progress.CurrentPath = journal.currentPath
+	progress.Performance = mergeTransferPerformance(journal.basePerformance, child.Performance)
+	if child.ActualRoute != "" {
+		progress.ActualRoute = child.ActualRoute
+		progress.DowngradedFrom = child.DowngradedFrom
+		progress.RouteReason = child.RouteReason
+	}
+	if err := journal.parent.Save(ctx, progress); err != nil {
+		return err
+	}
+	journal.root.Offset = progress.Offset
+	journal.root.CurrentPath = progress.CurrentPath
+	journal.root.Performance = cloneTransferPerformance(progress.Performance)
+	journal.root.ActualRoute = progress.ActualRoute
+	journal.root.DowngradedFrom = progress.DowngradedFrom
+	journal.root.RouteReason = progress.RouteReason
+	return nil
 }
 
 func (journal *volatileJournal) Load(context.Context, domain.JobID) (*Checkpoint, error) {

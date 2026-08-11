@@ -127,7 +127,9 @@ stable structured output.
   whether to start new work.
 
 Transfer speed uses a short moving average and is shown only while data is moving.
-Byte totals may be unknown for part of a directory operation.
+For a directory Job, transferred bytes include the current file before that file
+finishes verification, while the completed item count advances only after the
+file is committed. Byte totals may be unknown for part of a directory operation.
 
 ## Recovery after interruption
 
