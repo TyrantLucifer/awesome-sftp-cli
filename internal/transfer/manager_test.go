@@ -381,6 +381,77 @@ func TestManagerRunsDurableDirectoryJobAndReportsItemProgress(t *testing.T) {
 	}
 }
 
+func TestManagerReportsDirectoryBytesWhileCurrentFileIsStillTransferring(t *testing.T) {
+	sourceRoot := t.TempDir()
+	destinationRoot := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(sourceRoot, "tree"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	payload := strings.Repeat("x", 2*DefaultBufferBytes)
+	if err := os.WriteFile(filepath.Join(sourceRoot, "tree", "payload"), []byte(payload), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", sourceRoot, domain.EndpointLocal)
+	destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", destinationRoot, domain.EndpointSSH)
+	secondReadStarted := make(chan struct{})
+	releaseSecondRead := make(chan struct{})
+	gatedSource := &gateAfterFirstReadProvider{
+		Provider: source,
+		started:  secondReadStarted,
+		release:  releaseSecondRead,
+	}
+	resolver := MapResolver{source.Descriptor().ID: gatedSource, destination.Descriptor().ID: destination}
+	store, database := openTransferStore(t, context.Background(), testDatabasePath(t), true)
+	t.Cleanup(func() { _ = database.Close() })
+	manager, err := NewManager(ManagerConfig{
+		Store: store, Resolver: resolver, Generator: &testkit.SequenceGenerator{},
+		Now: func() time.Time { return time.Unix(1_800_000_155, 0) }, MaxConcurrent: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Close)
+	if err := manager.Start(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	reference, err := manager.Capture(context.Background(), normalizePlanTest(t, source, "/tree"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := manager.CreateCopy(context.Background(), Intent{
+		Clipboard: ClipboardCopy, Source: reference, DestinationDirectory: normalizePlanTest(t, destination, "/"),
+		Name: "copied", ConflictPolicy: ConflictAsk,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-secondReadStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("directory transfer did not start the second child-file read")
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		views, viewErr := manager.JobViews(context.Background(), 10)
+		if viewErr != nil {
+			t.Fatal(viewErr)
+		}
+		if len(views) == 1 && views[0].Bytes == DefaultBufferBytes && views[0].Items == 0 && views[0].Phase == PhaseStreaming {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("active directory Job view = %#v, want %d in-flight bytes", views, DefaultBufferBytes)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	close(releaseSecondRead)
+	completed := waitForTerminal(t, manager, created.JobID)
+	if completed.State != job.StateCompleted {
+		t.Fatalf("directory Job state = %q", completed.State)
+	}
+}
+
 func TestManagerRetriesOnlyFailedDirectoryItemsAfterPermissionRepair(t *testing.T) {
 	sourceRoot := t.TempDir()
 	destinationRoot := t.TempDir()
@@ -429,7 +500,8 @@ func TestManagerRetriesOnlyFailedDirectoryItemsAfterPermissionRepair(t *testing.
 	}
 	completed := waitForTerminal(t, manager, created.JobID)
 	if completed.State != job.StateCompleted {
-		t.Fatalf("retried directory state = %q", completed.State)
+		views, viewErr := manager.JobViews(context.Background(), 10)
+		t.Fatalf("retried directory state = %q, views = (%#v, %v)", completed.State, views, viewErr)
 	}
 	for name, want := range map[string]string{"denied": "denied", "ok": "ok"} {
 		// #nosec G304 -- names are fixed test literals below a private destination root.
@@ -1816,4 +1888,37 @@ func (handle *gatedReadHandle) Read(ctx context.Context, buffer []byte) (int, er
 	case <-handle.provider.release:
 		return handle.ReadHandle.Read(ctx, buffer)
 	}
+}
+
+type gateAfterFirstReadProvider struct {
+	providerapi.Provider
+	started chan struct{}
+	release chan struct{}
+}
+
+func (provider *gateAfterFirstReadProvider) OpenRead(ctx context.Context, request providerapi.OpenReadRequest) (providerapi.ReadHandle, error) {
+	handle, err := provider.Provider.OpenRead(ctx, request)
+	if err != nil {
+		return nil, err
+	}
+	return &gateAfterFirstReadHandle{ReadHandle: handle, provider: provider}, nil
+}
+
+type gateAfterFirstReadHandle struct {
+	providerapi.ReadHandle
+	provider *gateAfterFirstReadProvider
+	reads    int
+}
+
+func (handle *gateAfterFirstReadHandle) Read(ctx context.Context, buffer []byte) (int, error) {
+	handle.reads++
+	if handle.reads == 2 {
+		close(handle.provider.started)
+		select {
+		case <-ctx.Done():
+			return 0, ctx.Err()
+		case <-handle.provider.release:
+		}
+	}
+	return handle.ReadHandle.Read(ctx, buffer)
 }

@@ -36,3 +36,20 @@ func cloneTransferPerformance(performance *TransferPerformance) *TransferPerform
 	cloned := *performance
 	return &cloned
 }
+
+func mergeTransferPerformance(base, current *TransferPerformance) *TransferPerformance {
+	if base == nil {
+		return cloneTransferPerformance(current)
+	}
+	if current == nil {
+		return cloneTransferPerformance(base)
+	}
+	return &TransferPerformance{
+		Chunks:                saturatingAdd(base.Chunks, current.Chunks, ^uint64(0)),
+		ReadNanoseconds:       saturatingAdd(base.ReadNanoseconds, current.ReadNanoseconds, ^uint64(0)),
+		WriteNanoseconds:      saturatingAdd(base.WriteNanoseconds, current.WriteNanoseconds, ^uint64(0)),
+		SyncNanoseconds:       saturatingAdd(base.SyncNanoseconds, current.SyncNanoseconds, ^uint64(0)),
+		StatNanoseconds:       saturatingAdd(base.StatNanoseconds, current.StatNanoseconds, ^uint64(0)),
+		CheckpointNanoseconds: saturatingAdd(base.CheckpointNanoseconds, current.CheckpointNanoseconds, ^uint64(0)),
+	}
+}
