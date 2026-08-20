@@ -787,7 +787,7 @@ func canonicalCompareSetupGo(step workflowStep) bool {
 	return step.uses != nil && step.uses.value == "actions/setup-go@"+approvedActionCommits["actions/setup-go"] &&
 		nodeHasExactKeys(step.node, "uses", "with") &&
 		mappingHasExactScalars(step.with, map[string]string{
-			"go-version": "1.26.5",
+			"go-version": "1.26.6",
 			"cache":      "false",
 		})
 }

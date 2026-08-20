@@ -2,7 +2,7 @@ module github.com/TyrantLucifer/awesome-sftp-cli
 
 go 1.25.0
 
-toolchain go1.26.5
+toolchain go1.26.6
 
 require (
 	github.com/gdamore/tcell/v3 v3.4.0
