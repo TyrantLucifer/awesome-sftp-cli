@@ -63,7 +63,7 @@
 
 ## 开发与验证
 
-稳定工具链为 Go 1.26.5，oldstable 为 Go 1.25.12。所有 Make recipe 支持 `GO=/absolute/path/to/go`，并通过 `GOTOOLCHAIN=local` 禁止隐式下载或切换工具链。
+稳定工具链为 Go 1.26.6，oldstable 为 Go 1.25.12。所有 Make recipe 支持 `GO=/absolute/path/to/go`，并通过 `GOTOOLCHAIN=local` 禁止隐式下载或切换工具链。
 
 按风险从小到大选择命令：
 

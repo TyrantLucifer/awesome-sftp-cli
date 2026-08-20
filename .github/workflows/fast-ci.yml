@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - id: impact
@@ -94,7 +94,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make docs-check
@@ -110,7 +110,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Prepare trusted persistent test root
@@ -141,7 +141,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Lint impacted packages
@@ -164,7 +164,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Prepare trusted persistent test root
@@ -192,7 +192,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: go tool -modfile=tools/go.mod actionlint .github/workflows/fast-ci.yml .github/workflows/nightly.yml .github/workflows/release.yml
@@ -208,7 +208,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make mod-check
@@ -231,7 +231,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Prepare trusted persistent test root
@@ -265,7 +265,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - name: Install authentication fixtures
@@ -320,7 +320,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: 1.26.5
+          go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
       - run: make notice-check

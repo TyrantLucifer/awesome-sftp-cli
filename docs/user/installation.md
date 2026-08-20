@@ -107,7 +107,7 @@ users can modify.
 
 ## Build from source
 
-Source builds require Go 1.26.5:
+Source builds require Go 1.26.6:
 
 ```sh
 git clone https://github.com/TyrantLucifer/awesome-sftp-cli.git

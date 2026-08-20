@@ -102,7 +102,7 @@ sh install.sh --root /absolute/private/path
 
 ## 从源码构建
 
-源码构建需要 Go 1.26.5：
+源码构建需要 Go 1.26.6：
 
 ```sh
 git clone https://github.com/TyrantLucifer/awesome-sftp-cli.git
