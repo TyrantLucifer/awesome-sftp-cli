@@ -131,6 +131,12 @@ For a directory Job, transferred bytes include the current file before that file
 finishes verification, while the completed item count advances only after the
 file is committed. Byte totals may be unknown for part of a directory operation.
 
+Standard SFTP transfers keep a bounded window of protocol reads and writes within
+each durable transfer chunk, so network latency does not serialize the data path
+one packet at a time. AMSFTP still synchronizes the temporary destination, checks
+its size, and records a durable checkpoint before it advances recoverable
+progress.
+
 ## Recovery after interruption
 
 The daemon records safe progress as data is written. After a restart, it checks the

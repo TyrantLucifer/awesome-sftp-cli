@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -189,6 +191,47 @@ func TestDialParentCancellationAfterNegotiationKeepsSessionAlive(t *testing.T) {
 	}
 }
 
+func TestSFTPClientPipelinesBoundedWritePackets(t *testing.T) {
+	tracker := &concurrentWriteTracker{}
+	handlers := pkgsftp.InMemHandler()
+	handlers.FilePut = delayedFileWriter{delegate: handlers.FilePut, tracker: tracker}
+	serverConnection, clientConnection := net.Pipe()
+	server := pkgsftp.NewRequestServer(serverConnection, handlers)
+	serveDone := make(chan error, 1)
+	go func() { serveDone <- server.Serve() }()
+
+	client, err := newSFTPClientPipe(clientConnection, clientConnection)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = client.Close()
+		_ = server.Close()
+		_ = clientConnection.Close()
+		select {
+		case <-serveDone:
+		case <-time.After(time.Second):
+			t.Error("SFTP request server did not stop")
+		}
+	})
+
+	file, err := client.Create("/throughput.bin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.Write(make([]byte, 256<<10)); err != nil {
+		_ = file.Close()
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	maximum := tracker.maximumObserved()
+	if maximum < 4 || maximum > 8 {
+		t.Fatalf("maximum in-flight SFTP writes = %d, want 4..8", maximum)
+	}
+}
+
 func TestSFTPServerHelperProcess(t *testing.T) {
 	if os.Getenv("AMSFTP_TEST_SFTP_SERVER") != "1" {
 		return
@@ -201,6 +244,66 @@ func TestSFTPServerHelperProcess(t *testing.T) {
 		os.Exit(3)
 	}
 	os.Exit(0)
+}
+
+type delayedFileWriter struct {
+	delegate pkgsftp.FileWriter
+	tracker  *concurrentWriteTracker
+}
+
+func (writer delayedFileWriter) Filewrite(request *pkgsftp.Request) (io.WriterAt, error) {
+	delegate, err := writer.delegate.Filewrite(request)
+	if err != nil {
+		return nil, err
+	}
+	return &delayedWriterAt{delegate: delegate, tracker: writer.tracker}, nil
+}
+
+type delayedWriterAt struct {
+	delegate io.WriterAt
+	tracker  *concurrentWriteTracker
+}
+
+func (writer *delayedWriterAt) WriteAt(value []byte, offset int64) (int, error) {
+	writer.tracker.begin()
+	defer writer.tracker.end()
+	time.Sleep(25 * time.Millisecond)
+	return writer.delegate.WriteAt(value, offset)
+}
+
+func (writer *delayedWriterAt) Close() error {
+	if closer, ok := writer.delegate.(io.Closer); ok {
+		return closer.Close()
+	}
+	return nil
+}
+
+type concurrentWriteTracker struct {
+	mu      sync.Mutex
+	active  int
+	maximum int
+}
+
+func (tracker *concurrentWriteTracker) begin() {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	tracker.active++
+	if tracker.active <= tracker.maximum {
+		return
+	}
+	tracker.maximum = tracker.active
+}
+
+func (tracker *concurrentWriteTracker) end() {
+	tracker.mu.Lock()
+	tracker.active--
+	tracker.mu.Unlock()
+}
+
+func (tracker *concurrentWriteTracker) maximumObserved() int {
+	tracker.mu.Lock()
+	defer tracker.mu.Unlock()
+	return tracker.maximum
 }
 
 type stdioReadWriteCloser struct{}

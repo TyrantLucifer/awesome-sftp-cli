@@ -18,6 +18,7 @@ import (
 
 const DefaultBinary = "/usr/bin/ssh"
 const maxStderrBytes = 64 * 1024
+const maxConcurrentSFTPRequestsPerFile = 8
 
 var fixedSFTPArguments = []string{
 	"-T", "-oEscapeChar=none", "-oForwardAgent=no", "-oForwardX11=no",
@@ -201,7 +202,7 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 	}
 	collector := &boundedBuffer{redactions: append([]string(nil), config.Redact...)}
 	go func() { _, _ = io.Copy(collector, stderrPipe) }()
-	client, err := pkgsftp.NewClientPipe(stdout, stdin)
+	client, err := newSFTPClientPipe(stdout, stdin)
 	if err != nil {
 		cancel()
 		_ = command.Wait()
@@ -214,6 +215,15 @@ func Dial(ctx context.Context, config Config) (*Session, error) {
 		return nil, fmt.Errorf("negotiate SFTP subsystem: %w", err)
 	}
 	return &Session{client: client, command: command, cancel: cancel, stderr: collector}, nil
+}
+
+func newSFTPClientPipe(reader io.Reader, writer io.WriteCloser) (*pkgsftp.Client, error) {
+	return pkgsftp.NewClientPipe(
+		reader,
+		writer,
+		pkgsftp.MaxConcurrentRequestsPerFile(maxConcurrentSFTPRequestsPerFile),
+		pkgsftp.UseConcurrentWrites(true),
+	)
 }
 
 func (s *Session) Client() *pkgsftp.Client {
