@@ -323,10 +323,10 @@ jobs:
           go-version: 1.26.6
           cache: true
           cache-dependency-path: "go.sum\ntools/go.sum"
-      - run: make notice-check
       - run: make build-all
         env:
           BUILD_DIR: ${{ runner.temp }}/fast-release
+      - run: make notice-check
 
   required:
     name: required
