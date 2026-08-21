@@ -84,6 +84,30 @@ func TestWorkerUsesReadAheadOnlyWhenBandwidthIsUnlimited(t *testing.T) {
 	}
 }
 
+func TestWorkerUsesFullBoundedRelayWindowWhenBandwidthIsUnlimited(t *testing.T) {
+	const standardRelayWindowBytes = 4 << 20
+	fixture := newWorkerFixture(t, make([]byte, standardRelayWindowBytes), ConflictAsk)
+	journal := newMemoryJournal()
+	scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(2_100, 0)), SchedulerPolicy{})
+	worker := NewWorker(fixture.resolver, journal)
+	worker.scheduler = scheduler
+
+	result, err := worker.Execute(context.Background(), fixture.plan, nil)
+	if err != nil || result.Outcome != OutcomeCompleted {
+		t.Fatalf("Execute() = (%#v, %v)", result, err)
+	}
+	checkpoint := journal.latest()
+	if checkpoint.Performance == nil || checkpoint.Performance.Chunks != 1 {
+		t.Fatalf("performance = %#v, want one durable relay window", checkpoint.Performance)
+	}
+	if journal.maxBufferBytes != standardRelayWindowBytes {
+		t.Fatalf("relay buffer = %d, want %d", journal.maxBufferBytes, standardRelayWindowBytes)
+	}
+	if got := scheduler.Snapshot().GrantedBytes; got != standardRelayWindowBytes {
+		t.Fatalf("scheduled bytes = %d, want %d", got, standardRelayWindowBytes)
+	}
+}
+
 func TestWorkerOverlapsNextReadWithDurableCheckpoint(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("three relay chunks"), ConflictAsk)
 	fixture.plan.BufferBytes = 4

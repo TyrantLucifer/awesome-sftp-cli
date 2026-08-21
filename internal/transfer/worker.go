@@ -124,7 +124,7 @@ func (reader *relayReader) run() {
 		startedAt := time.Now()
 		var bytesRead int
 		var err error
-		if handle, ok := reader.handle.(providerapi.ReadAheadHandle); ok && len(request.buffer) < int(request.readAheadBytes) {
+		if handle, ok := reader.handle.(providerapi.ReadAheadHandle); ok && request.readAheadBytes > 0 {
 			bytesRead, err = handle.ReadAhead(reader.ctx, request.buffer, request.readAheadBytes)
 		} else {
 			bytesRead, err = reader.handle.Read(reader.ctx, request.buffer)
@@ -235,6 +235,25 @@ type bandwidthScheduler interface {
 
 type bandwidthReadAheadPolicy interface {
 	AllowsReadAhead(BandwidthRequest) bool
+}
+
+func waitForScheduledBytes(ctx context.Context, scheduler bandwidthScheduler, request BandwidthRequest, total uint32) error {
+	for remaining := total; remaining > 0; {
+		quantum := scheduler.QuantumBytes()
+		if quantum == 0 {
+			return errors.New("execute transfer: scheduler returned a zero quantum")
+		}
+		granted := remaining
+		if granted > quantum {
+			granted = quantum
+		}
+		request.Bytes = granted
+		if err := scheduler.Wait(ctx, request); err != nil {
+			return err
+		}
+		remaining -= granted
+	}
+	return nil
 }
 
 func NewWorker(resolver Resolver, journal Journal) *Worker {
@@ -527,24 +546,24 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	readPending := false
 	startNextRead := func() error {
+		bandwidthRequest := BandwidthRequest{
+			JobID: plan.JobID, EndpointID: plan.SourceEndpoint.ID, PeerEndpointID: plan.DestinationEndpoint.ID,
+			JobBytesPerSecond: plan.Bandwidth.JobBytesPerSecond, Class: ScheduleBulk,
+		}
+		unrestricted := worker.scheduler == nil && !plan.Bandwidth.requiresControl()
+		if policy, ok := worker.scheduler.(bandwidthReadAheadPolicy); ok && policy.AllowsReadAhead(bandwidthRequest) {
+			unrestricted = true
+		}
 		readBuffer := buffer
-		if worker.scheduler != nil {
+		if worker.scheduler != nil && !unrestricted {
 			quantum := worker.scheduler.QuantumBytes()
 			if quantum > 0 && int(quantum) < len(readBuffer) {
 				readBuffer = readBuffer[:quantum]
 			}
 		}
-		bandwidthRequest := BandwidthRequest{
-			JobID: plan.JobID, EndpointID: plan.SourceEndpoint.ID, PeerEndpointID: plan.DestinationEndpoint.ID,
-			JobBytesPerSecond: plan.Bandwidth.JobBytesPerSecond, Class: ScheduleBulk,
-		}
 		readAheadBytes := uint32(0)
-		if !plan.Bandwidth.requiresControl() {
-			if worker.scheduler == nil {
-				readAheadBytes = providerapi.MaxReadAheadBytes
-			} else if policy, ok := worker.scheduler.(bandwidthReadAheadPolicy); ok && policy.AllowsReadAhead(bandwidthRequest) {
-				readAheadBytes = providerapi.MaxReadAheadBytes
-			}
+		if unrestricted {
+			readAheadBytes = providerapi.MaxReadAheadBytes
 		}
 		if err := reader.Start(readBuffer, readAheadBytes); err != nil {
 			return err
@@ -586,11 +605,10 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		}
 		if n > 0 {
 			if worker.scheduler != nil {
-				if err := worker.scheduler.Wait(ctx, BandwidthRequest{
+				if err := waitForScheduledBytes(ctx, worker.scheduler, BandwidthRequest{
 					JobID: plan.JobID, EndpointID: plan.SourceEndpoint.ID, PeerEndpointID: plan.DestinationEndpoint.ID,
 					JobBytesPerSecond: plan.Bandwidth.JobBytesPerSecond, Class: ScheduleBulk,
-					Bytes: uint32(n), //nolint:gosec // n is bounded by the scheduler quantum, whose hard ceiling fits uint32.
-				}); err != nil {
+				}, uint32(n)); err != nil { //nolint:gosec // n is bounded by the 4 MiB transfer buffer.
 					return Result{}, err
 				}
 			}

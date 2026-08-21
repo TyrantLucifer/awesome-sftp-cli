@@ -740,6 +740,24 @@ func TestExecutionResourceUsageAccountsBoundedSFTPReadAhead(t *testing.T) {
 	}
 }
 
+func TestExecutionResourceUsageAccountsBoundedSFTPWriteWindow(t *testing.T) {
+	t.Parallel()
+
+	usage := executionResourceUsage(Plan{
+		Route:               RouteSFTPRelay,
+		BufferBytes:         4 << 20,
+		DestinationEndpoint: domain.Endpoint{Kind: domain.EndpointSSH},
+	})
+	const standardSFTPWriteWindowGoroutines = 64 + 2
+	wantGoroutines := uint32(2 + standardSFTPWriteWindowGoroutines)
+	if usage.Goroutines != wantGoroutines {
+		t.Fatalf("Goroutines = %d, want %d", usage.Goroutines, wantGoroutines)
+	}
+	if usage.MemoryBytes != 4<<20 {
+		t.Fatalf("MemoryBytes = %d, want %d", usage.MemoryBytes, 4<<20)
+	}
+}
+
 func TestExecutionResourceRequestChargesOneConnectionToEachEndpoint(t *testing.T) {
 	plan := Plan{
 		JobID:               "job-two-endpoints",

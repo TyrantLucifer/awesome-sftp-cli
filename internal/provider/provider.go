@@ -6,11 +6,19 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
-// MaxReadAheadBytes bounds optional Provider-owned request windows. The
-// standard SFTP implementation uses this budget for at most 32 concurrent
-// 32 KiB protocol reads while callers continue consuming durable 256 KiB
-// chunks.
-const MaxReadAheadBytes uint32 = 1 << 20
+const (
+	// MaxReadAheadBytes bounds optional Provider-owned request windows. The
+	// standard SFTP implementation uses this budget for at most 32 concurrent
+	// 32 KiB protocol reads.
+	MaxReadAheadBytes uint32 = 1 << 20
+
+	// MaxSFTPWriteWindowRequests bounds the standard SFTP per-file write
+	// pipeline. The request payloads remain backed by the caller's bounded
+	// transfer buffer; the resource ledger separately accounts the short-lived
+	// distributor, waiter, and request worker goroutines.
+	MaxSFTPWriteWindowRequests   uint32 = 64
+	MaxSFTPWriteWindowGoroutines        = MaxSFTPWriteWindowRequests + 2
+)
 
 // Provider is the minimum read-only endpoint contract. Descriptor must remain
 // stable for the provider's lifetime. Implementations must honor context

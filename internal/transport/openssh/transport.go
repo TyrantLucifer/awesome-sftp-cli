@@ -18,7 +18,7 @@ import (
 
 const DefaultBinary = "/usr/bin/ssh"
 const maxStderrBytes = 64 * 1024
-const maxConcurrentSFTPRequestsPerFile = 8
+const maxConcurrentSFTPRequestsPerFile = 64
 
 var fixedSFTPArguments = []string{
 	"-T", "-oEscapeChar=none", "-oForwardAgent=no", "-oForwardX11=no",

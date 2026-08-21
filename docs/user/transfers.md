@@ -131,11 +131,13 @@ For a directory Job, transferred bytes include the current file before that file
 finishes verification, while the completed item count advances only after the
 file is committed. Byte totals may be unknown for part of a directory operation.
 
-Standard SFTP transfers keep a bounded window of protocol reads and writes within
-each durable transfer chunk, so network latency does not serialize the data path
-one packet at a time. AMSFTP still synchronizes the temporary destination, checks
-its size, and records a durable checkpoint before it advances recoverable
-progress.
+Without a bandwidth limit, standard SFTP uses a bounded 4 MiB durable transfer
+chunk and allows up to 64 concurrent 32 KiB write requests inside that chunk.
+This keeps a full protocol window active on higher-latency links instead of
+waiting after every small group of packets. Bandwidth-controlled Jobs retain a
+256 KiB scheduling quantum. At the end of each durable chunk, AMSFTP synchronizes
+the temporary destination, checks its size, and records a checkpoint before it
+advances recoverable progress.
 
 ## Recovery after interruption
 
