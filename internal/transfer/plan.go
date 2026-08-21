@@ -20,7 +20,7 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
 )
 
-const DefaultBufferBytes = 256 * 1024
+const DefaultBufferBytes = HardTransferBufferBytes
 
 const (
 	ServerCopyCapabilityVersion uint16 = 1

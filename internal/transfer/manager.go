@@ -1215,13 +1215,17 @@ func executionResourceUsage(plan Plan) ResourceUsage {
 		readAheadMemory = uint64(providerapi.MaxReadAheadBytes)
 		readAheadGoroutines = providerapi.MaxReadAheadBytes/(32<<10) + 2
 	}
+	writeWindowGoroutines := uint32(0)
+	if plan.DestinationEndpoint.Kind == domain.EndpointSSH && plan.Route != RouteHelperSameHost {
+		writeWindowGoroutines = providerapi.MaxSFTPWriteWindowGoroutines
+	}
 	return ResourceUsage{
 		ActiveJobs:      1,
 		Connections:     connections,
 		SSHProcesses:    connections,
 		HelperProcesses: helperProcesses,
 		FileDescriptors: 2 + 3*connections,
-		Goroutines:      2 + readAheadGoroutines,
+		Goroutines:      2 + readAheadGoroutines + writeWindowGoroutines,
 		MemoryBytes:     uint64(plan.BufferBytes) + readAheadMemory,
 	}
 }

@@ -191,7 +191,10 @@ func TestDialParentCancellationAfterNegotiationKeepsSessionAlive(t *testing.T) {
 	}
 }
 
-func TestSFTPClientPipelinesBoundedWritePackets(t *testing.T) {
+func TestSFTPClientUsesStandardBoundedWriteWindow(t *testing.T) {
+	if maxConcurrentSFTPRequestsPerFile != 64 {
+		t.Fatalf("configured SFTP write requests = %d, want 64", maxConcurrentSFTPRequestsPerFile)
+	}
 	tracker := &concurrentWriteTracker{}
 	handlers := pkgsftp.InMemHandler()
 	handlers.FilePut = delayedFileWriter{delegate: handlers.FilePut, tracker: tracker}
@@ -219,7 +222,7 @@ func TestSFTPClientPipelinesBoundedWritePackets(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := file.Write(make([]byte, 256<<10)); err != nil {
+	if _, err := file.Write(make([]byte, 4<<20)); err != nil {
 		_ = file.Close()
 		t.Fatal(err)
 	}
@@ -227,8 +230,11 @@ func TestSFTPClientPipelinesBoundedWritePackets(t *testing.T) {
 		t.Fatal(err)
 	}
 	maximum := tracker.maximumObserved()
-	if maximum < 4 || maximum > 8 {
-		t.Fatalf("maximum in-flight SFTP writes = %d, want 4..8", maximum)
+	// The in-memory request server has eight workers. Saturating all of them
+	// proves the client is issuing concurrent requests; the configuration
+	// assertion above locks the production window to the standard depth.
+	if maximum != pkgsftp.SftpServerWorkerCount {
+		t.Fatalf("server-scheduled SFTP writes = %d, want %d", maximum, pkgsftp.SftpServerWorkerCount)
 	}
 }
 

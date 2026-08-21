@@ -12,9 +12,9 @@ import (
 )
 
 const (
-	HardTransferBufferBytes    = 256 << 10
+	HardTransferBufferBytes    = 4 << 20
 	HardRecoveryBufferBytes    = 512 << 10
-	TransferScheduleQuantum    = HardTransferBufferBytes
+	TransferScheduleQuantum    = 256 << 10
 	MaxBandwidthBytesPerSecond = 1 << 40
 
 	DefaultInteractiveWeight = 4
