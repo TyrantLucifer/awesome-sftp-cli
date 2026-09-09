@@ -1,13 +1,13 @@
 module github.com/TyrantLucifer/awesome-sftp-cli
 
-go 1.25.0
+go 1.26.0
 
 toolchain go1.26.6
 
 require (
 	github.com/gdamore/tcell/v3 v3.4.0
 	github.com/pkg/sftp v1.13.11
-	golang.org/x/sys v0.47.0
+	golang.org/x/sys v0.48.0
 	modernc.org/sqlite v1.53.0
 )
 
