@@ -36,6 +36,10 @@ func (fake *fakeHelperRPC) Call(_ context.Context, name string, request, respons
 	return fake.respond(name, request, response)
 }
 
+func (fake *fakeHelperRPC) connect(context.Context) (helperRPC, io.Closer, error) {
+	return fake, nopCloser{}, nil
+}
+
 func TestHelperStatusReportsNegotiatedLevelOneWithVersionedJSONAndReleases(t *testing.T) {
 	fake := &fakeHelperRPC{t: t}
 	fake.respond = func(name string, request, response any) error {
@@ -58,7 +62,7 @@ func TestHelperStatusReportsNegotiatedLevelOneWithVersionedJSONAndReleases(t *te
 	}
 
 	var stdout bytes.Buffer
-	if err := runHelperCommand(t.Context(), []string{"status", "work", "--format", "json"}, &stdout, fake); err != nil {
+	if err := runHelperWithConnector(t.Context(), []string{"status", "work", "--format", "json"}, &stdout, fake.connect); err != nil {
 		t.Fatal(err)
 	}
 	var output struct {
@@ -111,7 +115,7 @@ func TestHelperStatusHumanLevelZeroExplainsSafeFallbackAndClosedDistribution(t *
 		return nil
 	}
 	var stdout bytes.Buffer
-	if err := runHelperCommand(t.Context(), []string{"status", "legacy"}, &stdout, fake); err != nil {
+	if err := runHelperWithConnector(t.Context(), []string{"status", "legacy"}, &stdout, fake.connect); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{"legacy", "L0", "not_available", "Level 0", "production distribution: closed"} {
@@ -278,7 +282,7 @@ func TestHelperStatusRejectsMalformedCapabilityAndStillReleases(t *testing.T) {
 		}
 		return nil
 	}
-	err := runHelperCommand(t.Context(), []string{"status", "work"}, &bytes.Buffer{}, fake)
+	err := runHelperWithConnector(t.Context(), []string{"status", "work"}, &bytes.Buffer{}, fake.connect)
 	if err == nil || exitCode(err) != ExitInternal || !strings.Contains(err.Error(), "duplicate helper status constraint") {
 		t.Fatalf("error = %v, exit = %d", err, exitCode(err))
 	}

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 func TestResolutionPolicyFreezesSupportedAndUnsupportedLayers(t *testing.T) {
@@ -43,7 +43,7 @@ func TestHelperConfigurationDerivesProductionClosureAndCannotOpenIt(t *testing.T
 	if Default().Helper.Enabled {
 		t.Fatal("helper.enabled default must require explicit opt-in")
 	}
-	if helper.ProductionDistributionOpen {
+	if domain.ProductionHelperOpen {
 		t.Fatal("production Helper distribution opened before release trust gates")
 	}
 	_, err := Decode(strings.NewReader(`{"schema_version":1,"helper":{"enabled":true}}`))

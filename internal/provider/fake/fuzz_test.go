@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
-	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func FuzzNormalizePath(f *testing.F) {
@@ -102,6 +102,6 @@ func normalizeFuzzScenario() Scenario {
 			Kind: domain.EntryDirectory,
 		},
 		DefaultLimit: 1,
-		Clock:        foundation.NewManualClock(observedAt),
+		Clock:        testkit.NewManualClock(observedAt),
 	}
 }

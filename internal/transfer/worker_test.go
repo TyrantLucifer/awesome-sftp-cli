@@ -15,9 +15,9 @@ import (
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
-	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
 	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/state/jobstore"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestWorkerPublishesOnlyAfterDestinationVerification(t *testing.T) {
@@ -69,7 +69,7 @@ func TestWorkerUsesReadAheadOnlyWhenBandwidthIsUnlimited(t *testing.T) {
 			fixture := newWorkerFixture(t, make([]byte, 128<<10), ConflictAsk)
 			source := &recordingReadAheadProvider{Provider: fixture.source}
 			fixture.resolver[fixture.source.Descriptor().ID] = source
-			scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(2_000, 0)), test.policy)
+			scheduler := newTransferScheduler(t, testkit.NewManualClock(time.Unix(2_000, 0)), test.policy)
 			worker := NewWorker(fixture.resolver, newMemoryJournal())
 			worker.scheduler = scheduler
 
@@ -88,7 +88,7 @@ func TestWorkerUsesFullBoundedRelayWindowWhenBandwidthIsUnlimited(t *testing.T) 
 	const standardRelayWindowBytes = 4 << 20
 	fixture := newWorkerFixture(t, make([]byte, standardRelayWindowBytes), ConflictAsk)
 	journal := newMemoryJournal()
-	scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(2_100, 0)), SchedulerPolicy{})
+	scheduler := newTransferScheduler(t, testkit.NewManualClock(time.Unix(2_100, 0)), SchedulerPolicy{})
 	worker := NewWorker(fixture.resolver, journal)
 	worker.scheduler = scheduler
 

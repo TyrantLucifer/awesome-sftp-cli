@@ -1013,7 +1013,7 @@ func executeLevel2ConflictContract(t *testing.T, direct bool, policy ConflictPol
 	request.Intent.ConflictPolicy = policy
 	request.Intent.ConflictConfirmed = policy == ConflictOverwrite
 	if direct {
-		request.Intent.DirectPolicy = DirectPolicy{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: IntegrityRequireStrong}
+		request.Intent.DirectPolicy = DirectPolicy{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: domain.IntegrityRequireStrong}
 	}
 	plan, _, err := planner.FreezeCopy(context.Background(), request)
 	if err != nil {
@@ -1072,7 +1072,7 @@ func newLevel2PlanFixtureWithPayload(t *testing.T, payload []byte, direct bool) 
 	}
 	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
 	if direct {
-		request.Intent.DirectPolicy = DirectPolicy{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: IntegrityRequireStrong}
+		request.Intent.DirectPolicy = DirectPolicy{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: domain.IntegrityRequireStrong}
 	}
 	plan, _, err := planner.FreezeCopy(context.Background(), request)
 	if err != nil {

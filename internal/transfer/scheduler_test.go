@@ -77,7 +77,7 @@ func TestTransferSchedulerAllowsReadAheadOnlyWithoutRateControl(t *testing.T) {
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(1_000, 0)), test.policy)
+			scheduler := newTransferScheduler(t, testkit.NewManualClock(time.Unix(1_000, 0)), test.policy)
 			if got := scheduler.AllowsReadAhead(test.request); got != test.want {
 				t.Fatalf("AllowsReadAhead() = %t, want %t", got, test.want)
 			}
@@ -204,7 +204,7 @@ func TestFreezeRequestRejectsBandwidthAboveFrozenHardCeiling(t *testing.T) {
 }
 
 func TestTransferSchedulerUsesLayeredIntegerTokenBuckets(t *testing.T) {
-	clock := foundation.NewManualClock(time.Unix(1_000, 0))
+	clock := testkit.NewManualClock(time.Unix(1_000, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
 		GlobalBytesPerSecond:   8,
 		EndpointBytesPerSecond: 4,
@@ -237,7 +237,7 @@ func TestTransferSchedulerUsesLayeredIntegerTokenBuckets(t *testing.T) {
 }
 
 func TestTransferSchedulerAccumulatesLowRateTokensUpToOneBoundedQuantum(t *testing.T) {
-	clock := foundation.NewManualClock(time.Unix(1_500, 0))
+	clock := testkit.NewManualClock(time.Unix(1_500, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{BurstBytes: 8, QuantumBytes: 4})
 	done := waitForGrant(t, scheduler, BandwidthRequest{
 		JobID: domain.JobID("slow-job"), Class: ScheduleBulk, Bytes: 4, JobBytesPerSecond: 2,
@@ -250,7 +250,7 @@ func TestTransferSchedulerAccumulatesLowRateTokensUpToOneBoundedQuantum(t *testi
 }
 
 func TestTransferSchedulerWeightedRoundRobinNeverStarvesBulk(t *testing.T) {
-	clock := foundation.NewManualClock(time.Unix(2_000, 0))
+	clock := testkit.NewManualClock(time.Unix(2_000, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
 		GlobalBytesPerSecond: 1,
 		BurstBytes:           1,
@@ -289,7 +289,7 @@ func TestTransferSchedulerWeightedRoundRobinNeverStarvesBulk(t *testing.T) {
 }
 
 func TestTransferSchedulerGrantableInteractiveBypassesRateLimitedBulkHead(t *testing.T) {
-	clock := foundation.NewManualClock(time.Unix(2_500, 0))
+	clock := testkit.NewManualClock(time.Unix(2_500, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{BurstBytes: 8, QuantumBytes: 8})
 	bulk := waitForGrant(t, scheduler, BandwidthRequest{
 		JobID: "slow-bulk", Class: ScheduleBulk, Bytes: 8, JobBytesPerSecond: 1,
@@ -307,7 +307,7 @@ func TestTransferSchedulerGrantableInteractiveBypassesRateLimitedBulkHead(t *tes
 }
 
 func TestTransferSchedulerHotRateUpdateOnlyAffectsFutureTokens(t *testing.T) {
-	clock := foundation.NewManualClock(time.Unix(3_000, 0))
+	clock := testkit.NewManualClock(time.Unix(3_000, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
 		GlobalBytesPerSecond: 4,
 		BurstBytes:           8,
@@ -338,7 +338,7 @@ func TestTransferSchedulerHotRateUpdateOnlyAffectsFutureTokens(t *testing.T) {
 }
 
 func TestTransferSchedulerHotUpdateTightensExplicitJobBucketCapacity(t *testing.T) {
-	clock := foundation.NewManualClock(time.Unix(3_250, 0))
+	clock := testkit.NewManualClock(time.Unix(3_250, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{BurstBytes: 8, QuantumBytes: 8})
 	request := BandwidthRequest{JobID: "explicit-rate", Class: ScheduleBulk, Bytes: 8, JobBytesPerSecond: 8}
 	if err := scheduler.Wait(context.Background(), request); err != nil {
@@ -357,7 +357,7 @@ func TestTransferSchedulerHotUpdateTightensExplicitJobBucketCapacity(t *testing.
 }
 
 func TestTransferSchedulerRejectsHotUpdateThatWouldStrandQueuedGrant(t *testing.T) {
-	clock := foundation.NewManualClock(time.Unix(3_500, 0))
+	clock := testkit.NewManualClock(time.Unix(3_500, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
 		GlobalBytesPerSecond: 8,
 		BurstBytes:           8,
@@ -383,7 +383,7 @@ func TestTransferSchedulerRejectsHotUpdateThatWouldStrandQueuedGrant(t *testing.
 }
 
 func TestTransferSchedulerReleaseJobReclaimsUnusedIdentityBuckets(t *testing.T) {
-	scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(3_750, 0)), SchedulerPolicy{})
+	scheduler := newTransferScheduler(t, testkit.NewManualClock(time.Unix(3_750, 0)), SchedulerPolicy{})
 	for _, jobID := range []domain.JobID{"job-release-a", "job-release-b"} {
 		if err := scheduler.Wait(context.Background(), BandwidthRequest{
 			JobID: jobID, EndpointID: "endpoint-shared", PeerEndpointID: "endpoint-peer", Class: ScheduleBulk, Bytes: 1,
@@ -405,7 +405,7 @@ func TestTransferSchedulerReleaseJobReclaimsUnusedIdentityBuckets(t *testing.T) 
 }
 
 func TestTransferSchedulerCancellationRemovesWaiter(t *testing.T) {
-	clock := foundation.NewManualClock(time.Unix(4_000, 0))
+	clock := testkit.NewManualClock(time.Unix(4_000, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
 		GlobalBytesPerSecond: 1,
 		BurstBytes:           1,
@@ -472,7 +472,7 @@ func TestRelayWorkerAppliesSchedulerAtFixedSizeIndependentQuantum(t *testing.T) 
 	fixture.plan.Bandwidth = BandwidthPolicy{Required: true, JobBytesPerSecond: TransferScheduleQuantum}
 	freezeRouteEvidence(&fixture.plan)
 
-	clock := foundation.NewManualClock(time.Unix(5_000, 0))
+	clock := testkit.NewManualClock(time.Unix(5_000, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
 		GlobalBytesPerSecond: TransferScheduleQuantum,
 		BurstBytes:           TransferScheduleQuantum,
@@ -515,7 +515,7 @@ func TestWorkerHundredGiBContractLifecycleUsesSameCheckpointHashAndRateStateMach
 	fixture.plan.Bandwidth = BandwidthPolicy{Required: true, JobBytesPerSecond: TransferScheduleQuantum}
 	freezeRouteEvidence(&fixture.plan)
 
-	clock := foundation.NewManualClock(time.Unix(5_250, 0))
+	clock := testkit.NewManualClock(time.Unix(5_250, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
 		GlobalBytesPerSecond: TransferScheduleQuantum,
 		BurstBytes:           TransferScheduleQuantum,
@@ -571,7 +571,7 @@ func TestWorkerHundredGiBContractLifecycleUsesSameCheckpointHashAndRateStateMach
 
 func TestRelayWorkerHonorsTightenedSchedulerQuantum(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("123456789"), ConflictOverwrite)
-	scheduler := newTransferScheduler(t, foundation.NewManualClock(time.Unix(5_500, 0)), SchedulerPolicy{
+	scheduler := newTransferScheduler(t, testkit.NewManualClock(time.Unix(5_500, 0)), SchedulerPolicy{
 		BurstBytes: 4, QuantumBytes: 4,
 	})
 	worker := NewWorker(fixture.resolver, newMemoryJournal())
@@ -610,7 +610,7 @@ func TestDirectoryWorkerAppliesSchedulerToFileChildren(t *testing.T) {
 	}
 	plan.BufferBytes = 5
 
-	clock := foundation.NewManualClock(time.Unix(5_750, 0))
+	clock := testkit.NewManualClock(time.Unix(5_750, 0))
 	scheduler := newTransferScheduler(t, clock, SchedulerPolicy{
 		GlobalBytesPerSecond: 4,
 		BurstBytes:           4,
@@ -651,7 +651,7 @@ func TestManagerOwnsOneSharedHotUpdatableSchedulerWithinHardAdmissionCeilings(t 
 	fixture := newWorkerFixture(t, []byte("manager scheduler"), ConflictOverwrite)
 	store, database := openTransferStore(t, context.Background(), filepath.Join(t.TempDir(), "state.db"), true)
 	t.Cleanup(func() { _ = database.Close() })
-	clock := foundation.NewManualClock(time.Unix(6_000, 0))
+	clock := testkit.NewManualClock(time.Unix(6_000, 0))
 	manager, err := NewManager(ManagerConfig{
 		Store: store, Resolver: fixture.resolver, Generator: &testkit.SequenceGenerator{},
 		MaxConcurrent: 4, MaxQueued: 128, SchedulerClock: clock,
@@ -888,7 +888,7 @@ func waitForSchedulerGrantAndWaiter(t *testing.T, scheduler *TransferScheduler, 
 	t.Fatalf("scheduler snapshot = %+v, want %d granted bytes and %d waiters", scheduler.Snapshot(), bytes, waiters)
 }
 
-func waitForManualClockTimerAtOrBefore(t *testing.T, clock *foundation.ManualClock, want time.Time) {
+func waitForManualClockTimerAtOrBefore(t *testing.T, clock *testkit.ManualClock, want time.Time) {
 	t.Helper()
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {

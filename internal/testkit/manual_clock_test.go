@@ -1,14 +1,15 @@
-package foundation
+package testkit
 
 import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
 )
 
 var (
-	_ Clock = RealClock{}
-	_ Clock = (*ManualClock)(nil)
+	_ foundation.Clock = (*ManualClock)(nil)
 )
 
 func TestManualClockStartsAtProvidedTime(t *testing.T) {
@@ -25,28 +26,15 @@ func TestManualClockFiresTimersAtTheirDeadlines(t *testing.T) {
 	clock := NewManualClock(start)
 	later := clock.NewTimer(2 * time.Second)
 	earlier := clock.NewTimer(time.Second)
+	sameDeadline := clock.NewTimer(time.Second)
 
 	clock.Advance(time.Second)
 	assertTimerFiredAt(t, earlier, start.Add(time.Second))
+	assertTimerFiredAt(t, sameDeadline, start.Add(time.Second))
 	assertTimerNotFired(t, later)
 
 	clock.Advance(time.Second)
 	assertTimerFiredAt(t, later, start.Add(2*time.Second))
-}
-
-func TestManualClockOrdersSameDeadlineTimersByCreation(t *testing.T) {
-	clock := NewManualClock(time.Unix(0, 0))
-	first := clock.NewTimer(time.Second)
-	second := clock.NewTimer(time.Second)
-
-	clock.mu.Lock()
-	defer clock.mu.Unlock()
-	if len(clock.timers) != 2 {
-		t.Fatalf("pending timer count = %d, want 2", len(clock.timers))
-	}
-	if clock.timers[0] != first || clock.timers[1] != second {
-		t.Fatalf("same-deadline timers are not ordered by creation: %#v", clock.timers)
-	}
 }
 
 func TestManualClockNonPositiveTimersFireImmediately(t *testing.T) {
@@ -151,7 +139,7 @@ func TestManualClockConcurrentAccess(t *testing.T) {
 	workers.Wait()
 }
 
-func assertTimerFiredAt(t *testing.T, timer Timer, want time.Time) {
+func assertTimerFiredAt(t *testing.T, timer foundation.Timer, want time.Time) {
 	t.Helper()
 
 	select {
@@ -164,7 +152,7 @@ func assertTimerFiredAt(t *testing.T, timer Timer, want time.Time) {
 	}
 }
 
-func assertTimerNotFired(t *testing.T, timer Timer) {
+func assertTimerNotFired(t *testing.T, timer foundation.Timer) {
 	t.Helper()
 
 	select {

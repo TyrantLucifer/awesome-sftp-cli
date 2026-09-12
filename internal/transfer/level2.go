@@ -12,23 +12,16 @@ import (
 
 const level2DirectCapability = "direct_transfer"
 
-// ProductionDirectTransferOpen is the frozen production distribution boundary.
-// Level 2 backends remain injectable only for isolated verification fixtures.
-const ProductionDirectTransferOpen = false
-
-// DefaultIntegrityPolicy returns the current production transfer-integrity floor.
-func DefaultIntegrityPolicy() IntegrityPolicy { return IntegrityStrong }
-
 type DirectPolicy struct {
-	UserEnabled      bool            `json:"user_enabled"`
-	WorkspaceEnabled bool            `json:"workspace_enabled"`
-	DataAllowed      bool            `json:"data_allowed"`
-	Integrity        IntegrityPolicy `json:"integrity"`
+	UserEnabled      bool                   `json:"user_enabled"`
+	WorkspaceEnabled bool                   `json:"workspace_enabled"`
+	DataAllowed      bool                   `json:"data_allowed"`
+	Integrity        domain.IntegrityPolicy `json:"integrity"`
 }
 
 func (policy DirectPolicy) enabled() bool {
 	return policy.UserEnabled && policy.WorkspaceEnabled && policy.DataAllowed &&
-		(policy.Integrity == IntegrityStrong || policy.Integrity == IntegrityRequireStrong)
+		(policy.Integrity == domain.IntegrityStrong || policy.Integrity == domain.IntegrityRequireStrong)
 }
 
 func (policy DirectPolicy) zero() bool {
@@ -61,7 +54,7 @@ type level2PreflightBackend interface {
 }
 
 func (planner *Planner) tryLevel2Preflight(ctx context.Context, request FreezeRequest, plan *Plan) {
-	if planner == nil || plan == nil || !plan.DirectPolicy.enabled() || planner.level2 == nil ||
+	if !plan.DirectPolicy.enabled() || planner.level2 == nil ||
 		plan.Bandwidth.requiresControl() ||
 		plan.Version != 1 || plan.Source.Kind != domain.EntryFile ||
 		plan.SourceEndpoint.ID == plan.DestinationEndpoint.ID ||

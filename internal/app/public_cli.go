@@ -233,7 +233,7 @@ _amsftp
 func argumentsFor(name string) []string {
 	for _, fact := range publicCLIContract {
 		if fact.name == name {
-			return append([]string(nil), fact.arguments...)
+			return fact.arguments
 		}
 	}
 	return nil
@@ -242,7 +242,7 @@ func argumentsFor(name string) []string {
 func childArgumentsFor(name, child string) []string {
 	for _, fact := range publicCLIContract {
 		if fact.name == name {
-			return append([]string(nil), fact.childArguments[child]...)
+			return fact.childArguments[child]
 		}
 	}
 	return nil
@@ -261,7 +261,7 @@ func completionWords(facts []cliCommandFact) string {
 func childrenFor(name string) []string {
 	for _, fact := range publicCLIContract {
 		if fact.name == name {
-			return append([]string(nil), fact.children...)
+			return fact.children
 		}
 	}
 	return nil

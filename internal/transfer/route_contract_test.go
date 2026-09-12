@@ -94,8 +94,8 @@ func TestLevel2RouteEvidencePreservesRequireStrongPolicy(t *testing.T) {
 	if plan.RouteEvidence == nil {
 		t.Fatal("Level 2 plan has no route evidence")
 	}
-	if got := plan.RouteEvidence.Integrity.Policy; got != IntegrityRequireStrong {
-		t.Fatalf("integrity policy = %q, want %q", got, IntegrityRequireStrong)
+	if got := plan.RouteEvidence.Integrity.Policy; got != domain.IntegrityRequireStrong {
+		t.Fatalf("integrity policy = %q, want %q", got, domain.IntegrityRequireStrong)
 	}
 }
 
@@ -125,7 +125,7 @@ func TestValidateExecutionRejectsTamperedRouteEvidence(t *testing.T) {
 		{name: "version", tamper: func(evidence *RouteEvidence) { evidence.Version++ }},
 		{name: "selected route", tamper: func(evidence *RouteEvidence) { evidence.Selected.Route = RouteLevel2Direct }},
 		{name: "selected reason", tamper: func(evidence *RouteEvidence) { evidence.Selected.Reason = ReasonProductionDistributionClosed }},
-		{name: "integrity", tamper: func(evidence *RouteEvidence) { evidence.Integrity.Policy = IntegrityBaseline }},
+		{name: "integrity", tamper: func(evidence *RouteEvidence) { evidence.Integrity.Policy = domain.IntegrityBaseline }},
 		{name: "part", tamper: func(evidence *RouteEvidence) { evidence.Part.Path = "/foreign.part" }},
 		{name: "candidate eligibility", tamper: func(evidence *RouteEvidence) { evidence.Candidates[0].Eligible = true }},
 	}

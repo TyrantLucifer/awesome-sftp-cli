@@ -717,12 +717,12 @@ func createRequest(plan Plan, request FreezeRequest, initialState job.State) (jo
 	}
 	planString := string(planJSON)
 	eventPayload := struct {
-		SelectedRoute     Route           `json:"selected_route"`
-		RouteReason       RouteReason     `json:"route_reason"`
-		IntegrityPolicy   IntegrityPolicy `json:"integrity_policy"`
-		Verification      Verification    `json:"verification"`
-		DowngradeBoundary string          `json:"downgrade_boundary"`
-		ProgressSemantics string          `json:"progress_semantics"`
+		SelectedRoute     Route                  `json:"selected_route"`
+		RouteReason       RouteReason            `json:"route_reason"`
+		IntegrityPolicy   domain.IntegrityPolicy `json:"integrity_policy"`
+		Verification      Verification           `json:"verification"`
+		DowngradeBoundary string                 `json:"downgrade_boundary"`
+		ProgressSemantics string                 `json:"progress_semantics"`
 	}{}
 	if evidence := plan.RouteEvidence; evidence != nil {
 		eventPayload.SelectedRoute = evidence.Selected.Route

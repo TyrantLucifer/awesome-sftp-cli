@@ -19,6 +19,7 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
 	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/provider/contracttest"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 const (
@@ -2103,6 +2104,6 @@ func validScenario(t *testing.T) Scenario {
 			},
 		},
 		DefaultLimit: 2,
-		Clock:        foundation.NewManualClock(observedAt),
+		Clock:        testkit.NewManualClock(observedAt),
 	}
 }

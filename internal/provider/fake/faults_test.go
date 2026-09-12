@@ -16,6 +16,7 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
 	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 func TestNewRejectsInvalidFaultScripts(t *testing.T) {
@@ -4276,14 +4277,14 @@ func canonicalPathPointer(path domain.CanonicalPath) *domain.CanonicalPath {
 }
 
 type observedManualClock struct {
-	manual     *foundation.ManualClock
+	manual     *testkit.ManualClock
 	registered chan time.Duration
 	stopped    chan bool
 	onNewTimer func()
 }
 
 type commitBlockingClock struct {
-	manual  *foundation.ManualClock
+	manual  *testkit.ManualClock
 	once    sync.Once
 	entered chan struct{}
 	release chan struct{}
@@ -4291,7 +4292,7 @@ type commitBlockingClock struct {
 
 func newCommitBlockingClock(start time.Time) *commitBlockingClock {
 	return &commitBlockingClock{
-		manual:  foundation.NewManualClock(start),
+		manual:  testkit.NewManualClock(start),
 		entered: make(chan struct{}),
 		release: make(chan struct{}),
 	}
@@ -4311,7 +4312,7 @@ func (c *commitBlockingClock) NewTimer(duration time.Duration) foundation.Timer 
 
 func newObservedManualClock(start time.Time) *observedManualClock {
 	return &observedManualClock{
-		manual:     foundation.NewManualClock(start),
+		manual:     testkit.NewManualClock(start),
 		registered: make(chan time.Duration, 16),
 		stopped:    make(chan bool, 16),
 	}
