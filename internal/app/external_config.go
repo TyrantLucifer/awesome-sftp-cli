@@ -12,6 +12,7 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/edit"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/externalpreviewer"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/externalprocess"
@@ -82,7 +83,7 @@ func runtimeRetrySettings(input config.RetryConfig) (reconnectPolicy, time.Durat
 func runtimeDirectPolicy(integrity config.IntegrityConfig, direct config.DirectTransferConfig) transfer.DirectPolicy {
 	return transfer.DirectPolicy{
 		UserEnabled: direct.Enabled,
-		Integrity:   transfer.IntegrityPolicy(integrity.TransferPolicy),
+		Integrity:   domain.IntegrityPolicy(integrity.TransferPolicy),
 	}
 }
 

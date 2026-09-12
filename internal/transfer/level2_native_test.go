@@ -72,7 +72,7 @@ func TestLevel2NativeDualSSHDUsesIsolatedControlSessionsAndFixtureLocalDataPlane
 		t.Fatal(err)
 	}
 	request := validFreezeRequest(reference, nativeNormalize(t, ctx, destinationProvider, "/"))
-	request.Intent.DirectPolicy = DirectPolicy{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: IntegrityRequireStrong}
+	request.Intent.DirectPolicy = DirectPolicy{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: domain.IntegrityRequireStrong}
 	plan, _, err := planner.FreezeCopy(ctx, request)
 	if err != nil {
 		t.Fatal(err)

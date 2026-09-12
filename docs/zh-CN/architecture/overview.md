@@ -194,7 +194,7 @@ SQLite 保存系统的持久状态，包括 Job、事件、检查点、工作区
 | `cmd/amsftp` | 可执行文件入口和构建身份 |
 | `internal/app`、`internal/tui` | CLI/TUI 编排、交互与渲染 |
 | `internal/daemon`、`internal/ipc` | 后台生命周期和私有本地 RPC |
-| `internal/domain` | 稳定的 Endpoint、Location、能力、错误和 Job 类型 |
+| `internal/domain` | 稳定的 Endpoint、Location、能力、错误以及共享的完整性和分发策略类型 |
 | `internal/provider` | 本地文件系统与 SFTP provider 契约 |
 | `internal/transfer` | 计划、路由、worker、提交、恢复和调度 |
 | `internal/state`、`internal/statefs` | SQLite 状态、迁移和安全文件系统访问 |

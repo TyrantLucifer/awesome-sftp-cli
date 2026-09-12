@@ -16,7 +16,7 @@ func TestRuntimeDirectPolicyAndConfiguredCopyIntentRemainProductionClosed(t *tes
 		config.IntegrityConfig{TransferPolicy: "require_strong"},
 		config.DirectTransferConfig{Enabled: false},
 	)
-	if policy != (transfer.DirectPolicy{Integrity: transfer.IntegrityRequireStrong}) {
+	if policy != (transfer.DirectPolicy{Integrity: domain.IntegrityRequireStrong}) {
 		t.Fatalf("runtime direct policy = %#v", policy)
 	}
 	source := transfer.FileRef{Location: domain.Location{EndpointID: "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", Path: "/source"}}

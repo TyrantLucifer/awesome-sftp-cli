@@ -44,14 +44,6 @@ const (
 	BandwidthNotApplicable BandwidthControl = "not_applicable"
 )
 
-type IntegrityPolicy string
-
-const (
-	IntegrityBaseline      IntegrityPolicy = "baseline"
-	IntegrityStrong        IntegrityPolicy = "strong"
-	IntegrityRequireStrong IntegrityPolicy = "require_strong"
-)
-
 type RouteDecision struct {
 	Route    Route       `json:"route"`
 	Reason   RouteReason `json:"reason"`
@@ -59,9 +51,9 @@ type RouteDecision struct {
 }
 
 type RouteIntegrityEvidence struct {
-	Policy       IntegrityPolicy `json:"policy"`
-	Verification Verification    `json:"verification"`
-	Algorithm    string          `json:"algorithm"`
+	Policy       domain.IntegrityPolicy `json:"policy"`
+	Verification Verification           `json:"verification"`
+	Algorithm    string                 `json:"algorithm"`
 }
 
 type RouteEvidence struct {
@@ -78,9 +70,6 @@ type RouteEvidence struct {
 }
 
 func freezeRouteEvidence(plan *Plan) {
-	if plan == nil {
-		return
-	}
 	evidence := RouteEvidence{
 		Version: RouteEvidenceVersion,
 		Integrity: RouteIntegrityEvidence{
@@ -184,11 +173,11 @@ func freezeRouteEvidence(plan *Plan) {
 	plan.RouteEvidence = &evidence
 }
 
-func routeIntegrityPolicy(plan Plan) IntegrityPolicy {
-	if plan.DirectPolicy.Integrity == IntegrityRequireStrong {
-		return IntegrityRequireStrong
+func routeIntegrityPolicy(plan Plan) domain.IntegrityPolicy {
+	if plan.DirectPolicy.Integrity == domain.IntegrityRequireStrong {
+		return domain.IntegrityRequireStrong
 	}
-	return IntegrityStrong
+	return domain.IntegrityStrong
 }
 
 func validRouteEvidence(plan Plan) bool {

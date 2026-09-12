@@ -13,7 +13,6 @@ import (
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
-	helperruntime "github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transport/openssh"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/tui"
@@ -98,21 +97,6 @@ func runHelperWithConnector(ctx context.Context, args []string, stdout io.Writer
 		return machineCommandError(args, err)
 	}
 	return machineCommandError(args, writeHelperStatus(options, output, stdout))
-}
-
-func runHelperCommand(ctx context.Context, args []string, stdout io.Writer, rpc helperRPC) error {
-	options, err := parseHelperCommand(args)
-	if err != nil {
-		return NewExitError(ExitUsage, err)
-	}
-	if err := rejectClosedHelperDistribution(options); err != nil {
-		return err
-	}
-	output, err := executeHelperCommand(ctx, options, rpc)
-	if err != nil {
-		return err
-	}
-	return writeHelperStatus(options, output, stdout)
 }
 
 func executeHelperCommand(ctx context.Context, options helperCommandOptions, rpc helperRPC) (helperStatusEnvelope, error) {
@@ -248,7 +232,7 @@ func decodeHelperStatus(snapshot domain.CapabilitySnapshot) (helperStatusOutput,
 		Capabilities:               capabilities,
 		Reason:                     values["reason"],
 		Recovery:                   values["recovery"],
-		ProductionDistributionOpen: helperruntime.ProductionDistributionOpen,
+		ProductionDistributionOpen: domain.ProductionHelperOpen,
 	}, nil
 }
 

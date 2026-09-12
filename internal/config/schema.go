@@ -10,12 +10,11 @@ import (
 	"unicode/utf8"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
-	"github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/keymap"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/preview"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/retrypolicy"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
-	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 )
 
 const (
@@ -229,8 +228,8 @@ func Default() Config {
 			ReconnectDelaysMS: reconnectDelaysMS,
 			JobRetryDelayMS:   retrypolicy.DefaultJobDelay.Milliseconds(),
 		},
-		Integrity:      IntegrityConfig{TransferPolicy: string(transfer.DefaultIntegrityPolicy())},
-		DirectTransfer: DirectTransferConfig{Enabled: transfer.ProductionDirectTransferOpen},
+		Integrity:      IntegrityConfig{TransferPolicy: string(domain.DefaultIntegrityPolicy)},
+		DirectTransfer: DirectTransferConfig{Enabled: domain.ProductionDirectTransferOpen},
 		Diagnostic: DiagnosticConfig{
 			LogMaxBytes: diagnosticDefaults.MaxBytes,
 			LogBackups:  diagnosticDefaults.Backups,
@@ -320,17 +319,17 @@ func (c Config) Validate() error {
 	if err := c.Retry.validate(); err != nil {
 		return err
 	}
-	if c.Integrity.TransferPolicy != string(transfer.IntegrityStrong) &&
-		c.Integrity.TransferPolicy != string(transfer.IntegrityRequireStrong) {
+	if c.Integrity.TransferPolicy != string(domain.IntegrityStrong) &&
+		c.Integrity.TransferPolicy != string(domain.IntegrityRequireStrong) {
 		return errors.New("integrity.transfer_policy must be strong or require_strong")
 	}
-	if c.DirectTransfer.Enabled != transfer.ProductionDirectTransferOpen {
+	if c.DirectTransfer.Enabled != domain.ProductionDirectTransferOpen {
 		return errors.New("production direct transfer distribution is closed; direct_transfer.enabled must be false")
 	}
 	if err := c.Diagnostic.validate(); err != nil {
 		return err
 	}
-	if c.Helper.Enabled && !helper.ProductionDistributionOpen {
+	if c.Helper.Enabled && !domain.ProductionHelperOpen {
 		return errors.New("helper.enabled must be false while production distribution is closed")
 	}
 	if err := c.External.validate(); err != nil {

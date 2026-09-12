@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
-	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
 	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/testkit"
 )
 
 type e1OperationSpec struct {
@@ -594,7 +594,7 @@ func TestDisconnectFaultOperationMatrix(t *testing.T) {
 	for _, spec := range e1OperationSpecs() {
 		t.Run(string(spec.operation), func(t *testing.T) {
 			scenario := e1ReadWriteScenario(t)
-			scenario.Clock = foundation.NewManualClock(disconnectedAt)
+			scenario.Clock = testkit.NewManualClock(disconnectedAt)
 			scenario.Script = []FaultStep{{
 				Match:  FaultMatch{Operation: spec.operation, Nth: 1},
 				Effect: FaultEffect{Disconnect: true},
@@ -710,7 +710,7 @@ func TestDisconnectClearsCursorsAndPersistentStateGatesEveryOperation(t *testing
 func TestProviderDisconnectTargetsExecutionTimeSession(t *testing.T) {
 	disconnectedAt := time.Date(2026, time.July, 14, 18, 0, 0, 0, time.UTC)
 	scenario := e1ReadWriteScenario(t)
-	scenario.Clock = foundation.NewManualClock(disconnectedAt.Add(-time.Hour))
+	scenario.Clock = testkit.NewManualClock(disconnectedAt.Add(-time.Hour))
 	scenario.Script = []FaultStep{{
 		Match: FaultMatch{Operation: OperationStat, Nth: 1},
 		Effect: FaultEffect{

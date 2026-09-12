@@ -235,7 +235,7 @@ The implementation follows the same boundaries:
 | `cmd/amsftp` | executable entry point and build identity |
 | `internal/app`, `internal/tui` | CLI/TUI orchestration, interaction, and rendering |
 | `internal/daemon`, `internal/ipc` | background lifecycle and private local RPC |
-| `internal/domain` | stable Endpoint, Location, capability, error, and Job types |
+| `internal/domain` | stable Endpoint, Location, capability, error, and shared integrity/distribution policy types |
 | `internal/provider` | local filesystem and SFTP provider contracts |
 | `internal/transfer` | planning, routing, workers, commit, resume, and scheduling |
 | `internal/state`, `internal/statefs` | SQLite state, migrations, and safe filesystem access |

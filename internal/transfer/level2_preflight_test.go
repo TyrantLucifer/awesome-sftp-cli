@@ -117,9 +117,9 @@ func TestLevel2PolicyAndProductionClosureNeverInvokeDirectFixture(t *testing.T) 
 
 	t.Run("ordinary runtime is production closed", func(t *testing.T) {
 		policies := []DirectPolicy{
-			{Integrity: IntegrityStrong},
-			{Integrity: IntegrityRequireStrong},
-			{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: IntegrityStrong},
+			{Integrity: domain.IntegrityStrong},
+			{Integrity: domain.IntegrityRequireStrong},
+			{UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: domain.IntegrityStrong},
 		}
 		for _, policy := range policies {
 			fixturePlanner, request, destination := newLevel2PreflightPlanFixture(t, &level2PreflightFixture{result: passingLevel2PreflightResult})
@@ -263,7 +263,7 @@ func newLevel2PreflightPlanFixture(t *testing.T, fixture *level2PreflightFixture
 	}
 	request := validFreezeRequest(sourceRef, normalizePlanTest(t, destination, "/"))
 	request.Intent.DirectPolicy = DirectPolicy{
-		UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: IntegrityRequireStrong,
+		UserEnabled: true, WorkspaceEnabled: true, DataAllowed: true, Integrity: domain.IntegrityRequireStrong,
 	}
 	return planner, request, destination
 }

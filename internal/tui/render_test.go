@@ -294,7 +294,7 @@ func TestRendererShowsMinimalDurableJobsView(t *testing.T) {
 			Selected: transfer.RouteDecision{
 				Route: transfer.RouteSFTPRelay, Reason: transfer.ReasonBoundedRelayDefault, Eligible: true,
 			},
-			Integrity:         transfer.RouteIntegrityEvidence{Policy: transfer.IntegrityStrong, Verification: transfer.VerifySHA256, Algorithm: "sha256"},
+			Integrity:         transfer.RouteIntegrityEvidence{Policy: domain.IntegrityStrong, Verification: transfer.VerifySHA256, Algorithm: "sha256"},
 			DowngradeBoundary: "before_target_write",
 		},
 		Source: domain.Location{Path: "/source"}, Final: domain.Location{Path: "/final"},
@@ -428,7 +428,7 @@ func TestRendererKeepsRouteDowngradeEvidenceOutOfTheUserSummary(t *testing.T) {
 			Selected: transfer.RouteDecision{
 				Route: transfer.RouteSFTPServerCopy, Reason: transfer.ReasonServerCopySelected, Eligible: true,
 			},
-			Integrity:         transfer.RouteIntegrityEvidence{Policy: transfer.IntegrityStrong, Verification: transfer.VerifySHA256, Algorithm: "sha256"},
+			Integrity:         transfer.RouteIntegrityEvidence{Policy: domain.IntegrityStrong, Verification: transfer.VerifySHA256, Algorithm: "sha256"},
 			DowngradeBoundary: "before_target_write",
 		},
 		Source: domain.Location{Path: "/source"}, Final: domain.Location{Path: "/final"},

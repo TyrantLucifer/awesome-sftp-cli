@@ -1,16 +1,17 @@
-package foundation
+package testkit
 
 import (
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/foundation"
 )
 
 type ManualClock struct {
-	mu           sync.Mutex
-	now          time.Time
-	nextSequence uint64
-	timers       []*manualTimer
+	mu     sync.Mutex
+	now    time.Time
+	timers []*manualTimer
 }
 
 type manualTimerState uint8
@@ -25,7 +26,6 @@ type manualTimer struct {
 	clock    *ManualClock
 	channel  chan time.Time
 	deadline time.Time
-	sequence uint64
 	state    manualTimerState
 }
 
@@ -39,17 +39,15 @@ func (c *ManualClock) Now() time.Time {
 	return c.now
 }
 
-func (c *ManualClock) NewTimer(duration time.Duration) Timer {
+func (c *ManualClock) NewTimer(duration time.Duration) foundation.Timer {
 	c.mu.Lock()
 	deadline := c.now.Add(duration)
 	timer := &manualTimer{
 		clock:    c,
 		channel:  make(chan time.Time, 1),
 		deadline: deadline,
-		sequence: c.nextSequence,
 		state:    manualTimerActive,
 	}
-	c.nextSequence++
 
 	if duration <= 0 {
 		timer.deadline = c.now
@@ -60,11 +58,7 @@ func (c *ManualClock) NewTimer(duration time.Duration) Timer {
 	}
 
 	insertAt := sort.Search(len(c.timers), func(index int) bool {
-		candidate := c.timers[index]
-		if candidate.deadline.After(timer.deadline) {
-			return true
-		}
-		return candidate.deadline.Equal(timer.deadline) && candidate.sequence > timer.sequence
+		return c.timers[index].deadline.After(timer.deadline)
 	})
 	c.timers = append(c.timers, nil)
 	copy(c.timers[insertAt+1:], c.timers[insertAt:])
@@ -86,7 +80,7 @@ func (c *ManualClock) NextTimerDeadline() (time.Time, bool) {
 
 func (c *ManualClock) Advance(duration time.Duration) {
 	if duration < 0 {
-		panic("foundation.ManualClock.Advance: negative duration")
+		panic("testkit.ManualClock.Advance: negative duration")
 	}
 
 	c.mu.Lock()

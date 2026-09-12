@@ -307,8 +307,7 @@ func classifyRisk(path string, selected *plan) bool {
 		selected.Release = true
 		known = true
 	}
-	if strings.HasPrefix(path, ".github/") || strings.HasPrefix(path, "internal/docscheck/") ||
-		strings.HasPrefix(path, "internal/tools/makecontract/") {
+	if strings.HasPrefix(path, ".github/") || strings.HasPrefix(path, "internal/docscheck/") {
 		selected.Workflow = true
 		known = true
 	}
