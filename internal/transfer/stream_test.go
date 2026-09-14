@@ -330,3 +330,11 @@ func (p *cancelCreatedPartProvider) OpenWrite(ctx context.Context, request provi
 	}
 	return handle, err
 }
+
+func TestWorkerRejectsMissingReceiver(t *testing.T) {
+	fixture := newWorkerFixture(t, []byte("valid plan"), ConflictAsk)
+	var worker *Worker
+	if _, err := worker.Execute(context.Background(), fixture.plan, nil); err == nil {
+		t.Fatal("missing Worker did not return a dependency error")
+	}
+}

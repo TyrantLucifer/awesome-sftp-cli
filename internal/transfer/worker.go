@@ -186,15 +186,15 @@ func (worker *Worker) withJournal(journal Journal) *Worker {
 }
 
 func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (Result, error) {
-	executionWorker := *worker
-	executionWorker.control = control
-	worker = &executionWorker
 	if err := validateExecution(plan); err != nil {
 		return Result{}, err
 	}
 	if worker == nil || worker.resolver == nil || worker.journal == nil {
 		return Result{}, errors.New("execute transfer: resolver and durable journal are required")
 	}
+	executionWorker := *worker
+	executionWorker.control = control
+	worker = &executionWorker
 	if plan.Route == RouteLevel2Direct && worker.level2 == nil {
 		return Result{}, planError(domain.CodeUnsupported, "execute_direct", plan.Part, "Level 2 data-plane fixture is not attached", domain.RetryAfterReplan)
 	}
