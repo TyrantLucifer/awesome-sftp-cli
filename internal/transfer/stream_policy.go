@@ -18,5 +18,5 @@ func (policy StreamPolicy) valid() bool {
 	}
 	return policy.CheckpointBytes > 0 && policy.CheckpointBytes <= 64<<20 &&
 		policy.CheckpointIntervalMS >= 100 && policy.CheckpointIntervalMS <= 5000 &&
-		policy.DirectoryWorkers >= 1 && policy.DirectoryWorkers <= 2
+		policy.DirectoryWorkers >= 1 && policy.DirectoryWorkers <= 8
 }

@@ -39,25 +39,29 @@ type ManagerConfig struct {
 }
 
 type JobView struct {
-	Snapshot       jobstore.Snapshot    `json:"snapshot"`
-	Kind           OperationKind        `json:"kind"`
-	Route          Route                `json:"route"`
-	PlannedRoute   Route                `json:"planned_route"`
-	DowngradedFrom Route                `json:"downgraded_from,omitempty"`
-	RouteReason    RouteReason          `json:"route_reason,omitempty"`
-	RouteEvidence  *RouteEvidence       `json:"route_evidence,omitempty"`
-	Source         domain.Location      `json:"source"`
-	Final          domain.Location      `json:"final"`
-	Phase          Phase                `json:"phase,omitempty"`
-	Bytes          uint64               `json:"bytes"`
-	DurableBytes   uint64               `json:"durable_bytes"`
-	VerifiedBytes  uint64               `json:"verified_bytes,omitempty"`
-	BytesTotal     *uint64              `json:"bytes_total,omitempty"`
-	Items          uint64               `json:"items"`
-	WaitingReason  string               `json:"waiting_reason,omitempty"`
-	RecentError    string               `json:"recent_error,omitempty"`
-	RecoveryResult string               `json:"recovery_result,omitempty"`
-	Performance    *TransferPerformance `json:"performance,omitempty"`
+	Verification      Verification         `json:"verification"`
+	Durability        Durability           `json:"durability"`
+	AcknowledgedBytes uint64               `json:"acknowledged_bytes"`
+	ContentVerified   bool                 `json:"content_verified"`
+	Snapshot          jobstore.Snapshot    `json:"snapshot"`
+	Kind              OperationKind        `json:"kind"`
+	Route             Route                `json:"route"`
+	PlannedRoute      Route                `json:"planned_route"`
+	DowngradedFrom    Route                `json:"downgraded_from,omitempty"`
+	RouteReason       RouteReason          `json:"route_reason,omitempty"`
+	RouteEvidence     *RouteEvidence       `json:"route_evidence,omitempty"`
+	Source            domain.Location      `json:"source"`
+	Final             domain.Location      `json:"final"`
+	Phase             Phase                `json:"phase,omitempty"`
+	Bytes             uint64               `json:"bytes"`
+	DurableBytes      uint64               `json:"durable_bytes"`
+	VerifiedBytes     uint64               `json:"verified_bytes,omitempty"`
+	BytesTotal        *uint64              `json:"bytes_total,omitempty"`
+	Items             uint64               `json:"items"`
+	WaitingReason     string               `json:"waiting_reason,omitempty"`
+	RecentError       string               `json:"recent_error,omitempty"`
+	RecoveryResult    string               `json:"recovery_result,omitempty"`
+	Performance       *TransferPerformance `json:"performance,omitempty"`
 }
 
 // Manager owns transfer execution independently from any client connection.
@@ -622,8 +626,12 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			plannedRoute = plan.RouteEvidence.Selected.Route
 		}
 		view := JobView{
+			Verification: plan.Verification, Durability: plan.Durability,
 			Snapshot: snapshot, Kind: plan.Kind, Route: plannedRoute, PlannedRoute: plannedRoute, RouteEvidence: plan.RouteEvidence, Source: plan.Source.Location, Final: plan.Final,
 			BytesTotal: plan.Source.Fingerprint.Size, Items: 1,
+		}
+		if view.Durability == "" {
+			view.Durability = DurabilityCheckpoint
 		}
 		if plan.Source.Kind == domain.EntryDirectory {
 			view.Items = 0
@@ -636,7 +644,9 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 		if checkpoint != nil {
 			view.Phase = checkpoint.Phase
 			view.Bytes = checkpoint.Offset
-			view.DurableBytes = checkpoint.Offset
+			view.AcknowledgedBytes = checkpoint.Offset
+			view.ContentVerified = checkpoint.Phase == PhaseCommitted && checkpoint.Outcome == OutcomeCompleted && (checkpoint.Completion.ContentVerified || checkpoint.Completion.Version == 0 && plan.Verification == VerifySHA256 && checkpoint.ChecksumHex != "")
+			view.DurableBytes = checkpoint.durableBytes()
 			view.Final = checkpoint.Final
 			if checkpoint.ActualRoute != "" {
 				view.Route = checkpoint.ActualRoute
@@ -1227,6 +1237,9 @@ func (manager *Manager) releaseAllLeases() {
 }
 
 func executionResourceUsage(plan Plan) ResourceUsage {
+	if plan.Durability != "" {
+		return windowedExecutionResourceUsage(plan)
+	}
 	sshEndpoints := make(map[domain.EndpointID]struct{}, 2)
 	for _, endpoint := range []domain.Endpoint{plan.SourceEndpoint, plan.DestinationEndpoint} {
 		if endpoint.ID != "" && endpoint.Kind == domain.EndpointSSH {

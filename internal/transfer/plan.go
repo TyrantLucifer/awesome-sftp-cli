@@ -70,7 +70,10 @@ const (
 
 type Verification string
 
-const VerifySHA256 Verification = "stream_sha256"
+const (
+	VerifySHA256   Verification = "stream_sha256"
+	VerifyProtocol Verification = "protocol"
+)
 
 type Origin string
 
@@ -100,6 +103,8 @@ type FileRef struct {
 }
 
 type Intent struct {
+	Verification         Verification    `json:"verification,omitempty"`
+	Durability           Durability      `json:"durability,omitempty"`
 	Clipboard            ClipboardKind   `json:"clipboard"`
 	Source               FileRef         `json:"source"`
 	DestinationDirectory domain.Location `json:"destination_directory"`
@@ -138,6 +143,7 @@ type ServerCopyBinding struct {
 }
 
 type Plan struct {
+	Durability                      Durability               `json:"durability,omitempty"`
 	Version                         uint16                   `json:"version"`
 	Origin                          Origin                   `json:"origin,omitempty"`
 	EditSessionID                   string                   `json:"edit_session_id,omitempty"`
@@ -395,6 +401,9 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		SourceDeleteCapability: sourceDeleteCapability,
 		FrozenAt:               request.Now.UTC().Truncate(time.Second),
 	}
+	if err := freezeCompletionPolicy(&plan, request.Intent); err != nil {
+		return Plan{}, jobstore.CreateRequest{}, err
+	}
 	if plan.Source.Kind == domain.EntryDirectory {
 		budget := DefaultDiscoveryBudget
 		plan.Discovery = &budget
@@ -412,6 +421,10 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		planner.trySameHostCopy(ctx, &plan)
 	}
 	planner.tryLevel2Preflight(ctx, request, &plan)
+	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay {
+		plan.Verification = VerifySHA256
+		plan.Durability = ""
+	}
 	freezeRouteEvidence(&plan)
 	initialState := job.StateQueued
 	if finalExists && (request.Intent.ConflictPolicy == ConflictAsk || request.Intent.ConflictPolicy == ConflictOverwrite && !request.Intent.ConflictConfirmed) {

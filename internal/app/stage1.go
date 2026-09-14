@@ -24,6 +24,7 @@ import (
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cache"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cachefs"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/cachemanager"
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/config"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/daemon"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/diagnostic"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
@@ -994,7 +995,7 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 			go func() {
 				var response daemon.JobSnapshotResponse
 				createErr := activeClient.Call(runCtx, daemon.JobCreateCopy, daemon.JobCreateCopyRequest{
-					Intent: configuredCopyIntent(intent, directPolicy),
+					Intent: configuredCopyIntent(intent, directPolicy, applicationConfig.Transfer),
 				}, &response)
 				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
 				if createErr != nil {
@@ -1604,10 +1605,15 @@ func jobListRefreshRequired(model tui.Model) bool {
 	return false
 }
 
-func configuredCopyIntent(intent tui.Intent, directPolicy transfer.DirectPolicy) transfer.Intent {
+func configuredCopyIntent(intent tui.Intent, directPolicy transfer.DirectPolicy, policy config.TransferConfig) transfer.Intent {
+	verification := transfer.Verification(policy.Verification)
+	if policy.Verification == "sha256" {
+		verification = transfer.VerifySHA256
+	}
 	return transfer.Intent{
 		Clipboard: intent.Clipboard, Source: intent.Source, DestinationDirectory: intent.Location,
 		Name: intent.Name, ConflictPolicy: transfer.ConflictAsk, DirectPolicy: directPolicy,
+		Verification: verification, Durability: transfer.Durability(policy.Durability),
 	}
 }
 

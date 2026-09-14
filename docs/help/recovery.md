@@ -110,7 +110,7 @@ Do not manually finish the move, overwrite the destination, or remove the
 source. Resume the recorded Job so AMSFTP can check:
 
 - the source identity recorded when the Job was planned;
-- the durable offset and temporary destination;
+- the saved candidate offset, separate file-sync evidence, and temporary destination;
 - whether the final destination was already committed;
 - whether a move source is still present.
 

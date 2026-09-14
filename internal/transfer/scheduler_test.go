@@ -604,7 +604,7 @@ func TestDirectoryWorkerAppliesSchedulerToFileChildren(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request := strictFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
 	request.Intent.Name = "copied"
 	plan, _, err := planner.FreezeCopy(context.Background(), request)
 	if err != nil {

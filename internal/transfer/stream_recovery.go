@@ -154,6 +154,7 @@ func (worker *Worker) recoverStreamSuffix(ctx context.Context, plan Plan, source
 		return domain.Entry{}, conflict()
 	}
 	current.PartFingerprint = cloneFingerprint(restored.Fingerprint)
+	current.recordDurable()
 	if err := worker.journal.Save(ctx, *current); err != nil {
 		return domain.Entry{}, err
 	}

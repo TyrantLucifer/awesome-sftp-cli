@@ -20,6 +20,9 @@ type DirectoryChildCheckpoint struct {
 }
 
 func directoryStreamWorkers(plan Plan) int {
+	if plan.Durability != "" {
+		return int(max(uint32(1), min(plan.StreamPolicy.DirectoryWorkers, 8)))
+	}
 	if plan.StreamPolicy.DirectoryWorkers < 2 || plan.SourceEndpoint.Kind == domain.EndpointSSH && plan.DestinationEndpoint.Kind == domain.EndpointSSH {
 		return 1
 	}
@@ -44,7 +47,9 @@ type directoryStreams struct {
 	root        Checkpoint
 	floor       uint64
 	completed   uint64
+	durable     uint64
 	performance *TransferPerformance
+	slots       int
 	active      map[string]Checkpoint
 	live        map[string]TransferProgress
 }
@@ -59,6 +64,7 @@ func (s *directoryStreams) saveLocked(ctx context.Context) error {
 	s.root.DirectoryPerformance = cloneTransferPerformance(s.performance)
 	s.root.DirectoryChildren = nil
 	s.root.Offset = s.completed
+	durable := s.durable
 	s.root.Performance = cloneTransferPerformance(s.performance)
 	names := make([]string, 0, len(s.active))
 	for name := range s.active {
@@ -69,9 +75,13 @@ func (s *directoryStreams) saveLocked(ctx context.Context) error {
 		child := s.active[name]
 		s.root.DirectoryChildren = append(s.root.DirectoryChildren, DirectoryChildCheckpoint{RelativePath: name, Checkpoint: cloneCheckpoint(child)})
 		s.root.Offset = saturatingAdd(s.root.Offset, child.Offset, ^uint64(0))
+		durable = saturatingAdd(durable, child.durableBytes(), ^uint64(0))
 		s.root.Performance = mergeTransferPerformance(s.root.Performance, child.Performance)
 	}
 	s.root.Offset = max(s.root.Offset, s.floor)
+	if s.root.Completion.Version != 0 {
+		s.root.Completion.DurableBytes = max(s.root.Completion.DurableBytes, min(durable, s.root.Offset))
+	}
 	return s.parent.Save(ctx, cloneCheckpoint(s.root))
 }
 func (s *directoryStreams) setItems(items uint64) { s.mu.Lock(); s.root.Items = items; s.mu.Unlock() }
@@ -80,6 +90,8 @@ func (s *directoryStreams) complete(ctx context.Context, name string, bytes uint
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.performance = mergeTransferPerformance(s.performance, s.active[name].Performance)
+	child := s.active[name]
+	s.durable = saturatingAdd(s.durable, min(bytes, child.durableBytes()), ^uint64(0))
 	delete(s.active, name)
 	delete(s.live, name)
 	s.completed = saturatingAdd(s.completed, bytes, ^uint64(0))
@@ -115,7 +127,7 @@ func (j *directoryStreamJournal) Save(ctx context.Context, child Checkpoint) err
 	if len(child.DirectoryChildren) != 0 {
 		return errors.New("directory stream: nested child checkpoint")
 	}
-	if _, exists := s.active[j.name]; !exists && len(s.active) >= 2 {
+	if _, exists := s.active[j.name]; !exists && len(s.active) >= s.slots {
 		return errors.New("directory stream: active checkpoint budget exhausted")
 	}
 	s.active[j.name] = cloneCheckpoint(child)
@@ -127,7 +139,7 @@ func (j *directoryStreamJournal) ReportProgress(ctx context.Context, progress Tr
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.live[j.name] = progress
-	aggregate := TransferProgress{Phase: PhaseStreaming, Bytes: s.completed, DurableBytes: s.root.Offset}
+	aggregate := TransferProgress{Phase: PhaseStreaming, Bytes: s.completed, DurableBytes: s.root.durableBytes()}
 	if len(s.active) > 0 {
 		aggregate.Phase = PhaseTransferred
 	}
@@ -149,10 +161,10 @@ type directoryStreamResult struct {
 }
 
 func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, control Control, root Checkpoint, resuming bool, source, destinationProvider providerapi.Provider, destination providerapi.MutableProvider) (Result, error) {
-	if len(root.DirectoryChildren) > 2 {
+	if len(root.DirectoryChildren) > directoryStreamWorkers(plan) {
 		return Result{}, errors.New("directory stream: invalid active checkpoint budget")
 	}
-	streams := &directoryStreams{parent: worker.journal, root: root, floor: root.Offset, performance: cloneTransferPerformance(root.DirectoryPerformance), active: make(map[string]Checkpoint), live: make(map[string]TransferProgress)}
+	streams := &directoryStreams{slots: directoryStreamWorkers(plan), parent: worker.journal, root: root, floor: root.Offset, performance: cloneTransferPerformance(root.DirectoryPerformance), active: make(map[string]Checkpoint), live: make(map[string]TransferProgress)}
 	// Reopen the bounded interrupted transactions first. The ordinary walk below
 	// then validates completed files and reconstructs aggregate byte/item counts.
 	for _, saved := range root.DirectoryChildren {
@@ -205,9 +217,11 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 	slots := directoryStreamWorkers(plan)
 	completed := make(chan directoryStreamResult, slots)
 	active := 0
+	inFlightRequests := uint32(0)
 	var stopErr error
 	var conflict *Result
 	accept := func(done directoryStreamResult) {
+		inFlightRequests -= directoryRequestCost(plan, done.item.Entry)
 		record := ItemResult{RelativePath: done.item.RelativePath, Source: done.item.Entry.Location, Destination: childLocation(root.Final, done.item.RelativePath)}
 		if done.err != nil {
 			if code, ok := continuableDirectoryItemError(done.err); ok {
@@ -251,13 +265,16 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 			break
 		}
 		// A recovery readback occupies a file slot too. Reserve that slot before
-		// validating an existing item, so validation cannot add a third window.
-		if active == slots {
+		// validating an existing item, so readback cannot exceed the shared budget.
+		for active == slots || active > 0 && inFlightRequests+directoryRequestCost(plan, item.Entry) > directoryRequestBudget {
 			accept(<-completed)
 			active--
 			if stopErr != nil || conflict != nil {
 				break
 			}
+		}
+		if stopErr != nil || conflict != nil {
+			break
 		}
 		location := childLocation(root.Final, item.RelativePath)
 		if item.Entry.Kind != domain.EntryFile {
@@ -302,6 +319,7 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 		}
 		if item.Entry.Kind == domain.EntryFile {
 			active++
+			inFlightRequests += directoryRequestCost(plan, item.Entry)
 			go func(item DiscoveredItem) {
 				childPlan := directoryFilePlan(plan, item.Entry, item.RelativePath, root.Final)
 				childResult, err := worker.withJournal(&directoryStreamJournal{streams: streams, name: item.RelativePath}).Execute(streamCtx, childPlan, childControl)
@@ -347,6 +365,9 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 	} else if stopErr == nil {
 		streams.root.Phase = PhaseCommitted
 		streams.root.Outcome = OutcomeCompleted
+		if plan.Verification == VerifySHA256 {
+			streams.root.recordContentVerified()
+		}
 	} else if result.Failed > 0 {
 		result.Outcome = OutcomeCompletedPartial
 		streams.root.Outcome = OutcomeCompletedPartial
@@ -376,6 +397,7 @@ func (worker *Worker) validateOwnedDirectoryStreamItem(ctx context.Context, plan
 	if err != nil {
 		return false, 0, err
 	}
+	plan = directoryFilePlan(plan, item.Entry, path.Base(item.RelativePath), domain.Location{EndpointID: location.EndpointID, Path: domain.CanonicalPath(path.Dir(string(location.Path)))})
 	sourceHash, err := worker.verifyFile(ctx, plan, nil, source, item.Entry.Location, item.Entry.Fingerprint, buffer)
 	if err != nil {
 		return false, 0, err

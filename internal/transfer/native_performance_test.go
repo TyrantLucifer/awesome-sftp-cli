@@ -31,6 +31,7 @@ func (j *nativePerformanceJournal) Save(ctx context.Context, c Checkpoint) error
 	err := j.Journal.Save(ctx, c)
 	if c.Phase == PhaseTransferred {
 		j.timeTransferred = time.Now()
+		j.timeVerified = j.timeTransferred
 	}
 	if c.Phase == PhaseVerified {
 		j.timeVerified = time.Now()
@@ -221,7 +222,7 @@ func TestNativeSFTPPerformance(t *testing.T) {
 						if e != nil {
 							t.Fatal(e)
 						}
-						if result.Outcome != OutcomeCompleted || result.Bytes != uint64(len(data)) || result.SHA256 != fmt.Sprintf("%x", expected) {
+						if result.Outcome != OutcomeCompleted || result.Bytes != uint64(len(data)) || result.SHA256 != "" {
 							t.Fatal("worker result mismatch", result)
 						}
 						closeP()
@@ -252,7 +253,7 @@ func TestNativeSFTPPerformance(t *testing.T) {
 						}
 						wantRead, wantWrite := uint64(len(data)), uint64(0)
 						if direction == "upload" {
-							wantRead *= 2
+							wantRead = 0
 							wantWrite = uint64(len(data))
 						}
 						if protocol.Read != wantRead || protocol.Write != wantWrite {
@@ -323,7 +324,7 @@ func TestNativeRelayAndDirectoryPerformance(t *testing.T) {
 						// staged get followed by put, with both payload legs included.
 						staged := filepath.Join(t.TempDir(), "staged")
 						nativeElapsed = nativePerformanceCopy(t, rtt, "get", filepath.Join(remoteSource, "source"), staged, filepath.Join(outdir, prefix+"-native-get.json"))
-						nativeElapsed += nativePerformanceCopy(t, rtt, "put -f", staged, nativeDestination, filepath.Join(outdir, prefix+"-native-put.json"))
+						nativeElapsed += nativePerformanceCopy(t, rtt, "put", staged, nativeDestination, filepath.Join(outdir, prefix+"-native-put.json"))
 					} else {
 						sourceName = "/tree"
 						tree := filepath.Join(fixture.sourceRoot, "tree")
@@ -338,7 +339,7 @@ func TestNativeRelayAndDirectoryPerformance(t *testing.T) {
 								t.Fatal(err)
 							}
 						}
-						nativeElapsed = nativePerformanceCopy(t, rtt, "put -fr", tree, nativeDestination, filepath.Join(outdir, prefix+"-native.json"))
+						nativeElapsed = nativePerformanceCopy(t, rtt, "put -r", tree, nativeDestination, filepath.Join(outdir, prefix+"-native.json"))
 					}
 					ctx := t.Context()
 					planner := NewPlanner(fixture.resolver)

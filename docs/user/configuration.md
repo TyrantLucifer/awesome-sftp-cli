@@ -98,20 +98,28 @@ keeps the same request window and checkpoint policy as unlimited transfers.
 Pause and cancellation can interrupt waits for bandwidth during copying or
 verification.
 
-### Require strong transfer integrity
+### Choose copy verification and durability
 
 ```json
 {
   "schema_version": 1,
-  "integrity": {
-    "transfer_policy": "require_strong"
+  "transfer": {
+    "verification": "sha256",
+    "durability": "completion"
   }
 }
 ```
 
-The default `strong` policy verifies transferred content with SHA-256.
-`require_strong` additionally refuses a path that cannot satisfy the strong
-integrity contract. Weaker policies are not accepted.
+Ordinary copies default to `verification: "protocol"` and `durability: "none"`.
+`"sha256"` adds destination content readbacks. `"completion"` requests file sync
+once before publication; `"checkpoint"` requests it at every checkpoint. These
+settings are independent. See [transfer completion and recovery](transfers.md)
+for the guarantees and costs. Moves and edit sync-back retain stricter defaults.
+
+The legacy `integrity.transfer_policy: "require_strong"` also forces SHA-256 for
+copies. The default legacy value `"strong"` does not override the new copy setting.
+It does not enable the closed optional remote routes. Existing Jobs keep their
+frozen policy, including jobs created before these defaults changed.
 
 ### Select an editor and opener
 

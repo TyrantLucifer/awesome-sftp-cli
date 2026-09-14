@@ -20,7 +20,8 @@ workspace.
 - Runs copy, move, rename, and delete operations as durable background Jobs,
   with separate bandwidth, request-window, and recovery budgets; independent
   directory files can transfer concurrently.
-- Verifies transferred content before publishing the destination.
+- Publishes complete copies after server acknowledgment; offers SHA-256 checks
+  and explicit file synchronization, with stricter protection for moves and edits.
 - Previews text and images and supports editing or opening remote files locally.
 - Searches by filename or content with clear limits on large searches.
 - Provides `doctor`, structured diagnostics, and support bundles that require
@@ -109,8 +110,8 @@ The action bar shows the keys that apply to the current selection. Print the ful
 effective map with `amsftp config print-effective-keymap`.
 
 Copy and cut only capture a selection. Paste shows the destination and required
-choices before it creates Jobs. New content stays private until verification and
-commit complete. A move keeps its source until the destination is complete.
+choices before it creates Jobs. New content stays private until the selected
+completion checks and publication succeed. A move keeps its source until the destination is complete.
 Remote-to-remote copies use the local daemon as a bounded relay; SSH credentials
 are not copied to either server.
 

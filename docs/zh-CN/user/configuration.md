@@ -90,19 +90,26 @@ amsftp daemon start
 加密开销不计入数据字节；本地到本地复制只计算一次复制字节。非零的高限速值与不限速使用相同的请求窗口和检查点策略。
 复制或校验过程中等待带宽时，暂停和取消仍可打断等待。
 
-### 要求强传输完整性
+### 选择复制校验与持久化策略
 
 ```json
 {
   "schema_version": 1,
-  "integrity": {
-    "transfer_policy": "require_strong"
+  "transfer": {
+    "verification": "sha256",
+    "durability": "completion"
   }
 }
 ```
 
-默认的 `strong` 策略会使用 SHA-256 验证传输内容。`require_strong` 还会拒绝
-无法满足强完整性要求的通道。不接受更弱的策略。
+普通复制默认使用 `verification: "protocol"` 和 `durability: "none"`。
+`"sha256"` 增加目标内容回读；`"completion"` 在发布前同步一次文件，
+`"checkpoint"` 同步每个检查点。两个设置相互独立。具体保证与成本见
+[传输完成和恢复](transfers.md)。移动与编辑回写保留更严格的默认策略。
+
+原有 `integrity.transfer_policy: "require_strong"` 也会强制复制使用 SHA-256。
+原有字段的默认值 `"strong"` 不覆盖新的复制设置，也不会开启已关闭的远端增强通道。
+已有 Job 继续遵守其冻结策略，包括默认行为改变前创建的任务。
 
 ### 选择编辑器和 opener
 

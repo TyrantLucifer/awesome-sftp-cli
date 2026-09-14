@@ -26,7 +26,7 @@ func TestManagerPublishesVerifyingStateBeforeVerificationFinishes(t *testing.T) 
 	if err := manager.Start(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	created, err := manager.CreateCopy(context.Background(), Intent{Clipboard: ClipboardCopy, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory, Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk})
+	created, err := manager.CreateCopy(context.Background(), Intent{Verification: VerifySHA256, Clipboard: ClipboardCopy, Source: fixture.plan.Source, DestinationDirectory: fixture.plan.DestinationDirectory, Name: fixture.plan.RequestedName, ConflictPolicy: ConflictAsk})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -73,6 +73,8 @@ type CacheConfig struct {
 }
 
 type TransferConfig struct {
+	Verification           string `json:"verification"`
+	Durability             string `json:"durability"`
 	MaxConcurrent          int    `json:"max_concurrent"`
 	MaxQueued              int    `json:"max_queued"`
 	GlobalBytesPerSecond   uint64 `json:"global_bytes_per_second"`
@@ -197,7 +199,7 @@ func Default() Config {
 			GlobalBytes: maxCacheGlobalBytes, GlobalEntries: maxCacheGlobalEntries,
 			WorkspaceBytes: maxCacheWorkspaceBytes, MaxEvictionCandidates: maxCacheCandidates,
 		},
-		Transfer: TransferConfig{MaxConcurrent: maxTransferConcurrent, MaxQueued: maxTransferQueued},
+		Transfer: TransferConfig{Verification: "protocol", Durability: "none", MaxConcurrent: maxTransferConcurrent, MaxQueued: maxTransferQueued},
 		Preview: PreviewConfig{
 			MaxInputBytes: renderLimits.MaxInputBytes, MaxJSONBytes: renderLimits.MaxJSONBytes,
 			MaxJSONDepth: renderLimits.MaxJSONDepth, MaxRenderedLines: renderLimits.MaxRenderedLines,
@@ -372,6 +374,12 @@ func (c CacheConfig) validate() error {
 }
 
 func (c TransferConfig) validate() error {
+	if c.Verification != "" && c.Verification != "protocol" && c.Verification != "sha256" {
+		return errors.New("transfer.verification must be protocol or sha256")
+	}
+	if c.Durability != "" && c.Durability != "none" && c.Durability != "completion" && c.Durability != "checkpoint" {
+		return errors.New("transfer.durability must be none, completion, or checkpoint")
+	}
 	if c.MaxConcurrent < 1 || c.MaxConcurrent > maxTransferConcurrent {
 		return fmt.Errorf("transfer.max_concurrent must be within 1..%d", maxTransferConcurrent)
 	}

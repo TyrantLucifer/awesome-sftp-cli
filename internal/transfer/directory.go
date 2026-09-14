@@ -189,6 +189,7 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 		return Result{}, fmt.Errorf("execute directory: load checkpoint: %w", err)
 	}
 	checkpoint := Checkpoint{
+		Completion:        newCompletionEvidence(plan),
 		JobID:             plan.JobID,
 		Phase:             PhasePrepared,
 		SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
@@ -201,7 +202,7 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 		}
 	} else {
 		checkpoint = cloneCheckpoint(*stored)
-		if checkpoint.JobID != plan.JobID || !reflect.DeepEqual(checkpoint.SourceFingerprint, plan.Source.Fingerprint) {
+		if checkpoint.JobID != plan.JobID || !reflect.DeepEqual(checkpoint.SourceFingerprint, plan.Source.Fingerprint) || checkpoint.Completion.Version != newCompletionEvidence(plan).Version || checkpoint.Completion.DurableBytes > checkpoint.Offset {
 			return Result{}, errors.New("execute directory: checkpoint does not match frozen plan")
 		}
 		if checkpoint.Phase == PhaseCommitted {

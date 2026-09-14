@@ -171,7 +171,7 @@ func TestPlannerSelectsDeclaredServerCopyOnlyWithCapabilityAndFacet(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+	plan, _, err := planner.FreezeCopy(context.Background(), strictFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestWorkerStagesServerCopyPartThenVerifiesAndCommits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+	plan, _, err := planner.FreezeCopy(context.Background(), strictFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -268,7 +268,7 @@ func TestPlannerRequiresBothServerCopyCapabilityAndFacet(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+			plan, _, err := planner.FreezeCopy(context.Background(), strictFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -308,7 +308,7 @@ func TestPlannerRejectsUnknownOrDriftedServerCopyDeclaration(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+			plan, _, err := planner.FreezeCopy(context.Background(), strictFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -482,7 +482,7 @@ func executeRouteConflictContract(t *testing.T, serverCopy bool, policy Conflict
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination"))
+	request := strictFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination"))
 	request.Intent.Name = "copied"
 	request.Intent.ConflictPolicy = policy
 	request.Intent.ConflictConfirmed = policy == ConflictOverwrite
@@ -740,7 +740,7 @@ func freezeSameEndpointRouteContractPlan(clipboard ClipboardKind, helper bool) f
 		if err != nil {
 			t.Fatal(err)
 		}
-		request := validFreezeRequest(reference, normalizePlanTest(t, routeProvider, "/destination"))
+		request := strictFreezeRequest(reference, normalizePlanTest(t, routeProvider, "/destination"))
 		request.Intent.Clipboard = clipboard
 		plan, _, err := planner.FreezeCopy(context.Background(), request)
 		if err != nil {
@@ -767,7 +767,7 @@ func freezeCrossEndpointRouteContractPlan(t *testing.T) Plan {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, destination, "/")))
+	plan, _, err := planner.FreezeCopy(context.Background(), strictFreezeRequest(reference, normalizePlanTest(t, destination, "/")))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -982,7 +982,7 @@ func newRouteCopyPlan(t *testing.T, advertise bool, responseErr error) (Plan, *r
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
+	plan, _, err := planner.FreezeCopy(context.Background(), strictFreezeRequest(reference, normalizePlanTest(t, implementation, "/destination")))
 	if err != nil {
 		t.Fatal(err)
 	}
