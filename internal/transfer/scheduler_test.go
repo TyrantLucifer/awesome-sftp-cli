@@ -469,6 +469,7 @@ func TestPlannerDisablesUncontrolledFastPathWhenBandwidthControlIsRequired(t *te
 func TestRelayWorkerAppliesSchedulerAtFixedSizeIndependentQuantum(t *testing.T) {
 	data := bytes.Repeat([]byte("q"), TransferScheduleQuantum+1)
 	fixture := newWorkerFixture(t, data, ConflictOverwrite)
+	fixture.plan.BufferBytes = TransferScheduleQuantum
 	fixture.plan.Bandwidth = BandwidthPolicy{Required: true, JobBytesPerSecond: TransferScheduleQuantum}
 	freezeRouteEvidence(&fixture.plan)
 
@@ -512,6 +513,7 @@ func TestWorkerHundredGiBContractLifecycleUsesSameCheckpointHashAndRateStateMach
 	data := bytes.Repeat([]byte("sparse-shaped\x00"), (2*TransferScheduleQuantum)/14)
 	data = append(data, make([]byte, 2*TransferScheduleQuantum-len(data))...)
 	fixture := newWorkerFixture(t, data, ConflictOverwrite)
+	fixture.plan.BufferBytes = TransferScheduleQuantum
 	fixture.plan.Bandwidth = BandwidthPolicy{Required: true, JobBytesPerSecond: TransferScheduleQuantum}
 	freezeRouteEvidence(&fixture.plan)
 
@@ -629,21 +631,29 @@ func TestDirectoryWorkerAppliesSchedulerToFileChildren(t *testing.T) {
 		done <- execution{result: result, err: executeErr}
 	}()
 	waitForSchedulerGrantAndWaiter(t, scheduler, 4, 1)
-	clock.Advance(time.Second)
-
-	select {
-	case got := <-done:
-		if got.err != nil {
-			t.Fatalf("execute directory: %v", got.err)
+	tick := time.NewTicker(time.Millisecond)
+	defer tick.Stop()
+	timeout := time.After(3 * time.Second)
+	for {
+		select {
+		case <-tick.C:
+			if scheduler.Snapshot().Waiters > 0 {
+				clock.Advance(time.Second)
+			}
+		case <-timeout:
+			t.Fatalf("directory transfer did not finish; scheduler=%+v", scheduler.Snapshot())
+		case got := <-done:
+			if got.err != nil {
+				t.Fatalf("execute directory: %v", got.err)
+			}
+			if got.result.Bytes != 5 {
+				t.Fatalf("result bytes = %d, want 5", got.result.Bytes)
+			}
+			if snapshot := scheduler.Snapshot(); snapshot.GrantedBytes != 20 || snapshot.Waiters != 0 {
+				t.Fatalf("final scheduler snapshot = %+v, want source+destination+two readbacks", snapshot)
+			}
+			return
 		}
-		if got.result.Bytes != 5 {
-			t.Fatalf("result bytes = %d, want 5", got.result.Bytes)
-		}
-	case <-time.After(3 * time.Second):
-		t.Fatalf("directory transfer did not finish; scheduler=%+v", scheduler.Snapshot())
-	}
-	if snapshot := scheduler.Snapshot(); snapshot.GrantedBytes != 5 || snapshot.Waiters != 0 {
-		t.Fatalf("final scheduler snapshot = %+v", snapshot)
 	}
 }
 
@@ -753,8 +763,8 @@ func TestExecutionResourceUsageAccountsBoundedSFTPWriteWindow(t *testing.T) {
 	if usage.Goroutines != wantGoroutines {
 		t.Fatalf("Goroutines = %d, want %d", usage.Goroutines, wantGoroutines)
 	}
-	if usage.MemoryBytes != 4<<20 {
-		t.Fatalf("MemoryBytes = %d, want %d", usage.MemoryBytes, 4<<20)
+	if usage.MemoryBytes != 6<<20 {
+		t.Fatalf("MemoryBytes = %d, want %d", usage.MemoryBytes, 6<<20)
 	}
 }
 

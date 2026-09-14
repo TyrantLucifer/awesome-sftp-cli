@@ -602,3 +602,32 @@ jobs:
           name: provenance-${{ env.LEG }}
           path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
           if-no-files-found: error
+
+  transfer-performance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
+        with:
+          go-version: 1.26.6
+          cache: true
+          cache-dependency-path: "go.sum\ntools/go.sum"
+      - name: Install native comparison tools
+        run: sudo apt-get update && sudo apt-get install -y openssh-client openssh-sftp-server python3
+      - name: Compare bounded transfer pipelines with native SFTP
+        env:
+          AMSFTP_PERFORMANCE_OUT: ${{ runner.temp }}/transfer-performance
+        run: |
+          mkdir -p "${AMSFTP_PERFORMANCE_OUT}"
+          make bench-transfer 2>&1 | tee "${AMSFTP_PERFORMANCE_OUT}/comparison.log"
+      - name: Upload timings and protocol byte counts
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: transfer-performance
+          path: ${{ runner.temp }}/transfer-performance

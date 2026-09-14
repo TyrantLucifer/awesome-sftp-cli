@@ -433,3 +433,30 @@ func (h *writeHandle) Close(ctx context.Context) error {
 	}
 	return nil
 }
+
+// Truncate only removes a suffix from this opened, identity-checked file.
+func (h *writeHandle) Truncate(ctx context.Context, size int64) error {
+	if err := h.provider.checkMutable(ctx, "truncate_write", &h.location); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || size < 0 {
+		return h.provider.invalid("truncate_write", &h.location, "invalid truncate request")
+	}
+	info, err := h.file.Stat()
+	if err != nil {
+		return h.provider.mapMutationError("truncate_write", &h.location, err, domain.EffectNone)
+	}
+	if size > info.Size() {
+		return h.provider.invalid("truncate_write", &h.location, "truncate cannot expand a file")
+	}
+	if err := h.file.Truncate(size); err != nil {
+		return h.provider.mapMutationError("truncate_write", &h.location, err, domain.EffectUnknown)
+	}
+	_, err = h.file.Seek(size, io.SeekStart)
+	if err != nil {
+		return h.provider.mapMutationError("truncate_write", &h.location, err, domain.EffectApplied)
+	}
+	return nil
+}

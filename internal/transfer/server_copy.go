@@ -151,11 +151,11 @@ func (worker *Worker) executeServerCopy(
 		*partEntry.Metadata.Size > plan.ServerCopy.MaxBytes {
 		return Result{}, planError(domain.CodeConflict, "adopt_server_copy_part", plan.Part, "durable server-copy part has an unexpected location, type, or size", domain.RetryAfterConflict)
 	}
-	sourceChecksum, err := verifyFile(ctx, source, plan.Source.Location, plan.Source.Fingerprint, buffer)
+	sourceChecksum, err := worker.verifyFile(ctx, plan, checkpoint, source, plan.Source.Location, plan.Source.Fingerprint, buffer)
 	if err != nil {
 		return Result{}, err
 	}
-	destinationChecksum, err := verifyFile(ctx, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+	destinationChecksum, err := worker.verifyFile(ctx, plan, checkpoint, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
 	if err != nil {
 		return Result{}, err
 	}

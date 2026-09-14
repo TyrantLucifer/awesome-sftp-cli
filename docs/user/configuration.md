@@ -88,7 +88,15 @@ Existing Jobs keep the choices recorded when they were created.
 ```
 
 Rates are bytes per second. `0` means unlimited. Configuration can tighten the
-built-in safety ceilings but cannot expand them.
+built-in safety ceilings but cannot expand them. Limits cover streamed network
+payloads and transfer verification/recovery reads. A remote relay charges source
+reads and destination writes separately against the global and Job limits; an
+upload's later destination readback uses the same limiter. Protocol metadata,
+SSH framing, and encryption overhead are not payload bytes. Local-to-local copies
+charge copied bytes once. A high nonzero limit
+keeps the same request window and checkpoint policy as unlimited transfers.
+Pause and cancellation can interrupt waits for bandwidth during copying or
+verification.
 
 ### Require strong transfer integrity
 

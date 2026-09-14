@@ -129,16 +129,36 @@ func TestSameExecutableIdentityRejectsSameInodeRewrite(t *testing.T) {
 		t.Fatal(err)
 	}
 	originalModTime := before.ModTime()
-	time.Sleep(time.Millisecond)
-	if err := os.WriteFile(path, []byte("after!"), 0o700); err != nil { // #nosec G306 -- executable fixture intentionally requires owner execute permission.
-		t.Fatal(err)
+	beforeChangeTime, ok := executableChangeTime(before)
+	if !ok {
+		t.Fatal("fixture lacks executable change time")
 	}
-	if err := os.Chtimes(path, originalModTime, originalModTime); err != nil {
-		t.Fatal(err)
-	}
-	after, err := ExecutableIdentity(path)
-	if err != nil {
-		t.Fatal(err)
+	var after os.FileInfo
+	deadline := time.Now().Add(time.Second)
+	for {
+		// Filesystem ctime can use a coarser clock than time.Sleep. Establish the
+		// changed-ctime fixture explicitly before asserting identity rejection.
+		time.Sleep(time.Millisecond)
+		if err := os.WriteFile(path, []byte("after!"), 0o700); err != nil { // #nosec G306 -- owner-executable fixture.
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, originalModTime, originalModTime); err != nil {
+			t.Fatal(err)
+		}
+		after, err = ExecutableIdentity(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		afterChangeTime, ok := executableChangeTime(after)
+		if !ok {
+			t.Fatal("rewritten fixture lacks executable change time")
+		}
+		if afterChangeTime != beforeChangeTime {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("filesystem did not advance the fixture change time")
+		}
 	}
 	if os.SameFile(before, after) != true {
 		t.Fatal("fixture did not preserve the inode")

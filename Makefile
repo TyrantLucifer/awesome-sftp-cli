@@ -8,7 +8,7 @@ TOOL_MOD := -modfile=tools/go.mod
 
 .PHONY: fmt-check vet lint test test-contract test-race test-scale bench-scale fuzz-smoke
 .PHONY: docs-check notice-check mod-check supply-chain build-all
-.PHONY: check ci
+.PHONY: check ci bench-transfer
 
 fmt-check:
 	"$(GO)" run ./internal/tools/fmtcheck
@@ -68,3 +68,7 @@ build-all:
 check: fmt-check vet test docs-check notice-check mod-check
 
 ci: check lint test-race fuzz-smoke supply-chain build-all
+
+# Opt-in native client comparison; requires python3 and OpenSSH sftp/sftp-server.
+bench-transfer:
+	AMSFTP_NATIVE_PERFORMANCE=1 "$(GO)" test -count=1 -v -run='^TestNative(SFTP|RelayAndDirectory)Performance$$' ./internal/transfer

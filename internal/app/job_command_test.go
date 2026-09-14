@@ -71,6 +71,8 @@ func TestJobListUsesBoundedRPCAndVersionedJSON(t *testing.T) {
 				SyncNanoseconds:       7,
 				StatNanoseconds:       11,
 				CheckpointNanoseconds: 13,
+				VerifyNanoseconds:     17,
+				ScheduledBytes:        48,
 			},
 		}}
 	}
@@ -97,7 +99,7 @@ func TestJobListUsesBoundedRPCAndVersionedJSON(t *testing.T) {
 	if output.OutputVersion != JobCLIOutputVersion || len(output.Jobs) != 1 || output.Jobs[0].Snapshot.JobID != testJobID || output.Jobs[0].Snapshot.State != job.StateRunning || output.Jobs[0].Kind != transfer.OperationCopy || output.Jobs[0].Route != transfer.RouteSFTPRelay {
 		t.Fatalf("output = %#v", output)
 	}
-	if output.Jobs[0].Performance == nil || output.Jobs[0].Performance.CheckpointNanoseconds != 13 {
+	if output.Jobs[0].Performance == nil || output.Jobs[0].Performance.CheckpointNanoseconds != 13 || output.Jobs[0].Performance.VerifyNanoseconds != 17 || output.Jobs[0].Performance.ScheduledBytes != 48 {
 		t.Fatalf("performance output = %#v", output.Jobs[0].Performance)
 	}
 	if strings.Contains(stdout.String(), `"JobID"`) {

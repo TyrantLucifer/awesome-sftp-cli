@@ -1908,11 +1908,14 @@ type gateAfterFirstReadHandle struct {
 	providerapi.ReadHandle
 	provider *gateAfterFirstReadProvider
 	reads    int
+	bytes    int
+	blocked  bool
 }
 
 func (handle *gateAfterFirstReadHandle) Read(ctx context.Context, buffer []byte) (int, error) {
 	handle.reads++
-	if handle.reads == 2 {
+	if !handle.blocked && handle.bytes >= DefaultBufferBytes {
+		handle.blocked = true
 		close(handle.provider.started)
 		select {
 		case <-ctx.Done():
@@ -1920,5 +1923,7 @@ func (handle *gateAfterFirstReadHandle) Read(ctx context.Context, buffer []byte)
 		case <-handle.provider.release:
 		}
 	}
-	return handle.ReadHandle.Read(ctx, buffer)
+	n, err := handle.ReadHandle.Read(ctx, buffer)
+	handle.bytes += n
+	return n, err
 }

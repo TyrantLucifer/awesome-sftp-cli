@@ -442,10 +442,40 @@ func (h *readHandle) Read(ctx context.Context, buffer []byte) (int, error) {
 }
 
 func (h *readHandle) ReadAhead(ctx context.Context, buffer []byte, maxBytes uint32) (int, error) {
+	return h.ReadStream(ctx, buffer, providerapi.ReadStreamOptions{MaxBytes: maxBytes})
+}
+
+func (h *readHandle) ReadStream(ctx context.Context, buffer []byte, options providerapi.ReadStreamOptions) (int, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if maxBytes < 2*sftpReadAheadPacketBytes || h.limit != nil || h.info.Fingerprint.Size == nil {
+	maxBytes := options.MaxBytes
+	if h.closed {
+		return 0, io.ErrClosedPipe
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, h.provider.mapError("read", &h.location, err)
+	}
+	packetBytes := sftpReadAheadPacketBytes
+	if options.MaxRequestBytes > 0 {
+		packetBytes = min(packetBytes, options.MaxRequestBytes)
+	}
+	if maxBytes < 2*packetBytes || h.info.Fingerprint.Size == nil {
 		h.stopReadAheadLocked()
+		if options.BeforeRead != nil && len(buffer) > 0 {
+			buffer = buffer[:min(len(buffer), int(packetBytes))]
+			if h.limit != nil {
+				remaining := *h.limit - h.read
+				if remaining <= 0 {
+					return 0, io.EOF
+				}
+				if int64(len(buffer)) > remaining {
+					buffer = buffer[:remaining]
+				}
+			}
+			if err := options.BeforeRead(ctx, uint32(len(buffer))); err != nil { //nolint:gosec // buffer is capped to a 32 KiB packet above.
+				return 0, err
+			}
+		}
 		return h.readAtLocked(ctx, buffer)
 	}
 	if h.closed {
@@ -458,11 +488,14 @@ func (h *readHandle) ReadAhead(ctx context.Context, buffer []byte, maxBytes uint
 		return 0, nil
 	}
 	size := int64(*h.info.Fingerprint.Size) //nolint:gosec // Overflow remains negative and is rejected before the pipeline starts.
+	if h.limit != nil && h.read >= *h.limit {
+		return 0, io.EOF
+	}
 	if size >= 0 && h.offset+h.read >= size {
 		return 0, io.EOF
 	}
 	if h.readAhead == nil {
-		if err := h.startReadAheadLocked(maxBytes); err != nil {
+		if err := h.startReadAheadLocked(ctx, options); err != nil {
 			return 0, err
 		}
 	}
@@ -490,7 +523,7 @@ func (h *readHandle) ReadAhead(ctx context.Context, buffer []byte, maxBytes uint
 	if errors.Is(read.err, io.ErrUnexpectedEOF) {
 		read.err = io.EOF
 	}
-	if read.bytes == 0 && read.err != nil && !errors.Is(read.err, io.EOF) {
+	if read.bytes == 0 && read.err != nil && !errors.Is(read.err, io.EOF) && options.BeforeRead == nil {
 		h.stopReadAheadLocked()
 		return h.readAtLocked(ctx, buffer)
 	}
@@ -528,21 +561,30 @@ func (h *readHandle) readAtLocked(ctx context.Context, buffer []byte) (int, erro
 	return n, nil
 }
 
-func (h *readHandle) startReadAheadLocked(maxBytes uint32) error {
+func (h *readHandle) startReadAheadLocked(ctx context.Context, options providerapi.ReadStreamOptions) error {
 	start := h.offset + h.read
 	size := int64(*h.info.Fingerprint.Size) //nolint:gosec // SFTP size was validated into the domain's uint64 fingerprint.
 	if start < 0 || uint64(start) > *h.info.Fingerprint.Size || size < 0 {
 		return h.provider.invalid("read", &h.location, "read offset exceeds supported size")
 	}
-	windowBytes := min(maxBytes, providerapi.MaxReadAheadBytes)
-	windowPackets := max(2, int(windowBytes/sftpReadAheadPacketBytes))
+	windowBytes := min(options.MaxBytes, providerapi.MaxReadAheadBytes)
+	packetBytes := sftpReadAheadPacketBytes
+	if options.MaxRequestBytes > 0 {
+		packetBytes = min(packetBytes, options.MaxRequestBytes)
+	}
+	windowPackets := min(int(providerapi.MaxReadAheadBytes/sftpReadAheadPacketBytes), max(2, int(windowBytes/packetBytes)))
+	if h.limit != nil {
+		if *h.limit < size-h.offset {
+			size = h.offset + *h.limit
+		}
+	}
 	reader, writer := io.Pipe()
 	done := make(chan struct{})
-	streamContext, stop := context.WithCancel(context.Background())
+	streamContext, stop := context.WithCancel(ctx)
 	h.readAhead = reader
 	h.readAheadDone = done
 	h.readAheadStop = stop
-	go streamReadAhead(streamContext, h.file, start, size, windowPackets, writer, done)
+	go streamReadAhead(streamContext, h.file, start, size, windowPackets, packetBytes, writer, done, options.BeforeRead)
 	return nil
 }
 
@@ -596,22 +638,26 @@ func streamReadAhead(
 	start int64,
 	size int64,
 	windowPackets int,
+	packetBytes uint32,
 	writer *io.PipeWriter,
 	done chan<- struct{},
+	beforeRead func(context.Context, uint32) error,
 ) {
 	defer close(done)
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	remaining := size - start
 	if remaining <= 0 {
 		_ = writer.Close()
 		return
 	}
-	packetCount := (remaining + int64(sftpReadAheadPacketBytes) - 1) / int64(sftpReadAheadPacketBytes)
+	packetCount := (remaining-1)/int64(packetBytes) + 1
 	workerCount := min(windowPackets, int(packetCount))
 	jobs := make(chan readAheadJob, workerCount)
 	results := make(chan readAheadResult, workerCount)
 	buffers := make(chan []byte, workerCount)
 	for range workerCount {
-		buffers <- make([]byte, sftpReadAheadPacketBytes)
+		buffers <- make([]byte, packetBytes)
 	}
 
 	var workers sync.WaitGroup
@@ -633,7 +679,14 @@ func streamReadAhead(
 						return
 					case buffer = <-buffers:
 					}
-					n, err := file.ReadAt(buffer[:job.bytes], job.offset)
+					var n int
+					var err error
+					if beforeRead != nil {
+						err = beforeRead(ctx, uint32(job.bytes)) //nolint:gosec // dispatched requests contain at most one 32 KiB packet.
+					}
+					if err == nil {
+						n, err = file.ReadAt(buffer[:job.bytes], job.offset)
+					}
 					select {
 					case <-ctx.Done():
 						return
@@ -649,8 +702,8 @@ func streamReadAhead(
 		if nextDispatch >= packetCount {
 			return false
 		}
-		offset := start + nextDispatch*int64(sftpReadAheadPacketBytes)
-		bytes := int(min(int64(sftpReadAheadPacketBytes), size-offset))
+		offset := start + nextDispatch*int64(packetBytes)
+		bytes := int(min(int64(packetBytes), size-offset))
 		job := readAheadJob{sequence: nextDispatch, offset: offset, bytes: bytes}
 		select {
 		case <-ctx.Done():
@@ -674,6 +727,12 @@ func streamReadAhead(
 		case <-ctx.Done():
 			streamErr = ctx.Err()
 		case result := <-results:
+			// A later failed admission must wake earlier requests that are still
+			// waiting for tokens; ordering applies to data, not to failure delivery.
+			if result.err != nil && !errors.Is(result.err, io.EOF) {
+				streamErr = result.err
+				break
+			}
 			pending[result.job.sequence] = result
 			for {
 				ordered, ok := pending[nextWrite]
@@ -701,6 +760,9 @@ func streamReadAhead(
 		}
 	}
 	close(jobs)
+	if streamErr != nil {
+		cancel()
+	}
 	workers.Wait()
 	if streamErr != nil {
 		_ = writer.CloseWithError(streamErr)

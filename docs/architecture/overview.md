@@ -143,9 +143,25 @@ client does not turn an unknown result into success or failure.
 ### Copy and move
 
 A streamed copy writes to a Job-specific temporary destination. Progress is
-recorded only after the corresponding data has crossed the durability boundary.
+persisted only after the corresponding data has crossed the durability boundary;
+volatile progress separately reports bytes being consumed by the stream.
 AMSFTP then verifies the temporary result and publishes the final name.
 Incomplete content is never presented as the intended final file.
+
+The transfer coordinator owns independent packet, in-flight request, and checkpoint
+budgets. Providers own bounded wire concurrency; they report acknowledged writes,
+while only synchronized, inspected data advances the journal. A frozen stream
+policy caps an epoch at 64 MiB or the next packet boundary after one second.
+Recovery proves any uncheckpointed suffix before rolling it back. Directory
+workers persist at most two separate child transactions and serialize parent
+checkpoint updates. Admission accounts for both transport windows, verification
+reads, and bounded directory concurrency.
+
+Verification and publication remain separate responsibilities. A successful
+checksum proof can be reused within the same publication attempt after a lost
+response. Standard SFTP does not provide a trustworthy object/version identity
+that would let size/mtime observations replace a full post-publication checksum.
+The temporary and published destination therefore retain their content checks.
 
 A move is copy-and-commit followed by a separately checked source removal. The
 source is not deleted until the destination has been verified and committed.
@@ -261,3 +277,16 @@ The implementation follows the same boundaries:
   SSH or credential policy.
 
 Any optimization or new feature must preserve these rules.
+
+For a reproducible protocol comparison on Linux, `make bench-transfer` runs the
+real Worker, SQLite journal, and SFTP provider against the system native client.
+It requires Python 3 and the OpenSSH client/SFTP server. The opt-in suite covers
+0/20/80/200 ms response delays, upload/download/relay, small directory files, and
+unlimited versus high nonzero limits. It records timings and payload counts;
+`AMSFTP_PERFORMANCE_OUT` selects an artifact directory. Native upload results
+separate plain copying from fsync plus two readbacks (separate client sessions and
+local readback files). The relay comparator stages a native get before a put.
+These are explicit comparison strategies, not identical execution paths. The
+latency proxy excludes SSH encryption, TCP congestion, and real link bandwidth;
+normal native integration tests cover the SSH boundary. Nightly CI runs this
+comparison in addition to deterministic window, checkpoint, and recovery tests.

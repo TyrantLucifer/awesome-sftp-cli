@@ -987,6 +987,9 @@ func jobDetailLines(view transfer.JobView, sample jobProgressSample) []jobDetail
 	if value := jobTransferStageSummary(view.Performance); value != "" {
 		details = append(details, jobDetail{label: "Stages: ", value: value})
 	}
+	if view.Snapshot.State == job.StateRunning && view.Bytes > view.DurableBytes {
+		details = append(details, jobDetail{label: "Saved for resume: ", value: formatBytes(view.DurableBytes)})
+	}
 	return details
 }
 
@@ -1003,6 +1006,9 @@ func jobTransferStageSummary(performance *transfer.TransferPerformance) string {
 		{name: "sync", nanoseconds: performance.SyncNanoseconds},
 		{name: "stat", nanoseconds: performance.StatNanoseconds},
 		{name: "checkpoint", nanoseconds: performance.CheckpointNanoseconds},
+		{name: "verify", nanoseconds: performance.VerifyNanoseconds},
+		{name: "commit", nanoseconds: performance.CommitNanoseconds},
+		{name: "rate wait", nanoseconds: performance.SchedulerNanoseconds},
 	}
 	parts := make([]string, 0, len(stages))
 	for _, stage := range stages {
@@ -1112,6 +1118,11 @@ func jobListStatus(view transfer.JobView, sample jobProgressSample) string {
 			parts = append(parts, formatBytes(sample.bytesPerSecond)+"/s")
 		}
 		return strings.Join(parts, " · ")
+	case job.StateVerifying:
+		if view.VerifiedBytes > 0 {
+			return state + " · " + formatBytes(view.VerifiedBytes) + " checked"
+		}
+		return state
 	case job.StateCanceled, job.StateFailed:
 		if percent, ok := jobProgressPercent(view); ok {
 			return fmt.Sprintf("%s at %.0f%%", state, percent)
