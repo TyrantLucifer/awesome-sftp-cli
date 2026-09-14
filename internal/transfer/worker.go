@@ -381,23 +381,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if err != nil {
 			return Result{}, err
 		}
-		if err := writeHandle.Sync(ctx); err != nil {
-			_ = writeHandle.Close(context.Background())
-			return Result{}, err
-		}
-		partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-		if statErr != nil {
-			_ = writeHandle.Close(context.Background())
-			return Result{}, statErr
-		}
-		current.Phase = PhaseStreaming
-		current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
-		current.ChecksumState, err = marshalChecksum(hasher)
-		if err != nil {
-			_ = writeHandle.Close(context.Background())
-			return Result{}, err
-		}
-		if err := worker.journal.Save(ctx, current); err != nil {
+		if err := worker.initializeCreatedPart(ctx, destinationProvider, writeHandle, &current, hasher); err != nil {
 			_ = writeHandle.Close(context.Background())
 			return Result{}, err
 		}

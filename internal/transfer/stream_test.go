@@ -294,3 +294,39 @@ func TestStreamPolicyRejectsExpandedOrIncompleteBudgets(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkerCancellationAfterPartCreationPersistsResumeIdentity(t *testing.T) {
+	data := []byte("resume an initialized but unwritten part")
+	fixture := newWorkerFixture(t, data, ConflictAsk)
+	fixture.plan.StreamPolicy = DefaultStreamPolicy()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	fixture.resolver[fixture.destination.Descriptor().ID] = &cancelCreatedPartProvider{mutableTestProvider: fixture.destination, cancel: cancel}
+	journal := newMemoryJournal()
+	if _, err := NewWorker(fixture.resolver, journal).Execute(ctx, fixture.plan, nil); !errors.Is(err, context.Canceled) {
+		t.Fatalf("interrupted creation: %v", err)
+	}
+	checkpoint := journal.latest()
+	if checkpoint.Phase != PhaseStreaming || checkpoint.Offset != 0 || checkpoint.PartFingerprint.Size == nil || *checkpoint.PartFingerprint.Size != 0 || len(checkpoint.ChecksumState) == 0 {
+		t.Fatalf("created part lost its durable resume identity: %+v", checkpoint)
+	}
+	fixture.resolver[fixture.destination.Descriptor().ID] = fixture.destination
+	result, err := NewWorker(fixture.resolver, journal).Execute(context.Background(), fixture.plan, nil)
+	if err != nil || result.Outcome != OutcomeCompleted {
+		t.Fatalf("resume initialized part: %+v, %v", result, err)
+	}
+	assertWorkerBytes(t, fixture.destination, fixture.plan.Final, data)
+}
+
+type cancelCreatedPartProvider struct {
+	mutableTestProvider
+	cancel context.CancelFunc
+}
+
+func (p *cancelCreatedPartProvider) OpenWrite(ctx context.Context, request providerapi.OpenWriteRequest) (providerapi.WriteHandle, error) {
+	handle, err := p.mutableTestProvider.OpenWrite(ctx, request)
+	if err == nil && request.Disposition == providerapi.WriteCreateNew {
+		p.cancel()
+	}
+	return handle, err
+}

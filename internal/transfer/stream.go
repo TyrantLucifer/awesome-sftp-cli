@@ -339,3 +339,29 @@ func controlledStreamContext(ctx context.Context, control Control, checkpoint Ch
 		}
 	}
 }
+
+// Once create succeeds, cancellation must not strand an unrecorded empty part.
+// Finish the bounded initialization boundary before returning to cancellable
+// streaming. Failed identity/durability checks still leave the part untouched.
+func (worker *Worker) initializeCreatedPart(ctx context.Context, destination providerapi.Provider, handle providerapi.WriteHandle, checkpoint *Checkpoint, digest hash.Hash) error {
+	initializationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
+	defer cancel()
+	if err := handle.Sync(initializationCtx); err != nil {
+		return err
+	}
+	entry, err := destination.Stat(initializationCtx, providerapi.StatRequest{Location: checkpoint.Part})
+	if err != nil {
+		return err
+	}
+	if entry.Metadata.Size == nil || *entry.Metadata.Size != 0 {
+		return planError(domain.CodeConflict, "initialize_part", checkpoint.Part, "created part is no longer empty", domain.RetryAfterConflict)
+	}
+	state, err := marshalChecksum(digest)
+	if err != nil {
+		return err
+	}
+	checkpoint.Phase = PhaseStreaming
+	checkpoint.PartFingerprint = cloneFingerprint(entry.Fingerprint)
+	checkpoint.ChecksumState = state
+	return worker.journal.Save(initializationCtx, *checkpoint)
+}

@@ -171,6 +171,10 @@ the recorded prefix digest and compares the extra suffix with the unchanged
 source before truncating that exact partial file to its durable offset. Changed
 or unprovable content is retained and reported as a conflict.
 
+After creating a temporary file, AMSFTP finishes recording its empty-file durability
+and recovery identity before honoring cancellation. This prevents a sibling file's
+cancellation from leaving a newly created part without resume evidence.
+
 Pause normally keeps matching partial data for resume. Cancellation or failure may
 also leave Job-owned partial data or an edit safety copy when removing it would
 lose recovery evidence. Do not manually delete `.part`, backup, SQLite, or WAL
