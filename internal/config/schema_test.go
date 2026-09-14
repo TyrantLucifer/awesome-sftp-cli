@@ -28,7 +28,7 @@ func TestDefaultConfigIsValid(t *testing.T) {
 			GlobalBytes: 2 << 30, GlobalEntries: 4096,
 			WorkspaceBytes: 1 << 30, MaxEvictionCandidates: 256,
 		},
-		Transfer: TransferConfig{MaxConcurrent: 4, MaxQueued: 128},
+		Transfer: TransferConfig{Verification: "protocol", Durability: "none", MaxConcurrent: 4, MaxQueued: 128},
 		Preview: PreviewConfig{
 			MaxInputBytes: 512 * 1024, MaxJSONBytes: 256 * 1024, MaxJSONDepth: 64,
 			MaxRenderedLines: 10_000, MaxOutputBytes: 512 * 1024, MaxImagePixels: 40_000_000,
@@ -113,7 +113,7 @@ func TestDefaultCacheAndTransferSettingsFreezeCurrentRuntimeBehavior(t *testing.
 	if got.Cache != (CacheConfig{GlobalBytes: 2 << 30, GlobalEntries: 4096, WorkspaceBytes: 1 << 30, MaxEvictionCandidates: 256}) {
 		t.Fatalf("cache defaults = %#v", got.Cache)
 	}
-	if got.Transfer != (TransferConfig{MaxConcurrent: 4, MaxQueued: 128}) {
+	if got.Transfer != (TransferConfig{Verification: "protocol", Durability: "none", MaxConcurrent: 4, MaxQueued: 128}) {
 		t.Fatalf("transfer defaults = %#v", got.Transfer)
 	}
 }
@@ -472,5 +472,21 @@ func assertDecodeErrorContains(t *testing.T, input, want string) {
 	}
 	if !strings.Contains(err.Error(), want) {
 		t.Fatalf("Decode() error = %q, want it to contain %q", err, want)
+	}
+}
+
+func TestTransferCompletionPoliciesAreIndependent(t *testing.T) {
+	for _, verification := range []string{"protocol", "sha256"} {
+		for _, durability := range []string{"none", "completion", "checkpoint"} {
+			input := `{"schema_version":1,"transfer":{"verification":"` + verification + `","durability":"` + durability + `"}}`
+			if _, err := Decode(strings.NewReader(input)); err != nil {
+				t.Errorf("%s: %v", input, err)
+			}
+		}
+	}
+	for _, input := range []string{`{"schema_version":1,"transfer":{"verification":"size_only"}}`, `{"schema_version":1,"transfer":{"durability":"pretend"}}`} {
+		if _, err := Decode(strings.NewReader(input)); err == nil {
+			t.Errorf("accepted %s", input)
+		}
 	}
 }

@@ -26,7 +26,14 @@ func TestRuntimeDirectPolicyAndConfiguredCopyIntentRemainProductionClosed(t *tes
 		Clipboard: transfer.ClipboardCut, Source: source, DestinationDirectory: destination,
 		Name: "renamed", ConflictPolicy: transfer.ConflictAsk, DirectPolicy: policy,
 	}
-	if intent := configuredCopyIntent(input, policy); intent != want {
+	if intent := configuredCopyIntent(input, policy, config.TransferConfig{}); intent != want {
 		t.Fatalf("configured copy intent = %#v, want %#v", intent, want)
+	}
+}
+
+func TestConfiguredCopyIntentCarriesIndependentCompletionPolicies(t *testing.T) {
+	intent := configuredCopyIntent(tui.Intent{Clipboard: transfer.ClipboardCopy}, transfer.DirectPolicy{}, config.TransferConfig{Verification: "sha256", Durability: "completion"})
+	if intent.Verification != transfer.VerifySHA256 || intent.Durability != transfer.DurabilityCompletion {
+		t.Fatalf("completion intent=%#v", intent)
 	}
 }

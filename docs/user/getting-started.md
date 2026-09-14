@@ -2,7 +2,7 @@
 
 [简体中文](../zh-CN/user/getting-started.md)
 
-Start with an existing SSH account and finish with a verified file transfer.
+Start with an existing SSH account and finish with a completed file transfer.
 AMSFTP leaves authentication and host-key decisions to the system OpenSSH client.
 
 ## 1. Prepare an SSH alias
@@ -91,8 +91,9 @@ In the left pane:
 5. Press `J` to watch the Job until it is complete.
 
 `y` does not read or upload the file. The transfer starts only when `p` creates
-the Job. The destination becomes final only after its content is written,
-verified, and committed.
+the Job. The destination becomes final only after all writes are acknowledged,
+the file is closed successfully, and publication completes. Optional SHA-256
+checks and synchronization are described in [transfers](transfers.md).
 
 Press `q` to leave the TUI. Background Jobs keep running. Reopen AMSFTP or use
 `amsftp job list` to check them.

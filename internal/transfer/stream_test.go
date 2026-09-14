@@ -42,7 +42,7 @@ func TestWorkerMetersDestinationVerificationReads(t *testing.T) {
 	fixture.destination.(*endpointKindProvider).descriptor.Kind = domain.EndpointSSH
 	fixture.destination.(*endpointKindProvider).descriptor.SSHHostAlias = "fixture"
 	planner := NewPlanner(fixture.resolver)
-	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(fixture.plan.Source, fixture.plan.DestinationDirectory))
+	plan, _, err := planner.FreezeCopy(context.Background(), strictFreezeRequest(fixture.plan.Source, fixture.plan.DestinationDirectory))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +63,7 @@ func TestWorkerMetersDestinationVerificationReads(t *testing.T) {
 func TestPlannerFreezesIndependentStreamBudgets(t *testing.T) {
 	fixture := newWorkerFixture(t, []byte("policy"), ConflictAsk)
 	planner := NewPlanner(fixture.resolver)
-	plan, _, err := planner.FreezeCopy(context.Background(), validFreezeRequest(fixture.plan.Source, fixture.plan.DestinationDirectory))
+	plan, _, err := planner.FreezeCopy(context.Background(), strictFreezeRequest(fixture.plan.Source, fixture.plan.DestinationDirectory))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -205,7 +205,7 @@ func TestStreamPauseInterruptsRateLimitedVerification(t *testing.T) {
 	fixture := newWorkerFixture(t, make([]byte, 32<<10), ConflictAsk)
 	fixture.destination.(*endpointKindProvider).descriptor.Kind = domain.EndpointSSH
 	fixture.destination.(*endpointKindProvider).descriptor.SSHHostAlias = "fixture"
-	plan, _, err := NewPlanner(fixture.resolver).FreezeCopy(context.Background(), validFreezeRequest(fixture.plan.Source, fixture.plan.DestinationDirectory))
+	plan, _, err := NewPlanner(fixture.resolver).FreezeCopy(context.Background(), strictFreezeRequest(fixture.plan.Source, fixture.plan.DestinationDirectory))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -279,7 +279,7 @@ func TestStreamPolicyRejectsExpandedOrIncompleteBudgets(t *testing.T) {
 	for _, policy := range []StreamPolicy{
 		{CheckpointBytes: 65 << 20, CheckpointIntervalMS: 1000, DirectoryWorkers: 2},
 		{CheckpointBytes: 64 << 20, CheckpointIntervalMS: 5001, DirectoryWorkers: 2},
-		{CheckpointBytes: 64 << 20, CheckpointIntervalMS: 1000, DirectoryWorkers: 3},
+		{CheckpointBytes: 64 << 20, CheckpointIntervalMS: 1000, DirectoryWorkers: 9},
 		{CheckpointBytes: 64 << 20},
 	} {
 		fixture := newWorkerFixture(t, []byte("bounded"), ConflictAsk)

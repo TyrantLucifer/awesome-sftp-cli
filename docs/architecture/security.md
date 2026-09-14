@@ -18,7 +18,7 @@ relationships.
 | Local operating-system account | an authenticated user deliberately running the client | environment values, configuration, terminal input, filesystem ownership and permissions |
 | Client and daemon | a peer only after same-user and protocol checks | frame size, request identity, version, rate, deadline, and message structure |
 | System OpenSSH | the validated `/usr/bin/ssh` and its established policy | executable path, structured arguments, process lifetime, and bounded output |
-| Remote SSH/SFTP server | the session identity only after OpenSSH accepts its host and authentication policy | every name, metadata value, content byte, capability claim, error, and disconnect |
+| Remote SSH/SFTP server | session identity after OpenSSH accepts its policy; protocol-mode write/close/publication acknowledgments | names, metadata, sizes, capabilities, errors and disconnects; destination content independently in SHA-256 mode |
 | Editor, opener, and shell | only the program or command the user explicitly configured or entered | argument structure and the data brought back into AMSFTP |
 | Installed release | bytes obtained from a documented channel and verified as that channel specifies | installation path ownership, permissions, symlinks, and runtime compatibility |
 
@@ -96,9 +96,12 @@ the daemon, which freezes the source, destination, route, conflict policy, and
 required confirmations into a persistent Job.
 
 For a streamed copy, AMSFTP writes the destination under a Job-specific
-temporary name. It records progress at durable boundaries, verifies the
-result, and only then publishes the final name. An incomplete transfer is not
-exposed as the intended final file.
+temporary name. Its frozen completion policy requires acknowledged writes, exact
+byte counts, successful closes and publication. Ordinary copies trust these SFTP
+acknowledgments; optional SHA-256 readbacks independently compare destination
+content. File-sync evidence is tracked separately from candidate resume progress.
+A lost publication response requires content proof even in protocol mode. An
+incomplete transfer is not exposed as the intended final file.
 
 A move adds one more rule: the source is deleted only after the destination has
 been verified and committed. If source deletion is uncertain, AMSFTP retains

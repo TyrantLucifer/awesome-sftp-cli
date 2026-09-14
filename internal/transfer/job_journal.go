@@ -22,6 +22,7 @@ type JobJournal struct {
 }
 
 type checkpointLocationPayload struct {
+	Completion           CompletionEvidence         `json:"completion,omitzero"`
 	DirectoryPerformance *TransferPerformance       `json:"directory_performance,omitempty"`
 	DirectoryChildren    []DirectoryChildCheckpoint `json:"directory_children,omitempty"`
 	Part                 domain.Location            `json:"part"`
@@ -60,6 +61,7 @@ func (journal JobJournal) Load(ctx context.Context, jobID domain.JobID) (*Checkp
 		return nil, fmt.Errorf("load transfer checkpoint: decode part identity: %w", err)
 	}
 	return &Checkpoint{
+		Completion:           location.Completion,
 		JobID:                record.JobID,
 		Phase:                Phase(record.Phase),
 		Offset:               record.VerifiedOffset,
@@ -93,6 +95,7 @@ func (journal JobJournal) Save(ctx context.Context, checkpoint Checkpoint) error
 		return fmt.Errorf("save transfer checkpoint: encode source fingerprint: %w", err)
 	}
 	location, err := json.Marshal(checkpointLocationPayload{
+		Completion:           checkpoint.Completion,
 		Part:                 checkpoint.Part,
 		PartFingerprint:      checkpoint.PartFingerprint,
 		Final:                checkpoint.Final,
@@ -135,7 +138,7 @@ func (journal JobJournal) Save(ctx context.Context, checkpoint Checkpoint) error
 	}
 	return journal.ReportProgress(ctx, TransferProgress{
 		VerifiedBytes: verified,
-		Phase:         checkpoint.Phase, Bytes: checkpoint.Offset, DurableBytes: checkpoint.Offset,
+		Phase:         checkpoint.Phase, Bytes: checkpoint.Offset, DurableBytes: checkpoint.durableBytes(),
 		Performance: checkpoint.Performance,
 	})
 }

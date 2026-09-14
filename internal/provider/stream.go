@@ -36,3 +36,11 @@ type TruncatingWriteHandle interface {
 	WriteHandle
 	Truncate(context.Context, int64) error
 }
+
+// WindowedStreamWriteHandle tightens a stream's outstanding request budget.
+// MaxRequests must be in 1..MaxSFTPWriteWindowRequests. A Provider must not
+// silently widen this limit; acknowledgment semantics match WriteFrom.
+type WindowedStreamWriteHandle interface {
+	WriteHandle
+	WriteFromWindow(context.Context, io.Reader, uint32) (int64, error)
+}

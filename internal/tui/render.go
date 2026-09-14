@@ -987,8 +987,14 @@ func jobDetailLines(view transfer.JobView, sample jobProgressSample) []jobDetail
 	if value := jobTransferStageSummary(view.Performance); value != "" {
 		details = append(details, jobDetail{label: "Stages: ", value: value})
 	}
+	if view.Verification == transfer.VerifyProtocol {
+		details = append(details, jobDetail{label: "Checks: ", value: "Protocol acknowledgment"})
+		if view.Snapshot.State == job.StateRunning {
+			details = append(details, jobDetail{label: "Resume candidate: ", value: formatBytes(view.AcknowledgedBytes)})
+		}
+	}
 	if view.Snapshot.State == job.StateRunning && view.Bytes > view.DurableBytes {
-		details = append(details, jobDetail{label: "Saved for resume: ", value: formatBytes(view.DurableBytes)})
+		details = append(details, jobDetail{label: "Synced: ", value: formatBytes(view.DurableBytes)})
 	}
 	return details
 }
@@ -1119,6 +1125,9 @@ func jobListStatus(view transfer.JobView, sample jobProgressSample) string {
 		}
 		return strings.Join(parts, " · ")
 	case job.StateVerifying:
+		if view.Verification == transfer.VerifyProtocol && view.VerifiedBytes == 0 {
+			return "Finalizing"
+		}
 		if view.VerifiedBytes > 0 {
 			return state + " · " + formatBytes(view.VerifiedBytes) + " checked"
 		}

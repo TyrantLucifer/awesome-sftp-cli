@@ -174,24 +174,28 @@ type jobPerformanceOutput struct {
 }
 
 type jobViewOutput struct {
-	DurableBytes   uint64                `json:"durable_bytes"`
-	VerifiedBytes  uint64                `json:"verified_bytes"`
-	Snapshot       jobSnapshotOutput     `json:"snapshot"`
-	Kind           string                `json:"kind"`
-	Route          string                `json:"route"`
-	PlannedRoute   string                `json:"planned_route"`
-	DowngradedFrom string                `json:"downgraded_from"`
-	RouteReason    string                `json:"route_reason"`
-	Source         jobLocationOutput     `json:"source"`
-	Final          jobLocationOutput     `json:"final"`
-	Phase          string                `json:"phase"`
-	Bytes          uint64                `json:"bytes"`
-	BytesTotal     *uint64               `json:"bytes_total"`
-	Items          uint64                `json:"items"`
-	WaitingReason  string                `json:"waiting_reason"`
-	RecentError    string                `json:"recent_error"`
-	RecoveryResult string                `json:"recovery_result"`
-	Performance    *jobPerformanceOutput `json:"performance,omitempty"`
+	Verification      transfer.Verification `json:"verification"`
+	Durability        transfer.Durability   `json:"durability"`
+	AcknowledgedBytes uint64                `json:"acknowledged_bytes"`
+	ContentVerified   bool                  `json:"content_verified"`
+	DurableBytes      uint64                `json:"durable_bytes"`
+	VerifiedBytes     uint64                `json:"verified_bytes"`
+	Snapshot          jobSnapshotOutput     `json:"snapshot"`
+	Kind              string                `json:"kind"`
+	Route             string                `json:"route"`
+	PlannedRoute      string                `json:"planned_route"`
+	DowngradedFrom    string                `json:"downgraded_from"`
+	RouteReason       string                `json:"route_reason"`
+	Source            jobLocationOutput     `json:"source"`
+	Final             jobLocationOutput     `json:"final"`
+	Phase             string                `json:"phase"`
+	Bytes             uint64                `json:"bytes"`
+	BytesTotal        *uint64               `json:"bytes_total"`
+	Items             uint64                `json:"items"`
+	WaitingReason     string                `json:"waiting_reason"`
+	RecentError       string                `json:"recent_error"`
+	RecoveryResult    string                `json:"recovery_result"`
+	Performance       *jobPerformanceOutput `json:"performance,omitempty"`
 }
 
 type jobEventOutput struct {
@@ -248,6 +252,7 @@ func jobViewOutputs(views []transfer.JobView) []jobViewOutput {
 	outputs := make([]jobViewOutput, 0, len(views))
 	for _, view := range views {
 		outputs = append(outputs, jobViewOutput{
+			Verification: view.Verification, Durability: view.Durability, AcknowledgedBytes: view.AcknowledgedBytes, ContentVerified: view.ContentVerified,
 			Snapshot:       newJobSnapshotOutput(view.Snapshot),
 			Kind:           string(view.Kind),
 			Route:          string(view.Route),

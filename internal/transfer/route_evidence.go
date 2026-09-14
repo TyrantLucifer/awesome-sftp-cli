@@ -85,6 +85,13 @@ func freezeRouteEvidence(plan *Plan) {
 		Final:             plan.Final,
 	}
 
+	if plan.Verification == VerifyProtocol {
+		evidence.Integrity.Algorithm = ""
+	}
+	if plan.Durability != "" {
+		evidence.ProgressSemantics = "acknowledged_bytes"
+	}
+
 	if plan.Kind == OperationMove && plan.MoveStrategy == MoveAtomicRename {
 		evidence.Selected = RouteDecision{Route: RouteAtomicRename, Reason: ReasonSameEndpointAtomicRename, Eligible: true}
 		evidence.Candidates = append(evidence.Candidates, evidence.Selected)

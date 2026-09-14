@@ -184,15 +184,32 @@ func (scheduler *TransferScheduler) Wait(ctx context.Context, request BandwidthR
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if err := scheduler.validateRequest(request); err != nil {
-		return err
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 
-	waiter := &bandwidthWaiter{request: request}
 	scheduler.mu.Lock()
+	if err := scheduler.validateRequest(request); err != nil {
+		scheduler.mu.Unlock()
+		return err
+	}
+	// Most packets can proceed immediately. Keep the same token accounting and
+	// class rotation, without allocating a waiter or broadcasting two wakeups.
+	// Queued work always uses the ordinary fair-selection path below.
+	if len(scheduler.interactive) == 0 && len(scheduler.bulk) == 0 {
+		scheduler.refillLocked(scheduler.clock.Now())
+		if scheduler.canGrantLocked(request) {
+			scheduler.consumeLocked(request)
+			for scheduler.cycle[scheduler.cycleIndex] != request.Class {
+				scheduler.cycleIndex = (scheduler.cycleIndex + 1) % len(scheduler.cycle)
+			}
+			scheduler.cycleIndex = (scheduler.cycleIndex + 1) % len(scheduler.cycle)
+			scheduler.grantedBytes += uint64(request.Bytes)
+			scheduler.mu.Unlock()
+			return nil
+		}
+	}
+	waiter := &bandwidthWaiter{request: request}
 	scheduler.enqueue(waiter)
 	scheduler.broadcastLocked()
 	scheduler.mu.Unlock()

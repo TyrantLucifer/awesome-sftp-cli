@@ -52,6 +52,7 @@ const (
 )
 
 type Checkpoint struct {
+	Completion           CompletionEvidence         `json:"completion,omitzero"`
 	DirectoryPerformance *TransferPerformance       `json:"directory_performance,omitempty"`
 	DirectoryChildren    []DirectoryChildCheckpoint `json:"directory_children,omitempty"`
 	JobID                domain.JobID               `json:"job_id"`
@@ -185,7 +186,14 @@ func (worker *Worker) withJournal(journal Journal) *Worker {
 	return &child
 }
 
-func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (Result, error) {
+func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (result Result, returnErr error) {
+	// SHA256 historically denotes a checked destination. Never expose the source
+	// digest as destination proof for protocol-confirmed copies.
+	defer func() {
+		if plan.Verification == VerifyProtocol {
+			result.SHA256 = ""
+		}
+	}()
 	if err := validateExecution(plan); err != nil {
 		return Result{}, err
 	}
@@ -247,12 +255,13 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		directRevalidationFallback = fallback
 	}
 
-	buffer := make([]byte, int(plan.BufferBytes))
+	buffer := make([]byte, int(streamBufferBytes(plan)))
 	if observer, ok := worker.journal.(bufferObserver); ok {
 		observer.ObserveBuffer(len(buffer))
 	}
 	hasher := sha256.New()
 	current := Checkpoint{
+		Completion:        newCompletionEvidence(plan),
 		JobID:             plan.JobID,
 		Phase:             PhasePrepared,
 		SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
@@ -345,6 +354,23 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 
 	if current.Phase == PhaseVerified || current.Phase == PhaseWaitingConflict || current.Phase == PhaseCommitting {
+		if current.Completion.Version != 0 {
+			part, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+			if err != nil && (current.Phase != PhaseCommitting || !domain.IsCode(err, domain.CodeNotFound)) {
+				return Result{}, err
+			}
+			if err == nil {
+				actual, err := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, part.Fingerprint, buffer)
+				if err != nil {
+					return Result{}, err
+				}
+				if actual != current.ChecksumHex {
+					return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part content changed before publication", domain.RetryAfterConflict)
+				}
+				current.PartFingerprint = cloneFingerprint(part.Fingerprint)
+				current.recordContentVerified()
+			}
+		}
 		return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
 	}
 	if current.Phase == PhaseTransferred {
@@ -359,6 +385,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if checksum != current.ChecksumHex {
 			return Result{}, planError(domain.CodeConflict, "verify_part", plan.Part, "part checksum does not match streamed source", domain.RetryNever)
 		}
+		current.recordContentVerified()
 		current.Phase = PhaseVerified
 		current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
 		if err := worker.journal.Save(ctx, current); err != nil {
@@ -381,7 +408,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if err != nil {
 			return Result{}, err
 		}
-		if err := worker.initializeCreatedPart(ctx, destinationProvider, writeHandle, &current, hasher); err != nil {
+		if err := worker.initializeCreatedPart(ctx, plan, destinationProvider, writeHandle, &current, hasher); err != nil {
 			_ = writeHandle.Close(context.Background())
 			return Result{}, err
 		}
@@ -406,7 +433,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != current.Offset {
 			return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part no longer matches durable checkpoint", domain.RetryAfterConflict)
 		}
-		if !reflect.DeepEqual(partEntry.Fingerprint, current.PartFingerprint) {
+		if current.Completion.Version != 0 || !reflect.DeepEqual(partEntry.Fingerprint, current.PartFingerprint) {
 			checksum, verifyErr := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
 			if verifyErr != nil {
 				return Result{}, verifyErr
@@ -466,6 +493,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	if err != nil {
 		return Result{}, err
 	}
+	if partEntry.Kind != domain.EntryFile || partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != current.Offset {
+		return Result{}, planError(domain.CodeConflict, "stream_copy", plan.Part, "closed part size differs from acknowledged bytes", domain.RetryAfterConflict)
+	}
 	current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
 	current.ChecksumHex = hex.EncodeToString(hasher.Sum(nil))
 	if plan.Version == 2 && current.ChecksumHex != plan.ExpectedSourceSHA256 {
@@ -475,6 +505,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	if err := worker.journal.Save(ctx, current); err != nil {
 		return Result{}, err
 	}
+	if plan.Verification == VerifyProtocol {
+		return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
+	}
 	destinationChecksum, err := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
 	if err != nil {
 		return Result{}, err
@@ -482,6 +515,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	if destinationChecksum != current.ChecksumHex {
 		return Result{}, planError(domain.CodeConflict, "verify_part", plan.Part, "part checksum does not match streamed source", domain.RetryNever)
 	}
+	current.recordContentVerified()
 	current.Phase = PhaseVerified
 	if err := worker.journal.Save(ctx, current); err != nil {
 		return Result{}, err
@@ -490,6 +524,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 }
 
 func checkpointMatchesPlan(checkpoint Checkpoint, plan Plan) bool {
+	if checkpoint.Completion.Version != newCompletionEvidence(plan).Version || checkpoint.Completion.DurableBytes > checkpoint.Offset {
+		return false
+	}
 	if plan.Source.Kind != domain.EntryDirectory && (len(checkpoint.DirectoryChildren) != 0 || checkpoint.DirectoryPerformance != nil) {
 		return false
 	}
@@ -546,6 +583,7 @@ func (worker *Worker) closeAndRefreshCheckpoint(ctx context.Context, destination
 		return planError(domain.CodeConflict, "checkpoint_copy", checkpoint.Part, "part size changed while closing write handle", domain.RetryAfterConflict)
 	}
 	checkpoint.PartFingerprint = cloneFingerprint(entry.Fingerprint)
+	checkpoint.recordDurable()
 	if err := worker.journal.Save(ctx, *checkpoint); err != nil {
 		return fmt.Errorf("execute transfer: refresh closed part checkpoint: %w", err)
 	}
@@ -565,26 +603,32 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 			result.PreservationUnknown = preservationUnknown
 		}
 	}()
-	partEntry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-	if err != nil {
-		if checkpoint.Phase == PhaseCommitting && domain.IsCode(err, domain.CodeNotFound) {
-			proved, proofErr := worker.proveCommitted(ctx, plan, &checkpoint, destinationProvider, plan.Final, checkpoint.ChecksumHex, buffer)
-			if proofErr == nil && proved {
-				addPerformanceDuration(&checkpoint.Performance.CommitNanoseconds, time.Since(commitStarted))
-				checkpoint.Phase = PhaseCommitted
-				checkpoint.Outcome = OutcomeCompleted
-				checkpoint.Final = plan.Final
-				if saveErr := worker.journal.Save(ctx, checkpoint); saveErr != nil {
-					return Result{}, saveErr
-				}
-				result := Result{Outcome: OutcomeCompleted, Final: plan.Final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex}
-				if plan.PreservedDestination.Path != "" {
-					result.PreservedDestination = plan.PreservedDestination
-				}
-				return result, nil
-			}
+	if checkpoint.Phase == PhaseCommitting {
+		proved, proofErr := worker.proveCommitted(ctx, plan, &checkpoint, destinationProvider, checkpoint.Final, checkpoint.ChecksumHex, buffer)
+		if proofErr != nil {
+			return Result{}, proofErr
 		}
-		return Result{}, err
+		if proved {
+			addPerformanceDuration(&checkpoint.Performance.CommitNanoseconds, time.Since(commitStarted))
+			checkpoint.Phase = PhaseCommitted
+			checkpoint.Outcome = OutcomeCompleted
+			if err := worker.journal.Save(ctx, checkpoint); err != nil {
+				return Result{}, err
+			}
+			_, partErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+			return Result{Outcome: OutcomeCompleted, Final: checkpoint.Final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: !domain.IsCode(partErr, domain.CodeNotFound), PreservedDestination: plan.PreservedDestination}, nil
+		}
+	}
+	// The successful stream already observed the closed part. Conditional
+	// Provider mutations recheck this exact fingerprint at publication; a
+	// second coordinator stat adds no atomicity. Legacy plans keep their path.
+	partEntry := domain.Entry{Kind: domain.EntryFile, Fingerprint: cloneFingerprint(checkpoint.PartFingerprint)}
+	var err error
+	if checkpoint.Completion.Version == 0 {
+		partEntry, err = destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	if !reflect.DeepEqual(partEntry.Fingerprint, checkpoint.PartFingerprint) {
 		return Result{}, planError(domain.CodeConflict, "commit_copy", plan.Part, "verified part changed before commit", domain.RetryAfterConflict)
@@ -758,7 +802,7 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 		committedProof = true
 	}
 	checksum := checkpoint.ChecksumHex
-	if !committedProof {
+	if !committedProof && plan.Verification == VerifySHA256 {
 		checksum, err = worker.verifyCommittedFile(ctx, plan, &checkpoint, destinationProvider, final, checkpoint.ChecksumHex, buffer)
 	}
 	if err != nil {
@@ -774,8 +818,11 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	if err := worker.journal.Save(ctx, checkpoint); err != nil {
 		return Result{}, err
 	}
-	_, partErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-	partRetained := partErr == nil
+	partRetained := false
+	if renameErr != nil || checkpoint.Completion.Version == 0 {
+		_, partErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+		partRetained = !domain.IsCode(partErr, domain.CodeNotFound)
+	}
 	result = Result{Outcome: OutcomeCompleted, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: partRetained}
 	if preserved {
 		result.PreservedDestination = plan.PreservedDestination
@@ -813,7 +860,7 @@ func validateExecution(plan Plan) error {
 	if !plan.StreamPolicy.valid() {
 		return errors.New("execute transfer: stream policy exceeds bounded budgets")
 	}
-	if plan.Verification != VerifySHA256 {
+	if !validCompletionPolicy(plan) {
 		return errors.New("execute transfer: unsupported verification")
 	}
 	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay && plan.Route != RouteHelperSameHost && plan.Route != RouteSFTPServerCopy && plan.Route != RouteLevel2Direct {
@@ -974,6 +1021,9 @@ func (worker *Worker) proveCommitted(ctx context.Context, plan Plan, checkpoint 
 			return false, nil
 		}
 		return false, err
+	}
+	if actual == checksum {
+		checkpoint.recordContentVerified()
 	}
 	return actual == checksum, nil
 }

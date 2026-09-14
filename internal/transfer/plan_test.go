@@ -133,7 +133,7 @@ func TestCaptureAndFreezeCopyOwnImmutableFileReferenceAndPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FreezeCopy(): %v", err)
 	}
-	if plan.Kind != OperationCopy || plan.Route != RouteLocal || plan.Verification != VerifySHA256 || plan.BufferBytes != DefaultBufferBytes {
+	if plan.Kind != OperationCopy || plan.Route != RouteLocal || plan.Verification != VerifyProtocol || plan.BufferBytes != DefaultBufferBytes {
 		t.Fatalf("Plan = %#v", plan)
 	}
 	if plan.SourceEndpoint != source.Descriptor() || plan.DestinationEndpoint != destination.Descriptor() {

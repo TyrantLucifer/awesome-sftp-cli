@@ -163,13 +163,13 @@ func (worker *Worker) copyStream(ctx context.Context, plan Plan, source provider
 		current.Performance.SchedulerNanoseconds = saturatingAdd(current.Performance.SchedulerNanoseconds, admission.waited.Load(), ^uint64(0))
 		current.Performance.ScheduledBytes = saturatingAdd(current.Performance.ScheduledBytes, admission.bytes.Load(), ^uint64(0))
 	}()
-	reader := &sourceStream{ctx: ctx, handle: source, digest: digest, options: providerapi.ReadStreamOptions{MaxBytes: providerapi.MaxReadAheadBytes}}
+	reader := &sourceStream{ctx: ctx, handle: source, digest: digest, options: worker.streamReadOptions(plan, plan.Source.Fingerprint.Size)}
 	if worker.scheduler != nil {
 		reader.options.MaxRequestBytes = worker.scheduler.QuantumBytes()
 	}
 	baseOffset := current.Offset
 	reader.onRead = func(consumed uint64) error {
-		return reportProgress(ctx, worker.journal, TransferProgress{Phase: PhaseStreaming, Bytes: baseOffset + consumed, DurableBytes: current.Offset})
+		return reportProgress(ctx, worker.journal, TransferProgress{Phase: PhaseStreaming, Bytes: baseOffset + consumed, DurableBytes: current.durableBytes()})
 	}
 	if plan.SourceEndpoint.Kind == domain.EndpointSSH || plan.DestinationEndpoint.Kind != domain.EndpointSSH {
 		reader.beforeRead = admission.gate(plan.SourceEndpoint.ID)
@@ -228,10 +228,13 @@ func (worker *Worker) copyStream(ctx context.Context, plan Plan, source provider
 		} else {
 			close(joinedControl)
 		}
+		consumedBefore := reader.readBytes
 		started := time.Now()
 		var n int64
 		var err error
-		if stream, ok := destination.(providerapi.StreamWriteHandle); ok {
+		if stream, ok := destination.(providerapi.WindowedStreamWriteHandle); ok && plan.Durability != "" {
+			n, err = stream.WriteFromWindow(ctx, limited, streamWindowRequests(plan, plan.Source.Fingerprint.Size))
+		} else if stream, ok := destination.(providerapi.StreamWriteHandle); ok && plan.Durability == "" {
 			n, err = stream.WriteFrom(ctx, limited)
 		} else {
 			n, err = io.CopyBuffer(streamWriteAdapter{ctx: ctx, handle: destination}, limited, buffer[:min(len(buffer), streamPacketBytes)])
@@ -252,34 +255,41 @@ func (worker *Worker) copyStream(ctx context.Context, plan Plan, source provider
 		if err != nil {
 			return err
 		}
-		if n < 0 || uint64(n) > chunk {
+		if n < 0 || uint64(n) > chunk || uint64(n) != reader.readBytes-consumedBefore {
 			return errors.New("stream transfer: invalid acknowledged count")
 		}
 		if n == 0 {
 			break
 		}
-		started = time.Now()
-		err = destination.Sync(ctx)
-		addPerformanceDuration(&current.Performance.SyncNanoseconds, time.Since(started))
-		if err != nil {
-			return err
+		if plan.checkpointSync() {
+			started = time.Now()
+			err = destination.Sync(ctx)
+			addPerformanceDuration(&current.Performance.SyncNanoseconds, time.Since(started))
+			if err != nil {
+				return err
+			}
 		}
 		next := current.Offset + uint64(n)
-		started = time.Now()
-		entry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-		addPerformanceDuration(&current.Performance.StatNanoseconds, time.Since(started))
-		if err != nil {
-			return err
-		}
-		if entry.Metadata.Size == nil || *entry.Metadata.Size != next {
-			return planError(domain.CodeConflict, "stream_copy", plan.Part, "part size does not match acknowledged offset", domain.RetryNever)
+		if plan.checkpointSync() {
+			started = time.Now()
+			entry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+			addPerformanceDuration(&current.Performance.StatNanoseconds, time.Since(started))
+			if err != nil {
+				return err
+			}
+			if entry.Metadata.Size == nil || *entry.Metadata.Size != next {
+				return planError(domain.CodeConflict, "stream_copy", plan.Part, "part size does not match acknowledged offset", domain.RetryNever)
+			}
+			current.PartFingerprint = cloneFingerprint(entry.Fingerprint)
 		}
 		state, err := marshalChecksum(digest)
 		if err != nil {
 			return err
 		}
 		current.Offset = next
-		current.PartFingerprint = cloneFingerprint(entry.Fingerprint)
+		if plan.checkpointSync() {
+			current.recordDurable()
+		}
 		current.ChecksumState = state
 		current.Performance.Chunks++
 		started = time.Now()
@@ -290,6 +300,17 @@ func (worker *Worker) copyStream(ctx context.Context, plan Plan, source provider
 		}
 		if uint64(n) < chunk && (deadline.IsZero() || time.Now().Before(deadline)) {
 			break
+		}
+	}
+	if plan.Durability == DurabilityCompletion {
+		started := time.Now()
+		if err := destination.Sync(ctx); err != nil {
+			return err
+		}
+		addPerformanceDuration(&current.Performance.SyncNanoseconds, time.Since(started))
+		current.recordDurable()
+		if err := worker.journal.Save(ctx, *current); err != nil {
+			return err
 		}
 	}
 	// Fixed-size streams never issue speculative reads past the frozen end. Check
@@ -343,10 +364,10 @@ func controlledStreamContext(ctx context.Context, control Control, checkpoint Ch
 // Once create succeeds, cancellation must not strand an unrecorded empty part.
 // Finish the bounded initialization boundary before returning to cancellable
 // streaming. Failed identity/durability checks still leave the part untouched.
-func (worker *Worker) initializeCreatedPart(ctx context.Context, destination providerapi.Provider, handle providerapi.WriteHandle, checkpoint *Checkpoint, digest hash.Hash) error {
+func (worker *Worker) initializeCreatedPart(ctx context.Context, plan Plan, destination providerapi.Provider, handle providerapi.WriteHandle, checkpoint *Checkpoint, digest hash.Hash) error {
 	initializationCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 30*time.Second)
 	defer cancel()
-	if err := handle.Sync(initializationCtx); err != nil {
+	if err := syncInitialPart(initializationCtx, plan, handle); err != nil {
 		return err
 	}
 	entry, err := destination.Stat(initializationCtx, providerapi.StatRequest{Location: checkpoint.Part})

@@ -185,3 +185,56 @@ func TestPreservedDestinationReadbackUsesPacketAdmission(t *testing.T) {
 		t.Fatalf("admitted=%d, want full preserved readback=%d", admitted.Load(), len(payload))
 	}
 }
+
+func TestWriteStreamHonorsExplicitWindowBounds(t *testing.T) {
+	for _, requests := range []uint32{0, 1, 2, 64, 65} {
+		t.Run(fmt.Sprint(requests), func(t *testing.T) {
+			fixture := (contractFactory{}).New(t)
+			location := domain.Location{EndpointID: testEndpointID, Path: "/windowed.bin"}
+			handle, err := fixture.Provider.(providerapi.MutableProvider).OpenWrite(t.Context(), providerapi.OpenWriteRequest{Location: location, Disposition: providerapi.WriteCreateNew})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer handle.Close(context.Background())
+			stream, ok := handle.(providerapi.WindowedStreamWriteHandle)
+			if !ok {
+				t.Fatal("missing bounded write facet")
+			}
+			data := bytes.Repeat([]byte("window"), 20000)
+			reader := bytes.NewReader(data)
+			n, err := stream.WriteFromWindow(t.Context(), reader, requests)
+			if requests == 0 || requests > 64 {
+				if err == nil || n != 0 || reader.Len() != len(data) {
+					t.Fatal("invalid window consumed source data")
+				}
+				return
+			}
+			if err != nil || n != int64(len(data)) {
+				t.Fatalf("acknowledged=%d: %v", n, err)
+			}
+			if err := handle.Close(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			read, err := fixture.Provider.OpenRead(t.Context(), providerapi.OpenReadRequest{Location: location})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer read.Close(context.Background())
+			actual := make([]byte, len(data))
+			offset := 0
+			for offset < len(actual) {
+				n, err := read.Read(t.Context(), actual[offset:])
+				offset += n
+				if err != nil {
+					t.Fatal(err)
+				}
+				if n == 0 {
+					t.Fatal("read made no progress")
+				}
+			}
+			if !bytes.Equal(actual, data) {
+				t.Fatal("windowed transfer content differs")
+			}
+		})
+	}
+}

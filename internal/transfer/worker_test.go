@@ -171,7 +171,7 @@ func TestWorkerCopiesDirectoryTreeWithBoundedRelayAndNoSymlinkTraversal(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
+	request := strictFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
 	request.Intent.Name = "copied"
 	plan, _, err := planner.FreezeCopy(context.Background(), request)
 	if err != nil {
@@ -1187,7 +1187,9 @@ func newWorkerFixture(t testing.TB, data []byte, policy ConflictPolicy) workerFi
 	}
 	request := validFreezeRequest(reference, normalizePlanTest(t, destination, "/"))
 	request.Intent.ConflictPolicy = policy
-	// Keep the restart-contract fixture on the legacy checkpoint policy.
+	// Keep the restart-contract fixture on the legacy completion/checkpoint policy.
+	request.Intent.Verification = VerifySHA256
+	request.Intent.Durability = DurabilityCheckpoint
 	planner.streamPolicy = StreamPolicy{}
 	plan, create, err := planner.FreezeCopy(context.Background(), request)
 	if err != nil {
@@ -1351,3 +1353,11 @@ func (handle *recordingReadAheadHandle) ReadAhead(
 func uint64Pointer(value uint64) *uint64 { return &value }
 
 var _ = time.Time{}
+
+// Strict route/recovery tests opt into their original content and Sync contract.
+func strictFreezeRequest(source FileRef, directory domain.Location) FreezeRequest {
+	request := validFreezeRequest(source, directory)
+	request.Intent.Verification = VerifySHA256
+	request.Intent.Durability = DurabilityCheckpoint
+	return request
+}

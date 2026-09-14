@@ -13,6 +13,13 @@ var _ providerapi.StreamWriteHandle = (*writeHandle)(nil)
 // WriteFrom retains the protocol request window across reader calls. It drains
 // every write acknowledgement before returning to the durability coordinator.
 func (h *writeHandle) WriteFrom(ctx context.Context, source io.Reader) (int64, error) {
+	return h.WriteFromWindow(ctx, source, providerapi.MaxSFTPWriteWindowRequests)
+}
+
+func (h *writeHandle) WriteFromWindow(ctx context.Context, source io.Reader, requests uint32) (int64, error) {
+	if requests == 0 || requests > providerapi.MaxSFTPWriteWindowRequests {
+		return 0, h.provider.invalid("write", &h.location, "stream request budget is outside 1..64")
+	}
 	if err := h.provider.check(ctx, "write", &h.location); err != nil {
 		return 0, err
 	}
@@ -21,7 +28,7 @@ func (h *writeHandle) WriteFrom(ctx context.Context, source io.Reader) (int64, e
 	if h.closed {
 		return 0, h.provider.invalid("write", &h.location, "write handle is closed")
 	}
-	n, err := h.file.ReadFromWithConcurrency(contextStreamReader{ctx: ctx, reader: source}, int(providerapi.MaxSFTPWriteWindowRequests))
+	n, err := h.file.ReadFromWithConcurrency(contextStreamReader{ctx: ctx, reader: source}, int(requests))
 	if err != nil {
 		return n, h.provider.mapMutationError("write", &h.location, err, domain.EffectUnknown)
 	}

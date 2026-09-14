@@ -17,8 +17,8 @@ the work. Closing the TUI does not cancel these Jobs.
    confirm.
 6. Open `J` to follow the new Jobs.
 
-AMSFTP first writes each destination to private temporary content. It verifies and
-commits that content before the final name becomes visible. A failed transfer is
+AMSFTP first writes each destination to private temporary content. It checks the
+selected completion contract and commits before the final name becomes visible. A failed transfer is
 never reported as a complete final file.
 
 Directory copies are walked incrementally. Symlinks are shown as symlinks; AMSFTP
@@ -131,34 +131,52 @@ For a directory Job, transferred bytes include the current file before that file
 finishes verification, while the completed item count advances only after the
 file is committed. Byte totals may be unknown for part of a directory operation.
 
-Standard SFTP keeps up to 64 concurrent 32 KiB read or write requests in each
-file stream. Packet admission, the request window, and durable checkpoints have
-separate budgets: enabling a bandwidth limit does not shrink the checkpoint to
-the scheduler quantum. New Jobs drain their write acknowledgements and save a
-checkpoint after at most 64 MiB, or at the next packet boundary after one second.
-The daemon synchronizes the temporary file and checks its size before advancing
-the durable offset. These checkpoints do not require a 64 MiB memory buffer.
-Existing Jobs keep their frozen checkpoint policy.
+Ordinary copies default to **protocol confirmation**: all writes must be
+acknowledged, the byte count must match, both file handles must close successfully,
+and publication must succeed. This follows the completion standard of plain native
+SFTP while retaining Job-specific temporary files and no-overwrite protection.
+Successful copies do not read the destination back or force an fsync.
 
-The displayed byte count includes live transfer progress; it can be ahead of the
-bytes saved for resume. `amsftp job list --format json` exposes both `bytes` and
-`durable_bytes`, along with `verified_bytes` and cumulative stage timings. During
-verification, the Jobs drawer shows the bytes checked. Read, write, verification,
-commit, and scheduler durations can overlap and must not be added together as
-elapsed time.
+Content checking and file synchronization are independent settings:
 
-Independent files in a directory can use two execution slots. A relay between
-SSH endpoints uses one slot because it needs both read and write windows. Shared
-resource and bandwidth limits still apply; parent directories are created before
-their children. At most two unfinished file checkpoints are stored per directory
-Job, and completed files are checked again after a restart.
+- `transfer.verification: "sha256"` reads and hashes the temporary and published
+  destination. An upload then writes one file's worth of data and reads it twice.
+- `transfer.durability: "completion"` synchronizes the file once before closing
+  and publishing, comparable to native `sftp put -f` for uploaded file data.
+- `transfer.durability: "checkpoint"` synchronizes each checkpoint. `"none"`,
+  the default, makes no forced-synchronization promise.
 
-SHA-256 verification still reads the temporary and published destination. An
-upload therefore normally writes one file's worth of data and reads back twice
-that amount. This extra integrity work can make total completion slower than a
-plain native `sftp put`, especially on asymmetric links. A complete checksum
-proof after a lost publication response is reused within that commit attempt;
-size and modification time alone never authorize skipping content verification.
+A successful fsync request is evidence about file data; it does not prove parent
+namespace durability or honest storage hardware. SSH protects data in transit;
+write acknowledgments do not independently verify stored content. Strict checks
+cost additional I/O and do not replace fsync. Moves and edit sync-back retain
+SHA-256 checks and synchronized checkpoints. Explicit `require_strong` also
+requires SHA-256. Existing Jobs retain their frozen completion policy.
+
+Standard SFTP uses at most 64 outstanding 32 KiB requests per file. A new ordinary-copy checkpoint
+records acknowledged bytes, a source digest state, and the last observed temporary
+file identity after at most 64 MiB or the next packet boundary after five seconds.
+It is a candidate resume point; only actual successful synchronization advances
+`durable_bytes`. This does not require a 64 MiB memory buffer. Rate limiting uses
+its own packet budget and does not shrink the checkpoint interval.
+
+`amsftp job list --format json` distinguishes live `bytes`, saved
+`acknowledged_bytes`, and `durable_bytes`. `verification` and `durability` show the
+frozen policy. `content_verified` indicates completed destination content proof;
+`verified_bytes` measures cumulative readback work, including recovery reads, and
+can exceed file size. The Jobs drawer shows finalization separately from hashing.
+Stage durations can overlap and must not be added as elapsed time.
+
+New directory copies share a budget of 128 outstanding data requests across up to
+8 files. A small file needs only the window its size warrants; large uploads use
+at most two full windows, and a large two-SSH-endpoint relay uses both legs of one
+file. Older frozen directory policies keep their one or two slots. Memory,
+connection, and bandwidth limits still apply, parent directories precede children,
+and at most 8 unfinished file checkpoints are retained. Completed files are
+checked again after restart.
+
+A lost publication response always requires content proof before claiming success,
+including in protocol mode. A size/mtime match alone cannot resolve that ambiguity.
 
 ## Recovery after interruption
 
@@ -166,14 +184,17 @@ The daemon records safe progress as data is written. After a restart, it checks 
 source, partial destination, and final destination again before continuing. If the
 state is uncertain, the Job pauses or fails visibly instead of guessing.
 
-A newer stream may leave bytes beyond its last durable checkpoint. Resume checks
-the recorded prefix digest and compares the extra suffix with the unchanged
-source before truncating that exact partial file to its durable offset. Changed
-or unprovable content is retained and reported as a conflict.
+A stream may leave bytes beyond its last saved candidate. Resume validates the
+candidate prefix against its source digest even if size and mtime still match.
+It compares any extra suffix with the unchanged source before truncating that
+exact partial file to the candidate offset. If the part is shorter than the saved
+candidate, changed, or unprovable, it is retained and reported as a conflict;
+AMSFTP does not silently append or discard bytes. Unsynchronized progress may be
+lost after a server or machine crash.
 
-After creating a temporary file, AMSFTP finishes recording its empty-file durability
-and recovery identity before honoring cancellation. This prevents a sibling file's
-cancellation from leaving a newly created part without resume evidence.
+After creating a temporary file, AMSFTP records its empty-file recovery identity
+before honoring cancellation. Policies that require checkpoint synchronization
+also sync it. This prevents cancellation from stranding an unidentified new part.
 
 Pause normally keeps matching partial data for resume. Cancellation or failure may
 also leave Job-owned partial data or an edit safety copy when removing it would

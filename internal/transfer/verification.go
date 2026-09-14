@@ -39,7 +39,7 @@ func (worker *Worker) verifyFile(ctx context.Context, plan Plan, current *Checkp
 		}
 		prior := current.Performance.VerifiedBytes
 		reader.onRead = func(n uint64) error {
-			return reportProgress(ctx, worker.journal, TransferProgress{Phase: current.Phase, Bytes: current.Offset, DurableBytes: current.Offset, VerifiedBytes: saturatingAdd(prior, n, ^uint64(0))})
+			return reportProgress(ctx, worker.journal, TransferProgress{Phase: current.Phase, Bytes: current.Offset, DurableBytes: current.durableBytes(), VerifiedBytes: saturatingAdd(prior, n, ^uint64(0))})
 		}
 		defer func() {
 			addPerformanceDuration(&current.Performance.VerifyNanoseconds, time.Since(started))
@@ -82,7 +82,7 @@ func (worker *Worker) verifyFile(ctx context.Context, plan Plan, current *Checkp
 
 func (worker *Worker) verificationReader(ctx context.Context, plan Plan, implementation providerapi.Provider, handle providerapi.ReadHandle) (*sourceStream, *streamAdmission) {
 	admission := &streamAdmission{worker: worker, plan: plan}
-	reader := &sourceStream{ctx: ctx, handle: handle, options: providerapi.ReadStreamOptions{MaxBytes: providerapi.MaxReadAheadBytes}}
+	reader := &sourceStream{ctx: ctx, handle: handle, options: worker.streamReadOptions(plan, handle.Info().Fingerprint.Size)}
 	if worker.scheduler != nil {
 		reader.options.MaxRequestBytes = worker.scheduler.QuantumBytes()
 	}

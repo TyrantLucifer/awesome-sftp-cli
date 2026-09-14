@@ -3,6 +3,7 @@ package transfer
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path"
 	"path/filepath"
@@ -46,6 +47,7 @@ func testDirectoryStreamConcurrency(t *testing.T, resume bool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	plan.StreamPolicy.DirectoryWorkers = 2
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	journal := newMemoryJournal()
@@ -168,5 +170,80 @@ func TestDirectoryStreamResourceUsageIncludesBothWindowsAndValidation(t *testing
 	}
 	if relay.Goroutines > HardResourceCeilings().Goroutines || upload.MemoryBytes > HardResourceCeilings().MemoryBytes {
 		t.Fatal("directory expanded hard resource limits")
+	}
+}
+
+func TestDirectorySharesRequestBudgetAcrossSmallAndLargeFiles(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		size  int64
+		relay bool
+		slots int
+	}{
+		{"small_upload", 4096, false, 8}, {"large_upload", 4 << 20, false, 2}, {"large_relay", 4 << 20, true, 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			if err := os.Mkdir(filepath.Join(root, "tree"), 0700); err != nil {
+				t.Fatal(err)
+			}
+			gate := &directoryReadGate{started: make(chan string, 9), release: make(map[string]chan struct{})}
+			for i := range 9 {
+				name := fmt.Sprint(i)
+				gate.release[name] = make(chan struct{})
+				// #nosec G304 -- numbered sparse fixtures inside this test-owned temporary directory.
+				file, err := os.OpenFile(filepath.Join(root, "tree", name), os.O_CREATE|os.O_RDWR, 0600)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := file.Truncate(test.size); err != nil {
+					t.Fatal(err)
+				}
+				_ = file.Close()
+			}
+			sourceKind := domain.EndpointLocal
+			if test.relay {
+				sourceKind = domain.EndpointSSH
+			}
+			source := newPlanTestProvider(t, "ep_aaaaaaaaaaaaaaaaaaaaaaaaaa", root, sourceKind)
+			gate.Provider = source
+			destination := newPlanTestProvider(t, "ep_bbbbbbbbbbbbbbbbbbbbbbbbbb", t.TempDir(), domain.EndpointSSH)
+			resolver := MapResolver{source.Descriptor().ID: gate, destination.Descriptor().ID: destination}
+			planner := NewPlanner(resolver)
+			reference, err := planner.Capture(t.Context(), normalizePlanTest(t, source, "/tree"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			plan, _, err := planner.FreezeCopy(t.Context(), validFreezeRequest(reference, normalizePlanTest(t, destination, "/")))
+			if err != nil {
+				t.Fatal(err)
+			}
+			journal := newMemoryJournal()
+			ctx, cancel := context.WithCancel(t.Context())
+			done := make(chan error, 1)
+			go func() { _, err := NewWorker(resolver, journal).Execute(ctx, plan, nil); done <- err }()
+			defer func() {
+				for _, ch := range gate.release {
+					close(ch)
+				}
+				cancel()
+				<-done
+			}()
+			for range test.slots {
+				select {
+				case <-gate.started:
+				case <-time.After(time.Second):
+					t.Fatal("request budget did not admit expected independent files")
+				}
+			}
+			select {
+			case <-gate.started:
+				t.Fatal("request or file budget exceeded")
+			case <-time.After(50 * time.Millisecond):
+			}
+			if got := len(journal.latest().DirectoryChildren); got != test.slots {
+				t.Fatalf("active checkpoints=%d want %d", got, test.slots)
+			}
+		})
 	}
 }

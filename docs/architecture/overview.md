@@ -142,26 +142,35 @@ client does not turn an unknown result into success or failure.
 
 ### Copy and move
 
-A streamed copy writes to a Job-specific temporary destination. Progress is
-persisted only after the corresponding data has crossed the durability boundary;
-volatile progress separately reports bytes being consumed by the stream.
-AMSFTP then verifies the temporary result and publishes the final name.
-Incomplete content is never presented as the intended final file.
+A streamed copy writes to a Job-specific temporary destination. The frozen plan
+separates protocol confirmation, destination SHA-256 checks, and file sync policy.
+Ordinary copies default to acknowledged writes, exact byte counts, successful
+close and publication, without destination readback or forced sync. Incomplete
+content is never presented as the intended final file.
 
-The transfer coordinator owns independent packet, in-flight request, and checkpoint
-budgets. Providers own bounded wire concurrency; they report acknowledged writes,
-while only synchronized, inspected data advances the journal. A frozen stream
-policy caps an epoch at 64 MiB or the next packet boundary after one second.
-Recovery proves any uncheckpointed suffix before rolling it back. Directory
-workers persist at most two separate child transactions and serialize parent
-checkpoint updates. Admission accounts for both transport windows, verification
-reads, and bounded directory concurrency.
+The coordinator owns packet, request-window and checkpoint budgets. New copy epochs end
+after at most 64 MiB or the next packet boundary after five seconds. The journal
+stores a candidate offset and source digest state; versioned completion evidence
+separately records successful file syncs and destination content proof. The legacy
+SQLite `verified_offset` column retains the saved offset; it is not a claim of
+independent destination hashing. Older plans retain their synchronized checkpoints.
+Recovery hashes candidate content even when weak metadata matches, and proves
+extra suffix bytes before rolling them back. Missing or changed evidence causes a
+conflict rather than unproved truncation or append.
 
-Verification and publication remain separate responsibilities. A successful
-checksum proof can be reused within the same publication attempt after a lost
-response. Standard SFTP does not provide a trustworthy object/version identity
-that would let size/mtime observations replace a full post-publication checksum.
-The temporary and published destination therefore retain their content checks.
+New directory copies share 128 data-request slots across at most eight file
+transactions. Windows shrink with file size, both relay legs are charged, and
+recovery validation reserves its budget before opening streams. Per-file buffers,
+packet workers and transport windows are accounted in resource admission; parent
+journal updates remain serialized. Checkpoints retain only the bounded unfinished
+children, and restart reconstructs completed entries with content checks.
+
+Strict SHA-256 mode retains pre- and post-publication readbacks. Protocol mode
+trusts successful server write/close/publication acknowledgments, not metadata as
+a substitute for a checksum. Lost publication responses still require a full
+content proof. Standard SFTP does not provide a trustworthy content-version CAS;
+readbacks do not prevent later third-party changes, and neither readback nor SSH
+transport integrity substitutes for file synchronization.
 
 A move is copy-and-commit followed by a separately checked source removal. The
 source is not deleted until the destination has been verified and committed.
@@ -290,3 +299,16 @@ These are explicit comparison strategies, not identical execution paths. The
 latency proxy excludes SSH encryption, TCP congestion, and real link bandwidth;
 normal native integration tests cover the SSH boundary. Nightly CI runs this
 comparison in addition to deterministic window, checkpoint, and recovery tests.
+
+`make bench-transfer-ssh` complements the proxy with real loopback TCP, system
+OpenSSH encryption and private sshd fixtures. It compares 256 MiB upload/download
+copies over three repetitions, alternating execution order. The SQLite store is
+opened before timing, as in a running daemon; measurements include connection,
+planning, Job creation, and execution, and report Worker time separately. File
+hashes are checked outside the timed region. Default copying and completion-sync
+are compared to matching native operations; SHA-256 mode reports its extra work
+against the plain-copy reference. The native client writes its final name directly; AMSFTP includes temporary-file
+publication and Job journaling. No user SSH configuration is edited.
+`AMSFTP_PERFORMANCE_OPENSSH_DIR` can select a trusted directory containing both
+`ssh` and `sftp` for identical-version comparisons. These tests do not establish
+throughput on a particular user's WAN or storage system.
