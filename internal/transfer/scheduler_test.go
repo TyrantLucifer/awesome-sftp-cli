@@ -931,3 +931,24 @@ func assertGrant(t *testing.T, done <-chan error) {
 		t.Fatal("grant timed out")
 	}
 }
+
+func TestTransferSchedulerUncontendedGrantDoesNotAllocate(t *testing.T) {
+	scheduler := newTransferScheduler(t, foundation.RealClock{}, SchedulerPolicy{})
+	request := BandwidthRequest{JobID: "allocation-job", EndpointID: "allocation-endpoint", Class: ScheduleBulk, Bytes: 32 << 10}
+	ctx := context.Background()
+	if err := scheduler.Wait(ctx, request); err != nil {
+		t.Fatal(err)
+	}
+	before := scheduler.Snapshot().GrantedBytes
+	var waitErr error
+	allocations := testing.AllocsPerRun(100, func() { waitErr = scheduler.Wait(ctx, request) })
+	if waitErr != nil {
+		t.Fatal(waitErr)
+	}
+	if allocations != 0 {
+		t.Fatalf("uncontended packet admission allocates %g objects; want zero after warmup", allocations)
+	}
+	if got := scheduler.Snapshot(); got.Waiters != 0 || got.GrantedBytes != before+101*uint64(request.Bytes) {
+		t.Fatalf("uncontended admission lost byte accounting: %+v", got)
+	}
+}
