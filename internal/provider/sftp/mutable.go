@@ -232,7 +232,7 @@ func (p *Provider) preserveDestinationBlocking(ctx context.Context, request prov
 		if !equalFingerprint(request.ExpectedFingerprint, fingerprint(backupInfo)) {
 			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "preserved fingerprint does not match", errRetryConflict, nil)
 		}
-		contentSHA, hashErr := p.hashMutableFileBlocking(ctx, backupPath, request.Backup, request.ExpectedSize, request.MaxBytes)
+		contentSHA, hashErr := p.hashMutableFileBlocking(ctx, request.Backup, request.ExpectedSize, request.MaxBytes, request.ReadStream)
 		if hashErr != nil || contentSHA != request.ExpectedSHA256 {
 			return providerapi.PreserveDestinationResult{BackupPresent: true}, errors.Join(p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "preserved content does not match", errRetryConflict, nil), hashErr)
 		}
@@ -254,7 +254,7 @@ func (p *Provider) preserveDestinationBlocking(ctx context.Context, request prov
 			return providerapi.PreserveDestinationResult{EffectUnknown: true}, p.mapMutationError("preserve_destination", &request.Backup, renameErr, domain.EffectUnknown)
 		}
 	}
-	contentSHA, hashErr := p.hashMutableFileBlocking(ctx, backupPath, request.Backup, request.ExpectedSize, request.MaxBytes)
+	contentSHA, hashErr := p.hashMutableFileBlocking(ctx, request.Backup, request.ExpectedSize, request.MaxBytes, request.ReadStream)
 	if hashErr == nil && contentSHA == request.ExpectedSHA256 {
 		return providerapi.PreserveDestinationResult{BackupPresent: true}, nil
 	}
@@ -282,49 +282,55 @@ func (p *Provider) preserveDestinationBlocking(ctx context.Context, request prov
 	)
 }
 
-func (p *Provider) hashMutableFileBlocking(ctx context.Context, remotePath string, location domain.Location, expectedSize, maxBytes int64) (string, error) {
-	file, err := p.client.Open(remotePath)
-	if err != nil {
-		return "", p.mapMutationError("rename", &location, err, domain.EffectNone)
+func (p *Provider) hashMutableFileBlocking(ctx context.Context, location domain.Location, expectedSize, maxBytes int64, options providerapi.ReadStreamOptions) (string, error) {
+	if expectedSize < 0 || maxBytes < 0 || expectedSize > maxBytes {
+		return "", p.invalid("preserve_destination", &location, "invalid preserved size budget")
 	}
-	defer func() { _ = file.Close() }()
+	handle, err := p.OpenRead(ctx, providerapi.OpenReadRequest{Location: location})
+	if err != nil {
+		return "", err
+	}
+	defer handle.Close(context.Background())
+	info := handle.Info()
+	if info.Fingerprint.Size == nil || *info.Fingerprint.Size != uint64(expectedSize) {
+		return "", p.opError(domain.CodeConflict, "preserve_destination", &location, "preserved content size does not match", errRetryConflict, nil)
+	}
+	if options.MaxBytes == 0 {
+		options.MaxBytes = providerapi.MaxReadAheadBytes
+	}
 	digest := sha256.New()
-	buffer := make([]byte, 256*1024)
+	buffer := make([]byte, sftpReadAheadPacketBytes)
 	var total int64
-	zeroReads := 0
 	for {
-		if err := ctx.Err(); err != nil {
-			return "", err
-		}
-		remaining := maxBytes - total + 1
-		if remaining <= 0 {
-			return "", p.opError(domain.CodeResourceExhausted, "preserve_destination", &location, "preserved content exceeds byte limit", errRetryNever, nil)
-		}
-		chunk := buffer
-		if int64(len(chunk)) > remaining {
-			chunk = chunk[:remaining]
-		}
-		count, readErr := file.Read(chunk)
-		if count != 0 {
-			zeroReads = 0
+		count, readErr := handle.(providerapi.StreamReadHandle).ReadStream(ctx, buffer, options)
+		if count > 0 {
 			total += int64(count)
-			_, _ = digest.Write(chunk[:count])
-		} else if readErr == nil {
-			zeroReads++
-			if zeroReads >= 100 {
-				return "", io.ErrNoProgress
-			}
+			_, _ = digest.Write(buffer[:count])
 		}
 		if errors.Is(readErr, io.EOF) {
-			if total != expectedSize {
-				return "", p.opError(domain.CodeConflict, "preserve_destination", &location, "preserved content size does not match", errRetryConflict, nil)
-			}
-			return fmt.Sprintf("%x", digest.Sum(nil)), nil
+			break
 		}
 		if readErr != nil {
-			return "", p.mapMutationError("rename", &location, readErr, domain.EffectNone)
+			return "", readErr
+		}
+		if count == 0 {
+			return "", io.ErrNoProgress
 		}
 	}
+	if total != expectedSize {
+		return "", p.opError(domain.CodeConflict, "preserve_destination", &location, "preserved content size does not match", errRetryConflict, nil)
+	}
+	if err := handle.Close(ctx); err != nil {
+		return "", err
+	}
+	latest, err := p.Stat(ctx, providerapi.StatRequest{Location: location})
+	if err != nil {
+		return "", err
+	}
+	if !equalFingerprint(info.Fingerprint, latest.Fingerprint) {
+		return "", p.opError(domain.CodeConflict, "preserve_destination", &location, "preserved content changed during verification", errRetryConflict, nil)
+	}
+	return fmt.Sprintf("%x", digest.Sum(nil)), nil
 }
 
 func (p *Provider) Remove(ctx context.Context, request providerapi.RemoveRequest) error {
@@ -442,6 +448,33 @@ func (h *writeHandle) Close(ctx context.Context) error {
 	h.closed = true
 	if err := h.file.Close(); err != nil {
 		return h.provider.mapMutationError("close_write", &h.location, err, domain.EffectUnknown)
+	}
+	return nil
+}
+
+// Truncate only removes a suffix from this opened, identity-checked file.
+func (h *writeHandle) Truncate(ctx context.Context, size int64) error {
+	if err := h.provider.check(ctx, "truncate_write", &h.location); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.closed || size < 0 {
+		return h.provider.invalid("truncate_write", &h.location, "invalid truncate request")
+	}
+	info, err := h.file.Stat()
+	if err != nil {
+		return h.provider.mapMutationError("truncate_write", &h.location, err, domain.EffectNone)
+	}
+	if size > info.Size() {
+		return h.provider.invalid("truncate_write", &h.location, "truncate cannot expand a file")
+	}
+	if err := h.file.Truncate(size); err != nil {
+		return h.provider.mapMutationError("truncate_write", &h.location, err, domain.EffectUnknown)
+	}
+	_, err = h.file.Seek(size, io.SeekStart)
+	if err != nil {
+		return h.provider.mapMutationError("truncate_write", &h.location, err, domain.EffectApplied)
 	}
 	return nil
 }

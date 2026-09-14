@@ -15,6 +15,12 @@ type TransferPerformance struct {
 	SyncNanoseconds       uint64 `json:"sync_nanoseconds"`
 	StatNanoseconds       uint64 `json:"stat_nanoseconds"`
 	CheckpointNanoseconds uint64 `json:"checkpoint_nanoseconds"`
+	StreamingNanoseconds  uint64 `json:"streaming_nanoseconds"`
+	VerifyNanoseconds     uint64 `json:"verify_nanoseconds"`
+	CommitNanoseconds     uint64 `json:"commit_nanoseconds"`
+	SchedulerNanoseconds  uint64 `json:"scheduler_nanoseconds"`
+	VerifiedBytes         uint64 `json:"verified_bytes"`
+	ScheduledBytes        uint64 `json:"scheduled_bytes"`
 }
 
 func addPerformanceDuration(target *uint64, elapsed time.Duration) {
@@ -51,5 +57,11 @@ func mergeTransferPerformance(base, current *TransferPerformance) *TransferPerfo
 		SyncNanoseconds:       saturatingAdd(base.SyncNanoseconds, current.SyncNanoseconds, ^uint64(0)),
 		StatNanoseconds:       saturatingAdd(base.StatNanoseconds, current.StatNanoseconds, ^uint64(0)),
 		CheckpointNanoseconds: saturatingAdd(base.CheckpointNanoseconds, current.CheckpointNanoseconds, ^uint64(0)),
+		StreamingNanoseconds:  saturatingAdd(base.StreamingNanoseconds, current.StreamingNanoseconds, ^uint64(0)),
+		VerifyNanoseconds:     saturatingAdd(base.VerifyNanoseconds, current.VerifyNanoseconds, ^uint64(0)),
+		CommitNanoseconds:     saturatingAdd(base.CommitNanoseconds, current.CommitNanoseconds, ^uint64(0)),
+		SchedulerNanoseconds:  saturatingAdd(base.SchedulerNanoseconds, current.SchedulerNanoseconds, ^uint64(0)),
+		VerifiedBytes:         saturatingAdd(base.VerifiedBytes, current.VerifiedBytes, ^uint64(0)),
+		ScheduledBytes:        saturatingAdd(base.ScheduledBytes, current.ScheduledBytes, ^uint64(0)),
 	}
 }

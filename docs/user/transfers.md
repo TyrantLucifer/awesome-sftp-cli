@@ -131,19 +131,45 @@ For a directory Job, transferred bytes include the current file before that file
 finishes verification, while the completed item count advances only after the
 file is committed. Byte totals may be unknown for part of a directory operation.
 
-Without a bandwidth limit, standard SFTP uses a bounded 4 MiB durable transfer
-chunk and allows up to 64 concurrent 32 KiB write requests inside that chunk.
-This keeps a full protocol window active on higher-latency links instead of
-waiting after every small group of packets. Bandwidth-controlled Jobs retain a
-256 KiB scheduling quantum. At the end of each durable chunk, AMSFTP synchronizes
-the temporary destination, checks its size, and records a checkpoint before it
-advances recoverable progress.
+Standard SFTP keeps up to 64 concurrent 32 KiB read or write requests in each
+file stream. Packet admission, the request window, and durable checkpoints have
+separate budgets: enabling a bandwidth limit does not shrink the checkpoint to
+the scheduler quantum. New Jobs drain their write acknowledgements and save a
+checkpoint after at most 64 MiB, or at the next packet boundary after one second.
+The daemon synchronizes the temporary file and checks its size before advancing
+the durable offset. These checkpoints do not require a 64 MiB memory buffer.
+Existing Jobs keep their frozen checkpoint policy.
+
+The displayed byte count includes live transfer progress; it can be ahead of the
+bytes saved for resume. `amsftp job list --format json` exposes both `bytes` and
+`durable_bytes`, along with `verified_bytes` and cumulative stage timings. During
+verification, the Jobs drawer shows the bytes checked. Read, write, verification,
+commit, and scheduler durations can overlap and must not be added together as
+elapsed time.
+
+Independent files in a directory can use two execution slots. A relay between
+SSH endpoints uses one slot because it needs both read and write windows. Shared
+resource and bandwidth limits still apply; parent directories are created before
+their children. At most two unfinished file checkpoints are stored per directory
+Job, and completed files are checked again after a restart.
+
+SHA-256 verification still reads the temporary and published destination. An
+upload therefore normally writes one file's worth of data and reads back twice
+that amount. This extra integrity work can make total completion slower than a
+plain native `sftp put`, especially on asymmetric links. A complete checksum
+proof after a lost publication response is reused within that commit attempt;
+size and modification time alone never authorize skipping content verification.
 
 ## Recovery after interruption
 
 The daemon records safe progress as data is written. After a restart, it checks the
 source, partial destination, and final destination again before continuing. If the
 state is uncertain, the Job pauses or fails visibly instead of guessing.
+
+A newer stream may leave bytes beyond its last durable checkpoint. Resume checks
+the recorded prefix digest and compares the extra suffix with the unchanged
+source before truncating that exact partial file to its durable offset. Changed
+or unprovable content is retained and reported as a conflict.
 
 Pause normally keeps matching partial data for resume. Cancellation or failure may
 also leave Job-owned partial data or an edit safety copy when removing it would

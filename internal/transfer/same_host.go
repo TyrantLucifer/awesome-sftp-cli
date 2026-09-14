@@ -192,7 +192,7 @@ func (worker *Worker) executeSameHostCopy(
 	if partEntry.Kind != domain.EntryFile || partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != plan.SameHostCopy.SourceSize {
 		return Result{}, planError(domain.CodeConflict, "adopt_same_host_part", plan.Part, "durable Helper part has an unexpected type or size", domain.RetryAfterConflict)
 	}
-	checksum, err := verifyFile(ctx, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+	checksum, err := worker.verifyFile(ctx, plan, checkpoint, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
 	if err != nil {
 		return Result{}, err
 	}

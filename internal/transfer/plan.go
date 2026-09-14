@@ -163,6 +163,7 @@ type Plan struct {
 	Verification                    Verification             `json:"verification"`
 	ConflictPolicy                  ConflictPolicy           `json:"conflict_policy"`
 	BufferBytes                     uint32                   `json:"buffer_bytes"`
+	StreamPolicy                    StreamPolicy             `json:"stream_policy,omitzero"`
 	Discovery                       *DiscoveryBudget         `json:"discovery,omitempty"`
 	MoveStrategy                    MoveStrategy             `json:"move_strategy,omitempty"`
 	MoveCapability                  *CapabilityBinding       `json:"move_capability,omitempty"`
@@ -233,15 +234,18 @@ func (resolver MapResolver) Resolve(endpointID domain.EndpointID) (providerapi.P
 }
 
 type Planner struct {
-	resolver Resolver
-	sameHost SameHostCopyBackend
-	level2   level2PreflightBackend
+	resolver     Resolver
+	streamPolicy StreamPolicy
+	sameHost     SameHostCopyBackend
+	level2       level2PreflightBackend
 }
 
-func NewPlanner(resolver Resolver) *Planner { return &Planner{resolver: resolver} }
+func NewPlanner(resolver Resolver) *Planner {
+	return &Planner{resolver: resolver, streamPolicy: DefaultStreamPolicy()}
+}
 
 func NewPlannerWithSameHost(resolver Resolver, backend SameHostCopyBackend) *Planner {
-	return &Planner{resolver: resolver, sameHost: backend}
+	return &Planner{resolver: resolver, sameHost: backend, streamPolicy: DefaultStreamPolicy()}
 }
 
 func (planner *Planner) Capture(ctx context.Context, location domain.Location) (FileRef, error) {
@@ -387,6 +391,7 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		Verification:           VerifySHA256,
 		ConflictPolicy:         request.Intent.ConflictPolicy,
 		BufferBytes:            DefaultBufferBytes,
+		StreamPolicy:           planner.streamPolicy,
 		SourceDeleteCapability: sourceDeleteCapability,
 		FrozenAt:               request.Now.UTC().Truncate(time.Second),
 	}
@@ -509,7 +514,7 @@ func (planner *Planner) FreezeSyncBack(ctx context.Context, request SyncBackFree
 		SourceCapability:      CapabilityBinding{Revision: sourceSnapshot.Capabilities.Revision, Capability: sourceCapability},
 		DestinationCapability: CapabilityBinding{Revision: destinationSnapshot.Capabilities.Revision, Capability: destinationCapability},
 		Route:                 chooseRoute(sourceProvider.Descriptor(), destinationProvider.Descriptor()), Verification: VerifySHA256,
-		ConflictPolicy: ConflictOverwrite, BufferBytes: DefaultBufferBytes, FrozenAt: request.Now.UTC().Truncate(time.Second),
+		ConflictPolicy: ConflictOverwrite, BufferBytes: DefaultBufferBytes, StreamPolicy: planner.streamPolicy, FrozenAt: request.Now.UTC().Truncate(time.Second),
 	}
 	create, err := createRequest(plan, FreezeRequest{RequestID: request.RequestID, JobID: request.JobID, EventID: request.EventID, Now: request.Now}, job.StateQueued)
 	if err != nil {

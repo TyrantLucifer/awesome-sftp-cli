@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"hash"
-	"io"
 	"math"
 	"path"
 	"reflect"
@@ -53,25 +52,27 @@ const (
 )
 
 type Checkpoint struct {
-	JobID               domain.JobID         `json:"job_id"`
-	Phase               Phase                `json:"phase"`
-	Offset              uint64               `json:"offset"`
-	SourceFingerprint   domain.Fingerprint   `json:"source_fingerprint"`
-	Part                domain.Location      `json:"part"`
-	PartFingerprint     domain.Fingerprint   `json:"part_fingerprint"`
-	ChecksumState       []byte               `json:"checksum_state,omitempty"`
-	ChecksumHex         string               `json:"checksum_hex,omitempty"`
-	Final               domain.Location      `json:"final"`
-	Outcome             Outcome              `json:"outcome,omitempty"`
-	Items               uint64               `json:"items,omitempty"`
-	CurrentPath         string               `json:"current_path,omitempty"`
-	DirectoryRootOwned  bool                 `json:"directory_root_owned,omitempty"`
-	ActualRoute         Route                `json:"actual_route,omitempty"`
-	DowngradedFrom      Route                `json:"downgraded_from,omitempty"`
-	RouteReason         RouteReason          `json:"route_reason,omitempty"`
-	DirectFormatVersion uint16               `json:"direct_format_version,omitempty"`
-	DirectNonce         string               `json:"direct_nonce,omitempty"`
-	Performance         *TransferPerformance `json:"performance,omitempty"`
+	DirectoryPerformance *TransferPerformance       `json:"directory_performance,omitempty"`
+	DirectoryChildren    []DirectoryChildCheckpoint `json:"directory_children,omitempty"`
+	JobID                domain.JobID               `json:"job_id"`
+	Phase                Phase                      `json:"phase"`
+	Offset               uint64                     `json:"offset"`
+	SourceFingerprint    domain.Fingerprint         `json:"source_fingerprint"`
+	Part                 domain.Location            `json:"part"`
+	PartFingerprint      domain.Fingerprint         `json:"part_fingerprint"`
+	ChecksumState        []byte                     `json:"checksum_state,omitempty"`
+	ChecksumHex          string                     `json:"checksum_hex,omitempty"`
+	Final                domain.Location            `json:"final"`
+	Outcome              Outcome                    `json:"outcome,omitempty"`
+	Items                uint64                     `json:"items,omitempty"`
+	CurrentPath          string                     `json:"current_path,omitempty"`
+	DirectoryRootOwned   bool                       `json:"directory_root_owned,omitempty"`
+	ActualRoute          Route                      `json:"actual_route,omitempty"`
+	DowngradedFrom       Route                      `json:"downgraded_from,omitempty"`
+	RouteReason          RouteReason                `json:"route_reason,omitempty"`
+	DirectFormatVersion  uint16                     `json:"direct_format_version,omitempty"`
+	DirectNonce          string                     `json:"direct_nonce,omitempty"`
+	Performance          *TransferPerformance       `json:"performance,omitempty"`
 }
 
 type Journal interface {
@@ -80,93 +81,6 @@ type Journal interface {
 }
 
 type bufferObserver interface{ ObserveBuffer(int) }
-
-type relayReadResult struct {
-	bytes    int
-	limit    int
-	duration time.Duration
-	err      error
-}
-
-type relayReadRequest struct {
-	buffer         []byte
-	readAheadBytes uint32
-}
-
-type relayReader struct {
-	ctx      context.Context
-	cancel   context.CancelFunc
-	handle   providerapi.ReadHandle
-	requests chan relayReadRequest
-	results  chan relayReadResult
-	done     chan struct{}
-}
-
-func newRelayReader(ctx context.Context, handle providerapi.ReadHandle) *relayReader {
-	readContext, cancel := context.WithCancel(ctx)
-	reader := &relayReader{
-		ctx: readContext, cancel: cancel, handle: handle,
-		requests: make(chan relayReadRequest, 1), results: make(chan relayReadResult, 1), done: make(chan struct{}),
-	}
-	go reader.run()
-	return reader
-}
-
-func (reader *relayReader) run() {
-	defer close(reader.done)
-	for {
-		var request relayReadRequest
-		select {
-		case <-reader.ctx.Done():
-			return
-		case request = <-reader.requests:
-		}
-		startedAt := time.Now()
-		var bytesRead int
-		var err error
-		if handle, ok := reader.handle.(providerapi.ReadAheadHandle); ok && request.readAheadBytes > 0 {
-			bytesRead, err = handle.ReadAhead(reader.ctx, request.buffer, request.readAheadBytes)
-		} else {
-			bytesRead, err = reader.handle.Read(reader.ctx, request.buffer)
-		}
-		duration := time.Since(startedAt)
-		select {
-		case <-reader.ctx.Done():
-			return
-		case reader.results <- relayReadResult{bytes: bytesRead, limit: len(request.buffer), duration: duration, err: err}:
-		}
-	}
-}
-
-func (reader *relayReader) Start(buffer []byte, readAheadBytes uint32) error {
-	select {
-	case <-reader.done:
-		return reader.stoppedError()
-	case reader.requests <- relayReadRequest{buffer: buffer, readAheadBytes: readAheadBytes}:
-		return nil
-	}
-}
-
-func (reader *relayReader) Wait() relayReadResult {
-	select {
-	case result := <-reader.results:
-		return result
-	case <-reader.done:
-		return relayReadResult{err: reader.stoppedError()}
-	}
-}
-
-func (reader *relayReader) Stop() {
-	reader.cancel()
-	<-reader.done
-}
-
-func (reader *relayReader) stoppedError() error {
-	if err := reader.ctx.Err(); err != nil {
-		return err
-	}
-	return errors.New("execute transfer: source reader stopped")
-}
 
 type ControlAction uint8
 
@@ -220,6 +134,7 @@ type ItemResult struct {
 }
 
 type Worker struct {
+	control                Control
 	resolver               Resolver
 	journal                Journal
 	sameHost               SameHostCopyBackend
@@ -271,6 +186,9 @@ func (worker *Worker) withJournal(journal Journal) *Worker {
 }
 
 func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (Result, error) {
+	executionWorker := *worker
+	executionWorker.control = control
+	worker = &executionWorker
 	if err := validateExecution(plan); err != nil {
 		return Result{}, err
 	}
@@ -434,7 +352,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if statErr != nil {
 			return Result{}, statErr
 		}
-		checksum, verifyErr := verifyFile(ctx, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+		checksum, verifyErr := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
 		if verifyErr != nil {
 			return Result{}, verifyErr
 		}
@@ -495,11 +413,17 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		if statErr != nil {
 			return Result{}, statErr
 		}
+		if partEntry.Metadata.Size != nil && *partEntry.Metadata.Size > current.Offset && plan.StreamPolicy.CheckpointBytes != 0 {
+			partEntry, err = worker.recoverStreamSuffix(ctx, plan, source, destinationProvider, destination, &current, partEntry, hex.EncodeToString(hasher.Sum(nil)), buffer)
+			if err != nil {
+				return Result{}, err
+			}
+		}
 		if partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != current.Offset {
 			return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part no longer matches durable checkpoint", domain.RetryAfterConflict)
 		}
 		if !reflect.DeepEqual(partEntry.Fingerprint, current.PartFingerprint) {
-			checksum, verifyErr := verifyFile(ctx, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+			checksum, verifyErr := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
 			if verifyErr != nil {
 				return Result{}, verifyErr
 			}
@@ -539,133 +463,11 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	defer func() { _ = readHandle.Close(context.Background()) }()
 
-	reader := newRelayReader(ctx, readHandle)
-	defer reader.Stop()
-	if current.Performance == nil {
-		current.Performance = &TransferPerformance{}
-	}
-	readPending := false
-	startNextRead := func() error {
-		bandwidthRequest := BandwidthRequest{
-			JobID: plan.JobID, EndpointID: plan.SourceEndpoint.ID, PeerEndpointID: plan.DestinationEndpoint.ID,
-			JobBytesPerSecond: plan.Bandwidth.JobBytesPerSecond, Class: ScheduleBulk,
+	if err := worker.copyStream(ctx, plan, readHandle, writeHandle, destinationProvider, &current, hasher, buffer, control); err != nil {
+		if errors.Is(err, ErrPaused) || errors.Is(err, ErrCanceled) {
+			return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, err
 		}
-		unrestricted := worker.scheduler == nil && !plan.Bandwidth.requiresControl()
-		if policy, ok := worker.scheduler.(bandwidthReadAheadPolicy); ok && policy.AllowsReadAhead(bandwidthRequest) {
-			unrestricted = true
-		}
-		readBuffer := buffer
-		if worker.scheduler != nil && !unrestricted {
-			quantum := worker.scheduler.QuantumBytes()
-			if quantum > 0 && int(quantum) < len(readBuffer) {
-				readBuffer = readBuffer[:quantum]
-			}
-		}
-		readAheadBytes := uint32(0)
-		if unrestricted {
-			readAheadBytes = providerapi.MaxReadAheadBytes
-		}
-		if err := reader.Start(readBuffer, readAheadBytes); err != nil {
-			return err
-		}
-		readPending = true
-		return nil
-	}
-
-	for {
-		if control != nil {
-			switch control.Action(cloneCheckpoint(current)) {
-			case ControlPause:
-				reader.Stop()
-				readPending = false
-				if err := worker.closeAndRefreshCheckpoint(ctx, destinationProvider, writeHandle, &current); err != nil {
-					return Result{}, err
-				}
-				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrPaused
-			case ControlCancel:
-				reader.Stop()
-				readPending = false
-				if err := worker.closeAndRefreshCheckpoint(ctx, destinationProvider, writeHandle, &current); err != nil {
-					return Result{}, err
-				}
-				return Result{Final: plan.Final, Bytes: current.Offset, PartRetained: true}, ErrCanceled
-			}
-		}
-		if !readPending {
-			if err := startNextRead(); err != nil {
-				return Result{}, err
-			}
-		}
-		readResult := reader.Wait()
-		readPending = false
-		n, readErr := readResult.bytes, readResult.err
-		addPerformanceDuration(&current.Performance.ReadNanoseconds, readResult.duration)
-		if n < 0 || n > readResult.limit {
-			return Result{}, errors.New("execute transfer: provider returned invalid read count")
-		}
-		if n > 0 {
-			if worker.scheduler != nil {
-				if err := waitForScheduledBytes(ctx, worker.scheduler, BandwidthRequest{
-					JobID: plan.JobID, EndpointID: plan.SourceEndpoint.ID, PeerEndpointID: plan.DestinationEndpoint.ID,
-					JobBytesPerSecond: plan.Bandwidth.JobBytesPerSecond, Class: ScheduleBulk,
-				}, uint32(n)); err != nil { //nolint:gosec // n is bounded by the 4 MiB transfer buffer.
-					return Result{}, err
-				}
-			}
-			writeStartedAt := time.Now()
-			writeErr := writeAll(ctx, writeHandle, buffer[:n])
-			addPerformanceDuration(&current.Performance.WriteNanoseconds, time.Since(writeStartedAt))
-			if writeErr != nil {
-				return Result{}, writeErr
-			}
-			if _, err := hasher.Write(buffer[:n]); err != nil {
-				return Result{}, fmt.Errorf("execute transfer: hash source: %w", err)
-			}
-			// Write and hash have consumed the shared buffer. Reuse it now so
-			// the next bounded read can hide the current durable checkpoint.
-			if readErr == nil {
-				if err := startNextRead(); err != nil {
-					return Result{}, err
-				}
-			}
-			syncStartedAt := time.Now()
-			syncErr := writeHandle.Sync(ctx)
-			addPerformanceDuration(&current.Performance.SyncNanoseconds, time.Since(syncStartedAt))
-			if syncErr != nil {
-				return Result{}, syncErr
-			}
-			current.Offset += uint64(n)
-			statStartedAt := time.Now()
-			partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-			addPerformanceDuration(&current.Performance.StatNanoseconds, time.Since(statStartedAt))
-			if statErr != nil {
-				return Result{}, statErr
-			}
-			if partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != current.Offset {
-				return Result{}, planError(domain.CodeConflict, "stream_copy", plan.Part, "part size does not match streamed offset", domain.RetryNever)
-			}
-			current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
-			current.ChecksumState, err = marshalChecksum(hasher)
-			if err != nil {
-				return Result{}, err
-			}
-			current.Performance.Chunks++
-			checkpointStartedAt := time.Now()
-			checkpointErr := worker.journal.Save(ctx, current)
-			addPerformanceDuration(&current.Performance.CheckpointNanoseconds, time.Since(checkpointStartedAt))
-			if checkpointErr != nil {
-				return Result{}, fmt.Errorf("execute transfer: save streaming checkpoint: %w", checkpointErr)
-			}
-		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				return Result{}, readErr
-			}
-			break
-		}
-		if n == 0 {
-			return Result{}, errors.New("execute transfer: source read made no progress")
-		}
+		return Result{}, err
 	}
 	if plan.Source.Fingerprint.Size != nil && current.Offset != *plan.Source.Fingerprint.Size {
 		return Result{}, planError(domain.CodeConflict, "stream_copy", plan.Source.Location, "source size changed during transfer", domain.RetryAfterConflict)
@@ -689,7 +491,7 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	if err := worker.journal.Save(ctx, current); err != nil {
 		return Result{}, err
 	}
-	destinationChecksum, err := verifyFile(ctx, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+	destinationChecksum, err := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
 	if err != nil {
 		return Result{}, err
 	}
@@ -704,6 +506,9 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 }
 
 func checkpointMatchesPlan(checkpoint Checkpoint, plan Plan) bool {
+	if plan.Source.Kind != domain.EntryDirectory && (len(checkpoint.DirectoryChildren) != 0 || checkpoint.DirectoryPerformance != nil) {
+		return false
+	}
 	if checkpoint.Part != plan.Part || !reflect.DeepEqual(checkpoint.SourceFingerprint, plan.Source.Fingerprint) {
 		return false
 	}
@@ -764,6 +569,10 @@ func (worker *Worker) closeAndRefreshCheckpoint(ctx context.Context, destination
 }
 
 func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider providerapi.Provider, destination providerapi.MutableProvider, checkpoint Checkpoint, buffer []byte) (result Result, returnErr error) {
+	commitStarted := time.Now()
+	if checkpoint.Performance == nil {
+		checkpoint.Performance = &TransferPerformance{}
+	}
 	preserved := false
 	preservationUnknown := false
 	defer func() {
@@ -775,8 +584,9 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	partEntry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
 	if err != nil {
 		if checkpoint.Phase == PhaseCommitting && domain.IsCode(err, domain.CodeNotFound) {
-			proved, proofErr := worker.proveCommitted(ctx, plan, destinationProvider, plan.Final, checkpoint.ChecksumHex, buffer)
+			proved, proofErr := worker.proveCommitted(ctx, plan, &checkpoint, destinationProvider, plan.Final, checkpoint.ChecksumHex, buffer)
 			if proofErr == nil && proved {
+				addPerformanceDuration(&checkpoint.Performance.CommitNanoseconds, time.Since(commitStarted))
 				checkpoint.Phase = PhaseCommitted
 				checkpoint.Outcome = OutcomeCompleted
 				checkpoint.Final = plan.Final
@@ -816,7 +626,7 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
 		}
 		if !backupExists {
-			contentSHA, hashErr := verifyFile(ctx, destinationProvider, final, plan.ExpectedDestination.Fingerprint, buffer)
+			contentSHA, hashErr := worker.verifyFile(ctx, plan, &checkpoint, destinationProvider, final, plan.ExpectedDestination.Fingerprint, buffer)
 			if hashErr != nil {
 				return Result{}, hashErr
 			}
@@ -835,11 +645,24 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 		}
 		expectedSize := int64(*plan.ExpectedDestination.Fingerprint.Size) //nolint:gosec // validated below the 2 GiB preservation ceiling
 		preserveCtx, cancelPreserve := context.WithTimeout(ctx, preservationTimeout)
+		preserveCtx, finishPreserveControl := controlledStreamContext(preserveCtx, worker.control, cloneCheckpoint(checkpoint))
+		admission := &streamAdmission{worker: worker, plan: plan}
+		readOptions := providerapi.ReadStreamOptions{MaxBytes: providerapi.MaxReadAheadBytes}
+		if plan.DestinationEndpoint.Kind == domain.EndpointSSH {
+			readOptions.BeforeRead = admission.gate(plan.DestinationEndpoint.ID)
+		}
+		if worker.scheduler != nil {
+			readOptions.MaxRequestBytes = worker.scheduler.QuantumBytes()
+		}
 		preserveResult, preserveErr := preserver.PreserveDestination(preserveCtx, providerapi.PreserveDestinationRequest{
-			Source: final, Backup: plan.PreservedDestination, ExpectedFingerprint: plan.ExpectedDestination.Fingerprint,
+			ReadStream: readOptions,
+			Source:     final, Backup: plan.PreservedDestination, ExpectedFingerprint: plan.ExpectedDestination.Fingerprint,
 			ExpectedSHA256: string(plan.ExpectedDestination.ContentSHA256), ExpectedSize: expectedSize, MaxBytes: 2 * 1024 * 1024 * 1024,
 		})
+		preserveErr = finishPreserveControl(preserveErr)
 		cancelPreserve()
+		checkpoint.Performance.ScheduledBytes = saturatingAdd(checkpoint.Performance.ScheduledBytes, admission.bytes.Load(), ^uint64(0))
+		checkpoint.Performance.SchedulerNanoseconds = saturatingAdd(checkpoint.Performance.SchedulerNanoseconds, admission.waited.Load(), ^uint64(0))
 		preserved = preserveResult.BackupPresent
 		preservationUnknown = preserveResult.EffectUnknown
 		if preserveErr != nil {
@@ -867,7 +690,7 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 			return Result{}, finalErr
 		}
 		if finalExists {
-			proved, proofErr := proveCommitted(ctx, destinationProvider, final, checkpoint.ChecksumHex, buffer)
+			proved, proofErr := worker.proveCommitted(ctx, plan, &checkpoint, destinationProvider, final, checkpoint.ChecksumHex, buffer)
 			if proofErr != nil || !proved {
 				checkpoint.Phase = PhaseWaitingConflict
 				checkpoint.Outcome = OutcomeWaitingConflict
@@ -899,6 +722,7 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 			if err := destination.Remove(ctx, providerapi.RemoveRequest{Location: plan.Part, Expected: &partEntry.Fingerprint}); err != nil {
 				return Result{}, err
 			}
+			addPerformanceDuration(&checkpoint.Performance.CommitNanoseconds, time.Since(commitStarted))
 			checkpoint.Phase = PhaseCommitted
 			checkpoint.Outcome = OutcomeSkipped
 			checkpoint.Final = final
@@ -933,6 +757,7 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 		}
 	}
 	_, renameErr := destination.Rename(ctx, renameRequest)
+	committedProof := false
 	if renameErr != nil {
 		if plan.Version == 2 && plan.Origin == OriginSyncBack && (domain.IsCode(renameErr, domain.CodeConflict) || domain.IsCode(renameErr, domain.CodeAlreadyExists)) {
 			checkpoint.Phase = PhaseWaitingConflict
@@ -942,18 +767,23 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 			}
 			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
 		}
-		proved, proofErr := worker.proveCommitted(ctx, plan, destinationProvider, final, checkpoint.ChecksumHex, buffer)
+		proved, proofErr := worker.proveCommitted(ctx, plan, &checkpoint, destinationProvider, final, checkpoint.ChecksumHex, buffer)
 		if proofErr != nil || !proved {
 			return Result{}, renameErr
 		}
+		committedProof = true
 	}
-	checksum, err := worker.verifyCommittedFile(ctx, plan, destinationProvider, final, checkpoint.ChecksumHex, buffer)
+	checksum := checkpoint.ChecksumHex
+	if !committedProof {
+		checksum, err = worker.verifyCommittedFile(ctx, plan, &checkpoint, destinationProvider, final, checkpoint.ChecksumHex, buffer)
+	}
 	if err != nil {
 		return Result{}, err
 	}
 	if checksum != checkpoint.ChecksumHex {
 		return Result{}, planError(domain.CodeConflict, "commit_copy", final, "committed final checksum differs from verified part", domain.RetryNever)
 	}
+	addPerformanceDuration(&checkpoint.Performance.CommitNanoseconds, time.Since(commitStarted))
 	checkpoint.Phase = PhaseCommitted
 	checkpoint.Outcome = OutcomeCompleted
 	checkpoint.Final = final
@@ -995,6 +825,9 @@ func validateExecution(plan Plan) error {
 	}
 	if plan.BufferBytes == 0 || plan.BufferBytes > 4*1024*1024 {
 		return errors.New("execute transfer: buffer budget is outside 1..4MiB")
+	}
+	if !plan.StreamPolicy.valid() {
+		return errors.New("execute transfer: stream policy exceeds bounded budgets")
 	}
 	if plan.Verification != VerifySHA256 {
 		return errors.New("execute transfer: unsupported verification")
@@ -1140,66 +973,18 @@ func writeAll(ctx context.Context, handle providerapi.WriteHandle, data []byte) 
 	return nil
 }
 
-func verifyFile(ctx context.Context, implementation providerapi.Provider, location domain.Location, expected domain.Fingerprint, buffer []byte) (string, error) {
-	request := providerapi.OpenReadRequest{Location: location}
-	if expected.Strength() != domain.FingerprintWeak {
-		request.ExpectedFingerprint = &expected
-	}
-	handle, err := implementation.OpenRead(ctx, request)
-	if err != nil {
-		return "", err
-	}
-	defer func() { _ = handle.Close(context.Background()) }()
-	hasher := sha256.New()
-	for {
-		n, readErr := handle.Read(ctx, buffer)
-		if n < 0 || n > len(buffer) {
-			return "", errors.New("verify transfer: provider returned invalid read count")
-		}
-		if n > 0 {
-			if _, err := hasher.Write(buffer[:n]); err != nil {
-				return "", err
-			}
-		}
-		if readErr != nil {
-			if !errors.Is(readErr, io.EOF) {
-				return "", readErr
-			}
-			break
-		}
-		if n == 0 {
-			return "", errors.New("verify transfer: read made no progress")
-		}
-	}
-	if err := handle.Close(ctx); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(hasher.Sum(nil)), nil
-}
-
-func proveCommitted(ctx context.Context, implementation providerapi.Provider, final domain.Location, checksum string, buffer []byte) (bool, error) {
-	actual, err := verifyFile(ctx, implementation, final, domain.Fingerprint{}, buffer)
-	if err != nil {
-		if domain.IsCode(err, domain.CodeNotFound) {
-			return false, nil
-		}
-		return false, err
-	}
-	return actual == checksum, nil
-}
-
-func (worker *Worker) verifyCommittedFile(ctx context.Context, plan Plan, implementation providerapi.Provider, location domain.Location, checksum string, buffer []byte) (string, error) {
+func (worker *Worker) verifyCommittedFile(ctx context.Context, plan Plan, current *Checkpoint, implementation providerapi.Provider, location domain.Location, checksum string, buffer []byte) (string, error) {
 	if plan.Route == RouteLevel2Direct {
 		if plan.Level2Preflight == nil || plan.Level2Preflight.Result == nil {
 			return "", errors.New("verify committed direct: preflight evidence is absent")
 		}
 		return worker.verifyLevel2(ctx, plan, location, plan.Level2Preflight.Result.SourceSize, checksum)
 	}
-	return verifyFile(ctx, implementation, location, domain.Fingerprint{}, buffer)
+	return worker.verifyFile(ctx, plan, current, implementation, location, domain.Fingerprint{}, buffer)
 }
 
-func (worker *Worker) proveCommitted(ctx context.Context, plan Plan, implementation providerapi.Provider, final domain.Location, checksum string, buffer []byte) (bool, error) {
-	actual, err := worker.verifyCommittedFile(ctx, plan, implementation, final, checksum, buffer)
+func (worker *Worker) proveCommitted(ctx context.Context, plan Plan, checkpoint *Checkpoint, implementation providerapi.Provider, final domain.Location, checksum string, buffer []byte) (bool, error) {
+	actual, err := worker.verifyCommittedFile(ctx, plan, checkpoint, implementation, final, checksum, buffer)
 	if err != nil {
 		if domain.IsCode(err, domain.CodeNotFound) {
 			return false, nil
@@ -1233,10 +1018,23 @@ func unmarshalChecksum(hasher hash.Hash, state []byte) error {
 }
 
 func cloneCheckpoint(checkpoint Checkpoint) Checkpoint {
+	children := checkpoint.DirectoryChildren
+	checkpoint.DirectoryChildren = nil
+	if len(children) > 0 {
+		checkpoint.DirectoryChildren = append([]DirectoryChildCheckpoint(nil), children...)
+		for i := range checkpoint.DirectoryChildren {
+			child := &checkpoint.DirectoryChildren[i].Checkpoint
+			child.SourceFingerprint = cloneFingerprint(child.SourceFingerprint)
+			child.PartFingerprint = cloneFingerprint(child.PartFingerprint)
+			child.ChecksumState = append([]byte(nil), child.ChecksumState...)
+			child.Performance = cloneTransferPerformance(child.Performance)
+		}
+	}
 	checkpoint.SourceFingerprint = cloneFingerprint(checkpoint.SourceFingerprint)
 	checkpoint.PartFingerprint = cloneFingerprint(checkpoint.PartFingerprint)
 	checkpoint.ChecksumState = append([]byte(nil), checkpoint.ChecksumState...)
 	checkpoint.Performance = cloneTransferPerformance(checkpoint.Performance)
+	checkpoint.DirectoryPerformance = cloneTransferPerformance(checkpoint.DirectoryPerformance)
 	return checkpoint
 }
 

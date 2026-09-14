@@ -158,6 +158,13 @@ type jobLocationOutput struct {
 }
 
 type jobPerformanceOutput struct {
+	StreamingNanoseconds uint64 `json:"streaming_nanoseconds"`
+	VerifyNanoseconds    uint64 `json:"verify_nanoseconds"`
+	CommitNanoseconds    uint64 `json:"commit_nanoseconds"`
+	SchedulerNanoseconds uint64 `json:"scheduler_nanoseconds"`
+	VerifiedBytes        uint64 `json:"verified_bytes"`
+	ScheduledBytes       uint64 `json:"scheduled_bytes"`
+
 	Chunks                uint64 `json:"chunks"`
 	ReadNanoseconds       uint64 `json:"read_nanoseconds"`
 	WriteNanoseconds      uint64 `json:"write_nanoseconds"`
@@ -167,6 +174,8 @@ type jobPerformanceOutput struct {
 }
 
 type jobViewOutput struct {
+	DurableBytes   uint64                `json:"durable_bytes"`
+	VerifiedBytes  uint64                `json:"verified_bytes"`
 	Snapshot       jobSnapshotOutput     `json:"snapshot"`
 	Kind           string                `json:"kind"`
 	Route          string                `json:"route"`
@@ -219,6 +228,13 @@ func newJobPerformanceOutput(performance *transfer.TransferPerformance) *jobPerf
 		return nil
 	}
 	return &jobPerformanceOutput{
+		StreamingNanoseconds: performance.StreamingNanoseconds,
+		VerifyNanoseconds:    performance.VerifyNanoseconds,
+		CommitNanoseconds:    performance.CommitNanoseconds,
+		SchedulerNanoseconds: performance.SchedulerNanoseconds,
+		VerifiedBytes:        performance.VerifiedBytes,
+		ScheduledBytes:       performance.ScheduledBytes,
+
 		Chunks:                performance.Chunks,
 		ReadNanoseconds:       performance.ReadNanoseconds,
 		WriteNanoseconds:      performance.WriteNanoseconds,
@@ -242,6 +258,8 @@ func jobViewOutputs(views []transfer.JobView) []jobViewOutput {
 			Final:          newJobLocationOutput(view.Final),
 			Phase:          string(view.Phase),
 			Bytes:          view.Bytes,
+			DurableBytes:   view.DurableBytes,
+			VerifiedBytes:  view.VerifiedBytes,
 			BytesTotal:     view.BytesTotal,
 			Items:          view.Items,
 			WaitingReason:  view.WaitingReason,

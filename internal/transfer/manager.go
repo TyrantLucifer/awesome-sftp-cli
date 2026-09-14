@@ -50,6 +50,8 @@ type JobView struct {
 	Final          domain.Location      `json:"final"`
 	Phase          Phase                `json:"phase,omitempty"`
 	Bytes          uint64               `json:"bytes"`
+	DurableBytes   uint64               `json:"durable_bytes"`
+	VerifiedBytes  uint64               `json:"verified_bytes,omitempty"`
 	BytesTotal     *uint64              `json:"bytes_total,omitempty"`
 	Items          uint64               `json:"items"`
 	WaitingReason  string               `json:"waiting_reason,omitempty"`
@@ -86,6 +88,7 @@ type Manager struct {
 	leases           map[domain.JobID]func()
 	queueLeases      map[domain.JobID]*ResourceLease
 	transitionErrors map[domain.JobID]error
+	progress         map[domain.JobID]TransferProgress
 	workers          int
 }
 
@@ -155,6 +158,7 @@ func NewManager(config ManagerConfig) (*Manager, error) {
 		leases:           make(map[domain.JobID]func()),
 		queueLeases:      make(map[domain.JobID]*ResourceLease),
 		transitionErrors: make(map[domain.JobID]error),
+		progress:         make(map[domain.JobID]TransferProgress),
 		workers:          config.MaxConcurrent,
 	}, nil
 }
@@ -632,6 +636,7 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 		if checkpoint != nil {
 			view.Phase = checkpoint.Phase
 			view.Bytes = checkpoint.Offset
+			view.DurableBytes = checkpoint.Offset
 			view.Final = checkpoint.Final
 			if checkpoint.ActualRoute != "" {
 				view.Route = checkpoint.ActualRoute
@@ -639,10 +644,25 @@ func (manager *Manager) JobViews(ctx context.Context, limit int) ([]JobView, err
 			view.DowngradedFrom = checkpoint.DowngradedFrom
 			view.RouteReason = checkpoint.RouteReason
 			view.Performance = checkpoint.Performance
+			if checkpoint.Performance != nil {
+				view.VerifiedBytes = checkpoint.Performance.VerifiedBytes
+			}
 			if plan.Source.Kind == domain.EntryDirectory {
 				view.Items = checkpoint.Items
 			}
 		}
+		manager.mu.Lock()
+		progress, active := manager.progress[snapshot.JobID]
+		if active {
+			view.Phase = progress.Phase
+			view.Bytes = max(view.Bytes, progress.Bytes)
+			view.DurableBytes = max(view.DurableBytes, progress.DurableBytes)
+			view.VerifiedBytes = max(view.VerifiedBytes, progress.VerifiedBytes)
+			if progress.Performance != nil {
+				view.Performance = cloneTransferPerformance(progress.Performance)
+			}
+		}
+		manager.mu.Unlock()
 		afterSequence := snapshot.NextEventSequence - 8
 		if afterSequence < 0 {
 			afterSequence = 0
@@ -772,6 +792,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		return
 	}
 	defer manager.finishExecution()
+	defer manager.clearProgress(jobID)
 	record, err := manager.store.GetPlan(manager.ctx, jobID)
 	if err != nil {
 		manager.fail(snapshot, fmt.Errorf("execute Job: load durable plan: %w", err))
@@ -817,7 +838,11 @@ func (manager *Manager) execute(jobID domain.JobID) {
 	} else if plan.Kind == OperationMove && plan.MoveStrategy == MoveAtomicRename {
 		result, executeErr = manager.executeAtomicMove(plan)
 	} else {
-		journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now}
+		journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now,
+			Observer: func(ctx context.Context, progress TransferProgress) error {
+				return manager.observeProgress(ctx, jobID, plan.Route, plan.Source.Kind == domain.EntryDirectory, progress)
+			},
+		}
 		worker := &Worker{
 			resolver: manager.resolver, journal: journal, sameHost: manager.sameHost,
 			level2: manager.level2, scheduler: manager.scheduler,
@@ -863,7 +888,11 @@ func (manager *Manager) execute(jobID domain.JobID) {
 				verificationPayload["downgraded_from"] = checkpoint.DowngradedFrom
 			}
 		}
-		verifying, transitionErr := manager.transition(current, job.StateVerifying, "job_verifying", verificationPayload)
+		verifying := current
+		var transitionErr error
+		if current.State != job.StateVerifying {
+			verifying, transitionErr = manager.transition(current, job.StateVerifying, "job_verifying", verificationPayload)
+		}
 		if transitionErr == nil {
 			terminalState := job.StateCompleted
 			eventKind := "job_completed"
@@ -1219,14 +1248,38 @@ func executionResourceUsage(plan Plan) ResourceUsage {
 	if plan.DestinationEndpoint.Kind == domain.EndpointSSH && plan.Route != RouteHelperSameHost {
 		writeWindowGoroutines = providerapi.MaxSFTPWriteWindowGoroutines
 	}
+	verifyMemory := uint64(0)
+	verifyGoroutines := uint32(0)
+	if (plan.SourceEndpoint.Kind == domain.EndpointSSH || plan.DestinationEndpoint.Kind == domain.EndpointSSH) && plan.Route != RouteHelperSameHost {
+		verifyMemory = uint64(providerapi.MaxReadAheadBytes)
+		verifyGoroutines = providerapi.MaxReadAheadBytes/(32<<10) + 2
+	}
+	writeMemory := uint64(0)
+	if writeWindowGoroutines > 0 {
+		writeMemory = uint64(providerapi.MaxSFTPWriteWindowRequests) * (32 << 10)
+	}
+	slots := uint32(1)
+	directoryOverhead := uint32(0)
+	validationMemory := uint64(0)
+	if plan.Source.Kind == domain.EntryDirectory && plan.StreamPolicy.DirectoryWorkers > 0 {
+		slots = uint32(directoryStreamWorkers(plan)) //nolint:gosec // directoryStreamWorkers returns only 1 or 2.
+		directoryOverhead = 2
+		validationMemory = streamPacketBytes
+	}
+	preservationMemory := uint64(0)
+	preservationGoroutines := uint32(0)
+	if plan.Version == 2 && plan.ExpectedDestination != nil && plan.ExpectedDestination.Presence == DestinationPresent && plan.DestinationEndpoint.Kind == domain.EndpointSSH {
+		preservationMemory = streamPacketBytes
+		preservationGoroutines = 1
+	}
 	return ResourceUsage{
 		ActiveJobs:      1,
 		Connections:     connections,
 		SSHProcesses:    connections,
 		HelperProcesses: helperProcesses,
-		FileDescriptors: 2 + 3*connections,
-		Goroutines:      2 + readAheadGoroutines + writeWindowGoroutines,
-		MemoryBytes:     uint64(plan.BufferBytes) + readAheadMemory,
+		FileDescriptors: 2*slots + 3*connections,
+		Goroutines:      slots*(2+max(readAheadGoroutines+writeWindowGoroutines, verifyGoroutines)) + directoryOverhead + preservationGoroutines,
+		MemoryBytes:     uint64(slots)*(uint64(plan.BufferBytes)+max(readAheadMemory+writeMemory, verifyMemory)) + validationMemory + preservationMemory,
 	}
 }
 

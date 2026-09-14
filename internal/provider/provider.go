@@ -8,9 +8,9 @@ import (
 
 const (
 	// MaxReadAheadBytes bounds optional Provider-owned request windows. The
-	// standard SFTP implementation uses this budget for at most 32 concurrent
+	// standard SFTP implementation uses this budget for at most 64 concurrent
 	// 32 KiB protocol reads.
-	MaxReadAheadBytes uint32 = 1 << 20
+	MaxReadAheadBytes uint32 = 2 << 20
 
 	// MaxSFTPWriteWindowRequests bounds the standard SFTP per-file write
 	// pipeline. The request payloads remain backed by the caller's bounded

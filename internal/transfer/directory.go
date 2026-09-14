@@ -235,6 +235,9 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 	if err := worker.journal.Save(ctx, checkpoint); err != nil {
 		return Result{}, err
 	}
+	if plan.StreamPolicy.DirectoryWorkers > 0 {
+		return worker.executeDirectoryStreams(ctx, plan, control, checkpoint, resuming, source, destinationProvider, destination)
+	}
 	discoveryContext, cancelDiscovery := context.WithCancel(ctx)
 	defer cancelDiscovery()
 	items, failures, err := DiscoverDirectory(discoveryContext, source, plan.Source.Location, *plan.Discovery)
@@ -258,7 +261,7 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 	for item := range items {
 		destinationLocation := childLocation(final, item.RelativePath)
 		if resuming && checkpoint.DirectoryRootOwned {
-			completed, bytes, err := validateOwnedDirectoryItem(ctx, source, destinationProvider, item, destinationLocation, validationBuffer)
+			completed, bytes, err := worker.validateOwnedDirectoryItem(ctx, plan, source, destinationProvider, item, destinationLocation, validationBuffer)
 			if err != nil {
 				return Result{}, err
 			}
@@ -410,8 +413,9 @@ func appendItemResult(result *Result, item ItemResult) {
 	result.ManifestTruncated++
 }
 
-func validateOwnedDirectoryItem(
+func (worker *Worker) validateOwnedDirectoryItem(
 	ctx context.Context,
+	plan Plan,
 	source providerapi.Provider,
 	destination providerapi.Provider,
 	item DiscoveredItem,
@@ -439,11 +443,11 @@ func validateOwnedDirectoryItem(
 		if err != nil {
 			return false, 0, err
 		}
-		sourceChecksum, err := verifyFile(ctx, source, item.Entry.Location, item.Entry.Fingerprint, buffer)
+		sourceChecksum, err := worker.verifyFile(ctx, plan, nil, source, item.Entry.Location, item.Entry.Fingerprint, buffer)
 		if err != nil {
 			return false, 0, err
 		}
-		destinationChecksum, err := verifyFile(ctx, destination, destinationLocation, destinationEntry.Fingerprint, buffer)
+		destinationChecksum, err := worker.verifyFile(ctx, plan, nil, destination, destinationLocation, destinationEntry.Fingerprint, buffer)
 		if err != nil {
 			return false, 0, err
 		}

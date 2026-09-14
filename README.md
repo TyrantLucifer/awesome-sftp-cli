@@ -18,7 +18,8 @@ workspace.
 - Uses your system OpenSSH configuration, keys, agent, host-key policy,
   ProxyJump/ProxyCommand, and Kerberos/GSSAPI setup.
 - Runs copy, move, rename, and delete operations as durable background Jobs,
-  with a full bounded protocol window between standard SFTP checkpoints.
+  with separate bandwidth, request-window, and recovery budgets; independent
+  directory files can transfer concurrently.
 - Verifies transferred content before publishing the destination.
 - Previews text and images and supports editing or opening remote files locally.
 - Searches by filename or content with clear limits on large searches.

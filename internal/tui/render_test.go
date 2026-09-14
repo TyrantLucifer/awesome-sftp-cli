@@ -1001,3 +1001,11 @@ func (s *memorySurface) String() string {
 	}
 	return strings.Join(rows, "\n")
 }
+
+func TestJobStatusShowsReadbackProgressWhileVerifying(t *testing.T) {
+	view := transfer.JobView{Snapshot: jobstore.Snapshot{State: job.StateVerifying}, Phase: transfer.PhaseTransferred, VerifiedBytes: 32 << 20}
+	got := jobListStatus(view, jobProgressSample{})
+	if !strings.Contains(got, "32.0 MiB checked") {
+		t.Fatalf("verification status=%q", got)
+	}
+}

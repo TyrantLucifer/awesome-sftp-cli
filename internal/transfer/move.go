@@ -133,10 +133,11 @@ func (manager *Manager) finishMove(plan Plan, result Result) (bool, string) {
 			return false, "destination endpoint is unavailable for move verification"
 		}
 		buffer := make([]byte, int(plan.BufferBytes))
-		if verifyErr := verifyDirectoryMove(manager.ctx, source, destination, plan.Source.Location, result.Final, *plan.Discovery, buffer); verifyErr != nil {
+		verifier := &Worker{resolver: manager.resolver, scheduler: manager.scheduler, control: manager.control(plan.JobID)}
+		if verifyErr := verifier.verifyDirectoryMove(manager.ctx, plan, source, destination, plan.Source.Location, result.Final, *plan.Discovery, buffer); verifyErr != nil {
 			return false, safeMoveReason("directory verification failed", verifyErr)
 		}
-		if deleteErr := deleteVerifiedDirectory(manager.ctx, source, mutable, destination, plan.Source.Location, result.Final, *plan.Discovery, buffer, 0); deleteErr != nil {
+		if deleteErr := verifier.deleteVerifiedDirectory(manager.ctx, plan, source, mutable, destination, plan.Source.Location, result.Final, *plan.Discovery, buffer, 0); deleteErr != nil {
 			return false, safeMoveReason("directory source deletion was not proved", deleteErr)
 		}
 		return true, "source directory deletion proved"
@@ -157,8 +158,9 @@ func (manager *Manager) finishMove(plan Plan, result Result) (bool, string) {
 	return true, "source file deletion proved"
 }
 
-func verifyDirectoryMove(
+func (worker *Worker) verifyDirectoryMove(
 	ctx context.Context,
+	plan Plan,
 	source providerapi.Provider,
 	destination providerapi.Provider,
 	sourceRoot domain.Location,
@@ -184,7 +186,7 @@ func verifyDirectoryMove(
 				return planError(domain.CodeConflict, "verify_move", destinationLocation, "destination directory is missing or changed type", domain.RetryAfterConflict)
 			}
 		case domain.EntryFile:
-			if err := verifyMoveFile(ctx, source, destination, item.Entry, destinationLocation, buffer); err != nil {
+			if err := worker.verifyMoveFile(ctx, plan, source, destination, item.Entry, destinationLocation, buffer); err != nil {
 				return err
 			}
 		default:
@@ -194,8 +196,9 @@ func verifyDirectoryMove(
 	return <-failures
 }
 
-func verifyMoveFile(
+func (worker *Worker) verifyMoveFile(
 	ctx context.Context,
+	plan Plan,
 	source providerapi.Provider,
 	destination providerapi.Provider,
 	sourceEntry domain.Entry,
@@ -206,11 +209,11 @@ func verifyMoveFile(
 	if err != nil {
 		return err
 	}
-	sourceChecksum, err := verifyFile(ctx, source, sourceEntry.Location, sourceEntry.Fingerprint, buffer)
+	sourceChecksum, err := worker.verifyFile(ctx, plan, nil, source, sourceEntry.Location, sourceEntry.Fingerprint, buffer)
 	if err != nil {
 		return err
 	}
-	destinationChecksum, err := verifyFile(ctx, destination, destinationLocation, destinationEntry.Fingerprint, buffer)
+	destinationChecksum, err := worker.verifyFile(ctx, plan, nil, destination, destinationLocation, destinationEntry.Fingerprint, buffer)
 	if err != nil {
 		return err
 	}
@@ -220,8 +223,9 @@ func verifyMoveFile(
 	return nil
 }
 
-func deleteVerifiedDirectory(
+func (worker *Worker) deleteVerifiedDirectory(
 	ctx context.Context,
+	plan Plan,
 	source providerapi.Provider,
 	mutable providerapi.MutableProvider,
 	destination providerapi.Provider,
@@ -250,14 +254,14 @@ func deleteVerifiedDirectory(
 			destinationLocation := childLocation(destinationDirectory, relativeName)
 			switch entry.Kind {
 			case domain.EntryFile:
-				if err := verifyMoveFile(ctx, source, destination, entry, destinationLocation, buffer); err != nil {
+				if err := worker.verifyMoveFile(ctx, plan, source, destination, entry, destinationLocation, buffer); err != nil {
 					return err
 				}
 				if err := removeWithPostcondition(ctx, source, mutable, entry); err != nil {
 					return err
 				}
 			case domain.EntryDirectory:
-				if err := deleteVerifiedDirectory(ctx, source, mutable, destination, entry.Location, destinationLocation, budget, buffer, depth+1); err != nil {
+				if err := worker.deleteVerifiedDirectory(ctx, plan, source, mutable, destination, entry.Location, destinationLocation, budget, buffer, depth+1); err != nil {
 					return err
 				}
 			default:

@@ -31,6 +31,8 @@ type PreserveDestinationResult struct {
 }
 
 type PreserveDestinationRequest struct {
+	// ReadStream applies network admission while proving the preserved content.
+	ReadStream          ReadStreamOptions `json:"-"`
 	Source              domain.Location
 	Backup              domain.Location
 	ExpectedFingerprint domain.Fingerprint
