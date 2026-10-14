@@ -102,7 +102,7 @@ jobs:
           } >"${record}"
           test ! -s "${porcelain}"
       - name: Upload provenance
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provenance-${{ env.LEG }}
           path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
@@ -169,7 +169,7 @@ jobs:
           } >"${record}"
           test ! -s "${porcelain}"
       - name: Upload provenance
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provenance-${{ env.LEG }}
           path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
@@ -248,7 +248,7 @@ jobs:
           test -s "${directory}/${{ matrix.artifact }}.sha256"
           test -s "${directory}/${{ matrix.artifact }}.version-m"
       - name: Upload reproducible artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: repro-${{ matrix.artifact }}-${{ matrix.replica }}
           path: ${{ runner.temp }}/repro/${{ matrix.artifact }}
@@ -300,7 +300,7 @@ jobs:
           } >"${record}"
           test ! -s "${porcelain}"
       - name: Upload provenance
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provenance-${{ env.LEG }}
           path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
@@ -364,7 +364,7 @@ jobs:
           cmp -s "${expected}" "${actual}"
           test "$(wc -l <"${comparison}" | tr -d '[:space:]')" -eq 4
       - name: Upload comparison evidence
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: nightly-reproducibility-comparison
           path: ${{ runner.temp }}/accepted-sha256.txt
@@ -406,7 +406,7 @@ jobs:
           } >"${record}"
           test ! -s "${porcelain}"
       - name: Upload provenance
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provenance-${{ env.LEG }}
           path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
@@ -597,7 +597,7 @@ jobs:
           } >"${record}"
           test ! -s "${porcelain}"
       - name: Upload comparison provenance
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: provenance-${{ env.LEG }}
           path: ${{ runner.temp }}/provenance/${{ env.LEG }}.*
@@ -633,7 +633,7 @@ jobs:
           make bench-transfer-ssh 2>&1 | tee "${AMSFTP_PERFORMANCE_OUT}/comparison.log"
       - name: Upload timings and protocol byte counts
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: transfer-performance
           path: ${{ runner.temp }}/transfer-performance
