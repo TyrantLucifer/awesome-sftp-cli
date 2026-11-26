@@ -87,9 +87,9 @@ make ci
 ## 文档规则
 
 - `README.md` 与 `README.zh-CN.md`：用户现在能做什么、如何开始、当前限制。
-- `docs/user/`：安装、入门、日常使用、传输、预览/编辑/搜索、配置和参考。
-- `docs/help/`：按用户症状组织的故障排查与恢复。
-- `docs/architecture/`：当前架构、安全边界和核心数据流。
+- `docs/user/`：安装（`installation.md`）、使用指南（`guide.md`）以及配置与参考（`reference.md`）。
+- `docs/help/`：故障排查与恢复（`troubleshooting.md`）。
+- `docs/architecture/`：整体技术设计、架构与安全边界（`design.md`）。
 - `docs/zh-CN/`：与英文文档一一对应，目录和章节顺序保持一致。
 - `docs/man/amsftp.1`：由公开 CLI facts 生成并校验的英文 man 手册。
 

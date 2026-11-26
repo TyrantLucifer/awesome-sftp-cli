@@ -2,31 +2,22 @@
 
 [English](../README.md) | 简体中文
 
-请从要完成的任务进入对应文档。英文文档是规范来源；中文文档使用相同结构，并随
-英文文档同步更新。
+文档内容以英文原版为准，中文文档保持相同目录与章节结构并同步更新。
 
-## 使用 AMSFTP
+## 使用指南
 
-1. [安装或升级 AMSFTP](user/installation.md)
-2. [完成第一次连接和传输](user/getting-started.md)
-3. [熟悉双栏工作区](user/everyday-use.md)
-4. [复制、移动、重命名、删除和恢复传输](user/transfers.md)
-5. [预览、编辑、打开和搜索](user/preview-edit-search.md)
-6. [配置 AMSFTP](user/configuration.md)
-7. [查询按键和命令](user/reference.md)
+1. [安装、升级与卸载](user/installation.md)
+2. [使用指南：浏览、传输、编辑与搜索](user/guide.md)
+3. [配置、快捷键与命令参考](user/reference.md)
 
-## 获取帮助
+## 故障排查
 
-- [按现象排查问题](help/troubleshooting.md)
-- [恢复 daemon、Job、升级或工作区状态](help/recovery.md)
+- [故障排查与恢复](help/troubleshooting.md)
 
-## 了解设计
+## 技术设计
 
-- [架构概览](architecture/overview.md)
-- [安全模型](architecture/security.md)
+- [整体技术设计与架构](architecture/design.md)
 
-## man 手册
+## 手册页
 
-- [`amsftp(1)`（英文）](../man/amsftp.1)
-
-man 手册记录已安装命令的表面。需要分步操作说明时，请从上面的用户指南开始。
+- [`amsftp(1)`（英文）](../man/amsftp.1) — 由公开命令行定义生成。

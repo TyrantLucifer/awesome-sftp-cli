@@ -1,212 +1,145 @@
-# 故障排查
+# 故障排查与恢复
 
 [English](../../help/troubleshooting.md)
 
-大多数 AMSFTP 问题都可以在不修改文件、不重启进程的情况下定位。先运行这些只读
-检查：
+AMSFTP 采用保守恢复原则：只要无法证明一次写入或删除是否完成，就会保留现场并等待
+人工确认，而不会盲目重试或靠猜。
+
+## 先做只读排查
+
+大多数问题都可以在不改文件、不重启进程的情况下先定位：
 
 ```sh
 amsftp --version
 amsftp daemon status --format json
 amsftp doctor --format json
+amsftp doctor --endpoint work --format json   # 涉及某台 SSH 主机时补充检查
 ```
 
-如果问题与某台 SSH 主机有关，再检查对应 Endpoint：
+`doctor` 是严格只读命令，不会修改 SSH 信任关系、修复数据库或上传任何信息。
+
+**崩溃或传输失败后，在动手之前记住三条：**
+
+1. 不要对同一批文件重复发起新的复制、移动、删除或编辑任务。
+2. 记下错误码、request ID 与 Job ID。
+3. **切勿**手动删除 SQLite 数据库、WAL 文件、控制 socket、`.part` 临时文件或工作区
+   备份——这些文件是 AMSFTP 判断能否安全续传的依据。
+
+## 连接、SSH 与认证问题
+
+**远端主机打不开：** AMSFTP 直接复用系统 OpenSSH 别名，先在外部直接测试：
 
 ```sh
-amsftp doctor --endpoint work --format json
+/usr/bin/ssh work
+amsftp doctor --endpoint work
 ```
 
-`doctor` 不会修复状态、迁移数据、修改 SSH 信任关系或上传报告。Endpoint 检查也
-不会弹出交互式认证，因此可能仍需手动登录一次 SSH。
+请核对 `~/.ssh/config` 中是否存在该别名、远端路径是否为绝对路径（`work:/srv/project`）、
+服务端是否启用了 SFTP subsystem，以及跳板机、VPN、SSH Agent 或 Kerberos 票据是否正常。
 
-## AMSFTP 无法启动
+**主机密钥告警：** 请通过独立可信渠道核对新指纹，不要为了消掉提示而删除
+`known_hosts` 或关闭主机密钥校验。待 `/usr/bin/ssh work` 按正常策略能够连通后，再
+重试 AMSFTP。
 
-先验证配置：
+**反复要求认证或任务停在 `waiting_auth`：** 先在 `/usr/bin/ssh work` 中完成登录或
+刷新 Agent / Kerberos 票据。后台任务需要交互回答而当前没有 TUI 连接时，它会暂停
+等待，绝不保存或猜测密码——打开 TUI 完成认证后继续任务即可。
+
+## 启动、权限与配置错误
+
+**AMSFTP 拒绝启动：**
 
 ```sh
 amsftp config validate
 amsftp config print-effective
 ```
 
-如果错误提到安装路径不可信、运行目录、所有者、权限、ACL 或符号链接，不要把目录
-设为所有人可写来绕过检查。请重新运行可信来源的安装器。如果安装器要求使用受管
-根目录，请让管理员严格按输出创建对应的私有路径，再重新安装。
+- **未知配置字段：** 修正或删掉报错指出的键名；严格 JSON 校验会主动拦截拼写错误。
+- **路径、所有者、权限、ACL 或符号链接不安全：** 切勿通过 `chmod 777` 放宽目录权限来
+  绕过检查。请重新运行官方安装脚本；若提示需要自定义私有数据目录，请让管理员严格按
+  输出创建目录后再安装。
+- **文件报 `permission_denied`：** 检查本地或远端文件权限，不要用 `root` 运行 AMSFTP
+  （`root` 会使用另一套数据目录与 SSH 身份）。
+- **`protocol_incompatible`：** 客户端、daemon 或本地数据来自不兼容版本。请完成升级
+  或重装同一套版本。
 
-AMSFTP 会主动拒绝未知配置项。请只修正或删除错误中指出的字段，不必把整个配置
-文件重置。支持的配置项和优先级见[配置说明](../user/configuration.md)。
+## 中断的任务、冲突与编辑恢复
 
-## 无法打开远端位置
-
-AMSFTP 使用系统 OpenSSH 能识别的主机别名。先在 AMSFTP 之外测试同一个别名：
-
-```sh
-/usr/bin/ssh work
-```
-
-然后运行：
-
-```sh
-amsftp doctor --endpoint work
-```
-
-常见原因包括：
-
-- `~/.ssh/config` 中没有这个别名，或它展开后的配置和预期不同；
-- 远端路径不是绝对路径（`work:/srv/project` 才是有效格式）；
-- 远端账号不能使用 SFTP subsystem；
-- 跳板机、VPN、DNS、SSH Agent 或 Kerberos 票据不可用；
-- 服务器断开连接或拒绝访问。
-
-请先解决 OpenSSH 连接问题。AMSFTP 不维护另一套 SSH 配置或凭据存储。
-
-## OpenSSH 报告主机密钥异常
-
-先停止连接，通过可信且独立的渠道核对新指纹。不要为了消除提示而删除
-`known_hosts`、关闭主机密钥检查，或直接接受发生变化的密钥。
-
-当 `/usr/bin/ssh work` 已能按你的日常安全策略正常连接后，再重试 AMSFTP。
-
-## 缺少认证或反复要求认证
-
-在普通 SSH 会话中完成首次认证或续期认证：
-
-```sh
-/usr/bin/ssh work
-```
-
-确认 SSH Agent 中有预期的密钥，或对应 Kerberos 票据仍然有效。如果 Job 需要
-交互式回答、但当前没有可信客户端，AMSFTP 会进入等待，不会保存或猜测答案。打开
-TUI 完成认证，必要时恢复该 Job。
-
-AMSFTP 不会把密码、私钥、Agent 内容、Kerberos 票据或认证回答写入配置、数据库、
-Job、日志或支持包。
-
-## daemon 不可用，或 TUI 反复重连
-
-先查看 daemon 状态，不要急着替换它：
-
-```sh
-amsftp daemon status
-amsftp doctor
-```
-
-如果 daemon 只是停止了，正常启动即可：
-
-```sh
-amsftp daemon start
-```
-
-不要手工删除控制 socket，也不要终止身份不明的占用进程。AMSFTP 在使用 socket
-前会校验它的所有者和对端用户。升级期间，其他客户端可能会短暂等待旧 daemon
-释放实例，再连接新 daemon。
-
-如果客户端与 daemon 的版本不兼容，请完成升级，或重新安装同一个当前版本，确保
-两者来自同一套安装。
-
-## Job 没有进展
-
-列出 Job，并查看目标 Job 最近的事件：
+查看卡住或中断的任务及事件：
 
 ```sh
 amsftp job list --limit 50
-amsftp job events <job-id> --after 0 --limit 50
+amsftp job events <job-id> --after 0 --limit 100
 ```
 
-根据报告的状态选择下一步：
-
-| 状态或提示 | 处理方式 |
+| 状态 / 报错 | 处理方式 |
 | --- | --- |
-| `paused` | 准备好后执行 `amsftp job resume <job-id>`。 |
-| 需要认证 | 恢复 OpenSSH 认证会话，然后继续 Job。 |
-| 冲突 | 刷新两端，并明确选择保留、替换、重命名或跳过。 |
-| 连接中断或超时 | 恢复网络或服务器，查看事件后继续原来的 Job。 |
-| 资源不足 | 释放提示中的磁盘、配额或并发资源，再继续。 |
-| 能力丢失或不支持 | 重新连接，让 AMSFTP 改用标准 SFTP 或其他受支持路径。 |
+| `paused` | 在 TUI 中按 `U`，或执行 `amsftp job resume <job-id>` 继续。 |
+| `waiting_auth` | 恢复 OpenSSH 认证后继续任务。 |
+| `waiting_conflict` | 刷新两栏、核对两边文件后选择覆盖/跳过/自动重命名（`w`/`x`/`a`）。 |
+| 连接中断 / 超时 | 恢复网络或服务器后，查看事件并继续原任务（不要新建重复任务）。 |
+| 资源耗尽 | 释放磁盘空间或缓存配额，或等待其他活跃任务完成后再继续。 |
+| 服务端特性变化（`capability_lost`） | 重新连接，让 AMSFTP 重新检测服务器支持的 SFTP 扩展，必要时回退到基础 SFTP。 |
 
-不要因为第一次传输停住就再创建一份相同任务。现有 Job 已记录安全进度，继续前
-会检查来源、临时目标和最终目标。
+显式取消任务：`amsftp job cancel <job-id> --confirm <job-id>`。
 
-如果结果不确定或涉及破坏性操作，请先阅读[恢复指南](recovery.md)，不要直接处理
-临时文件。
+**移动结果不确定或残留临时文件：** 不要仅凭修改时间手动删除源文件或覆盖目标。请直接
+继续原任务，让 AMSFTP 核对源文件未改动、校验临时文件摘要，并确认目标是否已正式
+重命名到位。如果移动已完成复制但无法证明源文件删除成功，两边文件会一并保留，请核对
+后再自行处理。
 
-## 复制或编辑出现冲突
+**远端编辑中断：** 在 TUI 中按大写 `E` 进入编辑恢复界面，用 `K` 检查本地已修改的
+副本，再决定上传、另存为还是放弃。
 
-冲突表示来源或目标已经不同于 AMSFTP 制定操作计划时记录的状态。另一个进程可能
-已经编辑、重命名、替换或删除了同一个文件。
+**预览或搜索提前结束：** 这是触发了耗时、字节数、深度或结果数保护上限。缩小目录或
+关键词重试即可；部分结果并不意味着后续没有匹配项。
 
-刷新两栏，查看两个版本，再明确选择。AMSFTP 不会静默覆盖并发修改。远端编辑发生
-冲突时，请先保留本地编辑结果，再决定以新名称上传、替换远端版本，还是放弃修改。
+## Daemon、工作区、缓存与升级恢复
 
-## 找不到文件或没有权限
+**Daemon 不可用：** 先运行 `amsftp daemon status`。如果只是停止了，执行
+`amsftp daemon start` 和 `amsftp doctor` 即可。若提示 socket 不安全或归属其他用户，
+请**立即停止**，不要手删 socket 或强杀未知进程。daemon 崩溃重启后会自动检查所有
+未完成任务的两端状态。
 
-刷新上级目录，并确认它属于预期的本地或 SSH Endpoint。`not_found` 也可能表示
-文件在列出后被其他进程移动了。
+**工作区损坏：**
 
-遇到 `permission_denied` 时，请检查本地文件的所有者、mode 和 ACL，或远端账号的
-访问权限。不要用 root 运行 AMSFTP 来绕过限制；root 会使用另一套用户状态和 SSH
-身份。
+1. 确认不加载该工作区时，其他目录可以正常打开。
+2. 停止 daemon（`amsftp daemon stop --confirm stop`）。
+3. 备份原工作区文件（以及可能存在的 `<name>.schema-v1.backup`），不要原地编辑。
+   默认目录：
+   - macOS：`~/Library/Application Support/io.github.tyrantlucifer.amsftp/state/workspaces/`
+   - Linux：`${XDG_STATE_HOME:-$HOME/.local/state}/amsftp/workspaces/`
+4. 重启 daemon，从正常的双栏位置重新保存一个工作区。
 
-## 预览或搜索提前结束
+**缓存异常：** 先关闭占用缓存的编辑器、外部程序和预览面板，保住本地已编辑文件，再
+运行 `amsftp doctor` 并使用 AMSFTP 内置的 `gc`/`gC` 清理，不要直接 `rm -rf` 整个
+缓存目录。
 
-目录加载、预览和搜索都限制了时间、字节数、结果数和并发量。达到限制时，AMSFTP
-会显示部分结果，而不是无上限占用内存或读取整棵远端目录树。
+**升级失败或被拒绝：**
 
-缩小目录范围或搜索条件后再试。通过标准 SFTP 做大范围远端内容搜索可能较慢，因为
-被检查的内容都需要经过 SSH 连接传回本机。部分结果不能证明后面没有其他匹配项。
+- **替换程序前被拒绝：** 通常是存在活跃传输任务、另一个升级进程持有锁，或目录权限/
+  校验未通过。等待或暂停任务后重试 `amsftp upgrade`。
+- **程序已替换但 daemon 未启动：** 运行 `amsftp --version`、`amsftp daemon status`
+  与 `amsftp doctor`，再重跑 Homebrew 升级或官方安装脚本。若可能已触发数据库迁移，
+  不要直接启动旧版本程序。
+- **数据库迁移失败：** 停止所有写操作，完整保留私有状态目录并留存 `doctor` 输出。
+  切勿直接复制运行中的 SQLite 主文件或删除 WAL 文件。
 
-## 本地编辑器或默认打开程序失败
+## 提交问题报告与支持包
 
-检查配置的命令，再用一个本地文件单独测试。AMSFTP 会把参数以结构化形式交给
-程序，不会把文件名解释为 shell 命令。
+反馈问题时请附上 `amsftp --version`、失败命令或操作步骤、错误码与 request ID，以及
+`/usr/bin/ssh <alias>` 是否能够正常登录。
 
-编辑器退出后，AMSFTP 会比较缓存的初始版本、本地修改和远端当前版本。如果远端
-也发生了变化，上传会等待用户明确处理冲突。
-
-## 升级无法完成
-
-有 Job 正在修改数据时，AMSFTP 会拒绝升级。请等待这些 Job 完成，或先暂停；只有
-确定不再需要这项工作时才取消，然后重试：
-
-```sh
-amsftp upgrade
-```
-
-同一时间只能运行一个升级。如果软件包已经替换、但最终验证失败，请记录：
-
-```sh
-amsftp --version
-amsftp daemon status --format json
-amsftp doctor --format json
-```
-
-不要删除数据库，也不要让旧版本二进制写入较新的持久状态。接下来按
-[升级恢复](recovery.md#恢复升级)处理。
-
-## 出现 internal 或协议错误
-
-`protocol_incompatible` 通常表示客户端、daemon 或持久状态来自无法安全协作的
-版本。请只保留一套当前版本，并使用文档支持的升级路径。
-
-`internal` 表示底层原因包含不能安全显示的信息，AMSFTP 已将其隐藏。运行
-`doctor`，记录产品版本和稳定错误码；如果问题持续，再准备一份经过检查的支持包。
-
-## 为问题报告准备信息
-
-建议提供：
-
-- `amsftp --version`；
-- 失败的命令或 TUI 操作；
-- 界面显示的稳定错误码和 request ID；
-- `/usr/bin/ssh <alias>` 是否能够连接；
-- 仅在适合公开时提供 Job ID。
-
-可以只预览诊断包，而不创建文件：
+如需导出脱敏诊断包，分两步操作：
 
 ```sh
 amsftp support-bundle preview --format json
+amsftp support-bundle create \
+  --consent <sha256-from-preview> \
+  --output /absolute/private/path/amsftp-support.tar.gz \
+  --format json
 ```
 
-创建或分享支持包前，请检查文件清单和敏感级别。支持包默认只保存在本地私有位置，
-但仍可能包含系统元数据。不要在公开报告中附加私钥、票据、密码、未经检查的日志、
-文件内容或原始命令行。
+输出路径必须尚不存在且位于当前用户私有目录下。如果预览后状态发生变化，SHA-256
+确认摘要会失效，需要重新预览。AMSFTP 不会自动上传支持包；分享前请自行检查内容
+（凭据和原始路径会被脱敏，但仍含版本与系统元数据）。

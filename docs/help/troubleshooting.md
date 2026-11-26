@@ -1,238 +1,165 @@
-# Troubleshooting
+# Troubleshooting and Recovery
 
 [简体中文](../zh-CN/help/troubleshooting.md)
 
-Most AMSFTP problems can be isolated without changing files or restarting a
-process. Start with these read-only checks:
+AMSFTP uses conservative recovery: when it cannot prove whether a write or
+delete finished, it preserves evidence and waits for your decision instead of
+guessing.
+
+## Start with read-only checks
+
+Most issues can be diagnosed without modifying files or restarting processes:
 
 ```sh
 amsftp --version
 amsftp daemon status --format json
 amsftp doctor --format json
+amsftp doctor --endpoint work --format json   # if one SSH host is affected
 ```
 
-If the problem concerns one SSH host, add an endpoint check:
+`doctor` is strictly read-only—it never alters SSH trust, repairs databases, or
+uploads data.
+
+**Before changing anything after a crash or failed transfer:**
+
+1. Do not start duplicate copy, move, delete, or edit jobs on the same files.
+2. Record the error code, request ID, and Job ID.
+3. **Never** manually delete the SQLite database, WAL files, control socket,
+   `.part` temporary files, or workspace backups—they are the evidence AMSFTP
+   uses to recover safely.
+
+## Connection, SSH, and authentication
+
+**Remote host won't open:** AMSFTP uses your system OpenSSH aliases. Test
+outside AMSFTP first:
 
 ```sh
-amsftp doctor --endpoint work --format json
+/usr/bin/ssh work
+amsftp doctor --endpoint work
 ```
 
-`doctor` does not repair state, migrate data, change SSH trust, or upload a
-report. The endpoint check also avoids interactive authentication, so a manual
-SSH login may still be necessary.
+Check that the alias exists in `~/.ssh/config`, the remote path is absolute
+(`work:/srv/project`), the server supports the SFTP subsystem, and your jump
+host / VPN / agent / Kerberos ticket is working.
 
-## AMSFTP refuses to start
+**Host-key warning:** Verify the changed fingerprint through another trusted
+channel (such as your server admin or cloud console). Never delete `known_hosts`
+or disable host-key checks just to silence a warning. Once `/usr/bin/ssh work`
+connects under your normal policy, retry AMSFTP.
 
-First validate the configuration:
+**Repeated auth prompts or `waiting_auth`:** Complete login or renew your SSH
+agent / Kerberos ticket in `/usr/bin/ssh work`. If a background job needs an
+interactive answer while no TUI client is attached, it pauses instead of storing
+or guessing credentials—open the TUI to authenticate, then resume the job.
+
+## Startup, permissions, and configuration
+
+**AMSFTP refuses to start:**
 
 ```sh
 amsftp config validate
 amsftp config print-effective
 ```
 
-If the message mentions an untrusted installation path, runtime directory,
-owner, permissions, an ACL, or a symbolic link, do not make the directory
-world-writable to bypass the check. Re-run the verified installer. If it asks
-for a managed root, have an administrator create the exact private path printed
-by the installer, then run the installer again.
+- **Unknown config field:** Fix or remove the named key; strict JSON validation
+  rejects typos intentionally.
+- **Unsafe path, owner, permissions, ACL, or symlink:** Never `chmod 777` your
+  home or data directory to work around the check. Re-run the official installer;
+  if it asks for a custom private data directory, have an administrator create
+  the exact directory it prints, then install again.
+- **`permission_denied` on files:** Check local/remote file permissions. Do not
+  run AMSFTP as `root`—that uses a different state directory and SSH identity.
+- **`protocol_incompatible`:** Client, daemon, or stored state come from
+  incompatible versions. Finish your upgrade or reinstall a single matching
+  release.
 
-An unknown configuration field is rejected intentionally. Correct or remove
-the named field rather than replacing the entire configuration. See
-[Configuration](../user/configuration.md) for supported settings and
-precedence.
+## Interrupted jobs, conflicts, and edits
 
-## A remote location will not open
-
-AMSFTP uses the host aliases understood by the system OpenSSH client. Test the
-same alias outside AMSFTP:
-
-```sh
-/usr/bin/ssh work
-```
-
-Then check the endpoint:
-
-```sh
-amsftp doctor --endpoint work
-```
-
-Common causes are:
-
-- the alias is missing from `~/.ssh/config`, or expands differently than
-  expected;
-- the remote path is not absolute (`work:/srv/project` is valid);
-- the remote account cannot use the SFTP subsystem;
-- a jump host, VPN, DNS record, agent, or Kerberos ticket is unavailable;
-- the server closed the connection or denied access.
-
-Resolve the OpenSSH connection first. AMSFTP deliberately does not maintain a
-second SSH configuration or credential store.
-
-## OpenSSH reports a host-key problem
-
-Stop and verify the new fingerprint through a trusted, independent channel.
-Do not delete `known_hosts`, disable host-key checking, or accept a changed key
-only to make the warning disappear.
-
-Once `/usr/bin/ssh work` accepts the host according to your normal policy,
-retry AMSFTP.
-
-## Authentication is missing or keeps prompting
-
-Complete any first-time or renewed authentication in a normal SSH session:
-
-```sh
-/usr/bin/ssh work
-```
-
-Check that the expected key is available to the SSH Agent, or that the relevant
-Kerberos ticket is current. If an AMSFTP Job needs an interactive answer while
-no trusted client is present, it waits instead of storing or guessing the
-answer. Open the TUI, authenticate, and resume the Job if necessary.
-
-AMSFTP never writes passwords, private keys, agent contents, Kerberos tickets,
-or prompt answers to its configuration, database, Jobs, logs, or support
-bundles.
-
-## The daemon is unavailable or the TUI keeps reconnecting
-
-Inspect the daemon before trying to replace it:
-
-```sh
-amsftp daemon status
-amsftp doctor
-```
-
-If it is stopped, start it normally:
-
-```sh
-amsftp daemon start
-```
-
-Do not delete the control socket by hand or kill an unknown process that
-appears to own it. AMSFTP validates the socket owner and peer user before using
-it. During an upgrade, other clients may wait briefly for the old daemon to
-release ownership and for the new one to start.
-
-If the client and daemon report incompatible versions, finish the upgrade or
-reinstall one current release so both come from the same installation.
-
-## A Job is not making progress
-
-List Jobs and inspect the recent events for the affected ID:
+Inspect stuck or interrupted jobs:
 
 ```sh
 amsftp job list --limit 50
-amsftp job events <job-id> --after 0 --limit 50
+amsftp job events <job-id> --after 0 --limit 100
 ```
 
-Use the reported state to choose the next action:
-
-| State or message | What to do |
+| State / error | What to do |
 | --- | --- |
-| `paused` | Resume when you are ready with `amsftp job resume <job-id>`. |
-| authentication required | Restore the OpenSSH authentication session, then resume. |
-| conflict | Refresh both locations and make the requested keep, replace, rename, or skip choice. |
-| transport interrupted or timeout | Restore the network or server, inspect the events, then resume the existing Job. |
-| resource exhausted | Free the named disk, quota, or concurrency resource before resuming. |
-| capability lost or unsupported | Reconnect so AMSFTP can use the standard SFTP route or another supported path. |
+| `paused` | Resume with `U` in the TUI or `amsftp job resume <job-id>`. |
+| `waiting_auth` | Renew OpenSSH auth, then resume. |
+| `waiting_conflict` | Refresh both panes, inspect both versions, and choose overwrite/skip/auto-rename (`w`/`x`/`a`). |
+| Transport interrupted / timeout | Restore network/server, check events, then resume the existing job (do not start a second copy). |
+| Resource exhausted | Free disk space, cache quota, or wait for active jobs, then resume. |
+| Server features changed (`capability_lost`) | Reconnect so AMSFTP re-checks supported SFTP extensions and falls back to basic SFTP if needed. |
 
-Do not start a second copy of the same transfer because the first one stopped.
-The existing Job records safe progress and checks the source, temporary
-destination, and final destination before continuing.
+To cancel explicitly: `amsftp job cancel <job-id> --confirm <job-id>`.
 
-For uncertain or destructive results, follow
-[Recovery](recovery.md#recover-a-job) before touching temporary files.
+**Uncertain move or partial file:** Never manually finish a move or delete the
+source based only on timestamps. Resume the recorded job so AMSFTP can verify
+that the source file has not changed, check partial file digests, and confirm
+whether the destination was already renamed into place. If a move finished
+copying but could not prove source deletion, both copies are kept
+intentionally—inspect both before removing anything.
 
-## A copy or edit reports a conflict
+**Interrupted remote edit:** Press `E` in the TUI to open edit recovery, inspect
+the local edited copy with `K`, and decide whether to upload, save as a new
+name, or discard.
 
-A conflict means the source or destination no longer matches the state AMSFTP
-recorded when it planned the operation. Another process may have edited,
-renamed, replaced, or deleted the same file.
+**Preview or search stops early:** This is intentional when a time, byte, depth,
+or result cap is reached. Narrow the directory or query; a partial search result
+does not mean no further matches exist.
 
-Refresh both panes, inspect both versions, and choose explicitly. AMSFTP does
-not silently overwrite a concurrently changed file. For a remote edit, keep
-the local edited copy until you have decided whether to upload it under a new
-name, replace the remote version, or discard it.
+## Daemon, workspace, cache, and upgrade recovery
 
-## A file is missing or permission is denied
+**Daemon unavailable:** Check `amsftp daemon status`. If it is simply stopped,
+run `amsftp daemon start` and `amsftp doctor`. If status reports an unsafe
+socket or wrong owner, **stop**—do not delete the socket or kill unknown
+processes. After a crash, the restarted daemon automatically inspects incomplete
+jobs before continuing.
 
-Refresh the parent directory and confirm that it belongs to the intended local
-or SSH endpoint. A `not_found` result can also mean that another process moved
-the item after it was listed.
+**Damaged workspace:**
 
-For `permission_denied`, check the local owner, mode, and ACL, or the remote
-account's access. Do not run AMSFTP as root to bypass the boundary; doing so
-would create a different user state and a different SSH identity.
+1. Confirm other locations open normally without that workspace.
+2. Stop the daemon (`amsftp daemon stop --confirm stop`).
+3. Back up the workspace file (and any `<name>.schema-v1.backup` file) without
+   editing them in place. Default locations:
+   - macOS: `~/Library/Application Support/io.github.tyrantlucifer.amsftp/state/workspaces/`
+   - Linux: `${XDG_STATE_HOME:-$HOME/.local/state}/amsftp/workspaces/`
+4. Restart the daemon and save a new workspace from known-good locations.
 
-## Preview or search stops early
+**Cache issues:** Close any editor, opener, or preview using cached files first,
+preserve any edited local copy, run `amsftp doctor`, and use `gc`/`gC` inside
+AMSFTP instead of recursively deleting the cache folder.
 
-Directory loading, preview, and search have limits on time, bytes, results,
-and concurrency. When a limit is reached, AMSFTP shows a partial result instead
-of consuming unbounded memory or reading an entire remote tree.
+**Failed or refused upgrade:**
 
-Narrow the directory or search expression, then try again. Large remote content
-searches over standard SFTP can be slow because every examined byte crosses the
-SSH connection. A partial result does not prove that no later match exists.
+- **Refused before replacing binary:** Usually an active job is running, another
+  upgrade holds the lock, or permissions/checksum failed. Finish or pause jobs
+  and retry `amsftp upgrade`.
+- **Binary replaced, daemon failed to restart:** Check `amsftp --version`,
+  `amsftp daemon status`, and `amsftp doctor`. Re-run Homebrew upgrade or the
+  verified installer. Do not launch an older binary if a state migration may
+  have run.
+- **Database migration failed:** Stop all writes, preserve the entire private
+  state directory, and keep any read-only `doctor` output. Do not copy live
+  SQLite files or remove WAL files.
 
-## The local editor or opener fails
+## Bug reports and support bundles
 
-Check the configured command, then try it on a local file. AMSFTP passes
-structured arguments to the configured program; it does not interpret a
-filename as a shell command.
+Include `amsftp --version`, the failing command/action, any error code and
+request ID, and whether `/usr/bin/ssh <alias>` works.
 
-When an editor returns, AMSFTP compares the cached starting version, your local
-changes, and the current remote version. If the remote file changed too, the
-upload waits for an explicit conflict decision.
-
-## Upgrade does not complete
-
-AMSFTP refuses an upgrade while a Job is actively changing data. Let those Jobs
-finish or pause them. Cancel only if the work should be canceled, then retry:
-
-```sh
-amsftp upgrade
-```
-
-Only one upgrade can run at a time. If package replacement completed but
-verification failed, record:
-
-```sh
-amsftp --version
-amsftp daemon status --format json
-amsftp doctor --format json
-```
-
-Do not delete the database or run an older binary against newer persistent
-state. Continue with [Upgrade recovery](recovery.md#recover-an-upgrade).
-
-## An internal or protocol error appears
-
-`protocol_incompatible` normally means that the client, daemon, or stored state
-comes from a version that cannot safely communicate with the others. Use one
-current installation and follow the documented upgrade path.
-
-`internal` means AMSFTP hid a lower-level cause that was unsafe to expose. Run
-`doctor`, record the product version and stable error code, and prepare a
-reviewed support bundle if the problem persists.
-
-## Prepare information for a bug report
-
-Include:
-
-- `amsftp --version`;
-- the command or TUI action that failed;
-- the stable error code and request ID, if shown;
-- whether `/usr/bin/ssh <alias>` succeeds;
-- the Job ID only if sharing it is appropriate.
-
-You can preview the diagnostic bundle without creating it:
+To collect redacted local diagnostics in two steps:
 
 ```sh
 amsftp support-bundle preview --format json
+amsftp support-bundle create \
+  --consent <sha256-from-preview> \
+  --output /absolute/private/path/amsftp-support.tar.gz \
+  --format json
 ```
 
-Review the listed files and sensitivity labels before creating or sharing a
-bundle. A support bundle is local and private by default, but it can still
-contain system metadata. Never attach private keys, tickets, passwords,
-unreviewed logs, file contents, or raw command lines to a public report.
+The output file must not already exist and must live inside a directory
+accessible only by your user (`0700`). If state changes after preview, the
+SHA-256 confirmation hash expires and you must preview again. AMSFTP never
+uploads bundles automatically. Review the archive before sharing—redaction omits
+credentials and raw paths, but system metadata remains.

@@ -1,194 +1,213 @@
-# 按键和命令
+# 配置与命令参考
 
 [English](../../user/reference.md)
 
-本页列出默认 TUI 按键、位置写法和公开命令。运行 `amsftp --help` 和
-`man amsftp` 可以查看当前版本实际安装的命令。
+本页汇总 `config.json` 配置项、默认 TUI 快捷键与 CLI 命令。查看当前安装版本的
+完整命令说明可运行 `amsftp --help` 或 `man amsftp`。
 
-## 位置写法
+## 配置文件
 
-```text
-/absolute/local/path
-SSH-alias:/absolute/remote/path
-```
+AMSFTP 无需配置文件即可开箱使用；仅在需要覆盖默认行为时创建 `config.json`。
 
-示例：
+**默认路径：**
+
+- **macOS：** `~/Library/Application Support/io.github.tyrantlucifer.amsftp/config.json`
+- **Linux：** `${XDG_CONFIG_HOME:-$HOME/.config}/amsftp/config.json`
+- **自定义私有数据目录：** `<private-dir>/config/config.json`
+
+配置文件必须是当前用户独享的普通文件（不能是符号链接），权限为 `0600`，采用严格
+JSON 格式且包含 `"schema_version": 1`。未知字段或越界数值会被直接拒绝，不会静默
+忽略。
+
+修改后建议先校验并查看生效配置：
 
 ```sh
-amsftp
-amsftp /Users/alice/Downloads
-amsftp /home/alice work:/srv/project
-amsftp host-a:/data host-b:/backup
-amsftp --workspace project
+amsftp config validate
+amsftp config print-effective
 ```
 
-本地和远端路径都必须是绝对路径。SSH 别名来自 `~/.ssh/config`。
+两个命令都支持追加 `/absolute/path/to/config.json` 在不覆盖正式配置的情况下单独
+测试。外部命令的参数在输出中会自动脱敏。修改生效需要重启受影响的 TUI；如果修改了
+daemon 侧配置（`transfer`、`cache`、`retry`、`diagnostic`、`ipc`），还需重启
+daemon：
 
-## 文件栏按键
+```sh
+amsftp daemon stop --confirm stop
+amsftp daemon start
+```
 
-| 按键 | 作用 |
-| --- | --- |
-| `h` / `j` / `k` / `l` | 上级 / 下移 / 上移 / 进入或预览 |
-| `←` / `↓` / `↑` / `→` | 相同导航的固定别名 |
-| `gg` / `G` | 跳到已加载条目的开头 / 末尾 |
-| `Tab` | 切换活动栏 |
-| `g` | 输入绝对路径 |
-| `c` | 选择 `local` 或 OpenSSH 端点 |
-| `/` | 在当前已加载目录中模糊跳转 |
-| `f` | 递归搜索文件名 |
-| `g/` | 递归搜索文件内容 |
-| `s` | 切换排序方式 |
-| `H` | 切换隐藏条目 |
-| `R` | 刷新 |
-| `Space` | 切换离散标记 |
-| `v` / `V` | 开始或结束 Visual / Visual Line 选择 |
-| `y` / `d` / `p` | 复制 / 剪切 / 粘贴 |
-| `r` | 重命名一个条目 |
-| `D` | 进入需要确认的删除流程 |
-| `.` | 重复上一个符合条件且已冻结的操作 |
-| `e` / `o` | 编辑 / 打开普通文件 |
-| `E` | 打开编辑恢复 |
-| `K` / `J` / `L` | 预览 / Job / 日志抽屉 |
-| `S` | 保存工作区 |
-| `!` | 在当前目录运行一条经过确认的命令 |
-| `gs` / `gS` | 在当前目录打开 shell / 明确打开远端 home shell |
-| `gp` | 切换工作区缓存策略 |
-| `gc` / `gC` | 检查当前工作区 / 全局缓存清理 |
-| `Esc` | 取消最内层提示或返回焦点 |
-| `q` | 退出 TUI；Job 继续运行 |
+已创建的任务会继续沿用创建时的配置。切勿把密码、私钥或 SSH 选项写入 `config.json`，
+连接参数统一放在 `~/.ssh/config`。
 
-数字是支持计数的安全动作的前缀。数字不会取消冲突或破坏性确认。即使字母键被重新
-映射，方向键仍然是导航别名。
+## 常用配置示例
 
-查看当前准确键位：
+### 传输限速、校验与落盘同步
+
+```json
+{
+  "schema_version": 1,
+  "transfer": {
+    "max_concurrent": 2,
+    "max_queued": 64,
+    "global_bytes_per_second": 10485760,
+    "endpoint_bytes_per_second": 0,
+    "job_bytes_per_second": 0,
+    "verification": "protocol",
+    "durability": "none"
+  }
+}
+```
+
+- **限速字段**单位为字节/秒（`0` 表示不限速），按文件数据字节统计（不含 SSH 加密与
+  协议帧开销）；远端到远端中继时，源端读取与目标端写入分别计入全局与任务限速。
+- **`verification`：** `"protocol"`（普通复制默认）或 `"sha256"`（全量回读摘要校验）。
+  旧配置 `integrity.transfer_policy: "require_strong"` 同样会强制开启 SHA-256。
+- **`durability`：** `"none"`（默认）、`"completion"`（重命名前 `fsync` 一次）或
+  `"checkpoint"`（每个检查点 `fsync`）。移动与编辑回写始终保留严格校验与同步检查点。
+
+### 编辑器、打开程序与外部预览器
+
+```json
+{
+  "schema_version": 1,
+  "external": {
+    "editor": { "executable": "nvim", "argv": ["-f"] },
+    "opener": { "executable": "/usr/bin/open", "argv": [] },
+    "previewers": [
+      {
+        "name": "pdf-viewer",
+        "media_types": ["application/pdf"],
+        "extensions": [".pdf"],
+        "command": { "executable": "/absolute/path/to/previewer", "argv": [] },
+        "timeout_ms": 5000,
+        "max_input_bytes": 1048576,
+        "require_complete": true
+      }
+    ]
+  }
+}
+```
+
+程序通过 `exec` 直接启动，绝不经过 Shell 拼接。不含 `/` 的名称通过 `PATH` 解析，
+包含 `/` 的路径必须为绝对路径。AMSFTP 会自动把缓存文件路径作为最后一个参数传入，
+不需要也不应添加占位符或 Shell 引号。外部预览器会在内置预览之后按顺序尝试，失败
+则回退到内置预览。
+
+### 自定义快捷键
+
+```json
+{
+  "schema_version": 1,
+  "keymap": {
+    "bindings": [
+      { "context": "visual", "input": "n", "action": "down" }
+    ]
+  }
+}
+```
+
+支持在 `normal` 与 `visual` 两个上下文中将单个可重映射动作改绑到单个可打印字符。
+数字、控制键、多键序列（如 `gg`、`gs`）与危险动作均为保留键。查看生效键位或重置覆盖：
 
 ```sh
 amsftp config print-effective-keymap
+amsftp config reset-keymap --yes
 ```
 
-## 预览和 Job 按键
+### 全部配置项分组
 
-预览获得焦点时：
-
-| 按键 | 作用 |
+| 分组 | 控制范围 |
 | --- | --- |
-| `j` / `k` | 向下 / 向上滚动 |
-| `h` / `l` | 读取头部 / 尾部范围 |
-| `gg` / `G` | 跳到头部 / 尾部范围 |
-| `r` | 切换可用预览视图 |
-| `Esc` | 返回文件栏 |
-| `K` | 关闭预览 |
+| `listing` | 目录分页大小 |
+| `cache` | 全局与单工作区缓存配额 |
+| `transfer` | 并发数、队列上限、限速、校验与落盘同步 |
+| `preview` | 预览读取、渲染、JSON 与图片上限 |
+| `search.filename` / `search.content` | 搜索深度、条目、字节、耗时与结果数上限 |
+| `retry` | 重连与任务重试延迟 |
+| `integrity` | 传输完整性策略 |
+| `diagnostic` | 私有日志轮转与内存日志缓冲 |
+| `external` | 编辑器、打开程序与外部预览器 |
+| `keymap` | Normal 与 Visual 自定义快捷键 |
+| `ipc` | 客户端与后台进程间的单条消息大小上限 |
 
-Job 抽屉获得焦点时：
+运行 `amsftp config print-effective` 可查看全部默认值。大多数数值上限只允许在内置
+安全上限之内收紧，不能放宽。公开版本中 `helper.enabled` 与 `direct_transfer.enabled`
+必须保持 `false`。
 
-| 按键 | 作用 |
+## 默认快捷键
+
+**文件栏：**
+
+| 快捷键 | 作用 |
 | --- | --- |
-| `j` / `k` | 选择 Job |
-| `P` / `U` / `C` | 可用时暂停 / 恢复或重试 / 取消 |
-| `w` / `x` / `a` | 覆盖 / 跳过 / 自动重命名单个冲突 |
-| `W` / `X` / `A` | 在当前 Job 中应用对应的冲突选择 |
+| `h` / `j` / `k` / `l`（或方向键） | 上级目录 / 下移 / 上移 / 进入目录或预览 |
+| `gg` / `G` | 跳到已加载列表的第一项 / 最后一项 |
+| `Tab` | 切换当前活动栏 |
+| `g` | 输入绝对路径跳转 |
+| `c` | 切换当前栏主机（`local` 或 SSH 别名） |
+| `/` | 在当前目录内模糊跳转 |
+| `f` / `g/` | 递归搜索文件名 / 递归搜索文件内容 |
+| `s` / `H` / `R` | 切换排序 / 切换隐藏文件 / 刷新 |
+| `Space` / `v` / `V` | 单项勾选 / Visual 框选 / Visual Line 行选 |
+| `y` / `d` / `p` | 复制 / 剪切 / 粘贴 |
+| `r` / `D` | 重命名 / 删除（需确认） |
+| `.` | 重复上一个可重复的操作 |
+| `e` / `o` / `E` | 编辑 / 外部打开 / 编辑恢复 |
+| `K` / `J` / `L` | 预览 / 后台任务 / 日志面板 |
+| `S` | 保存工作区 |
+| `!` | 在当前目录执行一条经确认的命令 |
+| `gs` / `gS` | 当前目录交互 Shell / 远端 home 目录 Shell |
+| `gp` / `gc` / `gC` | 切换缓存策略 / 清理本工作区缓存 / 清理全部缓存 |
+| `Esc` / `q` | 关闭弹窗或退回焦点 / 退出 TUI |
 
-以抽屉标题为准：不适用于当前状态的动作不会显示。
+**预览面板（`K`）：** `j`/`k` 滚动，`h`/`l` 或 `gg`/`G` 读取头/尾范围，`r` 切换
+视图，`Esc` 退回文件栏，`K` 关闭。
 
-## 启动和生命周期命令
+**任务面板（`J`）：** `j`/`k` 选择任务，`P`/`U`/`C` 暂停/继续/取消，`w`/`x`/`a`
+处理单个冲突（覆盖/跳过/自动重命名），`W`/`X`/`A` 将选择应用到同一任务内的同类冲突。
+
+## 命令行接口
 
 ```text
 amsftp [<location> [<location>]]
 amsftp --workspace <name>
-amsftp daemon start [--format human|json]
-amsftp daemon status [--format human|json]
+amsftp --help | --version
+
+amsftp daemon start | status [--format human|json]
 amsftp daemon stop --confirm stop [--format human|json]
 amsftp upgrade [--format human|json]
-amsftp --help
-amsftp --version
-```
 
-`daemon status` 只检查 daemon，不会启动它。明确停止时必须提供字面值
-`--confirm stop`。
-
-## Job 命令
-
-```text
 amsftp job list [--limit <1..100>] [--format human|json]
-amsftp job events <job-id> [--after <sequence>] [--limit <1..100>] [--format human|json]
-amsftp job pause <job-id> [--format human|json]
-amsftp job resume <job-id> [--format human|json]
+amsftp job events <job-id> [--after <seq>] [--limit <1..100>] [--format human|json]
+amsftp job pause | resume <job-id> [--format human|json]
 amsftp job cancel <job-id> --confirm <same-job-id> [--format human|json]
-```
 
-列表和事件默认上限是 50，最大为 100。`events --after N` 只返回序号大于 `N`
-的事件。
+amsftp config validate | print-effective | print-effective-keymap [<abs-path>]
+amsftp config reset-keymap --yes [<abs-path>]
 
-## 配置和诊断
-
-```text
-amsftp config validate [<absolute-config-path>]
-amsftp config print-effective [<absolute-config-path>]
-amsftp config print-effective-keymap [<absolute-config-path>]
-amsftp config reset-keymap --yes [<absolute-config-path>]
-amsftp doctor [--endpoint <SSH-alias>] [--format human|json]
-amsftp helper status <SSH-alias> [--format human|json]
-```
-
-`doctor` 是只读检查。`helper status` 会报告端点使用标准 SFTP 还是可用的增强能力；
-公开构建目前没有受支持的 production Helper 安装通道。
-
-## 支持包
-
-先预览准确的本地诊断快照：
-
-```text
+amsftp doctor [--endpoint <ssh-alias>] [--format human|json]
+amsftp helper status <ssh-alias> [--format human|json]
 amsftp support-bundle preview [--format human|json]
+amsftp support-bundle create --consent <sha256> --output <abs-path> [--format human|json]
+amsftp completion bash | zsh | fish
 ```
 
-预览会返回一个同意摘要。检查快照后，可以创建新的私有归档：
+支持 `--format json` 的命令在成功时向 stdout 输出单个带版本号的 JSON 文档，失败时
+向 stderr 输出带版本号的 JSON 错误对象。
 
-```text
-amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]
-```
+**退出码：**
 
-输出目标不能已经存在，并且必须位于当前用户私有的目录下。AMSFTP 会重新生成快照；
-如果预览后内容发生变化，就会拒绝创建。没有命令会自动上传归档。
-
-## Shell 补全
-
-```sh
-amsftp completion bash
-amsftp completion zsh
-amsftp completion fish
-```
-
-生成的脚本会补全命令和已保存的工作区名称。手动安装升级后，请重新生成，确保它与
-当前程序一致。
-
-## Human 和 JSON 输出
-
-默认输出适合人类阅读。支持 `--format json` 的命令会输出一个带版本的 JSON 文档。
-脚本应该使用 JSON，不要解析供人阅读的表格。
-
-成功时 JSON 写到 stdout；失败时，带版本的错误写到 stderr，并保留有意义的进程
-退出码。
-
-## 退出码
-
-| 代码 | 含义 |
+| 退出码 | 含义 |
 | ---: | --- |
 | `0` | 成功 |
 | `1` | 内部或未分类错误 |
-| `2` | 命令用法错误 |
+| `2` | 命令行参数用法错误 |
 | `3` | 配置错误 |
 | `4` | 认证错误 |
 | `5` | 网络错误 |
-| `6` | 需要选择的冲突 |
+| `6` | 存在需要人工选择的冲突 |
 | `7` | 部分完成 |
 | `8` | 用户取消 |
 
-只有证据足够时，命令才会选择更具体的错误类型。无法可靠分类时会返回 `1`，而不是
-猜测。
-
-## 相关指南
-
-- [配置](configuration.md)
-- [传输和 Job](transfers.md)
-- [故障排查](../help/troubleshooting.md)
-- [`amsftp(1)`（英文）](../../man/amsftp.1)
+另见：[使用指南](guide.md)、[故障排查与恢复](../help/troubleshooting.md)、
+[`amsftp(1)`（英文）](../../man/amsftp.1)。

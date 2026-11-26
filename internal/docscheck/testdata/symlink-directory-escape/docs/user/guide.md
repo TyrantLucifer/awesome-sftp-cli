@@ -1,5 +1,5 @@
 # Guide
 
-[简体中文](../zh-CN/user/getting-started.md)
+[简体中文](../zh-CN/user/guide.md)
 
 [Escaped directory](outside-directory/outside.md)
