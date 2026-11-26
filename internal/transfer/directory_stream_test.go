@@ -247,3 +247,81 @@ func TestDirectorySharesRequestBudgetAcrossSmallAndLargeFiles(t *testing.T) {
 		})
 	}
 }
+
+type countingJournal struct {
+	mu    sync.Mutex
+	saves int
+	last  Checkpoint
+}
+
+func (j *countingJournal) Load(context.Context, domain.JobID) (*Checkpoint, error) { return nil, nil }
+func (j *countingJournal) Save(_ context.Context, cp Checkpoint) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.saves++
+	j.last = cloneCheckpoint(cp)
+	return nil
+}
+
+func TestDirectoryStreamJournalCoalescesDominatedFlushes(t *testing.T) {
+	fileSize := uint64(4096)
+	newHarness := func(v Verification) (*countingJournal, *directoryStreams, *directoryStreamJournal) {
+		parent := &countingJournal{}
+		streams := &directoryStreams{
+			parent:       parent,
+			verification: v,
+			slots:        2,
+			active:       make(map[string]Checkpoint),
+			live:         make(map[string]TransferProgress),
+		}
+		return parent, streams, &directoryStreamJournal{streams: streams, name: "a.txt"}
+	}
+
+	t.Run("protocol_verification_coalesces_dominated_states", func(t *testing.T) {
+		parent, streams, child := newHarness(VerifyProtocol)
+		fp := domain.Fingerprint{Size: &fileSize}
+
+		// Recovery boundaries must persist: PhasePrepared, initial PhaseStreaming (Offset==0), mid-file PhaseStreaming, PhaseCommitting.
+		for _, cp := range []Checkpoint{
+			{Phase: PhasePrepared, SourceFingerprint: fp},
+			{Phase: PhaseStreaming, Offset: 0, SourceFingerprint: fp},
+			{Phase: PhaseStreaming, Offset: 2048, SourceFingerprint: fp},
+			{Phase: PhaseCommitting, Offset: fileSize, SourceFingerprint: fp},
+		} {
+			if err := child.Save(t.Context(), cp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if parent.saves != 4 {
+			t.Fatalf("persisted saves=%d, want 4 for recovery boundaries", parent.saves)
+		}
+
+		// Dominated states must NOT trigger parent.Save, while still updating snapshot().Offset.
+		for _, cp := range []Checkpoint{
+			{Phase: PhaseStreaming, Offset: fileSize, SourceFingerprint: fp},
+			{Phase: PhaseTransferred, Offset: fileSize, SourceFingerprint: fp},
+			{Phase: PhaseCommitted, Offset: fileSize, SourceFingerprint: fp},
+		} {
+			if err := child.Save(t.Context(), cp); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if parent.saves != 4 {
+			t.Fatalf("persisted saves=%d after dominated states, want 4", parent.saves)
+		}
+		if got := streams.snapshot().Offset; got != fileSize {
+			t.Fatalf("snapshot offset=%d, want %d", got, fileSize)
+		}
+	})
+
+	t.Run("sha256_verification_persists_transferred_boundary", func(t *testing.T) {
+		parent, _, child := newHarness(VerifySHA256)
+		fp := domain.Fingerprint{Size: &fileSize}
+		if err := child.Save(t.Context(), Checkpoint{Phase: PhaseTransferred, Offset: fileSize, SourceFingerprint: fp}); err != nil {
+			t.Fatal(err)
+		}
+		if parent.saves != 1 {
+			t.Fatalf("persisted saves=%d, want 1 under VerifySHA256", parent.saves)
+		}
+	})
+}

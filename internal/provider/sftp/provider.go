@@ -719,7 +719,10 @@ func streamReadAhead(
 		}
 	}
 
-	pending := make(map[int64]readAheadResult, workerCount)
+	// Sequence numbers in flight are strictly within [nextWrite, nextWrite+workerCount),
+	// so a ring indexed by sequence%workerCount is collision-free and avoids per-packet map hashing.
+	pending := make([]readAheadResult, workerCount)
+	ready := make([]bool, workerCount)
 	nextWrite := int64(0)
 	var streamErr error
 	for nextWrite < packetCount && streamErr == nil {
@@ -733,13 +736,17 @@ func streamReadAhead(
 				streamErr = result.err
 				break
 			}
-			pending[result.job.sequence] = result
+			slot := int(result.job.sequence % int64(workerCount))
+			pending[slot] = result
+			ready[slot] = true
 			for {
-				ordered, ok := pending[nextWrite]
-				if !ok {
+				writeSlot := int(nextWrite % int64(workerCount))
+				if !ready[writeSlot] {
 					break
 				}
-				delete(pending, nextWrite)
+				ordered := pending[writeSlot]
+				pending[writeSlot] = readAheadResult{}
+				ready[writeSlot] = false
 				if ordered.bytes > 0 {
 					if _, err := writer.Write(ordered.buffer[:ordered.bytes]); err != nil {
 						streamErr = err

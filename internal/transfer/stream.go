@@ -44,16 +44,18 @@ func (a *streamAdmission) gate(endpoint domain.EndpointID) func(context.Context,
 }
 
 type sourceStream struct {
-	ctx         context.Context
-	handle      providerapi.ReadHandle
-	digest      hash.Hash
-	options     providerapi.ReadStreamOptions
-	beforeRead  func(context.Context, uint32) error
-	beforeWrite func(context.Context, uint32) error
-	readAhead   bool
-	readTime    time.Duration
-	readBytes   uint64
-	onRead      func(uint64) error
+	ctx             context.Context
+	handle          providerapi.ReadHandle
+	streamHandle    providerapi.StreamReadHandle
+	readAheadHandle providerapi.ReadAheadHandle
+	digest          hash.Hash
+	options         providerapi.ReadStreamOptions
+	beforeRead      func(context.Context, uint32) error
+	beforeWrite     func(context.Context, uint32) error
+	readAhead       bool
+	readTime        time.Duration
+	readBytes       uint64
+	onRead          func(uint64) error
 }
 
 func (r *sourceStream) Read(buffer []byte) (int, error) {
@@ -71,16 +73,16 @@ func (r *sourceStream) Read(buffer []byte) (int, error) {
 	start := time.Now()
 	var n int
 	var err error
-	if handle, ok := r.handle.(providerapi.StreamReadHandle); ok {
-		n, err = handle.ReadStream(r.ctx, buffer, r.options)
+	if r.streamHandle != nil {
+		n, err = r.streamHandle.ReadStream(r.ctx, buffer, r.options)
 	} else {
 		if r.beforeRead != nil {
 			if err = r.beforeRead(r.ctx, uint32(len(buffer))); err != nil { //nolint:gosec // buffer is capped to streamPacketBytes above.
 				return 0, err
 			}
 		}
-		if handle, ok := r.handle.(providerapi.ReadAheadHandle); ok && r.readAhead {
-			n, err = handle.ReadAhead(r.ctx, buffer, r.options.MaxBytes)
+		if r.readAheadHandle != nil && r.readAhead {
+			n, err = r.readAheadHandle.ReadAhead(r.ctx, buffer, r.options.MaxBytes)
 		} else {
 			n, err = r.handle.Read(r.ctx, buffer)
 		}
@@ -163,13 +165,24 @@ func (worker *Worker) copyStream(ctx context.Context, plan Plan, source provider
 		current.Performance.SchedulerNanoseconds = saturatingAdd(current.Performance.SchedulerNanoseconds, admission.waited.Load(), ^uint64(0))
 		current.Performance.ScheduledBytes = saturatingAdd(current.Performance.ScheduledBytes, admission.bytes.Load(), ^uint64(0))
 	}()
-	reader := &sourceStream{ctx: ctx, handle: source, digest: digest, options: worker.streamReadOptions(plan, plan.Source.Fingerprint.Size)}
+	streamHandle, _ := source.(providerapi.StreamReadHandle)
+	readAheadHandle, _ := source.(providerapi.ReadAheadHandle)
+	reader := &sourceStream{
+		ctx:             ctx,
+		handle:          source,
+		streamHandle:    streamHandle,
+		readAheadHandle: readAheadHandle,
+		digest:          digest,
+		options:         worker.streamReadOptions(plan, plan.Source.Fingerprint.Size),
+	}
 	if worker.scheduler != nil {
 		reader.options.MaxRequestBytes = worker.scheduler.QuantumBytes()
 	}
 	baseOffset := current.Offset
-	reader.onRead = func(consumed uint64) error {
-		return reportProgress(ctx, worker.journal, TransferProgress{Phase: PhaseStreaming, Bytes: baseOffset + consumed, DurableBytes: current.durableBytes()})
+	if progressObserver, ok := worker.journal.(progressJournal); ok {
+		reader.onRead = func(consumed uint64) error {
+			return progressObserver.ReportProgress(ctx, TransferProgress{Phase: PhaseStreaming, Bytes: baseOffset + consumed, DurableBytes: current.durableBytes()})
+		}
 	}
 	if plan.SourceEndpoint.Kind == domain.EndpointSSH || plan.DestinationEndpoint.Kind != domain.EndpointSSH {
 		reader.beforeRead = admission.gate(plan.SourceEndpoint.ID)
@@ -183,6 +196,18 @@ func (worker *Worker) copyStream(ctx context.Context, plan Plan, source provider
 	reader.readAhead = worker.scheduler == nil && !plan.Bandwidth.requiresControl()
 	if policy, ok := worker.scheduler.(bandwidthReadAheadPolicy); ok {
 		reader.readAhead = policy.AllowsReadAhead(BandwidthRequest{JobID: plan.JobID, EndpointID: plan.SourceEndpoint.ID, JobBytesPerSecond: plan.Bandwidth.JobBytesPerSecond})
+	}
+	windowedDest, hasWindowedDest := destination.(providerapi.WindowedStreamWriteHandle)
+	streamDest, hasStreamDest := destination.(providerapi.StreamWriteHandle)
+	writeEpoch := func(limited io.Reader) (int64, error) {
+		switch {
+		case hasWindowedDest && plan.Durability != "":
+			return windowedDest.WriteFromWindow(ctx, limited, streamWindowRequests(plan, plan.Source.Fingerprint.Size))
+		case hasStreamDest && plan.Durability == "":
+			return streamDest.WriteFrom(ctx, limited)
+		default:
+			return io.CopyBuffer(streamWriteAdapter{ctx: ctx, handle: destination}, limited, buffer[:min(len(buffer), streamPacketBytes)])
+		}
 	}
 	var previousReadTime time.Duration
 	for {
@@ -230,15 +255,7 @@ func (worker *Worker) copyStream(ctx context.Context, plan Plan, source provider
 		}
 		consumedBefore := reader.readBytes
 		started := time.Now()
-		var n int64
-		var err error
-		if stream, ok := destination.(providerapi.WindowedStreamWriteHandle); ok && plan.Durability != "" {
-			n, err = stream.WriteFromWindow(ctx, limited, streamWindowRequests(plan, plan.Source.Fingerprint.Size))
-		} else if stream, ok := destination.(providerapi.StreamWriteHandle); ok && plan.Durability == "" {
-			n, err = stream.WriteFrom(ctx, limited)
-		} else {
-			n, err = io.CopyBuffer(streamWriteAdapter{ctx: ctx, handle: destination}, limited, buffer[:min(len(buffer), streamPacketBytes)])
-		}
+		n, err := writeEpoch(limited)
 		close(stopControl)
 		<-joinedControl
 		select {
@@ -370,9 +387,19 @@ func (worker *Worker) initializeCreatedPart(ctx context.Context, plan Plan, dest
 	if err := syncInitialPart(initializationCtx, plan, handle); err != nil {
 		return err
 	}
-	entry, err := destination.Stat(initializationCtx, providerapi.StatRequest{Location: checkpoint.Part})
-	if err != nil {
-		return err
+	var entry domain.Entry
+	var err error
+	hasCreatedEntry := false
+	if !plan.checkpointSync() {
+		if createdHandle, ok := handle.(providerapi.CreatedEntryHandle); ok {
+			entry, hasCreatedEntry = createdHandle.CreatedEntry()
+		}
+	}
+	if !hasCreatedEntry {
+		entry, err = destination.Stat(initializationCtx, providerapi.StatRequest{Location: checkpoint.Part})
+		if err != nil {
+			return err
+		}
 	}
 	if entry.Metadata.Size == nil || *entry.Metadata.Size != 0 {
 		return planError(domain.CodeConflict, "initialize_part", checkpoint.Part, "created part is no longer empty", domain.RetryAfterConflict)

@@ -242,9 +242,21 @@ func (manager *Manager) PrepareUpgrade() error {
 	return nil
 }
 
-func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore.Snapshot, error) {
+type jobFreezeIDs struct {
+	RequestID domain.RequestID
+	JobID     domain.JobID
+	EventID   domain.EventID
+	PlanID    string
+	Now       time.Time
+}
+
+func (manager *Manager) createJob(
+	ctx context.Context,
+	opName string,
+	freeze func(jobFreezeIDs) (Plan, jobstore.CreateRequest, error),
+) (jobstore.Snapshot, error) {
 	if !manager.isStarted() {
-		return jobstore.Snapshot{}, errors.New("create copy Job: transfer manager is not started")
+		return jobstore.Snapshot{}, fmt.Errorf("%s: transfer manager is not started", opName)
 	}
 	requestID, err := domain.NewRequestID(manager.generator)
 	if err != nil {
@@ -260,22 +272,13 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 	}
 	planID, err := manager.generator.New("plan_")
 	if err != nil {
-		return jobstore.Snapshot{}, fmt.Errorf("create copy Job: generate plan ID: %w", err)
+		return jobstore.Snapshot{}, fmt.Errorf("%s: generate plan ID: %w", opName, err)
 	}
-	if manager.sameHost != nil && intent.Source.Kind == domain.EntryFile && intent.Source.Location.EndpointID != "" &&
-		intent.Source.Location.EndpointID == intent.DestinationDirectory.EndpointID {
-		releaseAdmission, err := manager.store.AcquireHelperJobAdmission(ctx)
-		if err != nil {
-			return jobstore.Snapshot{}, fmt.Errorf("create copy Job: acquire Helper admission lease: %w", err)
-		}
-		defer releaseAdmission()
-	}
-	plan, create, err := manager.planner.FreezeCopy(ctx, FreezeRequest{
-		Intent:    intent,
+	plan, create, err := freeze(jobFreezeIDs{
 		RequestID: requestID,
-		PlanID:    planID,
 		JobID:     jobID,
 		EventID:   eventID,
+		PlanID:    planID,
 		Now:       manager.now(),
 	})
 	if err != nil {
@@ -283,6 +286,14 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 	}
 	var queueLease *ResourceLease
 	var release func()
+	cleanupLeases := func() {
+		if queueLease != nil {
+			queueLease.Release()
+		}
+		if release != nil {
+			release()
+		}
+	}
 	if create.InitialState == job.StateQueued {
 		queueLease, err = manager.acquireQueueLease(plan.JobID)
 		if err != nil {
@@ -291,146 +302,19 @@ func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore
 		if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
 			release, err = acquirer.Acquire(ctx, plan)
 			if err != nil {
-				queueLease.Release()
+				cleanupLeases()
 				return jobstore.Snapshot{}, err
 			}
 		}
 	}
 	snapshot, _, err := manager.store.Create(ctx, create)
 	if err != nil {
-		if queueLease != nil {
-			queueLease.Release()
-		}
-		if release != nil {
-			release()
-		}
+		cleanupLeases()
 		return jobstore.Snapshot{}, err
 	}
-	if snapshot.State == job.StateQueued {
-		if release != nil {
-			manager.retainLease(snapshot.JobID, release)
-		}
-		if err := manager.enqueueWithLease(plan.JobID, queueLease); err != nil {
-			manager.releaseLease(snapshot.JobID)
-			return jobstore.Snapshot{}, err
-		}
-	} else {
-		if queueLease != nil {
-			queueLease.Release()
-		}
-		if release != nil {
-			release()
-		}
-	}
-	return snapshot, nil
-}
-
-func (manager *Manager) CreateSyncBack(ctx context.Context, intent SyncBackIntent) (jobstore.Snapshot, error) {
-	if !manager.isStarted() {
-		return jobstore.Snapshot{}, errors.New("create sync-back Job: transfer manager is not started")
-	}
-	requestID, err := domain.NewRequestID(manager.generator)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	jobID, err := domain.NewJobID(manager.generator)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	eventID, err := domain.NewEventID(manager.generator)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	bindingEventID, err := domain.NewEventID(manager.generator)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	planID, err := manager.generator.New("plan_")
-	if err != nil {
-		return jobstore.Snapshot{}, fmt.Errorf("create sync-back Job: generate plan ID: %w", err)
-	}
-	plan, create, err := manager.planner.FreezeSyncBack(ctx, SyncBackFreezeRequest{
-		SyncBack: intent.SyncBack, Source: intent.Source, RequestID: requestID, PlanID: planID, JobID: jobID,
-		EventID: eventID, BindingEventID: string(bindingEventID), Now: manager.now(),
-	})
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	queueLease, err := manager.acquireQueueLease(plan.JobID)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	var release func()
-	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
-		release, err = acquirer.Acquire(ctx, plan)
-		if err != nil {
-			queueLease.Release()
-			return jobstore.Snapshot{}, err
-		}
-	}
-	snapshot, _, err := manager.store.Create(ctx, create)
-	if err != nil {
-		queueLease.Release()
-		if release != nil {
-			release()
-		}
-		return jobstore.Snapshot{}, err
-	}
-	if release != nil {
-		manager.retainLease(snapshot.JobID, release)
-	}
-	if err := manager.enqueueWithLease(plan.JobID, queueLease); err != nil {
-		manager.releaseLease(snapshot.JobID)
-		return jobstore.Snapshot{}, err
-	}
-	return snapshot, nil
-}
-
-func (manager *Manager) CreateDelete(ctx context.Context, intent DeleteIntent) (jobstore.Snapshot, error) {
-	if !manager.isStarted() {
-		return jobstore.Snapshot{}, errors.New("create delete Job: transfer manager is not started")
-	}
-	requestID, err := domain.NewRequestID(manager.generator)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	jobID, err := domain.NewJobID(manager.generator)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	eventID, err := domain.NewEventID(manager.generator)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	planID, err := manager.generator.New("plan_")
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	plan, create, err := manager.planner.FreezeDelete(ctx, DeleteFreezeRequest{
-		Intent: intent, RequestID: requestID, PlanID: planID, JobID: jobID, EventID: eventID, Now: manager.now(),
-	})
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	queueLease, err := manager.acquireQueueLease(plan.JobID)
-	if err != nil {
-		return jobstore.Snapshot{}, err
-	}
-	var release func()
-	if acquirer, ok := manager.resolver.(PlanAcquirer); ok {
-		release, err = acquirer.Acquire(ctx, plan)
-		if err != nil {
-			queueLease.Release()
-			return jobstore.Snapshot{}, err
-		}
-	}
-	snapshot, _, err := manager.store.Create(ctx, create)
-	if err != nil {
-		queueLease.Release()
-		if release != nil {
-			release()
-		}
-		return jobstore.Snapshot{}, err
+	if snapshot.State != job.StateQueued {
+		cleanupLeases()
+		return snapshot, nil
 	}
 	if release != nil {
 		manager.retainLease(snapshot.JobID, release)
@@ -440,6 +324,51 @@ func (manager *Manager) CreateDelete(ctx context.Context, intent DeleteIntent) (
 		return jobstore.Snapshot{}, err
 	}
 	return snapshot, nil
+}
+
+func (manager *Manager) CreateCopy(ctx context.Context, intent Intent) (jobstore.Snapshot, error) {
+	if !manager.isStarted() {
+		return jobstore.Snapshot{}, errors.New("create copy Job: transfer manager is not started")
+	}
+	if manager.sameHost != nil && intent.Source.Kind == domain.EntryFile && intent.Source.Location.EndpointID != "" &&
+		intent.Source.Location.EndpointID == intent.DestinationDirectory.EndpointID {
+		releaseAdmission, err := manager.store.AcquireHelperJobAdmission(ctx)
+		if err != nil {
+			return jobstore.Snapshot{}, fmt.Errorf("create copy Job: acquire Helper admission lease: %w", err)
+		}
+		defer releaseAdmission()
+	}
+	return manager.createJob(ctx, "create copy Job", func(ids jobFreezeIDs) (Plan, jobstore.CreateRequest, error) {
+		return manager.planner.FreezeCopy(ctx, FreezeRequest{
+			Intent:    intent,
+			RequestID: ids.RequestID,
+			PlanID:    ids.PlanID,
+			JobID:     ids.JobID,
+			EventID:   ids.EventID,
+			Now:       ids.Now,
+		})
+	})
+}
+
+func (manager *Manager) CreateSyncBack(ctx context.Context, intent SyncBackIntent) (jobstore.Snapshot, error) {
+	return manager.createJob(ctx, "create sync-back Job", func(ids jobFreezeIDs) (Plan, jobstore.CreateRequest, error) {
+		bindingEventID, err := domain.NewEventID(manager.generator)
+		if err != nil {
+			return Plan{}, jobstore.CreateRequest{}, err
+		}
+		return manager.planner.FreezeSyncBack(ctx, SyncBackFreezeRequest{
+			SyncBack: intent.SyncBack, Source: intent.Source, RequestID: ids.RequestID, PlanID: ids.PlanID, JobID: ids.JobID,
+			EventID: ids.EventID, BindingEventID: string(bindingEventID), Now: ids.Now,
+		})
+	})
+}
+
+func (manager *Manager) CreateDelete(ctx context.Context, intent DeleteIntent) (jobstore.Snapshot, error) {
+	return manager.createJob(ctx, "create delete Job", func(ids jobFreezeIDs) (Plan, jobstore.CreateRequest, error) {
+		return manager.planner.FreezeDelete(ctx, DeleteFreezeRequest{
+			Intent: intent, RequestID: ids.RequestID, PlanID: ids.PlanID, JobID: ids.JobID, EventID: ids.EventID, Now: ids.Now,
+		})
+	})
 }
 
 func (manager *Manager) Capture(ctx context.Context, location domain.Location) (FileRef, error) {
@@ -841,24 +770,7 @@ func (manager *Manager) execute(jobID domain.JobID) {
 			defer release()
 		}
 	}
-	var result Result
-	var executeErr error
-	if plan.Kind == OperationDelete {
-		result, executeErr = manager.executeDelete(plan)
-	} else if plan.Kind == OperationMove && plan.MoveStrategy == MoveAtomicRename {
-		result, executeErr = manager.executeAtomicMove(plan)
-	} else {
-		journal := JobJournal{Store: manager.store, StepIndex: 0, Now: manager.now,
-			Observer: func(ctx context.Context, progress TransferProgress) error {
-				return manager.observeProgress(ctx, jobID, plan.Route, plan.Source.Kind == domain.EntryDirectory, progress)
-			},
-		}
-		worker := &Worker{
-			resolver: manager.resolver, journal: journal, sameHost: manager.sameHost,
-			level2: manager.level2, scheduler: manager.scheduler,
-		}
-		result, executeErr = worker.Execute(manager.ctx, plan, manager.control(jobID))
-	}
+	result, executeErr := manager.dispatchExecution(plan, jobID)
 	if manager.ctx.Err() != nil {
 		return
 	}
@@ -884,60 +796,85 @@ func (manager *Manager) execute(jobID domain.JobID) {
 		}
 		manager.openConflict(current, plan, result.Final, reason)
 	default:
-		verificationPayload := map[string]any{"sha256": result.SHA256}
-		checkpoint, checkpointErr := (JobJournal{Store: manager.store, StepIndex: 0}).Load(manager.ctx, jobID)
-		if checkpointErr != nil {
-			manager.handleExecutionError(current, checkpointErr, result)
+		manager.completeExecution(current, plan, result)
+	}
+}
+
+func (manager *Manager) dispatchExecution(plan Plan, jobID domain.JobID) (Result, error) {
+	switch {
+	case plan.Kind == OperationDelete:
+		return manager.executeDelete(plan)
+	case plan.Kind == OperationMove && plan.MoveStrategy == MoveAtomicRename:
+		return manager.executeAtomicMove(plan)
+	default:
+		journal := JobJournal{
+			Store: manager.store, StepIndex: 0, Now: manager.now,
+			Observer: func(ctx context.Context, progress TransferProgress) error {
+				return manager.observeProgress(ctx, jobID, plan.Route, plan.Source.Kind == domain.EntryDirectory, progress)
+			},
+		}
+		worker := &Worker{
+			resolver: manager.resolver, journal: journal, sameHost: manager.sameHost,
+			level2: manager.level2, scheduler: manager.scheduler,
+		}
+		return worker.Execute(manager.ctx, plan, manager.control(jobID))
+	}
+}
+
+func (manager *Manager) completeExecution(current jobstore.Snapshot, plan Plan, result Result) {
+	verificationPayload := map[string]any{"sha256": result.SHA256}
+	checkpoint, checkpointErr := (JobJournal{Store: manager.store, StepIndex: 0}).Load(manager.ctx, current.JobID)
+	if checkpointErr != nil {
+		manager.handleExecutionError(current, checkpointErr, result)
+		return
+	}
+	if checkpoint != nil && checkpoint.ActualRoute != "" {
+		verificationPayload["planned_route"] = plan.Route
+		verificationPayload["actual_route"] = checkpoint.ActualRoute
+		verificationPayload["route_reason"] = checkpoint.RouteReason
+		if checkpoint.DowngradedFrom != "" {
+			verificationPayload["downgraded_from"] = checkpoint.DowngradedFrom
+		}
+	}
+	verifying := current
+	if current.State != job.StateVerifying {
+		var transitionErr error
+		verifying, transitionErr = manager.transition(current, job.StateVerifying, "job_verifying", verificationPayload)
+		if transitionErr != nil {
+			manager.fail(current, fmt.Errorf("persist verifying state: %w", transitionErr))
 			return
 		}
-		if checkpoint != nil && checkpoint.ActualRoute != "" {
-			verificationPayload["planned_route"] = plan.Route
-			verificationPayload["actual_route"] = checkpoint.ActualRoute
-			verificationPayload["route_reason"] = checkpoint.RouteReason
-			if checkpoint.DowngradedFrom != "" {
-				verificationPayload["downgraded_from"] = checkpoint.DowngradedFrom
-			}
+	}
+	terminalState := job.StateCompleted
+	eventKind := "job_completed"
+	summary := string(result.Outcome)
+	if result.PreservedDestination.Path != "" {
+		summary += "; original remote version preserved at " + string(result.PreservedDestination.Path)
+	}
+	moveReason := ""
+	if plan.Kind == OperationMove {
+		deleted := false
+		reason := "copy was skipped; source retained"
+		if result.Outcome != OutcomeSkipped {
+			deleted, reason = manager.finishMove(plan, result)
 		}
-		verifying := current
-		var transitionErr error
-		if current.State != job.StateVerifying {
-			verifying, transitionErr = manager.transition(current, job.StateVerifying, "job_verifying", verificationPayload)
-		}
-		if transitionErr == nil {
-			terminalState := job.StateCompleted
-			eventKind := "job_completed"
-			summary := string(result.Outcome)
-			if result.PreservedDestination.Path != "" {
-				summary += "; original remote version preserved at " + string(result.PreservedDestination.Path)
-			}
-			moveReason := ""
-			if plan.Kind == OperationMove {
-				deleted := false
-				reason := "copy was skipped; source retained"
-				if result.Outcome != OutcomeSkipped {
-					deleted, reason = manager.finishMove(plan, result)
-				}
-				moveReason = reason
-				if !deleted {
-					terminalState = job.StateCompletedWithSourceRetained
-					eventKind = "job_completed_source_retained"
-					summary = "destination completed and source retained: " + reason
-				} else {
-					eventKind = "job_move_completed"
-					summary = "destination verified and source deletion proved"
-				}
-			}
-			if _, terminalErr := manager.persistTerminal(verifying, terminalState, eventKind, summary, map[string]any{
-				"bytes": result.Bytes, "items": result.Items, "succeeded": result.Succeeded, "skipped": result.Skipped,
-				"failed": result.Failed, "manifest": result.Manifest, "manifest_truncated": result.ManifestTruncated,
-				"final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome, "move_reason": moveReason,
-				"preserved_destination": result.PreservedDestination,
-			}); terminalErr != nil {
-				manager.fail(verifying, fmt.Errorf("persist completed state: %w", terminalErr))
-			}
+		moveReason = reason
+		if !deleted {
+			terminalState = job.StateCompletedWithSourceRetained
+			eventKind = "job_completed_source_retained"
+			summary = "destination completed and source retained: " + reason
 		} else {
-			manager.fail(current, fmt.Errorf("persist verifying state: %w", transitionErr))
+			eventKind = "job_move_completed"
+			summary = "destination verified and source deletion proved"
 		}
+	}
+	if _, terminalErr := manager.persistTerminal(verifying, terminalState, eventKind, summary, map[string]any{
+		"bytes": result.Bytes, "items": result.Items, "succeeded": result.Succeeded, "skipped": result.Skipped,
+		"failed": result.Failed, "manifest": result.Manifest, "manifest_truncated": result.ManifestTruncated,
+		"final": result.Final, "sha256": result.SHA256, "outcome": result.Outcome, "move_reason": moveReason,
+		"preserved_destination": result.PreservedDestination,
+	}); terminalErr != nil {
+		manager.fail(verifying, fmt.Errorf("persist completed state: %w", terminalErr))
 	}
 }
 
