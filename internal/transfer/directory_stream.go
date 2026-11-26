@@ -42,16 +42,17 @@ func directoryFilePlan(plan Plan, entry domain.Entry, relative string, final dom
 }
 
 type directoryStreams struct {
-	mu          sync.Mutex
-	parent      Journal
-	root        Checkpoint
-	floor       uint64
-	completed   uint64
-	durable     uint64
-	performance *TransferPerformance
-	slots       int
-	active      map[string]Checkpoint
-	live        map[string]TransferProgress
+	mu           sync.Mutex
+	parent       Journal
+	root         Checkpoint
+	verification Verification
+	floor        uint64
+	completed    uint64
+	durable      uint64
+	performance  *TransferPerformance
+	slots        int
+	active       map[string]Checkpoint
+	live         map[string]TransferProgress
 }
 
 func (s *directoryStreams) snapshot() Checkpoint {
@@ -59,7 +60,7 @@ func (s *directoryStreams) snapshot() Checkpoint {
 	defer s.mu.Unlock()
 	return cloneCheckpoint(s.root)
 }
-func (s *directoryStreams) saveLocked(ctx context.Context) error {
+func (s *directoryStreams) syncRootLocked() {
 	s.floor = max(s.floor, s.root.Offset)
 	s.root.DirectoryPerformance = cloneTransferPerformance(s.performance)
 	s.root.DirectoryChildren = nil
@@ -82,6 +83,10 @@ func (s *directoryStreams) saveLocked(ctx context.Context) error {
 	if s.root.Completion.Version != 0 {
 		s.root.Completion.DurableBytes = max(s.root.Completion.DurableBytes, min(durable, s.root.Offset))
 	}
+}
+
+func (s *directoryStreams) saveLocked(ctx context.Context) error {
+	s.syncRootLocked()
 	return s.parent.Save(ctx, cloneCheckpoint(s.root))
 }
 func (s *directoryStreams) setItems(items uint64) { s.mu.Lock(); s.root.Items = items; s.mu.Unlock() }
@@ -132,7 +137,32 @@ func (j *directoryStreamJournal) Save(ctx context.Context, child Checkpoint) err
 	}
 	s.active[j.name] = cloneCheckpoint(child)
 	s.root.CurrentPath = j.name
+	if !s.shouldPersistChildLocked(child) {
+		s.syncRootLocked()
+		return nil
+	}
 	return s.saveLocked(ctx)
+}
+
+// shouldPersistChildLocked skips strictly dominated intermediate child flushes
+// while preserving every crash-recovery boundary (part creation intent, empty
+// part identity, mid-file epoch progress, conflict waits, pre-rename commit,
+// and parent completion).
+func (s *directoryStreams) shouldPersistChildLocked(child Checkpoint) bool {
+	switch child.Phase {
+	case PhaseCommitted:
+		return false
+	case PhaseTransferred:
+		return s.verification != VerifyProtocol
+	case PhaseStreaming:
+		if child.Offset > 0 && child.Completion.DurableBytes == 0 &&
+			child.SourceFingerprint.Size != nil && child.Offset == *child.SourceFingerprint.Size {
+			return false
+		}
+		return true
+	default:
+		return true
+	}
 }
 func (j *directoryStreamJournal) ReportProgress(ctx context.Context, progress TransferProgress) error {
 	s := j.streams
@@ -161,60 +191,39 @@ type directoryStreamResult struct {
 }
 
 func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, control Control, root Checkpoint, resuming bool, source, destinationProvider providerapi.Provider, destination providerapi.MutableProvider) (Result, error) {
-	if len(root.DirectoryChildren) > directoryStreamWorkers(plan) {
+	slots := directoryStreamWorkers(plan)
+	if len(root.DirectoryChildren) > slots {
 		return Result{}, errors.New("directory stream: invalid active checkpoint budget")
 	}
-	streams := &directoryStreams{slots: directoryStreamWorkers(plan), parent: worker.journal, root: root, floor: root.Offset, performance: cloneTransferPerformance(root.DirectoryPerformance), active: make(map[string]Checkpoint), live: make(map[string]TransferProgress)}
-	// Reopen the bounded interrupted transactions first. The ordinary walk below
-	// then validates completed files and reconstructs aggregate byte/item counts.
-	for _, saved := range root.DirectoryChildren {
-		child := saved.Checkpoint
-		if saved.RelativePath == "" || path.Clean(saved.RelativePath) != saved.RelativePath || path.IsAbs(saved.RelativePath) || saved.RelativePath == ".." || len(saved.RelativePath) >= 3 && saved.RelativePath[:3] == "../" || len(child.DirectoryChildren) != 0 || child.JobID != plan.JobID || child.SourceFingerprint.Size == nil {
-			return Result{}, errors.New("directory stream: invalid child identity")
-		}
-		entry := domain.Entry{Location: childLocation(plan.Source.Location, saved.RelativePath), Kind: domain.EntryFile, Fingerprint: child.SourceFingerprint}
-		childPlan := directoryFilePlan(plan, entry, saved.RelativePath, root.Final)
-		if !checkpointMatchesPlan(child, childPlan) {
-			return Result{}, errors.New("directory stream: child checkpoint does not match plan")
-		}
-		streams.active[saved.RelativePath] = child
+	streams := &directoryStreams{
+		slots: slots, parent: worker.journal, root: root, verification: plan.Verification, floor: root.Offset,
+		performance: cloneTransferPerformance(root.DirectoryPerformance),
+		active:      make(map[string]Checkpoint), live: make(map[string]TransferProgress),
+	}
+	if err := loadActiveDirectoryChildren(streams, plan, root); err != nil {
+		return Result{}, err
 	}
 	// Do not count active performance twice when projecting child updates.
 	if root.DirectoryPerformance == nil && len(root.DirectoryChildren) == 0 {
 		streams.performance = cloneTransferPerformance(root.Performance)
 	}
 	result := Result{Outcome: OutcomeCompleted, Final: root.Final}
+	var manifest manifestAccumulator
 	streamCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
-	var controlMu sync.Mutex
-	var childControl Control
-	if control != nil {
-		childControl = ControlFunc(func(Checkpoint) ControlAction {
-			controlMu.Lock()
-			defer controlMu.Unlock()
-			return control.Action(streams.snapshot())
-		})
+	childControl := wrapDirectoryStreamControl(control, streams)
+	conflictResult, err := worker.resumeInterruptedDirectoryChildren(ctx, streamCtx, plan, root, streams, childControl)
+	if err != nil {
+		return result, err
 	}
-	for _, saved := range root.DirectoryChildren {
-		entry := domain.Entry{Location: childLocation(plan.Source.Location, saved.RelativePath), Kind: domain.EntryFile, Fingerprint: saved.Checkpoint.SourceFingerprint}
-		childPlan := directoryFilePlan(plan, entry, saved.RelativePath, root.Final)
-		childResult, err := worker.withJournal(&directoryStreamJournal{streams: streams, name: saved.RelativePath}).Execute(streamCtx, childPlan, childControl)
-		if err != nil {
-			return result, err
-		}
-		if childResult.Outcome == OutcomeWaitingConflict {
-			return childResult, nil
-		}
-		if err := streams.complete(ctx, saved.RelativePath, 0); err != nil {
-			return result, err
-		}
+	if conflictResult != nil {
+		return *conflictResult, nil
 	}
 	items, failures, err := DiscoverDirectory(streamCtx, source, plan.Source.Location, *plan.Discovery)
 	if err != nil {
 		return result, err
 	}
 	validationBuffer := make([]byte, streamPacketBytes)
-	slots := directoryStreamWorkers(plan)
 	completed := make(chan directoryStreamResult, slots)
 	active := 0
 	inFlightRequests := uint32(0)
@@ -223,7 +232,8 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 	accept := func(done directoryStreamResult) {
 		inFlightRequests -= directoryRequestCost(plan, done.item.Entry)
 		record := ItemResult{RelativePath: done.item.RelativePath, Source: done.item.Entry.Location, Destination: childLocation(root.Final, done.item.RelativePath)}
-		if done.err != nil {
+		switch {
+		case done.err != nil:
 			if code, ok := continuableDirectoryItemError(done.err); ok {
 				record.Status = ItemFailed
 				record.ErrorCode = code
@@ -235,10 +245,10 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 				stopErr = done.err
 				cancel()
 			}
-		} else if done.result.Outcome == OutcomeWaitingConflict {
-			copy := done.result
-			conflict = &copy
-		} else {
+		case done.result.Outcome == OutcomeWaitingConflict:
+			copyResult := done.result
+			conflict = &copyResult
+		default:
 			record.Status = ItemSucceeded
 			record.Bytes = done.result.Bytes
 			result.Succeeded++
@@ -251,7 +261,7 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 		}
 		if record.Status != "" {
 			result.Items++
-			appendItemResult(&result, record)
+			manifest.append(&result, record)
 		}
 	}
 	drain := func() {
@@ -295,7 +305,7 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 				result.Items++
 				result.Succeeded++
 				result.Bytes += bytes
-				appendItemResult(&result, ItemResult{RelativePath: item.RelativePath, Source: item.Entry.Location, Destination: location, Status: ItemSucceeded, Bytes: bytes})
+				manifest.append(&result, ItemResult{RelativePath: item.RelativePath, Source: item.Entry.Location, Destination: location, Status: ItemSucceeded, Bytes: bytes})
 				streams.setItems(result.Items)
 				if err := streams.complete(ctx, item.RelativePath, bytes); err != nil {
 					stopErr = err
@@ -306,12 +316,10 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 			}
 		}
 		if childControl != nil {
-			action := childControl.Action(Checkpoint{})
-			if action != ControlContinue {
+			if action := childControl.Action(Checkpoint{}); action != ControlContinue {
+				stopErr = ErrCanceled
 				if action == ControlPause {
 					stopErr = ErrPaused
-				} else {
-					stopErr = ErrCanceled
 				}
 				cancel()
 				break
@@ -340,7 +348,7 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 			result.Skipped++
 		}
 		result.Items++
-		appendItemResult(&result, record)
+		manifest.append(&result, record)
 		streams.setItems(result.Items)
 		if err := streams.complete(ctx, item.RelativePath, 0); err != nil {
 			stopErr = err
@@ -352,23 +360,91 @@ func (worker *Worker) executeDirectoryStreams(ctx context.Context, plan Plan, co
 	if stopErr == nil && conflict == nil {
 		stopErr = <-failures
 	}
+	return finalizeDirectoryStreams(ctx, plan, streams, result, conflict, stopErr)
+}
+
+func loadActiveDirectoryChildren(streams *directoryStreams, plan Plan, root Checkpoint) error {
+	for _, saved := range root.DirectoryChildren {
+		child := saved.Checkpoint
+		if saved.RelativePath == "" || path.Clean(saved.RelativePath) != saved.RelativePath || path.IsAbs(saved.RelativePath) ||
+			saved.RelativePath == ".." || len(saved.RelativePath) >= 3 && saved.RelativePath[:3] == "../" ||
+			len(child.DirectoryChildren) != 0 || child.JobID != plan.JobID || child.SourceFingerprint.Size == nil {
+			return errors.New("directory stream: invalid child identity")
+		}
+		entry := domain.Entry{Location: childLocation(plan.Source.Location, saved.RelativePath), Kind: domain.EntryFile, Fingerprint: child.SourceFingerprint}
+		childPlan := directoryFilePlan(plan, entry, saved.RelativePath, root.Final)
+		if !checkpointMatchesPlan(child, childPlan) {
+			return errors.New("directory stream: child checkpoint does not match plan")
+		}
+		streams.active[saved.RelativePath] = child
+	}
+	return nil
+}
+
+func wrapDirectoryStreamControl(control Control, streams *directoryStreams) Control {
+	if control == nil {
+		return nil
+	}
+	var controlMu sync.Mutex
+	return ControlFunc(func(Checkpoint) ControlAction {
+		controlMu.Lock()
+		defer controlMu.Unlock()
+		return control.Action(streams.snapshot())
+	})
+}
+
+func (worker *Worker) resumeInterruptedDirectoryChildren(
+	ctx, streamCtx context.Context,
+	plan Plan,
+	root Checkpoint,
+	streams *directoryStreams,
+	childControl Control,
+) (*Result, error) {
+	// Reopen the bounded interrupted transactions first. The ordinary walk below
+	// then validates completed files and reconstructs aggregate byte/item counts.
+	for _, saved := range root.DirectoryChildren {
+		entry := domain.Entry{Location: childLocation(plan.Source.Location, saved.RelativePath), Kind: domain.EntryFile, Fingerprint: saved.Checkpoint.SourceFingerprint}
+		childPlan := directoryFilePlan(plan, entry, saved.RelativePath, root.Final)
+		childResult, err := worker.withJournal(&directoryStreamJournal{streams: streams, name: saved.RelativePath}).Execute(streamCtx, childPlan, childControl)
+		if err != nil {
+			return nil, err
+		}
+		if childResult.Outcome == OutcomeWaitingConflict {
+			return &childResult, nil
+		}
+		if err := streams.complete(ctx, saved.RelativePath, 0); err != nil {
+			return nil, err
+		}
+	}
+	return nil, nil
+}
+
+func finalizeDirectoryStreams(
+	ctx context.Context,
+	plan Plan,
+	streams *directoryStreams,
+	result Result,
+	conflict *Result,
+	stopErr error,
+) (Result, error) {
 	streams.mu.Lock()
 	defer streams.mu.Unlock()
 	streams.root.Items = result.Items
 	streams.root.CurrentPath = ""
-	if conflict != nil {
+	switch {
+	case conflict != nil:
 		streams.root.Phase = PhaseWaitingConflict
 		streams.root.Outcome = OutcomeWaitingConflict
 		result.Outcome = OutcomeWaitingConflict
 		result.Final = conflict.Final
 		result.PartRetained = true
-	} else if stopErr == nil {
+	case stopErr == nil:
 		streams.root.Phase = PhaseCommitted
 		streams.root.Outcome = OutcomeCompleted
 		if plan.Verification == VerifySHA256 {
 			streams.root.recordContentVerified()
 		}
-	} else if result.Failed > 0 {
+	case result.Failed > 0:
 		result.Outcome = OutcomeCompletedPartial
 		streams.root.Outcome = OutcomeCompletedPartial
 		var partial *PartialItemsError

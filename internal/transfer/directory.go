@@ -184,61 +184,104 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 		return Result{}, planError(domain.CodeConflict, "execute_directory", plan.Source.Location, "frozen directory root changed", domain.RetryAfterConflict)
 	}
 
+	checkpoint, resuming, committed, err := worker.loadDirectoryCheckpoint(ctx, plan)
+	if err != nil {
+		return Result{}, err
+	}
+	if committed != nil {
+		return *committed, nil
+	}
+	final, conflictResult, err := worker.prepareDirectoryDestination(ctx, plan, destinationProvider, destination, &checkpoint)
+	if err != nil {
+		return Result{}, err
+	}
+	if conflictResult != nil {
+		return *conflictResult, nil
+	}
+	if plan.StreamPolicy.DirectoryWorkers > 0 {
+		return worker.executeDirectoryStreams(ctx, plan, control, checkpoint, resuming, source, destinationProvider, destination)
+	}
+	return worker.executeDirectorySequential(ctx, plan, control, checkpoint, resuming, final, source, destinationProvider, destination)
+}
+
+func (worker *Worker) loadDirectoryCheckpoint(ctx context.Context, plan Plan) (Checkpoint, bool, *Result, error) {
 	stored, err := worker.journal.Load(ctx, plan.JobID)
 	if err != nil {
-		return Result{}, fmt.Errorf("execute directory: load checkpoint: %w", err)
-	}
-	checkpoint := Checkpoint{
-		Completion:        newCompletionEvidence(plan),
-		JobID:             plan.JobID,
-		Phase:             PhasePrepared,
-		SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
-		Part:              plan.Part,
-		Final:             plan.Final,
+		return Checkpoint{}, false, nil, fmt.Errorf("execute directory: load checkpoint: %w", err)
 	}
 	if stored == nil {
+		checkpoint := Checkpoint{
+			Completion:        newCompletionEvidence(plan),
+			JobID:             plan.JobID,
+			Phase:             PhasePrepared,
+			SourceFingerprint: cloneFingerprint(plan.Source.Fingerprint),
+			Part:              plan.Part,
+			Final:             plan.Final,
+		}
 		if err := worker.journal.Save(ctx, checkpoint); err != nil {
-			return Result{}, fmt.Errorf("execute directory: persist root intent: %w", err)
+			return Checkpoint{}, false, nil, fmt.Errorf("execute directory: persist root intent: %w", err)
 		}
-	} else {
-		checkpoint = cloneCheckpoint(*stored)
-		if checkpoint.JobID != plan.JobID || !reflect.DeepEqual(checkpoint.SourceFingerprint, plan.Source.Fingerprint) || checkpoint.Completion.Version != newCompletionEvidence(plan).Version || checkpoint.Completion.DurableBytes > checkpoint.Offset {
-			return Result{}, errors.New("execute directory: checkpoint does not match frozen plan")
-		}
-		if checkpoint.Phase == PhaseCommitted {
-			return Result{Outcome: checkpoint.Outcome, Final: checkpoint.Final, Bytes: checkpoint.Offset, Items: checkpoint.Items}, nil
-		}
+		return checkpoint, false, nil, nil
 	}
-	resuming := stored != nil
+	checkpoint := cloneCheckpoint(*stored)
+	if checkpoint.JobID != plan.JobID || !reflect.DeepEqual(checkpoint.SourceFingerprint, plan.Source.Fingerprint) || checkpoint.Completion.Version != newCompletionEvidence(plan).Version || checkpoint.Completion.DurableBytes > checkpoint.Offset {
+		return Checkpoint{}, false, nil, errors.New("execute directory: checkpoint does not match frozen plan")
+	}
+	if checkpoint.Phase == PhaseCommitted {
+		committed := Result{Outcome: checkpoint.Outcome, Final: checkpoint.Final, Bytes: checkpoint.Offset, Items: checkpoint.Items}
+		return checkpoint, true, &committed, nil
+	}
+	return checkpoint, true, nil, nil
+}
+
+func (worker *Worker) prepareDirectoryDestination(
+	ctx context.Context,
+	plan Plan,
+	destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	checkpoint *Checkpoint,
+) (domain.Location, *Result, error) {
 	final := checkpoint.Final
 	if checkpoint.DirectoryRootOwned || plan.ConflictPolicy == ConflictOverwrite {
 		if err := ensureDirectory(ctx, destinationProvider, destination, final); err != nil {
-			return Result{}, err
+			return domain.Location{}, nil, err
 		}
 	} else {
 		var outcome Outcome
 		var owned bool
+		var err error
 		final, outcome, owned, err = prepareDirectoryRoot(ctx, destinationProvider, destination, plan)
 		if err != nil {
-			return Result{}, err
+			return domain.Location{}, nil, err
 		}
 		checkpoint.Final = final
 		checkpoint.DirectoryRootOwned = owned
 		if outcome != "" {
 			checkpoint.Phase = PhaseWaitingConflict
 			checkpoint.Outcome = outcome
-			_ = worker.journal.Save(ctx, checkpoint)
-			return Result{Outcome: outcome, Final: final}, nil
+			_ = worker.journal.Save(ctx, *checkpoint)
+			conflict := Result{Outcome: outcome, Final: final}
+			return final, &conflict, nil
 		}
 	}
 	checkpoint.Phase = PhaseStreaming
 	checkpoint.Outcome = ""
-	if err := worker.journal.Save(ctx, checkpoint); err != nil {
-		return Result{}, err
+	if err := worker.journal.Save(ctx, *checkpoint); err != nil {
+		return domain.Location{}, nil, err
 	}
-	if plan.StreamPolicy.DirectoryWorkers > 0 {
-		return worker.executeDirectoryStreams(ctx, plan, control, checkpoint, resuming, source, destinationProvider, destination)
-	}
+	return final, nil, nil
+}
+
+func (worker *Worker) executeDirectorySequential(
+	ctx context.Context,
+	plan Plan,
+	control Control,
+	checkpoint Checkpoint,
+	resuming bool,
+	final domain.Location,
+	source, destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+) (Result, error) {
 	discoveryContext, cancelDiscovery := context.WithCancel(ctx)
 	defer cancelDiscovery()
 	items, failures, err := DiscoverDirectory(discoveryContext, source, plan.Source.Location, *plan.Discovery)
@@ -252,9 +295,8 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 		}
 		observer.ObserveBuffer(bufferCeiling)
 	}
-	var result Result
-	result.Outcome = OutcomeCompleted
-	result.Final = final
+	result := Result{Outcome: OutcomeCompleted, Final: final}
+	var manifest manifestAccumulator
 	var validationBuffer []byte
 	if resuming && checkpoint.DirectoryRootOwned {
 		validationBuffer = make([]byte, int(plan.BufferBytes))
@@ -270,7 +312,7 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 				result.Items++
 				result.Succeeded++
 				result.Bytes += bytes
-				appendItemResult(&result, ItemResult{RelativePath: item.RelativePath, Source: item.Entry.Location, Destination: destinationLocation, Status: ItemSucceeded, Bytes: bytes})
+				manifest.append(&result, ItemResult{RelativePath: item.RelativePath, Source: item.Entry.Location, Destination: destinationLocation, Status: ItemSucceeded, Bytes: bytes})
 				checkpoint.Items = result.Items
 				if result.Bytes > checkpoint.Offset {
 					checkpoint.Offset = result.Bytes
@@ -302,62 +344,18 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 			itemResultRecord.Status = ItemSucceeded
 			result.Succeeded++
 		case domain.EntryFile:
-			itemPlan := plan
-			itemPlan.Source = FileRef{
-				Location:           item.Entry.Location,
-				Kind:               domain.EntryFile,
-				Fingerprint:        cloneFingerprint(item.Entry.Fingerprint),
-				CapabilityRevision: plan.SourceCapability.Revision,
-			}
-			itemPlan.DestinationDirectory = domain.Location{EndpointID: final.EndpointID, Path: domain.CanonicalPath(path.Dir(string(destinationLocation.Path)))}
-			itemPlan.RequestedName = path.Base(item.RelativePath)
-			itemPlan.Final = destinationLocation
-			itemPlan.Part = childLocation(itemPlan.DestinationDirectory, "."+itemPlan.RequestedName+".part-"+string(plan.JobID))
-			itemPlan.Discovery = nil
-			freezeRouteEvidence(&itemPlan)
-			if resuming {
-				partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: itemPlan.Part})
-				if statErr == nil {
-					if removeErr := destination.Remove(ctx, providerapi.RemoveRequest{Location: itemPlan.Part, Expected: &partEntry.Fingerprint}); removeErr != nil {
-						return Result{}, removeErr
-					}
-				} else if !domain.IsCode(statErr, domain.CodeNotFound) {
-					return Result{}, statErr
-				}
-			}
-			itemJournal := &directoryItemJournal{
-				parent:          worker.journal,
-				root:            &checkpoint,
-				baseOffset:      result.Bytes,
-				floorOffset:     checkpoint.Offset,
-				currentPath:     item.RelativePath,
-				basePerformance: cloneTransferPerformance(checkpoint.Performance),
-			}
-			itemResult, executeErr := worker.withJournal(itemJournal).Execute(ctx, itemPlan, control)
+			conflictResult, executeErr := worker.copySequentialDirectoryFile(ctx, plan, control, &checkpoint, resuming, final, item, destinationProvider, destination, &result, &itemResultRecord)
 			if executeErr != nil {
-				if code, ok := continuableDirectoryItemError(executeErr); ok {
-					itemResultRecord.Status = ItemFailed
-					itemResultRecord.ErrorCode = code
-					result.Failed++
-					break
-				}
 				return result, executeErr
 			}
-			if itemResult.Outcome == OutcomeWaitingConflict {
-				checkpoint.Phase = PhaseWaitingConflict
-				checkpoint.Outcome = OutcomeWaitingConflict
-				_ = worker.journal.Save(ctx, checkpoint)
-				return Result{Outcome: OutcomeWaitingConflict, Final: itemResult.Final, Bytes: result.Bytes, Items: checkpoint.Items, PartRetained: true}, nil
+			if conflictResult != nil {
+				return *conflictResult, nil
 			}
-			result.Bytes += itemResult.Bytes
-			itemResultRecord.Status = ItemSucceeded
-			itemResultRecord.Bytes = itemResult.Bytes
-			result.Succeeded++
 		default:
 			itemResultRecord.Status = ItemSkipped
 			result.Skipped++
 		}
-		appendItemResult(&result, itemResultRecord)
+		manifest.append(&result, itemResultRecord)
 		result.Items++
 		checkpoint.Items = result.Items
 		if result.Bytes > checkpoint.Offset {
@@ -388,6 +386,62 @@ func (worker *Worker) executeDirectory(ctx context.Context, plan Plan, control C
 	return result, nil
 }
 
+func (worker *Worker) copySequentialDirectoryFile(
+	ctx context.Context,
+	plan Plan,
+	control Control,
+	checkpoint *Checkpoint,
+	resuming bool,
+	final domain.Location,
+	item DiscoveredItem,
+	destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	result *Result,
+	record *ItemResult,
+) (*Result, error) {
+	itemPlan := directoryFilePlan(plan, item.Entry, item.RelativePath, final)
+	if resuming {
+		partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: itemPlan.Part})
+		if statErr == nil {
+			if removeErr := destination.Remove(ctx, providerapi.RemoveRequest{Location: itemPlan.Part, Expected: &partEntry.Fingerprint}); removeErr != nil {
+				return nil, removeErr
+			}
+		} else if !domain.IsCode(statErr, domain.CodeNotFound) {
+			return nil, statErr
+		}
+	}
+	itemJournal := &directoryItemJournal{
+		parent:          worker.journal,
+		root:            checkpoint,
+		baseOffset:      result.Bytes,
+		floorOffset:     checkpoint.Offset,
+		currentPath:     item.RelativePath,
+		basePerformance: cloneTransferPerformance(checkpoint.Performance),
+	}
+	itemResult, executeErr := worker.withJournal(itemJournal).Execute(ctx, itemPlan, control)
+	if executeErr != nil {
+		if code, ok := continuableDirectoryItemError(executeErr); ok {
+			record.Status = ItemFailed
+			record.ErrorCode = code
+			result.Failed++
+			return nil, nil
+		}
+		return nil, executeErr
+	}
+	if itemResult.Outcome == OutcomeWaitingConflict {
+		checkpoint.Phase = PhaseWaitingConflict
+		checkpoint.Outcome = OutcomeWaitingConflict
+		_ = worker.journal.Save(ctx, *checkpoint)
+		conflict := Result{Outcome: OutcomeWaitingConflict, Final: itemResult.Final, Bytes: result.Bytes, Items: checkpoint.Items, PartRetained: true}
+		return &conflict, nil
+	}
+	result.Bytes += itemResult.Bytes
+	record.Status = ItemSucceeded
+	record.Bytes = itemResult.Bytes
+	result.Succeeded++
+	return nil, nil
+}
+
 func continuableDirectoryItemError(err error) (domain.Code, bool) {
 	var operationError *domain.OpError
 	if !errors.As(err, &operationError) {
@@ -399,19 +453,41 @@ func continuableDirectoryItemError(err error) (domain.Code, bool) {
 	return operationError.Code, true
 }
 
-func appendItemResult(result *Result, item ItemResult) {
+// manifestAccumulator bounds the JSON-encoded directory manifest in O(1) per
+// item instead of re-marshaling the entire slice on every file.
+type manifestAccumulator struct {
+	jsonBytes int
+}
+
+func (a *manifestAccumulator) append(result *Result, item ItemResult) {
 	if result.ManifestTruncated != 0 {
 		result.ManifestTruncated++
 		return
 	}
 	if len(result.Manifest) < maximumManifestItems {
-		candidate := append(result.Manifest, item)
-		if encoded, err := json.Marshal(candidate); err == nil && len(encoded) <= maximumManifestJSONBytes {
-			result.Manifest = candidate
-			return
+		if encoded, err := json.Marshal(item); err == nil {
+			nextBytes := a.jsonBytes + len(encoded) + 1
+			if len(result.Manifest) == 0 {
+				nextBytes = len(encoded) + 2
+			}
+			if nextBytes <= maximumManifestJSONBytes {
+				result.Manifest = append(result.Manifest, item)
+				a.jsonBytes = nextBytes
+				return
+			}
 		}
 	}
 	result.ManifestTruncated++
+}
+
+func appendItemResult(result *Result, item ItemResult) {
+	var acc manifestAccumulator
+	if len(result.Manifest) != 0 {
+		if encoded, err := json.Marshal(result.Manifest); err == nil {
+			acc.jsonBytes = len(encoded)
+		}
+	}
+	acc.append(result, item)
 }
 
 func (worker *Worker) validateOwnedDirectoryItem(

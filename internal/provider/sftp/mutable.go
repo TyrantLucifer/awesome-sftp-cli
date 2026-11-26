@@ -30,14 +30,6 @@ func (p *Provider) OpenWrite(ctx context.Context, request providerapi.OpenWriteR
 		return nil, err
 	}
 	remotePath := p.remotePath(request.Location)
-	if request.Disposition == providerapi.WriteCreateNew {
-		if _, err := p.client.Lstat(remotePath); err == nil {
-			return nil, p.opError(domain.CodeAlreadyExists, "open_write", &request.Location, "path already exists", errRetryConflict, os.ErrExist)
-		} else if !isSFTPNotExist(err) {
-			return nil, p.mapMutationError("open_write", &request.Location, err, domain.EffectNone)
-		}
-	}
-
 	flags := os.O_WRONLY
 	if request.Disposition == providerapi.WriteCreateNew {
 		flags |= os.O_CREATE | os.O_EXCL
@@ -78,8 +70,13 @@ func (p *Provider) OpenWrite(ctx context.Context, request providerapi.OpenWriteR
 	if _, err := file.Seek(request.Offset, io.SeekStart); err != nil {
 		return nil, p.mapMutationError("open_write", &request.Location, err, domain.EffectNone)
 	}
+	var created *domain.Entry
+	if request.Disposition == providerapi.WriteCreateNew {
+		entry := p.entryFromInfo(request.Location, path.Base(string(request.Location.Path)), info)
+		created = &entry
+	}
 	closeOnError = false
-	return &writeHandle{provider: p, file: file, location: request.Location}, nil
+	return &writeHandle{provider: p, file: file, location: request.Location, createdEntry: created}, nil
 }
 
 func (p *Provider) Mkdir(ctx context.Context, request providerapi.MkdirRequest) (domain.Entry, error) {
@@ -93,12 +90,14 @@ func (p *Provider) Mkdir(ctx context.Context, request providerapi.MkdirRequest) 
 		return domain.Entry{}, err
 	}
 	remotePath := p.remotePath(request.Location)
-	if info, err := p.client.Lstat(remotePath); err == nil {
+	info, err := p.client.Lstat(remotePath)
+	if err == nil {
 		if !request.Exclusive && info.IsDir() && info.Mode()&os.ModeSymlink == 0 {
 			return p.entryFromInfo(request.Location, path.Base(string(request.Location.Path)), info), nil
 		}
 		return domain.Entry{}, p.opError(domain.CodeAlreadyExists, "mkdir", &request.Location, "path already exists", errRetryConflict, os.ErrExist)
-	} else if !isSFTPNotExist(err) {
+	}
+	if !isSFTPNotExist(err) {
 		return domain.Entry{}, p.mapMutationError("mkdir", &request.Location, err, domain.EffectNone)
 	}
 	if err := p.client.Mkdir(remotePath); err != nil {
@@ -107,7 +106,7 @@ func (p *Provider) Mkdir(ctx context.Context, request providerapi.MkdirRequest) 
 		}
 		return domain.Entry{}, p.mapMutationError("mkdir", &request.Location, err, domain.EffectNone)
 	}
-	info, err := p.client.Lstat(remotePath)
+	info, err = p.client.Lstat(remotePath)
 	if err != nil {
 		return domain.Entry{}, p.mapMutationError("mkdir", &request.Location, err, domain.EffectApplied)
 	}
@@ -139,25 +138,27 @@ func (p *Provider) Rename(ctx context.Context, request providerapi.RenameRequest
 	if request.ExpectedSource != nil && !equalFingerprint(*request.ExpectedSource, fingerprint(sourceInfo)) {
 		return providerapi.RenameResult{}, p.opError(domain.CodeConflict, "rename", &request.Source, "source fingerprint does not match", errRetryConflict, nil)
 	}
-	destinationInfo, destinationErr := p.client.Lstat(destinationPath)
-	destinationExists := destinationErr == nil
-	if destinationErr != nil && !isSFTPNotExist(destinationErr) {
-		return providerapi.RenameResult{}, p.mapMutationError("rename", &request.Destination, destinationErr, domain.EffectNone)
-	}
-	if request.ExpectedDestination != nil && (!destinationExists || !equalFingerprint(*request.ExpectedDestination, fingerprint(destinationInfo))) {
-		return providerapi.RenameResult{}, p.opError(domain.CodeConflict, "rename", &request.Destination, "destination fingerprint does not match", errRetryConflict, nil)
-	}
-	if !request.Replace && destinationExists {
-		return providerapi.RenameResult{}, p.opError(domain.CodeAlreadyExists, "rename", &request.Destination, "destination already exists", errRetryConflict, os.ErrExist)
-	}
-	if request.Replace {
-		if _, supported := p.client.HasExtension("posix-rename@openssh.com"); !supported {
-			return providerapi.RenameResult{}, p.opError(domain.CodeUnsupported, "rename", &request.Destination, "server does not support atomic replacement rename", errRetryNever, nil)
+	if request.Replace || request.ExpectedDestination != nil {
+		destinationInfo, destinationErr := p.client.Lstat(destinationPath)
+		destinationExists := destinationErr == nil
+		if destinationErr != nil && !isSFTPNotExist(destinationErr) {
+			return providerapi.RenameResult{}, p.mapMutationError("rename", &request.Destination, destinationErr, domain.EffectNone)
 		}
-		if err := p.client.PosixRename(sourcePath, destinationPath); err != nil {
-			return providerapi.RenameResult{}, p.mapMutationError("rename", &request.Destination, err, domain.EffectUnknown)
+		if request.ExpectedDestination != nil && (!destinationExists || !equalFingerprint(*request.ExpectedDestination, fingerprint(destinationInfo))) {
+			return providerapi.RenameResult{}, p.opError(domain.CodeConflict, "rename", &request.Destination, "destination fingerprint does not match", errRetryConflict, nil)
 		}
-		return providerapi.RenameResult{Atomic: true, Replaced: destinationExists}, nil
+		if !request.Replace && destinationExists {
+			return providerapi.RenameResult{}, p.opError(domain.CodeAlreadyExists, "rename", &request.Destination, "destination already exists", errRetryConflict, os.ErrExist)
+		}
+		if request.Replace {
+			if _, supported := p.client.HasExtension("posix-rename@openssh.com"); !supported {
+				return providerapi.RenameResult{}, p.opError(domain.CodeUnsupported, "rename", &request.Destination, "server does not support atomic replacement rename", errRetryNever, nil)
+			}
+			if err := p.client.PosixRename(sourcePath, destinationPath); err != nil {
+				return providerapi.RenameResult{}, p.mapMutationError("rename", &request.Destination, err, domain.EffectUnknown)
+			}
+			return providerapi.RenameResult{Atomic: true, Replaced: destinationExists}, nil
+		}
 	}
 	if !sourceInfo.Mode().IsRegular() {
 		return providerapi.RenameResult{}, p.opError(domain.CodeUnsupported, "rename", &request.Source, "no-replace rename is supported only for regular files", errRetryNever, nil)
@@ -223,10 +224,13 @@ func (p *Provider) PreserveDestination(ctx context.Context, request providerapi.
 func (p *Provider) preserveDestinationBlocking(ctx context.Context, request providerapi.PreserveDestinationRequest) (providerapi.PreserveDestinationResult, error) {
 	sourcePath := p.remotePath(request.Source)
 	backupPath := p.remotePath(request.Backup)
-	if backupInfo, backupErr := p.client.Lstat(backupPath); backupErr == nil {
-		if _, sourceErr := p.client.Lstat(sourcePath); sourceErr == nil {
+	backupInfo, backupErr := p.client.Lstat(backupPath)
+	if backupErr == nil {
+		_, sourceErr := p.client.Lstat(sourcePath)
+		if sourceErr == nil {
 			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "source and preservation path both exist", errRetryConflict, nil)
-		} else if !isSFTPNotExist(sourceErr) {
+		}
+		if !isSFTPNotExist(sourceErr) {
 			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.mapMutationError("preserve_destination", &request.Source, sourceErr, domain.EffectNone)
 		}
 		if !equalFingerprint(request.ExpectedFingerprint, fingerprint(backupInfo)) {
@@ -237,7 +241,8 @@ func (p *Provider) preserveDestinationBlocking(ctx context.Context, request prov
 			return providerapi.PreserveDestinationResult{BackupPresent: true}, errors.Join(p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "preserved content does not match", errRetryConflict, nil), hashErr)
 		}
 		return providerapi.PreserveDestinationResult{BackupPresent: true}, nil
-	} else if !isSFTPNotExist(backupErr) {
+	}
+	if !isSFTPNotExist(backupErr) {
 		return providerapi.PreserveDestinationResult{}, p.mapMutationError("preserve_destination", &request.Backup, backupErr, domain.EffectNone)
 	}
 	sourceInfo, err := p.client.Lstat(sourcePath)
@@ -393,13 +398,22 @@ func isSFTPNotExist(err error) bool {
 type writeHandle struct {
 	mu sync.Mutex
 
-	provider *Provider
-	file     *pkgsftp.File
-	location domain.Location
-	closed   bool
+	provider     *Provider
+	file         *pkgsftp.File
+	location     domain.Location
+	createdEntry *domain.Entry
+	closed       bool
 }
 
 var _ providerapi.WriteHandle = (*writeHandle)(nil)
+var _ providerapi.CreatedEntryHandle = (*writeHandle)(nil)
+
+func (h *writeHandle) CreatedEntry() (domain.Entry, bool) {
+	if h.createdEntry == nil {
+		return domain.Entry{}, false
+	}
+	return *h.createdEntry, true
+}
 
 func (h *writeHandle) Write(ctx context.Context, source []byte) (int, error) {
 	if err := h.provider.check(ctx, "write", &h.location); err != nil {

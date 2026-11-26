@@ -135,9 +135,13 @@ type CacheLifecycleResponse struct {
 	CatalogErr        string      `json:"catalog_error,omitempty"`
 }
 
+func unsupportedCache() error {
+	return &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+}
+
 func (s *providerSession) cacheHeartbeat(ctx context.Context, payload json.RawMessage) (any, error) {
 	if s.cache == nil {
-		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+		return nil, unsupportedCache()
 	}
 	var request CacheHeartbeatRequest
 	if err := decodePayload(payload, &request); err != nil {
@@ -155,7 +159,7 @@ func (s *providerSession) cacheHeartbeat(ctx context.Context, payload json.RawMe
 
 func (s *providerSession) cacheClear(ctx context.Context, payload json.RawMessage) (any, error) {
 	if s.cache == nil {
-		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+		return nil, unsupportedCache()
 	}
 	var request CacheClearRequest
 	if err := decodePayload(payload, &request); err != nil {
@@ -173,7 +177,7 @@ func (s *providerSession) cacheClear(ctx context.Context, payload json.RawMessag
 
 func (s *providerSession) cacheLifecycle(ctx context.Context, payload json.RawMessage) (any, error) {
 	if s.cache == nil {
-		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+		return nil, unsupportedCache()
 	}
 	var request CacheLifecycleRequest
 	if err := decodePayload(payload, &request); err != nil {
@@ -233,7 +237,7 @@ func cacheStatus(report cachemanager.ReconcileReport) CacheStatus {
 
 func (s *providerSession) cacheMarkDirty(ctx context.Context, payload json.RawMessage) (any, error) {
 	if s.cache == nil {
-		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+		return nil, unsupportedCache()
 	}
 	var request CacheMarkDirtyRequest
 	if err := decodePayload(payload, &request); err != nil {
@@ -254,7 +258,7 @@ func (s *providerSession) cacheMarkDirty(ctx context.Context, payload json.RawMe
 
 func (s *providerSession) cacheReleaseHandoff(ctx context.Context, payload json.RawMessage) (any, error) {
 	if s.cache == nil {
-		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+		return nil, unsupportedCache()
 	}
 	var request CacheReleaseHandoffRequest
 	if err := decodePayload(payload, &request); err != nil {
@@ -271,7 +275,7 @@ func (s *providerSession) cacheReleaseHandoff(ctx context.Context, payload json.
 
 func (s *providerSession) cacheMaterialize(ctx context.Context, payload json.RawMessage) (response any, resultErr error) {
 	if s.cache == nil {
-		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "content cache is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
+		return nil, unsupportedCache()
 	}
 	var request CacheMaterializeRequest
 	if err := decodePayload(payload, &request); err != nil {

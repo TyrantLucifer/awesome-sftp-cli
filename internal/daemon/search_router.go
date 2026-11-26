@@ -3,11 +3,143 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"sync"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
 )
+
+type activeSearch interface {
+	cancelSearch()
+	closeAndDrain()
+}
+
+type searchCursor[E any] struct {
+	mu     sync.Mutex
+	events <-chan E
+	cancel context.CancelFunc
+}
+
+func (c *searchCursor[E]) cancelSearch() {
+	c.cancel()
+}
+
+func (c *searchCursor[E]) closeAndDrain() {
+	c.cancel()
+	c.mu.Lock()
+	for range c.events {
+	}
+	c.mu.Unlock()
+}
+
+func (s *providerSession) checkSearchAdmissionLocked(requestID domain.RequestID) error {
+	if s.closed {
+		return internalError("provider session is closed", nil)
+	}
+	if _, duplicate := s.searches[requestID]; duplicate {
+		return searchCursorError(domain.CodeConflict, "search request ID is already active")
+	}
+	if len(s.searches) >= maxActiveFilenameSearches {
+		return searchCursorError(domain.CodeResourceExhausted, "active search limit reached")
+	}
+	return nil
+}
+
+func startSearchCursor[E any](
+	s *providerSession,
+	requestID domain.RequestID,
+	start func(context.Context) (<-chan E, error),
+) error {
+	s.mu.Lock()
+	admissionErr := s.checkSearchAdmissionLocked(requestID)
+	s.mu.Unlock()
+	if admissionErr != nil {
+		return admissionErr
+	}
+
+	searchCtx, cancel := context.WithCancel(context.Background())
+	events, err := start(searchCtx)
+	if err != nil {
+		cancel()
+		return err
+	}
+	cursor := &searchCursor[E]{events: events, cancel: cancel}
+
+	s.mu.Lock()
+	if err := s.checkSearchAdmissionLocked(requestID); err != nil {
+		s.mu.Unlock()
+		cursor.closeAndDrain()
+		return err
+	}
+	s.searches[requestID] = cursor
+	s.mu.Unlock()
+	return nil
+}
+
+func nextSearchPage[E any, W any](
+	ctx context.Context,
+	s *providerSession,
+	rawRequestID string,
+	limit uint32,
+	label, notFoundMessage, opName string,
+	isTerminal func(E) bool,
+	encode func(E) W,
+) ([]W, bool, error) {
+	requestID, err := domain.ParseRequestID(rawRequestID)
+	if err != nil {
+		return nil, false, invalidArgument("validate "+label+" search request ID", err)
+	}
+	if limit == 0 || limit > maxFilenameEventsPerPage {
+		return nil, false, invalidArgument("validate "+label+" search page limit", nil)
+	}
+	s.mu.Lock()
+	cursor, ok := s.searches[requestID].(*searchCursor[E])
+	s.mu.Unlock()
+	if !ok || cursor == nil {
+		return nil, false, searchCursorError(domain.CodeNotFound, notFoundMessage)
+	}
+
+	cursor.mu.Lock()
+	defer cursor.mu.Unlock()
+	wireEvents := make([]W, 0, limit)
+	done := false
+
+	select {
+	case event, open := <-cursor.events:
+		if !open {
+			done = true
+		} else {
+			wireEvents = append(wireEvents, encode(event))
+			done = isTerminal(event)
+		}
+	case <-ctx.Done():
+		return nil, false, domain.FromContext(opName, "", nil, ctx.Err())
+	}
+
+	for !done && len(wireEvents) < int(limit) {
+		select {
+		case event, open := <-cursor.events:
+			if !open {
+				done = true
+				break
+			}
+			wireEvents = append(wireEvents, encode(event))
+			done = isTerminal(event)
+		default:
+			return wireEvents, false, nil
+		}
+	}
+	if done {
+		s.mu.Lock()
+		if s.searches[requestID] == cursor {
+			delete(s.searches, requestID)
+		}
+		s.mu.Unlock()
+		cursor.cancel()
+	}
+	return wireEvents, done, nil
+}
 
 func (s *providerSession) startFilenameSearch(payload json.RawMessage) (any, error) {
 	var request ipc.SearchFilenameStartRequest
@@ -22,48 +154,12 @@ func (s *providerSession) startFilenameSearch(payload json.RawMessage) (any, err
 	if err != nil {
 		return nil, err
 	}
-
-	s.mu.Lock()
-	_, duplicate := s.searches[identity.RequestID]
-	_, contentDuplicate := s.contentSearches[identity.RequestID]
-	duplicate = duplicate || contentDuplicate
-	full := len(s.searches)+len(s.contentSearches) >= maxActiveFilenameSearches
-	closed := s.closed
-	s.mu.Unlock()
-	if closed {
-		return nil, internalError("provider session is closed", nil)
-	}
-	if duplicate {
-		return nil, searchCursorError(domain.CodeConflict, "search request ID is already active")
-	}
-	if full {
-		return nil, searchCursorError(domain.CodeResourceExhausted, "active search limit reached")
-	}
-
-	searchCtx, cancel := context.WithCancel(context.Background())
-	events, err := s.startFilenameEvents(searchCtx, implementation, identity)
+	err = startSearchCursor(s, identity.RequestID, func(ctx context.Context) (<-chan search.Event, error) {
+		return s.startFilenameEvents(ctx, implementation, identity)
+	})
 	if err != nil {
-		cancel()
 		return nil, err
 	}
-	cursor := &filenameSearchCursor{events: events, cancel: cancel}
-	s.mu.Lock()
-	if s.closed {
-		s.mu.Unlock()
-		cancelAndDrainSearch(cursor)
-		return nil, internalError("provider session is closed", nil)
-	}
-	_, contentDuplicate = s.contentSearches[identity.RequestID]
-	if _, duplicate = s.searches[identity.RequestID]; duplicate || contentDuplicate || len(s.searches)+len(s.contentSearches) >= maxActiveFilenameSearches {
-		s.mu.Unlock()
-		cancelAndDrainSearch(cursor)
-		if duplicate {
-			return nil, searchCursorError(domain.CodeConflict, "search request ID is already active")
-		}
-		return nil, searchCursorError(domain.CodeResourceExhausted, "active search limit reached")
-	}
-	s.searches[identity.RequestID] = cursor
-	s.mu.Unlock()
 	return ipc.SearchFilenameStartResponse{RequestID: string(identity.RequestID)}, nil
 }
 
@@ -72,55 +168,16 @@ func (s *providerSession) nextFilenameSearch(ctx context.Context, payload json.R
 	if err := decodePayload(payload, &request); err != nil {
 		return nil, invalidArgument("decode filename search next request", err)
 	}
-	requestID, err := domain.ParseRequestID(request.RequestID)
-	if err != nil {
-		return nil, invalidArgument("validate filename search request ID", err)
-	}
-	if request.Limit == 0 || request.Limit > maxFilenameEventsPerPage {
-		return nil, invalidArgument("validate filename search page limit", nil)
-	}
-	s.mu.Lock()
-	cursor := s.searches[requestID]
-	s.mu.Unlock()
-	if cursor == nil {
-		return nil, searchCursorError(domain.CodeNotFound, "search request is not active")
-	}
-
-	cursor.mu.Lock()
-	defer cursor.mu.Unlock()
-	response := ipc.SearchFilenameNextResponse{Events: make([]ipc.SearchEventWire, 0, request.Limit)}
-	first, ok, err := receiveSearchEvent(ctx, cursor.events)
+	events, done, err := nextSearchPage(
+		ctx, s, request.RequestID, request.Limit,
+		"filename", "search request is not active", "search_next",
+		func(event search.Event) bool { return event.Kind == search.EventTerminal },
+		ipc.EncodeSearchEvent,
+	)
 	if err != nil {
 		return nil, err
 	}
-	if !ok {
-		response.Done = true
-	} else {
-		response.Events = append(response.Events, ipc.EncodeSearchEvent(first))
-		response.Done = first.Kind == search.EventTerminal
-	}
-	for !response.Done && len(response.Events) < int(request.Limit) {
-		select {
-		case event, open := <-cursor.events:
-			if !open {
-				response.Done = true
-				break
-			}
-			response.Events = append(response.Events, ipc.EncodeSearchEvent(event))
-			response.Done = event.Kind == search.EventTerminal
-		default:
-			return response, nil
-		}
-	}
-	if response.Done {
-		s.mu.Lock()
-		if s.searches[requestID] == cursor {
-			delete(s.searches, requestID)
-		}
-		s.mu.Unlock()
-		cursor.cancel()
-	}
-	return response, nil
+	return ipc.SearchFilenameNextResponse{Events: events, Done: done}, nil
 }
 
 func (s *providerSession) cancelSearch(payload json.RawMessage) (any, error) {
@@ -134,32 +191,12 @@ func (s *providerSession) cancelSearch(payload json.RawMessage) (any, error) {
 	}
 	s.mu.Lock()
 	cursor := s.searches[requestID]
-	contentCursor := s.contentSearches[requestID]
 	s.mu.Unlock()
-	if cursor == nil && contentCursor == nil {
+	if cursor == nil {
 		return nil, searchCursorError(domain.CodeNotFound, "search request is not active")
 	}
-	if cursor != nil {
-		cursor.cancel()
-	} else {
-		contentCursor.cancel()
-	}
+	cursor.cancelSearch()
 	return ipc.SearchCancelResponse{}, nil
-}
-
-func receiveSearchEvent(ctx context.Context, events <-chan search.Event) (search.Event, bool, error) {
-	select {
-	case event, ok := <-events:
-		return event, ok, nil
-	case <-ctx.Done():
-		return search.Event{}, false, domain.FromContext("search_next", "", nil, ctx.Err())
-	}
-}
-
-func cancelAndDrainSearch(cursor *filenameSearchCursor) {
-	cursor.cancel()
-	for range cursor.events {
-	}
 }
 
 func searchCursorError(code domain.Code, message string) error {

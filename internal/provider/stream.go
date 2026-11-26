@@ -3,6 +3,8 @@ package provider
 import (
 	"context"
 	"io"
+
+	"github.com/TyrantLucifer/awesome-sftp-cli/internal/domain"
 )
 
 // ReadStreamOptions applies admission before each remote data request, including
@@ -43,4 +45,12 @@ type TruncatingWriteHandle interface {
 type WindowedStreamWriteHandle interface {
 	WriteHandle
 	WriteFromWindow(context.Context, io.Reader, uint32) (int64, error)
+}
+
+// CreatedEntryHandle optionally exposes the entry observed via fstat when a
+// WriteCreateNew handle was just opened, allowing callers to skip an immediate
+// redundant stat round-trip when no initial sync is required.
+type CreatedEntryHandle interface {
+	WriteHandle
+	CreatedEntry() (domain.Entry, bool)
 }

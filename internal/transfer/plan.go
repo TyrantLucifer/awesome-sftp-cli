@@ -361,10 +361,8 @@ func (planner *Planner) FreezeCopy(ctx context.Context, request FreezeRequest) (
 		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeInvalidArgument, "plan_copy", final, "directory destination is inside the frozen source tree", domain.RetryNever)
 	}
 	part := childLocation(request.Intent.DestinationDirectory, "."+path.Base(string(final.Path))+".part-"+string(request.JobID))
-	if exists, err := locationExists(ctx, destinationProvider, part); err != nil {
+	if err := ensureLocationAbsent(ctx, destinationProvider, "plan_copy", part, "job part location already exists"); err != nil {
 		return Plan{}, jobstore.CreateRequest{}, err
-	} else if exists {
-		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeAlreadyExists, "plan_copy", part, "job part location already exists", domain.RetryAfterConflict)
 	}
 
 	kind := OperationCopy
@@ -502,10 +500,8 @@ func (planner *Planner) FreezeSyncBack(ctx context.Context, request SyncBackFree
 		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeInvalidArgument, "plan_sync_back", destinationDirectory, "destination parent is not a directory", domain.RetryNever)
 	}
 	part := childLocation(destinationDirectory, "."+path.Base(string(request.SyncBack.Target.Path))+".part-"+string(request.JobID))
-	if exists, err := locationExists(ctx, destinationProvider, part); err != nil {
+	if err := ensureLocationAbsent(ctx, destinationProvider, "plan_sync_back", part, "job part location already exists"); err != nil {
 		return Plan{}, jobstore.CreateRequest{}, err
-	} else if exists {
-		return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeAlreadyExists, "plan_sync_back", part, "job part location already exists", domain.RetryAfterConflict)
 	}
 	var preserved domain.Location
 	if expected.Presence == DestinationPresent {
@@ -513,10 +509,8 @@ func (planner *Planner) FreezeSyncBack(ctx context.Context, request SyncBackFree
 			return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeUnsupported, "plan_sync_back", request.SyncBack.Target, "destination cannot preserve the replaced remote version", domain.RetryAfterReplan)
 		}
 		preserved = childLocation(destinationDirectory, "."+path.Base(string(request.SyncBack.Target.Path))+".amsftp-original-"+string(request.JobID))
-		if exists, err := locationExists(ctx, destinationProvider, preserved); err != nil {
+		if err := ensureLocationAbsent(ctx, destinationProvider, "plan_sync_back", preserved, "job preservation location already exists"); err != nil {
 			return Plan{}, jobstore.CreateRequest{}, err
-		} else if exists {
-			return Plan{}, jobstore.CreateRequest{}, planError(domain.CodeAlreadyExists, "plan_sync_back", preserved, "job preservation location already exists", domain.RetryAfterConflict)
 		}
 	}
 	plan := Plan{
@@ -535,6 +529,17 @@ func (planner *Planner) FreezeSyncBack(ctx context.Context, request SyncBackFree
 	}
 	create.EditSession = &jobstore.EditSessionBinding{SessionID: string(request.SyncBack.SessionID), ExpectedVersion: int64(request.SyncBack.SessionVersion), EventID: request.BindingEventID, EventKind: "sync_back_job_bound"}
 	return plan, create, nil
+}
+
+func ensureLocationAbsent(ctx context.Context, implementation providerapi.Provider, operation string, location domain.Location, existsMessage string) error {
+	exists, err := locationExists(ctx, implementation, location)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return planError(domain.CodeAlreadyExists, operation, location, existsMessage, domain.RetryAfterConflict)
+	}
+	return nil
 }
 
 func destinationPreconditionFromEdit(value edit.RemotePrecondition) (DestinationPrecondition, error) {

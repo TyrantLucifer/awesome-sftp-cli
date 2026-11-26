@@ -278,185 +278,24 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		}
 	}
 	if directRevalidationFallback {
-		reason := ReasonLevel2RevalidationFailed
-		if checkpoint != nil {
-			cleaned, cleanupErr := cleanupExactDirectPartForRelay(ctx, plan, destinationProvider, destination, current)
-			if cleanupErr != nil {
-				return Result{}, cleanupErr
-			}
-			if cleaned {
-				reason = ReasonLevel2PartCleanedForRelay
-			} else if current.Offset == 0 {
-				if _, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part}); !domain.IsCode(statErr, domain.CodeNotFound) {
-					if statErr != nil {
-						return Result{}, statErr
-					}
-					return Result{}, planError(domain.CodeConflict, "preflight_direct", plan.Part, "unacknowledged direct part exists after failed revalidation", domain.RetryAfterReplan)
-				}
-			} else {
-				return Result{}, planError(domain.CodeConflict, "preflight_direct", plan.Part, "expired direct evidence failed with an unprovable checkpoint", domain.RetryAfterReplan)
-			}
-		}
-		current.Phase = PhasePrepared
-		current.Offset = 0
-		current.PartFingerprint = domain.Fingerprint{}
-		current.ChecksumState = nil
-		current.ChecksumHex = ""
-		current.ActualRoute = RouteSFTPRelay
-		current.DowngradedFrom = RouteLevel2Direct
-		current.RouteReason = reason
-		current.DirectFormatVersion = Level2DirectFormatVersion
-		current.DirectNonce = plan.Level2Preflight.Request.Nonce
-		if err := worker.journal.Save(ctx, current); err != nil {
-			return Result{}, fmt.Errorf("execute transfer: persist expired direct route downgrade: %w", err)
+		if err := worker.downgradeExpiredDirectToRelay(ctx, plan, destinationProvider, destination, &current, checkpoint != nil); err != nil {
+			return Result{}, err
 		}
 	}
-	if plan.Route == RouteLevel2Direct {
-		if checkpoint == nil {
-			current.DirectFormatVersion = Level2DirectFormatVersion
-			current.DirectNonce = plan.Level2Preflight.Request.Nonce
-		}
-		if current.ActualRoute != RouteSFTPRelay && (current.Phase == PhasePrepared || current.Phase == PhaseStreaming) {
-			result, directErr := worker.executeLevel2Direct(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
-			if !errors.Is(directErr, errLevel2SafeRelayFallback) && !errors.Is(directErr, errLevel2CleanedPartRelayFallback) {
-				return result, directErr
-			}
-			current.Phase = PhasePrepared
-			current.Offset = 0
-			current.PartFingerprint = domain.Fingerprint{}
-			current.ChecksumState = nil
-			current.ChecksumHex = ""
-			current.ActualRoute = RouteSFTPRelay
-			current.DowngradedFrom = RouteLevel2Direct
-			current.RouteReason = ReasonLevel2FailedBeforeWrite
-			if errors.Is(directErr, errLevel2CleanedPartRelayFallback) {
-				current.RouteReason = ReasonLevel2PartCleanedForRelay
-			}
-			if err := worker.journal.Save(ctx, current); err != nil {
-				return Result{}, fmt.Errorf("execute transfer: persist safe direct route downgrade: %w", err)
-			}
-		}
-	}
-	if plan.Route == RouteHelperSameHost && current.Phase == PhasePrepared {
-		return worker.executeSameHostCopy(ctx, plan, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
-	}
-	if plan.Route == RouteSFTPServerCopy && current.ActualRoute != RouteSFTPRelay && current.Phase == PhasePrepared {
-		result, serverCopyErr := worker.executeServerCopy(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, control, buffer)
-		if !errors.Is(serverCopyErr, errServerCopySafeFallback) {
-			return result, serverCopyErr
-		}
-		current.ActualRoute = RouteSFTPRelay
-		current.DowngradedFrom = RouteSFTPServerCopy
-		current.RouteReason = ReasonServerCopyFailedBeforeWrite
-		if err := worker.journal.Save(ctx, current); err != nil {
-			return Result{}, fmt.Errorf("execute transfer: persist safe route downgrade: %w", err)
-		}
+	if result, done, err := worker.tryAcceleratedRoute(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, control, buffer); done {
+		return result, err
 	}
 
-	if current.Phase == PhaseVerified || current.Phase == PhaseWaitingConflict || current.Phase == PhaseCommitting {
-		if current.Completion.Version != 0 {
-			part, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-			if err != nil && (current.Phase != PhaseCommitting || !domain.IsCode(err, domain.CodeNotFound)) {
-				return Result{}, err
-			}
-			if err == nil {
-				actual, err := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, part.Fingerprint, buffer)
-				if err != nil {
-					return Result{}, err
-				}
-				if actual != current.ChecksumHex {
-					return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part content changed before publication", domain.RetryAfterConflict)
-				}
-				current.PartFingerprint = cloneFingerprint(part.Fingerprint)
-				current.recordContentVerified()
-			}
-		}
-		return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
-	}
-	if current.Phase == PhaseTransferred {
-		partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-		if statErr != nil {
-			return Result{}, statErr
-		}
-		checksum, verifyErr := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
-		if verifyErr != nil {
-			return Result{}, verifyErr
-		}
-		if checksum != current.ChecksumHex {
-			return Result{}, planError(domain.CodeConflict, "verify_part", plan.Part, "part checksum does not match streamed source", domain.RetryNever)
-		}
-		current.recordContentVerified()
-		current.Phase = PhaseVerified
-		current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
-		if err := worker.journal.Save(ctx, current); err != nil {
-			return Result{}, err
-		}
-		return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
+	switch current.Phase {
+	case PhaseVerified, PhaseWaitingConflict, PhaseCommitting:
+		return worker.resumeCommitPhase(ctx, plan, destinationProvider, destination, current, buffer)
+	case PhaseTransferred:
+		return worker.verifyTransferredAndCommit(ctx, plan, destinationProvider, destination, current, buffer)
 	}
 
-	var writeHandle providerapi.WriteHandle
-	if checkpoint == nil || current.Phase == PhasePrepared {
-		if checkpoint == nil {
-			if err := worker.journal.Save(ctx, current); err != nil {
-				return Result{}, fmt.Errorf("execute transfer: persist part intent: %w", err)
-			}
-		}
-		writeHandle, err = destination.OpenWrite(ctx, providerapi.OpenWriteRequest{
-			Location:    plan.Part,
-			Disposition: providerapi.WriteCreateNew,
-		})
-		if err != nil {
-			return Result{}, err
-		}
-		if err := worker.initializeCreatedPart(ctx, plan, destinationProvider, writeHandle, &current, hasher); err != nil {
-			_ = writeHandle.Close(context.Background())
-			return Result{}, err
-		}
-	} else if current.Phase == PhaseStreaming {
-		providerOffset, offsetErr := checkedProviderOffset(current.Offset)
-		if offsetErr != nil {
-			return Result{}, offsetErr
-		}
-		if err := unmarshalChecksum(hasher, current.ChecksumState); err != nil {
-			return Result{}, err
-		}
-		partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-		if statErr != nil {
-			return Result{}, statErr
-		}
-		if partEntry.Metadata.Size != nil && *partEntry.Metadata.Size > current.Offset && plan.StreamPolicy.CheckpointBytes != 0 {
-			partEntry, err = worker.recoverStreamSuffix(ctx, plan, source, destinationProvider, destination, &current, partEntry, hex.EncodeToString(hasher.Sum(nil)), buffer)
-			if err != nil {
-				return Result{}, err
-			}
-		}
-		if partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != current.Offset {
-			return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part no longer matches durable checkpoint", domain.RetryAfterConflict)
-		}
-		if current.Completion.Version != 0 || !reflect.DeepEqual(partEntry.Fingerprint, current.PartFingerprint) {
-			checksum, verifyErr := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
-			if verifyErr != nil {
-				return Result{}, verifyErr
-			}
-			if checksum != hex.EncodeToString(hasher.Sum(nil)) {
-				return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part content no longer matches durable checkpoint", domain.RetryAfterConflict)
-			}
-			current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
-			if err := worker.journal.Save(ctx, current); err != nil {
-				return Result{}, fmt.Errorf("execute transfer: refresh revalidated part checkpoint: %w", err)
-			}
-		}
-		writeHandle, err = destination.OpenWrite(ctx, providerapi.OpenWriteRequest{
-			Location:            plan.Part,
-			Offset:              providerOffset,
-			Disposition:         providerapi.WriteResumeExisting,
-			ExpectedFingerprint: &current.PartFingerprint,
-		})
-		if err != nil {
-			return Result{}, err
-		}
-	} else {
-		return Result{}, fmt.Errorf("execute transfer: unsupported checkpoint phase %q", current.Phase)
+	writeHandle, err := worker.openOrResumePart(ctx, plan, source, destinationProvider, destination, &current, checkpoint != nil, hasher, buffer)
+	if err != nil {
+		return Result{}, err
 	}
 	defer func() { _ = writeHandle.Close(context.Background()) }()
 
@@ -489,6 +328,252 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	if err := readHandle.Close(ctx); err != nil {
 		return Result{}, err
 	}
+	return worker.finalizeStreamedPart(ctx, plan, destinationProvider, destination, &current, hasher, buffer)
+}
+
+func resetCheckpointToDirectRelay(current *Checkpoint, plan Plan, reason RouteReason, includeDirectMeta bool) {
+	current.Phase = PhasePrepared
+	current.Offset = 0
+	current.PartFingerprint = domain.Fingerprint{}
+	current.ChecksumState = nil
+	current.ChecksumHex = ""
+	current.ActualRoute = RouteSFTPRelay
+	current.DowngradedFrom = RouteLevel2Direct
+	current.RouteReason = reason
+	if includeDirectMeta {
+		current.DirectFormatVersion = Level2DirectFormatVersion
+		current.DirectNonce = plan.Level2Preflight.Request.Nonce
+	}
+}
+
+func (worker *Worker) downgradeExpiredDirectToRelay(
+	ctx context.Context,
+	plan Plan,
+	destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	current *Checkpoint,
+	hasCheckpoint bool,
+) error {
+	reason := ReasonLevel2RevalidationFailed
+	if hasCheckpoint {
+		cleaned, cleanupErr := cleanupExactDirectPartForRelay(ctx, plan, destinationProvider, destination, *current)
+		if cleanupErr != nil {
+			return cleanupErr
+		}
+		switch {
+		case cleaned:
+			reason = ReasonLevel2PartCleanedForRelay
+		case current.Offset == 0:
+			if _, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part}); !domain.IsCode(statErr, domain.CodeNotFound) {
+				if statErr != nil {
+					return statErr
+				}
+				return planError(domain.CodeConflict, "preflight_direct", plan.Part, "unacknowledged direct part exists after failed revalidation", domain.RetryAfterReplan)
+			}
+		default:
+			return planError(domain.CodeConflict, "preflight_direct", plan.Part, "expired direct evidence failed with an unprovable checkpoint", domain.RetryAfterReplan)
+		}
+	}
+	resetCheckpointToDirectRelay(current, plan, reason, true)
+	if err := worker.journal.Save(ctx, *current); err != nil {
+		return fmt.Errorf("execute transfer: persist expired direct route downgrade: %w", err)
+	}
+	return nil
+}
+
+func (worker *Worker) tryAcceleratedRoute(
+	ctx context.Context,
+	plan Plan,
+	source, destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	current *Checkpoint,
+	hasCheckpoint bool,
+	control Control,
+	buffer []byte,
+) (Result, bool, error) {
+	switch plan.Route {
+	case RouteLevel2Direct:
+		if !hasCheckpoint {
+			current.DirectFormatVersion = Level2DirectFormatVersion
+			current.DirectNonce = plan.Level2Preflight.Request.Nonce
+		}
+		if current.ActualRoute == RouteSFTPRelay || current.Phase != PhasePrepared && current.Phase != PhaseStreaming {
+			return Result{}, false, nil
+		}
+		result, directErr := worker.executeLevel2Direct(ctx, plan, source, destinationProvider, destination, current, hasCheckpoint, control, buffer)
+		if !errors.Is(directErr, errLevel2SafeRelayFallback) && !errors.Is(directErr, errLevel2CleanedPartRelayFallback) {
+			return result, true, directErr
+		}
+		reason := ReasonLevel2FailedBeforeWrite
+		if errors.Is(directErr, errLevel2CleanedPartRelayFallback) {
+			reason = ReasonLevel2PartCleanedForRelay
+		}
+		resetCheckpointToDirectRelay(current, plan, reason, false)
+		if err := worker.journal.Save(ctx, *current); err != nil {
+			return Result{}, true, fmt.Errorf("execute transfer: persist safe direct route downgrade: %w", err)
+		}
+	case RouteHelperSameHost:
+		if current.Phase == PhasePrepared {
+			result, err := worker.executeSameHostCopy(ctx, plan, destinationProvider, destination, current, hasCheckpoint, control, buffer)
+			return result, true, err
+		}
+	case RouteSFTPServerCopy:
+		if current.ActualRoute == RouteSFTPRelay || current.Phase != PhasePrepared {
+			return Result{}, false, nil
+		}
+		result, serverCopyErr := worker.executeServerCopy(ctx, plan, source, destinationProvider, destination, current, hasCheckpoint, control, buffer)
+		if !errors.Is(serverCopyErr, errServerCopySafeFallback) {
+			return result, true, serverCopyErr
+		}
+		current.ActualRoute = RouteSFTPRelay
+		current.DowngradedFrom = RouteSFTPServerCopy
+		current.RouteReason = ReasonServerCopyFailedBeforeWrite
+		if err := worker.journal.Save(ctx, *current); err != nil {
+			return Result{}, true, fmt.Errorf("execute transfer: persist safe route downgrade: %w", err)
+		}
+	}
+	return Result{}, false, nil
+}
+
+func (worker *Worker) resumeCommitPhase(
+	ctx context.Context,
+	plan Plan,
+	destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	current Checkpoint,
+	buffer []byte,
+) (Result, error) {
+	if current.Completion.Version != 0 {
+		part, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+		if err != nil && (current.Phase != PhaseCommitting || !domain.IsCode(err, domain.CodeNotFound)) {
+			return Result{}, err
+		}
+		if err == nil {
+			actual, verifyErr := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, part.Fingerprint, buffer)
+			if verifyErr != nil {
+				return Result{}, verifyErr
+			}
+			if actual != current.ChecksumHex {
+				return Result{}, planError(domain.CodeConflict, "resume_copy", plan.Part, "part content changed before publication", domain.RetryAfterConflict)
+			}
+			current.PartFingerprint = cloneFingerprint(part.Fingerprint)
+			current.recordContentVerified()
+		}
+	}
+	return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
+}
+
+func (worker *Worker) verifyTransferredAndCommit(
+	ctx context.Context,
+	plan Plan,
+	destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	current Checkpoint,
+	buffer []byte,
+) (Result, error) {
+	partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+	if statErr != nil {
+		return Result{}, statErr
+	}
+	checksum, verifyErr := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+	if verifyErr != nil {
+		return Result{}, verifyErr
+	}
+	if checksum != current.ChecksumHex {
+		return Result{}, planError(domain.CodeConflict, "verify_part", plan.Part, "part checksum does not match streamed source", domain.RetryNever)
+	}
+	current.recordContentVerified()
+	current.Phase = PhaseVerified
+	current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
+	if err := worker.journal.Save(ctx, current); err != nil {
+		return Result{}, err
+	}
+	return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
+}
+
+func (worker *Worker) openOrResumePart(
+	ctx context.Context,
+	plan Plan,
+	source, destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	current *Checkpoint,
+	hasCheckpoint bool,
+	hasher hash.Hash,
+	buffer []byte,
+) (providerapi.WriteHandle, error) {
+	if !hasCheckpoint || current.Phase == PhasePrepared {
+		if !hasCheckpoint {
+			if err := worker.journal.Save(ctx, *current); err != nil {
+				return nil, fmt.Errorf("execute transfer: persist part intent: %w", err)
+			}
+		}
+		writeHandle, err := destination.OpenWrite(ctx, providerapi.OpenWriteRequest{
+			Location:    plan.Part,
+			Disposition: providerapi.WriteCreateNew,
+		})
+		if err != nil {
+			return nil, err
+		}
+		if err := worker.initializeCreatedPart(ctx, plan, destinationProvider, writeHandle, current, hasher); err != nil {
+			_ = writeHandle.Close(context.Background())
+			return nil, err
+		}
+		return writeHandle, nil
+	}
+	if current.Phase != PhaseStreaming {
+		return nil, fmt.Errorf("execute transfer: unsupported checkpoint phase %q", current.Phase)
+	}
+	providerOffset, offsetErr := checkedProviderOffset(current.Offset)
+	if offsetErr != nil {
+		return nil, offsetErr
+	}
+	if err := unmarshalChecksum(hasher, current.ChecksumState); err != nil {
+		return nil, err
+	}
+	partEntry, statErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
+	if statErr != nil {
+		return nil, statErr
+	}
+	if partEntry.Metadata.Size != nil && *partEntry.Metadata.Size > current.Offset && plan.StreamPolicy.CheckpointBytes != 0 {
+		var err error
+		partEntry, err = worker.recoverStreamSuffix(ctx, plan, source, destinationProvider, destination, current, partEntry, hex.EncodeToString(hasher.Sum(nil)), buffer)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if partEntry.Metadata.Size == nil || *partEntry.Metadata.Size != current.Offset {
+		return nil, planError(domain.CodeConflict, "resume_copy", plan.Part, "part no longer matches durable checkpoint", domain.RetryAfterConflict)
+	}
+	if current.Completion.Version != 0 || !reflect.DeepEqual(partEntry.Fingerprint, current.PartFingerprint) {
+		checksum, verifyErr := worker.verifyFile(ctx, plan, current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+		if verifyErr != nil {
+			return nil, verifyErr
+		}
+		if checksum != hex.EncodeToString(hasher.Sum(nil)) {
+			return nil, planError(domain.CodeConflict, "resume_copy", plan.Part, "part content no longer matches durable checkpoint", domain.RetryAfterConflict)
+		}
+		current.PartFingerprint = cloneFingerprint(partEntry.Fingerprint)
+		if err := worker.journal.Save(ctx, *current); err != nil {
+			return nil, fmt.Errorf("execute transfer: refresh revalidated part checkpoint: %w", err)
+		}
+	}
+	return destination.OpenWrite(ctx, providerapi.OpenWriteRequest{
+		Location:            plan.Part,
+		Offset:              providerOffset,
+		Disposition:         providerapi.WriteResumeExisting,
+		ExpectedFingerprint: &current.PartFingerprint,
+	})
+}
+
+func (worker *Worker) finalizeStreamedPart(
+	ctx context.Context,
+	plan Plan,
+	destinationProvider providerapi.Provider,
+	destination providerapi.MutableProvider,
+	current *Checkpoint,
+	hasher hash.Hash,
+	buffer []byte,
+) (Result, error) {
 	partEntry, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
 	if err != nil {
 		return Result{}, err
@@ -502,13 +587,13 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 		return Result{Final: plan.Final, Bytes: current.Offset, SHA256: current.ChecksumHex, PartRetained: true}, planError(domain.CodeConflict, "verify_sync_back_source", plan.Source.Location, "materialization content differs from frozen edit digest", domain.RetryAfterConflict)
 	}
 	current.Phase = PhaseTransferred
-	if err := worker.journal.Save(ctx, current); err != nil {
+	if err := worker.journal.Save(ctx, *current); err != nil {
 		return Result{}, err
 	}
 	if plan.Verification == VerifyProtocol {
-		return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
+		return worker.commit(ctx, plan, destinationProvider, destination, *current, buffer)
 	}
-	destinationChecksum, err := worker.verifyFile(ctx, plan, &current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
+	destinationChecksum, err := worker.verifyFile(ctx, plan, current, destinationProvider, plan.Part, partEntry.Fingerprint, buffer)
 	if err != nil {
 		return Result{}, err
 	}
@@ -517,10 +602,10 @@ func (worker *Worker) Execute(ctx context.Context, plan Plan, control Control) (
 	}
 	current.recordContentVerified()
 	current.Phase = PhaseVerified
-	if err := worker.journal.Save(ctx, current); err != nil {
+	if err := worker.journal.Save(ctx, *current); err != nil {
 		return Result{}, err
 	}
-	return worker.commit(ctx, plan, destinationProvider, destination, current, buffer)
+	return worker.commit(ctx, plan, destinationProvider, destination, *current, buffer)
 }
 
 func checkpointMatchesPlan(checkpoint Checkpoint, plan Plan) bool {
@@ -634,118 +719,35 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 		return Result{}, planError(domain.CodeConflict, "commit_copy", plan.Part, "verified part changed before commit", domain.RetryAfterConflict)
 	}
 	final := plan.Final
-	finalEntry, finalErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: final})
-	finalExists := finalErr == nil
-	if finalErr != nil && !domain.IsCode(finalErr, domain.CodeNotFound) {
-		return Result{}, finalErr
-	}
-	if plan.Version == 2 && plan.ExpectedDestination.Presence == DestinationPresent {
-		_, backupErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.PreservedDestination})
-		backupExists := backupErr == nil
-		if backupErr != nil && !domain.IsCode(backupErr, domain.CodeNotFound) {
-			return Result{}, backupErr
-		}
-		if !backupExists && !destinationPreconditionMatches(plan.ExpectedDestination, finalExists, finalEntry) {
-			checkpoint.Phase = PhaseWaitingConflict
-			checkpoint.Outcome = OutcomeWaitingConflict
-			if err := worker.journal.Save(ctx, checkpoint); err != nil {
-				return Result{}, err
-			}
-			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
-		}
-		if !backupExists {
-			contentSHA, hashErr := worker.verifyFile(ctx, plan, &checkpoint, destinationProvider, final, plan.ExpectedDestination.Fingerprint, buffer)
-			if hashErr != nil {
-				return Result{}, hashErr
-			}
-			if contentSHA != string(plan.ExpectedDestination.ContentSHA256) {
-				checkpoint.Phase = PhaseWaitingConflict
-				checkpoint.Outcome = OutcomeWaitingConflict
-				if err := worker.journal.Save(ctx, checkpoint); err != nil {
-					return Result{}, err
-				}
-				return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
-			}
-		}
-		preserver, ok := destinationProvider.(providerapi.DestinationPreserver)
-		if !ok {
-			return Result{}, planError(domain.CodeUnsupported, "commit_copy", final, "destination cannot preserve the replaced remote version", domain.RetryAfterReplan)
-		}
-		expectedSize := int64(*plan.ExpectedDestination.Fingerprint.Size) //nolint:gosec // validated below the 2 GiB preservation ceiling
-		preserveCtx, cancelPreserve := context.WithTimeout(ctx, preservationTimeout)
-		preserveCtx, finishPreserveControl := controlledStreamContext(preserveCtx, worker.control, cloneCheckpoint(checkpoint))
-		admission := &streamAdmission{worker: worker, plan: plan}
-		readOptions := providerapi.ReadStreamOptions{MaxBytes: providerapi.MaxReadAheadBytes}
-		if plan.DestinationEndpoint.Kind == domain.EndpointSSH {
-			readOptions.BeforeRead = admission.gate(plan.DestinationEndpoint.ID)
-		}
-		if worker.scheduler != nil {
-			readOptions.MaxRequestBytes = worker.scheduler.QuantumBytes()
-		}
-		preserveResult, preserveErr := preserver.PreserveDestination(preserveCtx, providerapi.PreserveDestinationRequest{
-			ReadStream: readOptions,
-			Source:     final, Backup: plan.PreservedDestination, ExpectedFingerprint: plan.ExpectedDestination.Fingerprint,
-			ExpectedSHA256: string(plan.ExpectedDestination.ContentSHA256), ExpectedSize: expectedSize, MaxBytes: 2 * 1024 * 1024 * 1024,
-		})
-		preserveErr = finishPreserveControl(preserveErr)
-		cancelPreserve()
-		checkpoint.Performance.ScheduledBytes = saturatingAdd(checkpoint.Performance.ScheduledBytes, admission.bytes.Load(), ^uint64(0))
-		checkpoint.Performance.SchedulerNanoseconds = saturatingAdd(checkpoint.Performance.SchedulerNanoseconds, admission.waited.Load(), ^uint64(0))
-		preserved = preserveResult.BackupPresent
-		preservationUnknown = preserveResult.EffectUnknown
-		if preserveErr != nil {
-			if domain.IsCode(preserveErr, domain.CodeConflict) {
-				checkpoint.Phase = PhaseWaitingConflict
-				checkpoint.Outcome = OutcomeWaitingConflict
-				if saveErr := worker.journal.Save(ctx, checkpoint); saveErr != nil {
-					return Result{}, saveErr
-				}
-				conflictResult := Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}
-				if preserved || preservationUnknown {
-					conflictResult.PreservedDestination = plan.PreservedDestination
-					conflictResult.PreservationUnknown = preservationUnknown
-				}
-				return conflictResult, nil
-			}
-			return Result{}, preserveErr
-		}
-		if !preserved {
-			return Result{}, planError(domain.CodeIntegrityFailed, "commit_copy", plan.PreservedDestination, "provider did not confirm preserved destination", domain.RetryNever)
-		}
+	var finalEntry domain.Entry
+	finalExists := false
+	// Plan Version 1 with ConflictAsk publishes via atomic no-replace Rename,
+	// so probing final first adds an extra round-trip on the common absent path.
+	if plan.Version != 1 || plan.ConflictPolicy != ConflictAsk {
+		var finalErr error
 		finalEntry, finalErr = destinationProvider.Stat(ctx, providerapi.StatRequest{Location: final})
 		finalExists = finalErr == nil
 		if finalErr != nil && !domain.IsCode(finalErr, domain.CodeNotFound) {
 			return Result{}, finalErr
 		}
-		if finalExists {
-			proved, proofErr := worker.proveCommitted(ctx, plan, &checkpoint, destinationProvider, final, checkpoint.ChecksumHex, buffer)
-			if proofErr != nil || !proved {
-				checkpoint.Phase = PhaseWaitingConflict
-				checkpoint.Outcome = OutcomeWaitingConflict
-				if err := worker.journal.Save(ctx, checkpoint); err != nil {
-					return Result{}, err
-				}
-				return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true, PreservedDestination: plan.PreservedDestination}, nil
-			}
+	}
+	if plan.Version == 2 && plan.ExpectedDestination.Presence == DestinationPresent {
+		var conflict *Result
+		preserved, preservationUnknown, finalEntry, finalExists, conflict, err = worker.preserveSyncBackDestination(ctx, plan, destinationProvider, &checkpoint, final, finalExists, finalEntry, buffer)
+		if err != nil {
+			return Result{}, err
+		}
+		if conflict != nil {
+			return *conflict, nil
 		}
 	}
 	if plan.Version == 2 && plan.ExpectedDestination.Presence == DestinationAbsent && !destinationPreconditionMatches(plan.ExpectedDestination, finalExists, finalEntry) {
-		checkpoint.Phase = PhaseWaitingConflict
-		checkpoint.Outcome = OutcomeWaitingConflict
-		if err := worker.journal.Save(ctx, checkpoint); err != nil {
-			return Result{}, err
-		}
-		return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
+		return worker.waitForConflict(ctx, &checkpoint, final, domain.Location{}, false)
 	}
 	if finalExists {
 		switch plan.ConflictPolicy {
 		case ConflictAsk:
-			checkpoint.Phase = PhaseWaitingConflict
-			checkpoint.Outcome = OutcomeWaitingConflict
-			if err := worker.journal.Save(ctx, checkpoint); err != nil {
-				return Result{}, err
-			}
-			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
+			return worker.waitForConflict(ctx, &checkpoint, final, domain.Location{}, false)
 		case ConflictSkip:
 			if err := destination.Remove(ctx, providerapi.RemoveRequest{Location: plan.Part, Expected: &partEntry.Fingerprint}); err != nil {
 				return Result{}, err
@@ -787,13 +789,11 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	_, renameErr := destination.Rename(ctx, renameRequest)
 	committedProof := false
 	if renameErr != nil {
+		if plan.Version == 1 && plan.ConflictPolicy == ConflictAsk && domain.IsCode(renameErr, domain.CodeAlreadyExists) {
+			return worker.waitForConflict(ctx, &checkpoint, final, domain.Location{}, false)
+		}
 		if plan.Version == 2 && plan.Origin == OriginSyncBack && (domain.IsCode(renameErr, domain.CodeConflict) || domain.IsCode(renameErr, domain.CodeAlreadyExists)) {
-			checkpoint.Phase = PhaseWaitingConflict
-			checkpoint.Outcome = OutcomeWaitingConflict
-			if err := worker.journal.Save(ctx, checkpoint); err != nil {
-				return Result{}, err
-			}
-			return Result{Outcome: OutcomeWaitingConflict, Final: final, Bytes: checkpoint.Offset, SHA256: checkpoint.ChecksumHex, PartRetained: true}, nil
+			return worker.waitForConflict(ctx, &checkpoint, final, domain.Location{}, false)
 		}
 		proved, proofErr := worker.proveCommitted(ctx, plan, &checkpoint, destinationProvider, final, checkpoint.ChecksumHex, buffer)
 		if proofErr != nil || !proved {
@@ -830,6 +830,113 @@ func (worker *Worker) commit(ctx context.Context, plan Plan, destinationProvider
 	return result, nil
 }
 
+func (worker *Worker) waitForConflict(
+	ctx context.Context,
+	checkpoint *Checkpoint,
+	final domain.Location,
+	preservedDestination domain.Location,
+	preservationUnknown bool,
+) (Result, error) {
+	checkpoint.Phase = PhaseWaitingConflict
+	checkpoint.Outcome = OutcomeWaitingConflict
+	if err := worker.journal.Save(ctx, *checkpoint); err != nil {
+		return Result{}, err
+	}
+	return Result{
+		Outcome:              OutcomeWaitingConflict,
+		Final:                final,
+		Bytes:                checkpoint.Offset,
+		SHA256:               checkpoint.ChecksumHex,
+		PartRetained:         true,
+		PreservedDestination: preservedDestination,
+		PreservationUnknown:  preservationUnknown,
+	}, nil
+}
+
+func (worker *Worker) preserveSyncBackDestination(
+	ctx context.Context,
+	plan Plan,
+	destinationProvider providerapi.Provider,
+	checkpoint *Checkpoint,
+	final domain.Location,
+	finalExists bool,
+	finalEntry domain.Entry,
+	buffer []byte,
+) (preserved, preservationUnknown bool, updatedEntry domain.Entry, updatedExists bool, conflict *Result, err error) {
+	_, backupErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.PreservedDestination})
+	backupExists := backupErr == nil
+	if backupErr != nil && !domain.IsCode(backupErr, domain.CodeNotFound) {
+		return false, false, finalEntry, finalExists, nil, backupErr
+	}
+	if !backupExists {
+		if !destinationPreconditionMatches(plan.ExpectedDestination, finalExists, finalEntry) {
+			conflictResult, saveErr := worker.waitForConflict(ctx, checkpoint, final, domain.Location{}, false)
+			return false, false, finalEntry, finalExists, &conflictResult, saveErr
+		}
+		contentSHA, hashErr := worker.verifyFile(ctx, plan, checkpoint, destinationProvider, final, plan.ExpectedDestination.Fingerprint, buffer)
+		if hashErr != nil {
+			return false, false, finalEntry, finalExists, nil, hashErr
+		}
+		if contentSHA != string(plan.ExpectedDestination.ContentSHA256) {
+			conflictResult, saveErr := worker.waitForConflict(ctx, checkpoint, final, domain.Location{}, false)
+			return false, false, finalEntry, finalExists, &conflictResult, saveErr
+		}
+	}
+	preserver, ok := destinationProvider.(providerapi.DestinationPreserver)
+	if !ok {
+		return false, false, finalEntry, finalExists, nil, planError(domain.CodeUnsupported, "commit_copy", final, "destination cannot preserve the replaced remote version", domain.RetryAfterReplan)
+	}
+	expectedSize := int64(*plan.ExpectedDestination.Fingerprint.Size) //nolint:gosec // validated below the 2 GiB preservation ceiling
+	preserveCtx, cancelPreserve := context.WithTimeout(ctx, preservationTimeout)
+	preserveCtx, finishPreserveControl := controlledStreamContext(preserveCtx, worker.control, cloneCheckpoint(*checkpoint))
+	admission := &streamAdmission{worker: worker, plan: plan}
+	readOptions := providerapi.ReadStreamOptions{MaxBytes: providerapi.MaxReadAheadBytes}
+	if plan.DestinationEndpoint.Kind == domain.EndpointSSH {
+		readOptions.BeforeRead = admission.gate(plan.DestinationEndpoint.ID)
+	}
+	if worker.scheduler != nil {
+		readOptions.MaxRequestBytes = worker.scheduler.QuantumBytes()
+	}
+	preserveResult, preserveErr := preserver.PreserveDestination(preserveCtx, providerapi.PreserveDestinationRequest{
+		ReadStream: readOptions,
+		Source:     final, Backup: plan.PreservedDestination, ExpectedFingerprint: plan.ExpectedDestination.Fingerprint,
+		ExpectedSHA256: string(plan.ExpectedDestination.ContentSHA256), ExpectedSize: expectedSize, MaxBytes: 2 * 1024 * 1024 * 1024,
+	})
+	preserveErr = finishPreserveControl(preserveErr)
+	cancelPreserve()
+	checkpoint.Performance.ScheduledBytes = saturatingAdd(checkpoint.Performance.ScheduledBytes, admission.bytes.Load(), ^uint64(0))
+	checkpoint.Performance.SchedulerNanoseconds = saturatingAdd(checkpoint.Performance.SchedulerNanoseconds, admission.waited.Load(), ^uint64(0))
+	preserved = preserveResult.BackupPresent
+	preservationUnknown = preserveResult.EffectUnknown
+	if preserveErr != nil {
+		if domain.IsCode(preserveErr, domain.CodeConflict) {
+			var preservedLoc domain.Location
+			if preserved || preservationUnknown {
+				preservedLoc = plan.PreservedDestination
+			}
+			conflictResult, saveErr := worker.waitForConflict(ctx, checkpoint, final, preservedLoc, preservationUnknown)
+			return preserved, preservationUnknown, finalEntry, finalExists, &conflictResult, saveErr
+		}
+		return preserved, preservationUnknown, finalEntry, finalExists, nil, preserveErr
+	}
+	if !preserved {
+		return false, preservationUnknown, finalEntry, finalExists, nil, planError(domain.CodeIntegrityFailed, "commit_copy", plan.PreservedDestination, "provider did not confirm preserved destination", domain.RetryNever)
+	}
+	updatedEntry, finalErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: final})
+	updatedExists = finalErr == nil
+	if finalErr != nil && !domain.IsCode(finalErr, domain.CodeNotFound) {
+		return preserved, preservationUnknown, updatedEntry, updatedExists, nil, finalErr
+	}
+	if updatedExists {
+		proved, proofErr := worker.proveCommitted(ctx, plan, checkpoint, destinationProvider, final, checkpoint.ChecksumHex, buffer)
+		if proofErr != nil || !proved {
+			conflictResult, saveErr := worker.waitForConflict(ctx, checkpoint, final, plan.PreservedDestination, false)
+			return preserved, preservationUnknown, updatedEntry, updatedExists, &conflictResult, saveErr
+		}
+	}
+	return preserved, preservationUnknown, updatedEntry, updatedExists, nil, nil
+}
+
 func validateExecution(plan Plan) error {
 	validSourceKind := plan.Source.Kind == domain.EntryFile || plan.Source.Kind == domain.EntryDirectory ||
 		(plan.Kind == OperationDelete && plan.Source.Kind == domain.EntrySymlink)
@@ -841,18 +948,8 @@ func validateExecution(plan Plan) error {
 	if _, err := domain.ParseJobID(string(plan.JobID)); err != nil {
 		return errors.New("execute transfer: invalid frozen Job ID")
 	}
-	if plan.Version == 1 {
-		if plan.Origin != "" || plan.EditSessionID != "" || plan.ExpectedDestination != nil || plan.OriginalDestinationPrecondition != nil || plan.ExpectedSourceSHA256 != "" {
-			return errors.New("execute transfer: Plan Version 1 contains sync-back fields")
-		}
-	} else if plan.Origin != OriginSyncBack || validateLowerHexIdentity(plan.EditSessionID, 32) != nil ||
-		plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile || plan.ConflictPolicy != ConflictOverwrite ||
-		validateLowerHexIdentity(plan.ExpectedSourceSHA256, 64) != nil || !validDestinationPrecondition(plan.ExpectedDestination) || !validDestinationPrecondition(plan.OriginalDestinationPrecondition) ||
-		plan.DestinationDirectory != (domain.Location{EndpointID: plan.Final.EndpointID, Path: domain.CanonicalPath(path.Dir(string(plan.Final.Path)))}) ||
-		plan.Part != childLocation(plan.DestinationDirectory, "."+path.Base(string(plan.Final.Path))+".part-"+string(plan.JobID)) ||
-		(plan.ExpectedDestination.Presence == DestinationPresent && plan.PreservedDestination != childLocation(plan.DestinationDirectory, "."+path.Base(string(plan.Final.Path))+".amsftp-original-"+string(plan.JobID))) ||
-		(plan.ExpectedDestination.Presence == DestinationAbsent && plan.PreservedDestination.Path != "") {
-		return errors.New("execute transfer: invalid sync-back Plan Version 2")
+	if err := validatePlanVersion(plan); err != nil {
+		return err
 	}
 	if plan.BufferBytes == 0 || plan.BufferBytes > 4*1024*1024 {
 		return errors.New("execute transfer: buffer budget is outside 1..4MiB")
@@ -863,7 +960,38 @@ func validateExecution(plan Plan) error {
 	if !validCompletionPolicy(plan) {
 		return errors.New("execute transfer: unsupported verification")
 	}
-	if plan.Route != RouteLocal && plan.Route != RouteSFTPRelay && plan.Route != RouteHelperSameHost && plan.Route != RouteSFTPServerCopy && plan.Route != RouteLevel2Direct {
+	if err := validatePlanRoute(plan); err != nil {
+		return err
+	}
+	if err := validatePlanDiscovery(plan); err != nil {
+		return err
+	}
+	return validatePlanOperation(plan)
+}
+
+func validatePlanVersion(plan Plan) error {
+	if plan.Version == 1 {
+		if plan.Origin != "" || plan.EditSessionID != "" || plan.ExpectedDestination != nil || plan.OriginalDestinationPrecondition != nil || plan.ExpectedSourceSHA256 != "" {
+			return errors.New("execute transfer: Plan Version 1 contains sync-back fields")
+		}
+		return nil
+	}
+	if plan.Origin != OriginSyncBack || validateLowerHexIdentity(plan.EditSessionID, 32) != nil ||
+		plan.Kind != OperationCopy || plan.Source.Kind != domain.EntryFile || plan.ConflictPolicy != ConflictOverwrite ||
+		validateLowerHexIdentity(plan.ExpectedSourceSHA256, 64) != nil || !validDestinationPrecondition(plan.ExpectedDestination) || !validDestinationPrecondition(plan.OriginalDestinationPrecondition) ||
+		plan.DestinationDirectory != (domain.Location{EndpointID: plan.Final.EndpointID, Path: domain.CanonicalPath(path.Dir(string(plan.Final.Path)))}) ||
+		plan.Part != childLocation(plan.DestinationDirectory, "."+path.Base(string(plan.Final.Path))+".part-"+string(plan.JobID)) ||
+		(plan.ExpectedDestination.Presence == DestinationPresent && plan.PreservedDestination != childLocation(plan.DestinationDirectory, "."+path.Base(string(plan.Final.Path))+".amsftp-original-"+string(plan.JobID))) ||
+		(plan.ExpectedDestination.Presence == DestinationAbsent && plan.PreservedDestination.Path != "") {
+		return errors.New("execute transfer: invalid sync-back Plan Version 2")
+	}
+	return nil
+}
+
+func validatePlanRoute(plan Plan) error {
+	switch plan.Route {
+	case RouteLocal, RouteSFTPRelay, RouteHelperSameHost, RouteSFTPServerCopy, RouteLevel2Direct:
+	default:
 		return errors.New("execute transfer: unsupported route")
 	}
 	if !validRouteEvidence(plan) {
@@ -901,6 +1029,10 @@ func validateExecution(plan Plan) error {
 	if plan.Route == RouteLevel2Direct && plan.Level2Preflight.Outcome != Level2PreflightPassed {
 		return errors.New("execute transfer: Level 2 route lacks passing preflight evidence")
 	}
+	return nil
+}
+
+func validatePlanDiscovery(plan Plan) error {
 	if plan.Source.Kind == domain.EntryFile && plan.Discovery != nil {
 		return errors.New("execute transfer: file plan has a directory discovery budget")
 	}
@@ -911,7 +1043,14 @@ func validateExecution(plan Plan) error {
 			return errors.New("execute transfer: directory discovery budget is invalid")
 		}
 	}
-	if plan.Kind == OperationMove {
+	return nil
+}
+
+func validatePlanOperation(plan Plan) error {
+	switch plan.Kind {
+	case OperationCopy:
+		return nil
+	case OperationMove:
 		if plan.MoveStrategy != "" && plan.MoveStrategy != MoveCopyDelete && plan.MoveStrategy != MoveAtomicRename {
 			return errors.New("execute transfer: move strategy is invalid")
 		}
@@ -921,17 +1060,17 @@ func validateExecution(plan Plan) error {
 		if plan.MoveStrategy == MoveCopyDelete && plan.SourceDeleteCapability == nil {
 			return errors.New("execute transfer: move source deletion capability is missing")
 		}
-	}
-	if plan.Kind == OperationDelete {
+		return nil
+	case OperationDelete:
 		if plan.DeleteIrreversible == plan.DeleteTrash || plan.DeleteTrash && plan.DeleteCapability == nil ||
 			plan.Source.Location.Path == "/" || plan.Final != plan.Source.Location ||
 			plan.SourceEndpoint.ID != plan.DestinationEndpoint.ID {
 			return errors.New("execute transfer: delete plan is invalid")
 		}
-	} else if plan.Kind != OperationCopy && plan.Kind != OperationMove {
+		return nil
+	default:
 		return errors.New("execute transfer: operation kind is invalid")
 	}
-	return nil
 }
 
 func destinationPreconditionMatches(expected *DestinationPrecondition, exists bool, entry domain.Entry) bool {

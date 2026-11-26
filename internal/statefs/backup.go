@@ -321,13 +321,14 @@ func resumePublishedBackup(ctx context.Context, config BackupConfig, expectation
 }
 
 func pathExists(path string) (bool, error) {
-	if _, err := os.Lstat(path); err == nil {
+	_, err := os.Lstat(path)
+	if err == nil {
 		return true, nil
-	} else if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	} else {
-		return false, err
 	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, err
 }
 
 func backupDestinationURI(path string) string {
@@ -557,10 +558,10 @@ func queryDriverInteger(ctx context.Context, connection driver.Conn, query strin
 func cleanupBackupTemp(path string) error {
 	var result error
 	for _, candidate := range []string{path + "-wal", path + "-shm", path + "-journal", path} {
-		if _, err := os.Lstat(candidate); errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
-			result = errors.Join(result, err)
+		if _, err := os.Lstat(candidate); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				result = errors.Join(result, err)
+			}
 			continue
 		}
 		if err := validatePrivateRegular(candidate); err != nil {

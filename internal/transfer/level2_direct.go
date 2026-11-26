@@ -131,14 +131,15 @@ func (worker *Worker) executeLevel2Direct(
 		}
 	}
 	partEntry, partErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
-	if partErr == nil {
+	switch {
+	case partErr == nil:
 		if !checkpointExists || checkpoint.Offset == 0 || partEntry.Kind != domain.EntryFile || partEntry.Metadata.Size == nil ||
 			*partEntry.Metadata.Size != checkpoint.Offset || !reflect.DeepEqual(partEntry.Fingerprint, checkpoint.PartFingerprint) {
 			return Result{}, planError(domain.CodeConflict, "adopt_direct_part", plan.Part, "direct part does not match its durable acknowledged checkpoint", domain.RetryAfterConflict)
 		}
-	} else if !domain.IsCode(partErr, domain.CodeNotFound) {
+	case !domain.IsCode(partErr, domain.CodeNotFound):
 		return Result{}, partErr
-	} else if checkpoint.Offset != 0 {
+	case checkpoint.Offset != 0:
 		return Result{}, planError(domain.CodeConflict, "adopt_direct_part", plan.Part, "acknowledged direct part is absent", domain.RetryAfterConflict)
 	}
 	if action := controlAction(control, *checkpoint); action != ControlContinue {
@@ -322,10 +323,12 @@ func cleanupExactDirectPartForRelay(
 	if checkpoint.Offset == 0 || checkpoint.PartFingerprint.Strength() == domain.FingerprintWeak {
 		return false, nil
 	}
-	if _, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Final}); err == nil {
+	_, finalErr := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Final})
+	if finalErr == nil {
 		return false, nil
-	} else if !domain.IsCode(err, domain.CodeNotFound) {
-		return false, err
+	}
+	if !domain.IsCode(finalErr, domain.CodeNotFound) {
+		return false, finalErr
 	}
 	part, err := destinationProvider.Stat(ctx, providerapi.StatRequest{Location: plan.Part})
 	if err != nil {

@@ -207,43 +207,38 @@ func Render(surface Surface, model Model, options RenderOptions) RenderStats {
 	if model.Auth.Active {
 		renderAuthModal(surface, model.Auth, width, height)
 	}
-	if model.Mode == ModeWorkspace {
+	renderModeModal(surface, model, width, height)
+	return stats
+}
+
+func renderModeModal(surface Surface, model Model, width, height int) {
+	switch model.Mode {
+	case ModeWorkspace:
 		renderWorkspaceModal(surface, string(model.workspaceName), width, height)
-	}
-	if model.Mode == ModeFilenameSearch || model.Mode == ModeContentSearch || model.Mode == ModeContentSearchConfirm {
-		renderSearchModal(surface, string(model.searchInput), model.Mode == ModeContentSearch || model.Mode == ModeContentSearchConfirm, model.Mode == ModeContentSearchConfirm, width, height)
-	}
-	if model.Mode == ModePath {
+	case ModeFilenameSearch, ModeContentSearch, ModeContentSearchConfirm:
+		isContent := model.Mode == ModeContentSearch || model.Mode == ModeContentSearchConfirm
+		renderSearchModal(surface, string(model.searchInput), isContent, model.Mode == ModeContentSearchConfirm, width, height)
+	case ModePath:
 		renderPathModal(surface, string(model.pathInput), width, height)
-	}
-	if model.Mode == ModeEndpoint {
+	case ModeEndpoint:
 		renderEndpointModal(surface, model.endpointPicker, width, height)
-	}
-	if model.Mode == ModeRename {
+	case ModeRename:
 		renderRenameModal(surface, model.pendingRename, string(model.renameInput), width, height)
-	}
-	if model.Mode == ModeMoveConfirm {
+	case ModeMoveConfirm:
 		renderMoveModal(surface, model.pendingMove, width, height)
-	}
-	if model.Mode == ModeDeleteConfirm {
+	case ModeDeleteConfirm:
 		renderDeleteModal(surface, model.pendingDelete, model.DeleteConfirmation, width, height)
-	}
-	if model.Mode == ModeCommand || model.Mode == ModeCommandConfirm {
+	case ModeCommand, ModeCommandConfirm:
 		renderCommandModal(surface, model, width, height)
-	}
-	if model.Mode == ModeEditDecision || model.Mode == ModeEditSaveAs {
+	case ModeEditDecision, ModeEditSaveAs:
 		renderEditDecisionModal(surface, model, width, height)
-	}
-	if model.Mode == ModeEditLaunchConfirm {
+	case ModeEditLaunchConfirm:
 		renderEditLaunchModal(surface, model, width, height)
-	}
-	if model.Mode == ModeEditRecovery {
+	case ModeEditRecovery:
 		renderEditRecoveryModal(surface, model, width, height)
-	}
-	if model.Mode == ModeCacheClearConfirm {
+	case ModeCacheClearConfirm:
 		renderCacheClearModal(surface, model, width, height)
 	}
-	return stats
 }
 
 type actionHint struct {
@@ -754,19 +749,24 @@ func selectedJobControls(jobs []transfer.JobView, cursor int) string {
 	}
 }
 
-func renderSearchDrawer(surface Surface, state SearchState, y, width, rows int) {
-	header := fmt.Sprintf("f:%s · %d results", SanitizeTerminalText(state.Query), len(state.Results))
-	if state.Loading {
-		header += " · searching"
-	} else if state.Terminal.Status != "" {
-		header += " · " + string(state.Terminal.Status)
-		if state.Terminal.StopReason != "none" && state.Terminal.StopReason != "" {
-			header += "/" + string(state.Terminal.StopReason)
+func formatSearchDrawerHeader(prefix, query string, count int, unit string, loading bool, loadingLabel, status, stopReason, message string) string {
+	header := fmt.Sprintf("%s:%s · %d %s", prefix, SanitizeTerminalText(query), count, unit)
+	if loading {
+		header += " · " + loadingLabel
+	} else if status != "" {
+		header += " · " + status
+		if stopReason != "none" && stopReason != "" {
+			header += "/" + stopReason
 		}
 	}
-	if state.Message != "" {
-		header += " · " + SanitizeTerminalText(state.Message)
+	if message != "" {
+		header += " · " + SanitizeTerminalText(message)
 	}
+	return header
+}
+
+func renderSearchDrawer(surface Surface, state SearchState, y, width, rows int) {
+	header := formatSearchDrawerHeader("f", state.Query, len(state.Results), "results", state.Loading, "searching", string(state.Terminal.Status), string(state.Terminal.StopReason), state.Message)
 	surface.PutClipped(0, y, width, header, StylePreview)
 	if rows <= 1 {
 		return
@@ -775,8 +775,7 @@ func renderSearchDrawer(surface Surface, state SearchState, y, width, rows int) 
 	window := ComputeWindow(len(state.Results), state.Cursor, visible, 0)
 	for index := window.VisibleStart; index < window.VisibleEnd; index++ {
 		result := state.Results[index]
-		marker := "  "
-		style := StylePreview
+		marker, style := "  ", StylePreview
 		if index == state.Cursor {
 			marker, style = "▌ ", StyleCursor
 			surface.Fill(0, y+1+index-window.VisibleStart, width, style)
@@ -787,18 +786,7 @@ func renderSearchDrawer(surface Surface, state SearchState, y, width, rows int) 
 }
 
 func renderContentSearchDrawer(surface Surface, state ContentSearchState, y, width, rows int) {
-	header := fmt.Sprintf("g/:%s · %d matches", SanitizeTerminalText(state.Query), len(state.Results))
-	if state.Loading {
-		header += " · slow SFTP scan"
-	} else if state.Terminal.Status != "" {
-		header += " · " + string(state.Terminal.Status)
-		if state.Terminal.StopReason != "none" && state.Terminal.StopReason != "" {
-			header += "/" + string(state.Terminal.StopReason)
-		}
-	}
-	if state.Message != "" {
-		header += " · " + SanitizeTerminalText(state.Message)
-	}
+	header := formatSearchDrawerHeader("g/", state.Query, len(state.Results), "matches", state.Loading, "slow SFTP scan", string(state.Terminal.Status), string(state.Terminal.StopReason), state.Message)
 	surface.PutClipped(0, y, width, header, StylePreview)
 	if rows <= 1 {
 		return

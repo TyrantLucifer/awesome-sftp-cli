@@ -226,36 +226,11 @@ func Render(request Request, limits Limits) Result {
 		return imageResult
 	}
 	if !partial && looksLikeJSON(request.Path, data) {
-		switch {
-		case len(data) > limits.MaxJSONBytes:
-			result.Warning = "JSON exceeds preview parse budget; showing text fallback"
-		default:
-			if view == ViewRawJSON {
-				if err := scanJSON(data, limits.MaxJSONDepth); err == nil {
-					result.Kind = KindJSON
-					safe, sanitizedTruncated := sanitizeText(data, limits.MaxOutputBytes)
-					result.Truncated = result.Truncated || sanitizedTruncated
-					result.Text, result.Lines, result.Truncated = renderNumberedLines(safe, limits, result.Truncated)
-					return result
-				} else if errors.Is(err, errJSONDepthBudget) {
-					result.Warning = err.Error()
-				} else {
-					result.Warning = "invalid JSON; showing text fallback"
-				}
-				break
-			}
-			rendered, err := renderJSON(data, limits.MaxJSONDepth)
-			switch {
-			case err == nil:
-				result.Kind = KindJSON
-				result.Text, result.Lines, result.Truncated = renderNumberedLines(rendered, limits, result.Truncated)
-				return result
-			case errors.Is(err, errJSONDepthBudget):
-				result.Warning = err.Error()
-			default:
-				result.Warning = "invalid JSON; showing text fallback"
-			}
+		rendered, warning, ok := tryRenderJSONPreview(result, data, view, limits)
+		if ok {
+			return rendered
 		}
+		result.Warning = warning
 	}
 	if looksBinary(data) {
 		result.Kind = KindBinary
@@ -278,6 +253,33 @@ func Render(request Request, limits Limits) Result {
 		result.Styles, result.StylesTruncated = highlightSyntax(result.Text, limits.MaxStyleSpans)
 	}
 	return result
+}
+
+func tryRenderJSONPreview(base Result, data []byte, view ViewMode, limits Limits) (Result, string, bool) {
+	if len(data) > limits.MaxJSONBytes {
+		return Result{}, "JSON exceeds preview parse budget; showing text fallback", false
+	}
+	var content []byte
+	var err error
+	if view == ViewRawJSON {
+		err = scanJSON(data, limits.MaxJSONDepth)
+		if err == nil {
+			var sanitizedTruncated bool
+			content, sanitizedTruncated = sanitizeText(data, limits.MaxOutputBytes)
+			base.Truncated = base.Truncated || sanitizedTruncated
+		}
+	} else {
+		content, err = renderJSON(data, limits.MaxJSONDepth)
+	}
+	if err != nil {
+		if errors.Is(err, errJSONDepthBudget) {
+			return Result{}, err.Error(), false
+		}
+		return Result{}, "invalid JSON; showing text fallback", false
+	}
+	base.Kind = KindJSON
+	base.Text, base.Lines, base.Truncated = renderNumberedLines(content, limits, base.Truncated)
+	return base, "", true
 }
 
 func (limits Limits) validate() error {

@@ -90,69 +90,75 @@ type JobResolveConflictRequest struct {
 	ApplyAll   bool                    `json:"apply_all"`
 }
 
+func decodeRPC[Req any](payload json.RawMessage, description string) (Req, error) {
+	var request Req
+	if err := decodePayload(payload, &request); err != nil {
+		return request, invalidArgument(description, err)
+	}
+	return request, nil
+}
+
 func (session *providerSession) handleJob(ctx context.Context, name string, payload json.RawMessage) (any, error) {
 	if session.transfer == nil {
 		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "durable transfer service is unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 	}
 	switch name {
 	case JobCapture, JobCaptureDelete:
-		var request JobCaptureRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode transfer capture request", err)
+		request, err := decodeRPC[JobCaptureRequest](payload, "decode transfer capture request")
+		if err != nil {
+			return nil, err
 		}
 		location, err := ipc.DecodeLocation(request.Location)
 		if err != nil {
 			return nil, invalidArgument("decode transfer capture location", err)
 		}
-		var reference transfer.FileRef
 		if name == JobCaptureDelete {
-			reference, err = session.transfer.CaptureDelete(ctx, location)
-		} else {
-			reference, err = session.transfer.Capture(ctx, location)
+			reference, captureErr := session.transfer.CaptureDelete(ctx, location)
+			return JobCaptureResponse{Reference: reference}, captureErr
 		}
-		return JobCaptureResponse{Reference: reference}, err
+		reference, captureErr := session.transfer.Capture(ctx, location)
+		return JobCaptureResponse{Reference: reference}, captureErr
 	case JobCreateCopy:
-		var request JobCreateCopyRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode copy Job request", err)
+		request, err := decodeRPC[JobCreateCopyRequest](payload, "decode copy Job request")
+		if err != nil {
+			return nil, err
 		}
 		snapshot, err := session.transfer.CreateCopy(ctx, request.Intent)
 		return JobSnapshotResponse{Snapshot: snapshot}, err
 	case JobCreateSyncBack:
-		var request JobCreateSyncBackRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode sync-back Job request", err)
+		request, err := decodeRPC[JobCreateSyncBackRequest](payload, "decode sync-back Job request")
+		if err != nil {
+			return nil, err
 		}
 		snapshot, err := session.transfer.CreateSyncBack(ctx, request.Intent)
 		return JobSnapshotResponse{Snapshot: snapshot}, err
 	case JobCreateDelete:
-		var request JobCreateDeleteRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode delete Job request", err)
+		request, err := decodeRPC[JobCreateDeleteRequest](payload, "decode delete Job request")
+		if err != nil {
+			return nil, err
 		}
 		snapshot, err := session.transfer.CreateDelete(ctx, request.Intent)
 		return JobSnapshotResponse{Snapshot: snapshot}, err
 	case JobList:
-		var request JobListRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode Job list request", err)
+		request, err := decodeRPC[JobListRequest](payload, "decode Job list request")
+		if err != nil {
+			return nil, err
 		}
 		jobs, err := session.transfer.JobViews(ctx, request.Limit)
 		return JobListResponse{Jobs: jobs}, err
 	case JobEvents:
-		var request JobEventsRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode Job events request", err)
+		request, err := decodeRPC[JobEventsRequest](payload, "decode Job events request")
+		if err != nil {
+			return nil, err
 		}
 		events, err := session.transfer.Events(ctx, request.JobID, request.AfterSequence, request.Limit)
 		return JobEventsResponse{Events: events}, err
 	case JobPause, JobResume, JobCancel:
-		var request JobControlRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode Job control request", err)
+		request, err := decodeRPC[JobControlRequest](payload, "decode Job control request")
+		if err != nil {
+			return nil, err
 		}
 		var snapshot jobstore.Snapshot
-		var err error
 		switch name {
 		case JobPause:
 			snapshot, err = session.transfer.Pause(ctx, request.JobID)
@@ -163,9 +169,9 @@ func (session *providerSession) handleJob(ctx context.Context, name string, payl
 		}
 		return JobSnapshotResponse{Snapshot: snapshot}, err
 	case JobResolveConflict:
-		var request JobResolveConflictRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode Job conflict resolution request", err)
+		request, err := decodeRPC[JobResolveConflictRequest](payload, "decode Job conflict resolution request")
+		if err != nil {
+			return nil, err
 		}
 		snapshot, err := session.transfer.ResolveConflict(ctx, request.JobID, request.Resolution, request.ApplyAll)
 		return JobSnapshotResponse{Snapshot: snapshot}, err

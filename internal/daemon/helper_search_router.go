@@ -124,17 +124,40 @@ func validateHelperSearchSnapshot(ctx context.Context, implementation providerap
 	return nil
 }
 
-func adaptHelperFilename(ctx context.Context, implementation providerapi.Provider, client *helperruntime.Client, identity search.Identity, input <-chan helperruntime.ClientEvent, output chan<- search.Event) {
+type helperStreamAdapter[E any] struct {
+	requestID  domain.RequestID
+	endpointID domain.EndpointID
+	sessionID  domain.SessionID
+	generation uint64
+	scopePath  domain.CanonicalPath
+	onResult   func(json.RawMessage) (E, bool)
+	onProblem  func(domain.Location, helperruntime.OperationProblem) E
+	onComplete func(helperruntime.Completion) E
+	onTerminal func(search.Status, search.StopReason) E
+}
+
+func adaptHelperStream[E any](
+	ctx context.Context,
+	implementation providerapi.Provider,
+	client *helperruntime.Client,
+	input <-chan helperruntime.ClientEvent,
+	output chan<- E,
+	adapter helperStreamAdapter[E],
+) {
 	defer close(output)
+	failInvalid := func() {
+		closeInvalidHelper(client)
+		output <- adapter.onTerminal(search.StatusPartial, search.StopProviderError)
+	}
 	for event := range input {
 		if ctx.Err() != nil {
-			_ = client.Cancel(identity.RequestID)
-			output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusCanceled, StopReason: search.StopCanceled}}
+			_ = client.Cancel(adapter.requestID)
+			output <- adapter.onTerminal(search.StatusCanceled, search.StopCanceled)
 			return
 		}
-		if err := validateHelperSearchSnapshot(ctx, implementation, identity.EndpointID, identity.SessionID, identity.EndpointGeneration); err != nil {
-			_ = client.Cancel(identity.RequestID)
-			output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusPartial, StopReason: search.StopGenerationChanged}}
+		if err := validateHelperSearchSnapshot(ctx, implementation, adapter.endpointID, adapter.sessionID, adapter.generation); err != nil {
+			_ = client.Cancel(adapter.requestID)
+			output <- adapter.onTerminal(search.StatusPartial, search.StopGenerationChanged)
 			return
 		}
 		if event.Err != nil {
@@ -142,139 +165,117 @@ func adaptHelperFilename(ctx context.Context, implementation providerapi.Provide
 		}
 		switch event.Type {
 		case helperruntime.FrameResult:
-			var result helperruntime.FilenameSearchResult
-			if helperruntime.DecodePayload(event.Payload, &result) != nil {
-				closeInvalidHelper(client)
-				output <- helperFilenameFailure(identity)
+			converted, ok := adapter.onResult(event.Payload)
+			if !ok {
+				failInvalid()
 				return
+			}
+			output <- converted
+		case helperruntime.FrameProgress:
+			var problem helperruntime.OperationProblem
+			if helperruntime.DecodePayload(event.Payload, &problem) != nil {
+				failInvalid()
+				return
+			}
+			location, ok := helperResultLocation(adapter.endpointID, adapter.scopePath, problem.RelativePath)
+			if !ok {
+				failInvalid()
+				return
+			}
+			output <- adapter.onProblem(location, problem)
+		case helperruntime.FrameError:
+			var structured helperruntime.StructuredError
+			if helperruntime.DecodePayload(event.Payload, &structured) != nil {
+				failInvalid()
+				return
+			}
+		case helperruntime.FrameComplete:
+			var completion helperruntime.Completion
+			if helperruntime.DecodePayload(event.Payload, &completion) != nil {
+				failInvalid()
+				return
+			}
+			output <- adapter.onComplete(completion)
+			return
+		}
+	}
+	if ctx.Err() != nil {
+		output <- adapter.onTerminal(search.StatusCanceled, search.StopCanceled)
+		return
+	}
+	output <- adapter.onTerminal(search.StatusPartial, search.StopProviderError)
+}
+
+func adaptHelperFilename(ctx context.Context, implementation providerapi.Provider, client *helperruntime.Client, identity search.Identity, input <-chan helperruntime.ClientEvent, output chan<- search.Event) {
+	adaptHelperStream(ctx, implementation, client, input, output, helperStreamAdapter[search.Event]{
+		requestID:  identity.RequestID,
+		endpointID: identity.EndpointID,
+		sessionID:  identity.SessionID,
+		generation: identity.EndpointGeneration,
+		scopePath:  identity.Scope.Path,
+		onResult: func(payload json.RawMessage) (search.Event, bool) {
+			var result helperruntime.FilenameSearchResult
+			if helperruntime.DecodePayload(payload, &result) != nil {
+				return search.Event{}, false
 			}
 			converted, ok := convertHelperFilenameResult(identity, result)
 			if !ok {
-				closeInvalidHelper(client)
-				output <- helperFilenameFailure(identity)
-				return
+				return search.Event{}, false
 			}
-			output <- search.Event{Identity: identity, Kind: search.EventResult, Result: converted}
-		case helperruntime.FrameProgress:
-			var problem helperruntime.OperationProblem
-			if helperruntime.DecodePayload(event.Payload, &problem) != nil {
-				closeInvalidHelper(client)
-				output <- helperFilenameFailure(identity)
-				return
-			}
-			location, ok := helperResultLocation(identity.EndpointID, identity.Scope.Path, problem.RelativePath)
-			if !ok {
-				closeInvalidHelper(client)
-				output <- helperFilenameFailure(identity)
-				return
-			}
-			output <- search.Event{Identity: identity, Kind: search.EventProblem, Problem: search.Problem{Location: location, Code: helperProblemCode(problem.Reason)}}
-		case helperruntime.FrameError:
-			var structured helperruntime.StructuredError
-			if helperruntime.DecodePayload(event.Payload, &structured) != nil {
-				closeInvalidHelper(client)
-				output <- helperFilenameFailure(identity)
-				return
-			}
-		case helperruntime.FrameComplete:
-			var completion helperruntime.Completion
-			if helperruntime.DecodePayload(event.Payload, &completion) != nil {
-				closeInvalidHelper(client)
-				output <- helperFilenameFailure(identity)
-				return
-			}
-			output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: filenameTerminal(completion)}
-			return
-		}
-	}
-	if ctx.Err() != nil {
-		output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusCanceled, StopReason: search.StopCanceled}}
-		return
-	}
-	output <- search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusPartial, StopReason: search.StopProviderError}}
+			return search.Event{Identity: identity, Kind: search.EventResult, Result: converted}, true
+		},
+		onProblem: func(location domain.Location, problem helperruntime.OperationProblem) search.Event {
+			return search.Event{Identity: identity, Kind: search.EventProblem, Problem: search.Problem{Location: location, Code: helperProblemCode(problem.Reason)}}
+		},
+		onComplete: func(completion helperruntime.Completion) search.Event {
+			return search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: filenameTerminal(completion)}
+		},
+		onTerminal: func(status search.Status, reason search.StopReason) search.Event {
+			return search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: status, StopReason: reason}}
+		},
+	})
 }
 
 func adaptHelperContent(ctx context.Context, implementation providerapi.Provider, client *helperruntime.Client, identity search.ContentIdentity, input <-chan helperruntime.ClientEvent, output chan<- search.ContentEvent) {
-	defer close(output)
-	for event := range input {
-		if ctx.Err() != nil {
-			_ = client.Cancel(identity.RequestID)
-			output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusCanceled, StopReason: search.StopCanceled}}
-			return
-		}
-		if err := validateHelperSearchSnapshot(ctx, implementation, identity.EndpointID, identity.SessionID, identity.EndpointGeneration); err != nil {
-			_ = client.Cancel(identity.RequestID)
-			output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusPartial, StopReason: search.StopGenerationChanged}}
-			return
-		}
-		if event.Err != nil {
-			break
-		}
-		switch event.Type {
-		case helperruntime.FrameResult:
+	adaptHelperStream(ctx, implementation, client, input, output, helperStreamAdapter[search.ContentEvent]{
+		requestID:  identity.RequestID,
+		endpointID: identity.EndpointID,
+		sessionID:  identity.SessionID,
+		generation: identity.EndpointGeneration,
+		scopePath:  identity.Scope.Path,
+		onResult: func(payload json.RawMessage) (search.ContentEvent, bool) {
 			var result helperruntime.ContentSearchResult
-			if helperruntime.DecodePayload(event.Payload, &result) != nil {
-				closeInvalidHelper(client)
-				output <- helperContentFailure(identity)
-				return
+			if helperruntime.DecodePayload(payload, &result) != nil {
+				return search.ContentEvent{}, false
 			}
 			location, ok := helperResultLocation(identity.EndpointID, identity.Scope.Path, result.RelativePath)
 			if !ok || result.Line == 0 || len(result.Snippet) > int(identity.Budget.MaxSnippetBytes) {
-				closeInvalidHelper(client)
-				output <- helperContentFailure(identity)
-				return
+				return search.ContentEvent{}, false
 			}
-			output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventResult, Result: search.ContentResult{Location: location, RelativePath: result.RelativePath, Line: result.Line, Offset: result.Offset, Snippet: result.Snippet}}
-		case helperruntime.FrameProgress:
-			var problem helperruntime.OperationProblem
-			if helperruntime.DecodePayload(event.Payload, &problem) != nil {
-				closeInvalidHelper(client)
-				output <- helperContentFailure(identity)
-				return
+			return search.ContentEvent{
+				Identity: identity,
+				Kind:     search.ContentEventResult,
+				Result:   search.ContentResult{Location: location, RelativePath: result.RelativePath, Line: result.Line, Offset: result.Offset, Snippet: result.Snippet},
+			}, true
+		},
+		onProblem: func(location domain.Location, problem helperruntime.OperationProblem) search.ContentEvent {
+			return search.ContentEvent{
+				Identity: identity,
+				Kind:     search.ContentEventProblem,
+				Problem:  search.ContentProblem{Location: location, Code: helperProblemCode(problem.Reason), Reason: helperStopReason(problem.Reason)},
 			}
-			location, ok := helperResultLocation(identity.EndpointID, identity.Scope.Path, problem.RelativePath)
-			if !ok {
-				closeInvalidHelper(client)
-				output <- helperContentFailure(identity)
-				return
-			}
-			reason := helperStopReason(problem.Reason)
-			output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventProblem, Problem: search.ContentProblem{Location: location, Code: helperProblemCode(problem.Reason), Reason: reason}}
-		case helperruntime.FrameError:
-			var structured helperruntime.StructuredError
-			if helperruntime.DecodePayload(event.Payload, &structured) != nil {
-				closeInvalidHelper(client)
-				output <- helperContentFailure(identity)
-				return
-			}
-		case helperruntime.FrameComplete:
-			var completion helperruntime.Completion
-			if helperruntime.DecodePayload(event.Payload, &completion) != nil {
-				closeInvalidHelper(client)
-				output <- helperContentFailure(identity)
-				return
-			}
-			output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: contentTerminal(completion)}
-			return
-		}
-	}
-	if ctx.Err() != nil {
-		output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusCanceled, StopReason: search.StopCanceled}}
-		return
-	}
-	output <- search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusPartial, StopReason: search.StopProviderError}}
+		},
+		onComplete: func(completion helperruntime.Completion) search.ContentEvent {
+			return search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: contentTerminal(completion)}
+		},
+		onTerminal: func(status search.Status, reason search.StopReason) search.ContentEvent {
+			return search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: status, StopReason: reason}}
+		},
+	})
 }
 
 func closeInvalidHelper(client *helperruntime.Client) {
 	_ = client.Close()
-}
-
-func helperFilenameFailure(identity search.Identity) search.Event {
-	return search.Event{Identity: identity, Kind: search.EventTerminal, Terminal: search.Terminal{Status: search.StatusPartial, StopReason: search.StopProviderError}}
-}
-
-func helperContentFailure(identity search.ContentIdentity) search.ContentEvent {
-	return search.ContentEvent{Identity: identity, Kind: search.ContentEventTerminal, Terminal: search.ContentTerminal{Status: search.StatusPartial, StopReason: search.StopProviderError}}
 }
 
 func convertHelperFilenameResult(identity search.Identity, result helperruntime.FilenameSearchResult) (search.Result, bool) {
