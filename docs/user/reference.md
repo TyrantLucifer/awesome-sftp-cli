@@ -1,202 +1,224 @@
-# Keys and Commands
+# Configuration and Reference
 
 [简体中文](../zh-CN/user/reference.md)
 
-Use this page to look up the default TUI keys, location syntax, and public
-commands. Run `amsftp --help` and `man amsftp` for the exact commands installed
-with your version.
+Use this page to look up `config.json` options, default TUI keybindings, and CLI
+commands. Run `amsftp --help` or `man amsftp` for the exact command list of your
+installed version.
 
-## Location syntax
+## Configuration file
 
-```text
-/absolute/local/path
-SSH-alias:/absolute/remote/path
-```
+AMSFTP works with no configuration file at all. Create `config.json` only when
+you want to override defaults.
 
-Examples:
+**Default paths:**
+
+- **macOS:** `~/Library/Application Support/io.github.tyrantlucifer.amsftp/config.json`
+- **Linux:** `${XDG_CONFIG_HOME:-$HOME/.config}/amsftp/config.json`
+- **Custom private data directory:** `<private-dir>/config/config.json`
+
+The file must be a regular, owner-only file (no symlinks) with mode `0600`,
+strict JSON, and `"schema_version": 1`. Unknown fields or out-of-range values
+are rejected instead of ignored.
+
+Validate and inspect your configuration before restarting:
 
 ```sh
-amsftp
-amsftp /Users/alice/Downloads
-amsftp /home/alice work:/srv/project
-amsftp host-a:/data host-b:/backup
-amsftp --workspace project
+amsftp config validate
+amsftp config print-effective
 ```
 
-Local and remote paths must be absolute. The SSH alias comes from
-`~/.ssh/config`.
+Both commands accept an optional `/absolute/path/to/config.json` to test a file
+without installing it. External command arguments are redacted in the output.
+Changes take effect after restarting affected TUI clients—and for daemon-side
+settings (`transfer`, `cache`, `retry`, `diagnostic`, `ipc`), restarting the
+daemon:
 
-## File-pane keys
+```sh
+amsftp daemon stop --confirm stop
+amsftp daemon start
+```
 
-| Key | Action |
-| --- | --- |
-| `h` / `j` / `k` / `l` | Parent / down / up / enter or preview |
-| `←` / `↓` / `↑` / `→` | Fixed aliases for the same navigation |
-| `gg` / `G` | Jump to the first / last loaded entry |
-| `Tab` | Switch active pane |
-| `g` | Enter an absolute path |
-| `c` | Choose `local` or an OpenSSH endpoint |
-| `/` | Fuzzy-jump in the current loaded directory |
-| `f` | Recursive filename search |
-| `g/` | Recursive content search |
-| `s` | Cycle sort order |
-| `H` | Toggle hidden entries |
-| `R` | Refresh |
-| `Space` | Toggle a discrete mark |
-| `v` / `V` | Start or end Visual / Visual Line selection |
-| `y` / `d` / `p` | Copy / cut / paste |
-| `r` | Rename one entry |
-| `D` | Delete through the confirmed delete flow |
-| `.` | Repeat the last eligible frozen operation |
-| `e` / `o` | Edit / open a regular file |
-| `E` | Open edit recovery |
-| `K` / `J` / `L` | Preview / Jobs / Log drawer |
-| `S` | Save the workspace |
-| `!` | Run one reviewed command in the active directory |
-| `gs` / `gS` | Shell in the active directory / explicit remote home shell |
-| `gp` | Cycle the workspace cache policy |
-| `gc` / `gC` | Review workspace / global cache cleanup |
-| `Esc` | Cancel the innermost prompt or return focus |
-| `q` | Leave the TUI; Jobs continue |
+Existing jobs keep the settings captured when they were created. Do not store
+passwords, private keys, or SSH options in `config.json`; put connection details
+in `~/.ssh/config`.
 
-Digits are count prefixes for the safe actions that support them. Counts do not
-remove conflict or destructive confirmations. Arrow keys remain navigation aliases
-even when letter bindings are remapped.
+## Common configuration examples
 
-Print the exact current map:
+### Transfer limits, verification, and sync
+
+```json
+{
+  "schema_version": 1,
+  "transfer": {
+    "max_concurrent": 2,
+    "max_queued": 64,
+    "global_bytes_per_second": 10485760,
+    "endpoint_bytes_per_second": 0,
+    "job_bytes_per_second": 0,
+    "verification": "protocol",
+    "durability": "none"
+  }
+}
+```
+
+- **Rates** are in bytes/second (`0` = unlimited). Limits apply to file data
+  bytes (excluding SSH framing/encryption); remote-to-remote relays count both
+  the read from source and write to destination against global/job limits.
+- **`verification`:** `"protocol"` (default for copies) or `"sha256"` (full
+  readback hashing). Legacy `integrity.transfer_policy: "require_strong"` also
+  forces SHA-256.
+- **`durability`:** `"none"` (default), `"completion"` (`fsync` once before
+  renaming), or `"checkpoint"` (`fsync` at every checkpoint). Moves and edit
+  uploads keep strict verification and synced checkpoints.
+
+### Editor, opener, and external previewers
+
+```json
+{
+  "schema_version": 1,
+  "external": {
+    "editor": { "executable": "nvim", "argv": ["-f"] },
+    "opener": { "executable": "/usr/bin/open", "argv": [] },
+    "previewers": [
+      {
+        "name": "pdf-viewer",
+        "media_types": ["application/pdf"],
+        "extensions": [".pdf"],
+        "command": { "executable": "/absolute/path/to/previewer", "argv": [] },
+        "timeout_ms": 5000,
+        "max_input_bytes": 1048576,
+        "require_complete": true
+      }
+    ]
+  }
+}
+```
+
+Commands are executed directly via `exec` (never through a shell). Bare names
+are resolved on `PATH`; paths containing `/` must be absolute. AMSFTP appends
+the cached file path as the final argument automatically—do not add placeholders
+or shell quotes. External previewers run in order after the built-in preview and
+fall back to it on failure.
+
+### Key remapping
+
+```json
+{
+  "schema_version": 1,
+  "keymap": {
+    "bindings": [
+      { "context": "visual", "input": "n", "action": "down" }
+    ]
+  }
+}
+```
+
+Remapping supports `normal` and `visual` contexts and moves one remappable
+action to a single printable character. Digits, control keys, multi-key
+sequences (like `gg`, `gs`), and destructive actions are reserved. Inspect or
+reset overrides with:
 
 ```sh
 amsftp config print-effective-keymap
+amsftp config reset-keymap --yes
 ```
 
-## Preview and Job keys
+### All setting groups
 
-When Preview has focus:
+| Group | Controls |
+| --- | --- |
+| `listing` | Directory page sizes |
+| `cache` | Global and per-workspace cache quotas |
+| `transfer` | Concurrency, queue size, bandwidth limits, verification, sync |
+| `preview` | Preview read, render, JSON, and image limits |
+| `search.filename` / `search.content` | Depth, entry, byte, time, and result limits |
+| `retry` | Reconnect and job retry delays |
+| `integrity` | Transfer integrity requirement |
+| `diagnostic` | Private log rotation and in-memory log buffer |
+| `external` | Editor, opener, and external previewers |
+| `keymap` | Normal and Visual key overrides |
+| `ipc` | Max message size between client and daemon |
+
+Run `amsftp config print-effective` to inspect all defaults. Most numeric limits
+can only be tightened below built-in safety limits. `helper.enabled` and
+`direct_transfer.enabled` must stay `false` in public builds.
+
+## Default keybindings
+
+**File pane:**
 
 | Key | Action |
 | --- | --- |
-| `j` / `k` | Scroll down / up |
-| `h` / `l` | Read the head / tail range |
-| `gg` / `G` | Jump to the head / tail range |
-| `r` | Cycle available preview views |
-| `Esc` | Return to the file pane |
-| `K` | Close Preview |
+| `h` / `j` / `k` / `l` (or arrows) | Parent / down / up / enter or preview |
+| `gg` / `G` | Jump to first / last loaded item |
+| `Tab` | Switch active pane |
+| `g` | Enter an absolute path |
+| `c` | Switch host (`local` or SSH alias) |
+| `/` | Fuzzy-jump in current directory |
+| `f` / `g/` | Recursive filename / content search |
+| `s` / `H` / `R` | Cycle sort / toggle hidden / refresh |
+| `Space` / `v` / `V` | Mark / Visual / Visual Line select |
+| `y` / `d` / `p` | Copy / cut / paste |
+| `r` / `D` | Rename / delete (confirmed) |
+| `.` | Repeat last repeatable action |
+| `e` / `o` / `E` | Edit / open / edit recovery |
+| `K` / `J` / `L` | Preview / Jobs / Log drawer |
+| `S` | Save workspace |
+| `!` | Run one confirmed command in active directory |
+| `gs` / `gS` | Interactive shell / remote home shell |
+| `gp` / `gc` / `gC` | Cycle cache policy / clean workspace / clean all cache |
+| `Esc` / `q` | Close prompt or unfocus drawer / quit TUI |
 
-When Jobs has focus:
+**Preview drawer (`K`):** `j`/`k` scroll, `h`/`l` or `gg`/`G` head/tail range,
+`r` cycle view, `Esc` unfocus, `K` close.
 
-| Key | Action |
-| --- | --- |
-| `j` / `k` | Select a Job |
-| `P` / `U` / `C` | Pause / resume or retry / cancel when available |
-| `w` / `x` / `a` | Overwrite / skip / auto-rename one conflict |
-| `W` / `X` / `A` | Apply the matching conflict choice within this Job |
+**Jobs drawer (`J`):** `j`/`k` select job, `P`/`U`/`C` pause/resume/cancel,
+`w`/`x`/`a` resolve one conflict (overwrite/skip/auto-rename), `W`/`X`/`A` apply
+to matching conflicts in the same job.
 
-Use the drawer header as the source of truth: actions that are invalid for the
-selected state are hidden.
-
-## Launch and lifecycle commands
+## CLI commands
 
 ```text
 amsftp [<location> [<location>]]
 amsftp --workspace <name>
-amsftp daemon start [--format human|json]
-amsftp daemon status [--format human|json]
+amsftp --help | --version
+
+amsftp daemon start | status [--format human|json]
 amsftp daemon stop --confirm stop [--format human|json]
 amsftp upgrade [--format human|json]
-amsftp --help
-amsftp --version
-```
 
-`daemon status` only inspects the daemon; it does not start one. An explicit stop
-requires the literal `--confirm stop`.
-
-## Job commands
-
-```text
 amsftp job list [--limit <1..100>] [--format human|json]
-amsftp job events <job-id> [--after <sequence>] [--limit <1..100>] [--format human|json]
-amsftp job pause <job-id> [--format human|json]
-amsftp job resume <job-id> [--format human|json]
+amsftp job events <job-id> [--after <seq>] [--limit <1..100>] [--format human|json]
+amsftp job pause | resume <job-id> [--format human|json]
 amsftp job cancel <job-id> --confirm <same-job-id> [--format human|json]
-```
 
-The default list/event limit is 50 and the maximum is 100. `events --after N`
-returns events with a sequence greater than `N`.
+amsftp config validate | print-effective | print-effective-keymap [<abs-path>]
+amsftp config reset-keymap --yes [<abs-path>]
 
-## Configuration and diagnostics
-
-```text
-amsftp config validate [<absolute-config-path>]
-amsftp config print-effective [<absolute-config-path>]
-amsftp config print-effective-keymap [<absolute-config-path>]
-amsftp config reset-keymap --yes [<absolute-config-path>]
-amsftp doctor [--endpoint <SSH-alias>] [--format human|json]
-amsftp helper status <SSH-alias> [--format human|json]
-```
-
-`doctor` is read-only. `helper status` reports whether the endpoint is using
-standard SFTP or an available enhancement; public builds do not provide a
-supported production Helper installation path.
-
-## Support bundle
-
-Preview the exact local diagnostic snapshot:
-
-```text
+amsftp doctor [--endpoint <ssh-alias>] [--format human|json]
+amsftp helper status <ssh-alias> [--format human|json]
 amsftp support-bundle preview [--format human|json]
+amsftp support-bundle create --consent <sha256> --output <abs-path> [--format human|json]
+amsftp completion bash | zsh | fish
 ```
 
-The preview returns a consent digest. Review the snapshot, then create a new
-private archive:
+Commands that accept `--format json` emit one versioned JSON document to stdout
+on success, or a versioned JSON error to stderr on failure.
 
-```text
-amsftp support-bundle create --consent <sha256> --output <absolute-path> [--format human|json]
-```
-
-The output target must not already exist and must be below an owner-private
-directory. AMSFTP recomposes the snapshot and refuses creation if it changed after
-preview. No command uploads the archive.
-
-## Shell completion
-
-```sh
-amsftp completion bash
-amsftp completion zsh
-amsftp completion fish
-```
-
-The generated script completes commands and saved workspace names. Regenerate it
-after upgrading a manual installation so that it matches the installed binary.
-
-## Human and JSON output
-
-Human-readable output is the default. Commands that accept `--format json` write
-one versioned JSON document. Scripts should use JSON instead of parsing the
-human-readable tables.
-
-On success JSON is written to stdout. On failure the versioned error is written to
-stderr and the process keeps its meaningful exit status.
-
-## Exit status
+**Exit codes:**
 
 | Code | Meaning |
 | ---: | --- |
 | `0` | Success |
-| `1` | Internal or unclassified failure |
-| `2` | Command usage error |
+| `1` | Internal or unclassified error |
+| `2` | Invalid command usage |
 | `3` | Configuration error |
 | `4` | Authentication error |
 | `5` | Network error |
 | `6` | Conflict requiring a choice |
 | `7` | Partial completion |
-| `8` | User cancellation |
+| `8` | Canceled by user |
 
-Only commands with enough evidence select a specialized failure class. An
-unclassified problem returns `1` rather than guessing.
-
-## Related guides
-
-- [Configuration](configuration.md)
-- [Transfers and Jobs](transfers.md)
-- [Troubleshooting](../help/troubleshooting.md)
-- [`amsftp(1)`](../man/amsftp.1)
+See also: [User guide](guide.md), [Troubleshooting](../help/troubleshooting.md),
+[`amsftp(1)`](../man/amsftp.1).

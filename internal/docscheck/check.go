@@ -24,16 +24,10 @@ var bilingualDocumentationPairs = []translationPair{
 	{english: "README.md", chinese: "README.zh-CN.md"},
 	{english: "docs/README.md", chinese: "docs/zh-CN/README.md"},
 	{english: "docs/user/installation.md", chinese: "docs/zh-CN/user/installation.md"},
-	{english: "docs/user/getting-started.md", chinese: "docs/zh-CN/user/getting-started.md"},
-	{english: "docs/user/everyday-use.md", chinese: "docs/zh-CN/user/everyday-use.md"},
-	{english: "docs/user/transfers.md", chinese: "docs/zh-CN/user/transfers.md"},
-	{english: "docs/user/preview-edit-search.md", chinese: "docs/zh-CN/user/preview-edit-search.md"},
-	{english: "docs/user/configuration.md", chinese: "docs/zh-CN/user/configuration.md"},
+	{english: "docs/user/guide.md", chinese: "docs/zh-CN/user/guide.md"},
 	{english: "docs/user/reference.md", chinese: "docs/zh-CN/user/reference.md"},
 	{english: "docs/help/troubleshooting.md", chinese: "docs/zh-CN/help/troubleshooting.md"},
-	{english: "docs/help/recovery.md", chinese: "docs/zh-CN/help/recovery.md"},
-	{english: "docs/architecture/overview.md", chinese: "docs/zh-CN/architecture/overview.md"},
-	{english: "docs/architecture/security.md", chinese: "docs/zh-CN/architecture/security.md"},
+	{english: "docs/architecture/design.md", chinese: "docs/zh-CN/architecture/design.md"},
 }
 
 var requiredDocumentationEntryPoints = documentationEntryPoints()

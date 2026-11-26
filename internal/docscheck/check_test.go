@@ -44,8 +44,8 @@ func TestMissingRequiredDocumentationEntryPoint(t *testing.T) {
 
 func TestBrokenRelativeLink(t *testing.T) {
 	assertFixtureFindings(t, "broken-link", []expectedFinding{
-		{Path: "docs/user/getting-started.md", Line: 5, Rule: "link.missing"},
-		{Path: "docs/user/getting-started.md", Line: 6, Rule: "link.escape"},
+		{Path: "docs/user/guide.md", Line: 5, Rule: "link.missing"},
+		{Path: "docs/user/guide.md", Line: 6, Rule: "link.escape"},
 	})
 }
 
@@ -57,7 +57,7 @@ func TestRelativeLinkRejectsFileSymlinkEscape(t *testing.T) {
 	}
 
 	assertCheckFindings(t, root, []expectedFinding{
-		{Path: "docs/user/getting-started.md", Line: 5, Rule: "link.escape"},
+		{Path: "docs/user/guide.md", Line: 5, Rule: "link.escape"},
 		{Path: "docs/user/outside-file.md", Line: 1, Rule: "docs.layout"},
 	})
 }
@@ -70,7 +70,7 @@ func TestRelativeLinkRejectsDirectorySymlinkEscape(t *testing.T) {
 	}
 
 	assertCheckFindings(t, root, []expectedFinding{
-		{Path: "docs/user/getting-started.md", Line: 5, Rule: "link.escape"},
+		{Path: "docs/user/guide.md", Line: 5, Rule: "link.escape"},
 		{Path: "docs/user/outside-directory", Line: 1, Rule: "docs.layout"},
 	})
 }
@@ -130,24 +130,24 @@ func TestRequiredWorkflowsRejectSymlinks(t *testing.T) {
 
 func TestDurableDocumentMarker(t *testing.T) {
 	assertFixtureFindings(t, "durable-marker", []expectedFinding{
-		{Path: "docs/user/getting-started.md", Line: 5, Rule: "docs.marker"},
+		{Path: "docs/user/guide.md", Line: 5, Rule: "docs.marker"},
 	})
 }
 
 func TestMissingTranslatedPage(t *testing.T) {
 	root := prepareFixture(t, "valid")
-	path := filepath.Join(root, "docs", "zh-CN", "help", "recovery.md")
+	path := filepath.Join(root, "docs", "zh-CN", "help", "troubleshooting.md")
 	if err := os.Remove(path); err != nil {
 		t.Fatalf("remove translated page fixture: %v", err)
 	}
 
 	assertExactCheckFindings(t, root, []Finding{
 		{
-			Path: "docs/help/recovery.md", Line: 3, Rule: "link.missing",
-			Message: `relative link "../zh-CN/help/recovery.md" does not resolve`,
+			Path: "docs/help/troubleshooting.md", Line: 3, Rule: "link.missing",
+			Message: `relative link "../zh-CN/help/troubleshooting.md" does not resolve`,
 		},
 		{
-			Path: "docs/zh-CN/help/recovery.md", Line: 1, Rule: "docs.required",
+			Path: "docs/zh-CN/help/troubleshooting.md", Line: 1, Rule: "docs.required",
 			Message: "required documentation entry point is missing or is not a regular file",
 		},
 	})
@@ -155,20 +155,20 @@ func TestMissingTranslatedPage(t *testing.T) {
 
 func TestTranslationPairRequiresReciprocalLinks(t *testing.T) {
 	root := prepareFixture(t, "valid")
-	writePolicyFile(t, root, "docs/user/transfers.md", "# Transfers\n")
+	writePolicyFile(t, root, "docs/user/guide.md", "# Guide\n")
 
 	assertExactCheckFindings(t, root, []Finding{{
-		Path: "docs/user/transfers.md", Line: 1, Rule: "docs.translation_link",
-		Message: `English page must link to its Chinese translation "../zh-CN/user/transfers.md"`,
+		Path: "docs/user/guide.md", Line: 1, Rule: "docs.translation_link",
+		Message: `English page must link to its Chinese translation "../zh-CN/user/guide.md"`,
 	}})
 }
 
 func TestTranslationPairRequiresMatchingHeadingStructure(t *testing.T) {
 	root := prepareFixture(t, "valid")
-	writePolicyFile(t, root, "docs/zh-CN/user/transfers.md", "# 传输\n\n[English](../../user/transfers.md)\n\n## 多余章节\n")
+	writePolicyFile(t, root, "docs/zh-CN/user/guide.md", "# 指南\n\n[English](../../user/guide.md)\n\n## 多余章节\n")
 
 	assertExactCheckFindings(t, root, []Finding{{
-		Path: "docs/zh-CN/user/transfers.md", Line: 1, Rule: "docs.translation_structure",
+		Path: "docs/zh-CN/user/guide.md", Line: 1, Rule: "docs.translation_structure",
 		Message: "Chinese heading levels [1 2] must match English source [1]",
 	}})
 }
