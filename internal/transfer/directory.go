@@ -344,7 +344,7 @@ func (worker *Worker) executeDirectorySequential(
 			itemResultRecord.Status = ItemSucceeded
 			result.Succeeded++
 		case domain.EntryFile:
-			conflictResult, executeErr := worker.copySequentialDirectoryFile(ctx, plan, control, &checkpoint, resuming, final, item, destinationLocation, destinationProvider, destination, &result, &itemResultRecord)
+			conflictResult, executeErr := worker.copySequentialDirectoryFile(ctx, plan, control, &checkpoint, resuming, final, item, destinationProvider, destination, &result, &itemResultRecord)
 			if executeErr != nil {
 				return result, executeErr
 			}
@@ -394,7 +394,6 @@ func (worker *Worker) copySequentialDirectoryFile(
 	resuming bool,
 	final domain.Location,
 	item DiscoveredItem,
-	destinationLocation domain.Location,
 	destinationProvider providerapi.Provider,
 	destination providerapi.MutableProvider,
 	result *Result,
