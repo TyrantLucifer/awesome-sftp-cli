@@ -16,7 +16,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/auth"
@@ -137,38 +136,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return fmt.Errorf("load daemon configuration: %w", err)
 	}
 	generator := &domain.RandomGenerator{}
-	var stateDatabase *sql.DB
-	var jobStore *jobstore.Store
-	var editStore *editstore.Store
-	var stateOpenErr error
-	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
-		stateOpenErr = fmt.Errorf("prepare persistent state: %w", err)
-	} else {
-		databasePath := paths.DatabaseFile
-		if databasePath == "" {
-			databasePath = filepath.Join(paths.StateDir, "amsftp.db")
-		}
-		stateDatabase, _, stateOpenErr = statefs.Initialize(ctx, statefs.InitializeConfig{
-			Root: paths.StateDir, DatabasePath: databasePath,
-			ExplicitMigrationResume: options.explicitMigrationResume,
-		})
-		if stateOpenErr == nil {
-			store, err := initializeDurableJobStore(ctx, stateDatabase, generator, time.Now())
-			if err == nil {
-				var durableEdits *editstore.Store
-				durableEdits, err = editstore.New(ctx, stateDatabase)
-				if err == nil {
-					jobStore = store
-					editStore = durableEdits
-				}
-			}
-			if err != nil {
-				stateOpenErr = fmt.Errorf("initialize durable Jobs and edit sessions: %w", err)
-				_ = stateDatabase.Close()
-				stateDatabase = nil
-			}
-		}
-	}
+	stateDatabase, jobStore, editStore, stateOpenErr := openDaemonState(ctx, paths, options, generator)
 	if options.explicitMigrationResume && stateOpenErr != nil {
 		return fmt.Errorf("explicit migration resume failed: %w", stateOpenErr)
 	}
@@ -239,30 +207,7 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 	}
 	sessions.SetDiagnosticSource(diagnosticRecords)
 	if stateDatabase != nil && paths.CacheDir != "" {
-		cacheErr := platform.PreparePrivateDirectory(paths.CacheDir, platform.ValidatePersistent)
-		var files *cachefs.Store
-		if cacheErr == nil {
-			files, cacheErr = cachefs.Initialize(paths.CacheDir)
-		}
-		var catalog *cachestore.Store
-		if cacheErr == nil {
-			catalog, cacheErr = cachestore.New(ctx, stateDatabase)
-		}
-		var cacheManager *cachemanager.Manager
-		if cacheErr == nil {
-			cacheManager, cacheErr = cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), runtimeCacheLimits(applicationConfig.Cache))
-		}
-		var lifecycle cachemanager.StartupLifecycleResult
-		if cacheErr == nil {
-			lifecycle, cacheErr = cacheManager.RunStartupLifecycle(ctx, cachemanager.StartupLifecycleRequest{MaxVisited: 10_000, MaxBatches: 64})
-		}
-		if cacheErr != nil {
-			logger.Error("content cache unavailable; browsing and durable Jobs remain enabled", diagnostic.Component("cache"), diagnostic.Event("cache_unavailable"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
-		} else {
-			sessions.SetCacheManager(cacheManager)
-			report := lifecycle.Reconcile
-			logger.Info("content cache initialized", diagnostic.Component("cache"), diagnostic.Event("cache_initialized"), slog.Bool("needs_attention", report.NeedsAttention), slog.Int("recovered_evictions", len(lifecycle.Recovered)), slog.Int("quota_evictions", len(lifecycle.Quota.Deleted)), slog.Int("verified_blobs", len(report.Filesystem.VerifiedBlobs)), slog.Int("verified_entries", len(report.Filesystem.VerifiedEntries)), slog.Int("verified_materializations", len(report.Filesystem.VerifiedMaterializations)))
-		}
+		initDaemonCache(ctx, paths.CacheDir, sessionID, stateDatabase, applicationConfig.Cache, sessions, logger)
 	}
 	if stateOpenErr == nil {
 		workspaceStore, err := workspace.NewStore(filepath.Join(paths.StateDir, "workspaces"))
@@ -364,6 +309,81 @@ func runDaemonWithPathsAndOptions(ctx context.Context, paths platform.Paths, pur
 		return err
 	}
 	return daemon.Serve(serveCtx, listener, server)
+}
+
+func openDaemonState(
+	ctx context.Context,
+	paths platform.Paths,
+	options daemonOptions,
+	generator domain.Generator,
+) (*sql.DB, *jobstore.Store, *editstore.Store, error) {
+	if err := platform.PreparePrivateDirectory(paths.StateDir, platform.ValidatePersistent); err != nil {
+		return nil, nil, nil, fmt.Errorf("prepare persistent state: %w", err)
+	}
+	databasePath := paths.DatabaseFile
+	if databasePath == "" {
+		databasePath = filepath.Join(paths.StateDir, "amsftp.db")
+	}
+	stateDatabase, _, err := statefs.Initialize(ctx, statefs.InitializeConfig{
+		Root:                    paths.StateDir,
+		DatabasePath:            databasePath,
+		ExplicitMigrationResume: options.explicitMigrationResume,
+	})
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	jobStore, err := initializeDurableJobStore(ctx, stateDatabase, generator, time.Now())
+	if err != nil {
+		_ = stateDatabase.Close()
+		return nil, nil, nil, fmt.Errorf("initialize durable Jobs and edit sessions: %w", err)
+	}
+	editStore, err := editstore.New(ctx, stateDatabase)
+	if err != nil {
+		_ = stateDatabase.Close()
+		return nil, nil, nil, fmt.Errorf("initialize durable Jobs and edit sessions: %w", err)
+	}
+	return stateDatabase, jobStore, editStore, nil
+}
+
+func initDaemonCache(
+	ctx context.Context,
+	cacheDir string,
+	sessionID domain.SessionID,
+	stateDatabase *sql.DB,
+	cacheConfig config.CacheConfig,
+	sessions *daemon.ProviderSessions,
+	logger *slog.Logger,
+) {
+	fail := func() {
+		logger.Error("content cache unavailable; browsing and durable Jobs remain enabled", diagnostic.Component("cache"), diagnostic.Event("cache_unavailable"), diagnostic.ErrorCode(domain.CodeIntegrityFailed))
+	}
+	if err := platform.PreparePrivateDirectory(cacheDir, platform.ValidatePersistent); err != nil {
+		fail()
+		return
+	}
+	files, err := cachefs.Initialize(cacheDir)
+	if err != nil {
+		fail()
+		return
+	}
+	catalog, err := cachestore.New(ctx, stateDatabase)
+	if err != nil {
+		fail()
+		return
+	}
+	cacheManager, err := cachemanager.New(files, catalog, foundation.RealClock{}, cacheDaemonID(sessionID), runtimeCacheLimits(cacheConfig))
+	if err != nil {
+		fail()
+		return
+	}
+	lifecycle, err := cacheManager.RunStartupLifecycle(ctx, cachemanager.StartupLifecycleRequest{MaxVisited: 10_000, MaxBatches: 64})
+	if err != nil {
+		fail()
+		return
+	}
+	sessions.SetCacheManager(cacheManager)
+	report := lifecycle.Reconcile
+	logger.Info("content cache initialized", diagnostic.Component("cache"), diagnostic.Event("cache_initialized"), slog.Bool("needs_attention", report.NeedsAttention), slog.Int("recovered_evictions", len(lifecycle.Recovered)), slog.Int("quota_evictions", len(lifecycle.Quota.Deleted)), slog.Int("verified_blobs", len(report.Filesystem.VerifiedBlobs)), slog.Int("verified_entries", len(report.Filesystem.VerifiedEntries)), slog.Int("verified_materializations", len(report.Filesystem.VerifiedMaterializations)))
 }
 
 func initializeDurableJobStore(ctx context.Context, database *sql.DB, generator domain.Generator, now time.Time) (*jobstore.Store, error) {
@@ -549,11 +569,11 @@ func connectDaemonWithExecutableMode(ctx context.Context, paths platform.Paths, 
 	deadline := time.Now().Add(daemonReadyTimeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		if client, err := connect(); err == nil {
+		client, err := connect()
+		if err == nil {
 			return client, nil
-		} else {
-			lastErr = err
 		}
+		lastErr = err
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -674,7 +694,12 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	if err != nil {
 		return err
 	}
-	defer func() { _ = client.Close() }()
+	closeInitialClient := true
+	defer func() {
+		if closeInitialClient {
+			_ = client.Close()
+		}
+	}()
 	var endpoints ipc.ProviderEndpointsResponse
 	if err := client.Call(ctx, daemon.ProviderEndpoints, struct{}{}, &endpoints); err != nil {
 		return err
@@ -695,38 +720,12 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 	}
 	defer screen.Fini()
 	events := screen.EventQ()
-	var restored *workspace.Document
-	var locations [2]startLocation
-	if invocation.Workspace != "" {
-		var response workspace.LoadResponse
-		if err := client.Call(ctx, daemon.WorkspaceLoad, workspace.LoadRequest{Name: invocation.Workspace}, &response); err != nil {
-			locations, restored, err = pickStartLocations(ctx, screen, events, client, "Cannot open workspace "+invocation.Workspace+": "+clientErrorMessage(err))
-			if errors.Is(err, errPickerCanceled) {
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-		} else {
-			locations, err = workspaceStartLocations(response.Document)
-			if err != nil {
-				return err
-			}
-			restored = &response.Document
-		}
-	} else if invocation.Pick {
-		locations, restored, err = pickStartLocations(ctx, screen, events, client, "")
-		if errors.Is(err, errPickerCanceled) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-	} else {
-		locations, err = startLocations(invocation.Locations)
-		if err != nil {
-			return err
-		}
+	locations, restored, canceled, err := resolveStartupLocations(ctx, invocation, screen, events, client)
+	if canceled {
+		return nil
+	}
+	if err != nil {
+		return err
 	}
 	localEndpoint := domain.Endpoint{ID: endpointID, Kind: domain.EndpointLocal, DisplayName: "local"}
 	left, err := initialPaneState(localEndpoint, locations[0])
@@ -774,823 +773,51 @@ func runClient(ctx context.Context, args []string, _ io.Writer, _ io.Writer) err
 		return err
 	}
 	runCtx, stop := context.WithCancel(ctx)
-	daemonLosses := make(chan *daemon.Client, 4)
-	watchDaemonConnection := func(activeClient *daemon.Client) {
-		go func() {
-			select {
-			case <-activeClient.Done():
-				select {
-				case daemonLosses <- activeClient:
-				case <-runCtx.Done():
-				}
-			case <-runCtx.Done():
-			}
-		}()
-	}
-	watchDaemonConnection(client)
 	authClient, err := connectDaemon(runCtx, paths, purpose)
 	if err != nil {
 		stop()
 		return err
 	}
-	actions := make(chan tui.Action, 32)
-	authResolutions := make(chan tui.Intent, 1)
-	authErrors := make(chan error, 1)
-	connectRequests := make(chan tui.Intent, 2)
-	var authCancel context.CancelFunc
-	startAuthLoop := func(activeClient *daemon.Client) {
-		// #nosec G118 -- cancel is retained in authCancel and called on replacement and shutdown.
-		claimCtx, cancel := context.WithCancel(runCtx)
-		authCancel = cancel
-		go func() {
-			if err := runAuthClaimLoop(claimCtx, activeClient, actions, authResolutions); err != nil && claimCtx.Err() == nil {
-				select {
-				case authErrors <- err:
-				case <-runCtx.Done():
-				}
-			}
-		}()
+	closeInitialClient = false
+	runtime := &clientRuntime{
+		paths:                   paths,
+		purpose:                 purpose,
+		appConfig:               applicationConfig,
+		userKeymap:              userKeymap,
+		clientVersion:           clientVersion,
+		externalRuntime:         externalRuntime,
+		previewRenderLimits:     previewRenderLimits,
+		previewImageLimits:      previewImageLimits,
+		filenameSearchBudget:    filenameSearchBudget,
+		contentSearchBudget:     contentSearchBudget,
+		clientReconnectPolicy:   clientReconnectPolicy,
+		directPolicy:            directPolicy,
+		terminalImageCapability: terminalImageCapability,
+		reprobeTerminalImages:   reprobeTerminalImages,
+		screen:                  screen,
+		events:                  events,
+		editWorkspace:           editWorkspace,
+		requestGenerator:        &domain.RandomGenerator{},
+		ctx:                     runCtx,
+		stop:                    stop,
+		client:                  client,
+		authClient:              authClient,
+		localEndpoint:           localEndpoint,
+		model:                   model,
+		cachePolicy:             cachePolicy,
+		editFlow:                editFlow,
+		daemonLosses:            make(chan *daemon.Client, 4),
+		actions:                 make(chan tui.Action, 32),
+		authResolutions:         make(chan tui.Intent, 1),
+		authErrors:              make(chan error, 1),
+		connectRequests:         make(chan tui.Intent, 2),
+		connections:             make(chan clientConnectionResult, 4),
+		daemonRecoveries:        make(chan daemonRecoveryResult, 1),
 	}
-	startAuthLoop(authClient)
-	defer func() {
-		if authCancel != nil {
-			authCancel()
-		}
-		stop()
-		_ = authClient.Close()
-	}()
-	var generations [2]uint64
-	var cancels [2]context.CancelFunc
-	var paneRecoveries [2]paneRecovery
-	var previewGeneration uint64
-	var previewCancel context.CancelFunc
-	var searchGeneration uint64
-	var searchCancel context.CancelFunc
-	var commandMu sync.Mutex
-	var commandCancel context.CancelFunc
-	var commandGeneration uint64
-	previewRequestGenerator := &domain.RandomGenerator{}
-	var startIntent func(tui.Intent)
-	startIntent = func(intent tui.Intent) {
-		switch intent.Kind {
-		case tui.IntentEdit, tui.IntentOpenExternal:
-			actions <- editFlow.Begin(runCtx, intent)
-			return
-		case tui.IntentEditLaunch:
-			actions <- editFlow.Launch(runCtx, intent.EditSessionID)
-			return
-		case tui.IntentEditCheck:
-			actions <- editFlow.Check(runCtx, intent.EditSessionID)
-			return
-		case tui.IntentEditDecision:
-			actions <- editFlow.Decide(runCtx, intent)
-			return
-		case tui.IntentEditResume:
-			actions <- editFlow.Resume(runCtx, intent.EditSessionID, intent.Pane)
-			return
-		case tui.IntentEditRecoverable:
-			actions <- editFlow.Recoverable(runCtx, tui.MaxRecoverableEditSessions)
-			return
-		case tui.IntentCachePolicy:
-			if err := editFlow.SetPolicy(intent.CachePolicy); err != nil {
-				model.Notice = "cache policy change refused: " + err.Error()
-				return
-			}
-			cachePolicy = workspace.CachePolicy(intent.CachePolicy)
-			return
-		case tui.IntentCacheClear:
-			activeClient := client
-			go func() {
-				scope := cachemanager.ClearWorkspace
-				workspace := editWorkspace
-				if intent.CacheClearScope == tui.CacheClearAll {
-					scope, workspace = cachemanager.ClearAll, ""
-				}
-				var response daemon.CacheClearResponse
-				clearErr := activeClient.Call(runCtx, daemon.CacheClear, daemon.CacheClearRequest{
-					Scope: scope, WorkspaceID: workspace, MaxTargets: cache.DefaultMaxCandidates, MaxVisited: 10_000,
-				}, &response)
-				result := tui.CacheCleared{Deleted: response.Deleted, Protected: response.Protected, RemainingBytes: response.Remaining.Bytes}
-				if clearErr != nil {
-					result.Message = "cache clear refused safely: " + clientErrorMessage(clearErr)
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentConnectEndpoint:
-			select {
-			case connectRequests <- intent:
-			case <-runCtx.Done():
-			}
-			return
-		case tui.IntentReleaseEndpoint:
-			activeClient := client
-			go func() {
-				var response ipc.ProviderReleaseResponse
-				releaseErr := activeClient.Call(runCtx, daemon.ProviderRelease, ipc.ProviderReleaseRequest{EndpointID: string(intent.EndpointID)}, &response)
-				if releaseErr != nil && runCtx.Err() == nil {
-					select {
-					case actions <- tui.WorkspaceSaveResult{Message: "old endpoint cleanup failed: " + clientErrorMessage(releaseErr)}:
-					case <-runCtx.Done():
-					}
-				}
-			}()
-			return
-		case tui.IntentWorkspaceSave:
-			document, documentErr := workspaceDocument(model, time.Now().UTC(), cachePolicy)
-			if documentErr != nil {
-				actions <- tui.WorkspaceSaveResult{Name: intent.Name, Message: "workspace save failed: " + documentErr.Error()}
-				return
-			}
-			activeClient := client
-			go func() {
-				var response workspace.SaveResponse
-				saveErr := activeClient.Call(runCtx, daemon.WorkspaceSave, workspace.SaveRequest{Name: intent.Name, Document: document}, &response)
-				result := tui.WorkspaceSaveResult{Name: intent.Name}
-				if saveErr != nil {
-					result.Message = "workspace save failed: " + clientErrorMessage(saveErr)
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentAuthResolve:
-			select {
-			case authResolutions <- intent:
-			case <-runCtx.Done():
-			}
-			return
-		case tui.IntentTransferCapture, tui.IntentPrepareDelete, tui.IntentPrepareRename:
-			activeClient := client
-			go func() {
-				locations := intent.Locations
-				if len(locations) == 0 {
-					locations = []domain.Location{intent.Location}
-				}
-				references := make([]transfer.FileRef, 0, len(locations))
-				route := daemon.JobCapture
-				if intent.Kind == tui.IntentPrepareDelete {
-					route = daemon.JobCaptureDelete
-				}
-				var captureErr error
-				for _, location := range locations {
-					var response daemon.JobCaptureResponse
-					captureErr = activeClient.Call(runCtx, route, daemon.JobCaptureRequest{Location: ipc.EncodeLocation(location)}, &response)
-					if captureErr != nil {
-						break
-					}
-					references = append(references, response.Reference)
-				}
-				message := ""
-				if captureErr != nil {
-					message = "capture failed: " + clientErrorMessage(captureErr)
-				}
-				var result tui.Action
-				switch intent.Kind {
-				case tui.IntentPrepareDelete:
-					result = tui.DeletePrepared{References: references, Message: message}
-				case tui.IntentPrepareRename:
-					var reference transfer.FileRef
-					if len(references) != 0 {
-						reference = references[0]
-					}
-					result = tui.RenamePrepared{Reference: reference, Message: message}
-				default:
-					result = tui.ClipboardCaptured{
-						Clipboard: intent.Clipboard, References: references,
-						Generation: intent.ClipboardGeneration, Message: message,
-					}
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentCreateDeleteJob:
-			activeClient := client
-			go func() {
-				var response daemon.JobSnapshotResponse
-				createErr := activeClient.Call(runCtx, daemon.JobCreateDelete, daemon.JobCreateDeleteRequest{Intent: transfer.DeleteIntent{
-					Target: intent.Target, Recursive: intent.Recursive, Confirmed: intent.Confirmed,
-					IrreversibleConfirmed: intent.IrreversibleConfirmed,
-				}}, &response)
-				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
-				if createErr != nil {
-					result.Message = "create delete Job failed: " + clientErrorMessage(createErr)
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentCreateCopyJob:
-			activeClient := client
-			go func() {
-				var response daemon.JobSnapshotResponse
-				createErr := activeClient.Call(runCtx, daemon.JobCreateCopy, daemon.JobCreateCopyRequest{
-					Intent: configuredCopyIntent(intent, directPolicy, applicationConfig.Transfer),
-				}, &response)
-				result := tui.JobCreated{JobID: response.Snapshot.JobID, State: response.Snapshot.State}
-				if createErr != nil {
-					result.Message = "create Job failed: " + clientErrorMessage(createErr)
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentJobList:
-			activeClient := client
-			go func() {
-				var response daemon.JobListResponse
-				listErr := activeClient.Call(runCtx, daemon.JobList, daemon.JobListRequest{Limit: 100}, &response)
-				result := tui.JobsLoaded{Jobs: response.Jobs, ObservedAt: time.Now()}
-				if listErr != nil {
-					result.Message = "list Jobs failed: " + clientErrorMessage(listErr)
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentDiagnosticList:
-			activeClient := client
-			go func() {
-				var response daemon.DiagnosticListResponse
-				listErr := activeClient.Call(runCtx, daemon.DiagnosticList, daemon.DiagnosticListRequest{
-					AfterSequence: intent.AfterSequence,
-					Limit:         intent.Limit,
-					EndpointID:    intent.EndpointID,
-					JobID:         intent.JobID,
-				}, &response)
-				result := tui.DiagnosticsLoaded{Records: response.Records}
-				if listErr != nil {
-					result.Message = "list diagnostics failed: " + clientErrorMessage(listErr)
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentJobPause, tui.IntentJobResume, tui.IntentJobCancel, tui.IntentJobResolveConflict:
-			activeClient := client
-			go func() {
-				route := daemon.JobPause
-				request := any(daemon.JobControlRequest{JobID: intent.JobID})
-				switch intent.Kind {
-				case tui.IntentJobResume:
-					route = daemon.JobResume
-				case tui.IntentJobCancel:
-					route = daemon.JobCancel
-				case tui.IntentJobResolveConflict:
-					route = daemon.JobResolveConflict
-					request = daemon.JobResolveConflictRequest{JobID: intent.JobID, Resolution: intent.Resolution, ApplyAll: intent.ApplyAll}
-				}
-				var response daemon.JobSnapshotResponse
-				controlErr := activeClient.Call(runCtx, route, request, &response)
-				result := tui.JobUpdated{Snapshot: response.Snapshot}
-				if controlErr != nil {
-					result.Message = "Job control failed: " + clientErrorMessage(controlErr)
-				}
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentPreview:
-			if previewCancel != nil {
-				previewCancel()
-			}
-			requestCtx, cancel := context.WithCancel(runCtx)
-			previewCancel = cancel
-			previewGeneration++
-			generation := previewGeneration
-			requestID, requestIDErr := domain.NewRequestID(previewRequestGenerator)
-			if requestIDErr != nil {
-				model.Notice = "preview request failed: " + requestIDErr.Error()
-				return
-			}
-			activeClient := client
-			mode := intent.PreviewMode
-			if mode == "" {
-				mode = builtinpreview.ReadHead
-			}
-			view := intent.PreviewView
-			if view == "" {
-				view = builtinpreview.ViewAuto
-			}
-			identity := tui.PreviewRequestIdentity{
-				RequestID: requestID, Pane: intent.Pane, EndpointSession: intent.EndpointSession,
-				EndpointGeneration: intent.EndpointGeneration, Mode: mode, Offset: intent.PreviewOffset,
-				RequestedLimit: builtinpreview.ReadChunkBytes, UIGeneration: generation,
-			}
-			go func() {
-				defer cancel()
-				previewLocation(requestCtx, activeClient, identity, view, intent.Location, editWorkspace, cache.Policy(cachePolicy), externalRuntime.previewer, terminalImageCapability.Current(), previewRenderLimits, previewImageLimits, actions)
-			}()
-			return
-		case tui.IntentPreviewCancel:
-			if previewCancel != nil {
-				previewCancel()
-				previewCancel = nil
-			}
-			return
-		case tui.IntentSearchFilename:
-			if searchCancel != nil {
-				searchCancel()
-			}
-			requestCtx, cancel := context.WithCancel(runCtx)
-			searchCancel = cancel
-			searchGeneration++
-			generation := searchGeneration
-			requestID, requestIDErr := domain.NewRequestID(previewRequestGenerator)
-			if requestIDErr != nil {
-				model.Notice = "filename search request failed: " + requestIDErr.Error()
-				return
-			}
-			activeClient := client
-			frozenIntent := intent
-			pendingIdentity := pendingFilenameSearchIdentity(requestID, generation, frozenIntent, filenameSearchBudget)
-			go func() {
-				defer cancel()
-				select {
-				case actions <- tui.BeginSearch{Identity: pendingIdentity}:
-				case <-requestCtx.Done():
-					return
-				}
-				identity, identityErr := filenameSearchIdentity(requestCtx, activeClient, pendingIdentity)
-				if identityErr != nil {
-					if requestCtx.Err() == nil {
-						actions <- tui.SearchFailed{Identity: pendingIdentity, Message: "filename search snapshot failed: " + clientErrorMessage(identityErr)}
-					}
-					return
-				}
-				select {
-				case actions <- tui.BeginSearch{Identity: identity}:
-				case <-requestCtx.Done():
-					return
-				}
-				streamFilenameSearch(requestCtx, activeClient, identity, actions)
-			}()
-			return
-		case tui.IntentSearchContent:
-			if searchCancel != nil {
-				searchCancel()
-			}
-			requestCtx, cancel := context.WithCancel(runCtx)
-			searchCancel = cancel
-			searchGeneration++
-			generation := searchGeneration
-			requestID, requestIDErr := domain.NewRequestID(previewRequestGenerator)
-			if requestIDErr != nil {
-				model.Notice = "content search request failed: " + requestIDErr.Error()
-				return
-			}
-			activeClient := client
-			pendingIdentity := pendingContentSearchIdentity(requestID, generation, intent, contentSearchBudget)
-			go func() {
-				defer cancel()
-				select {
-				case actions <- tui.BeginContentSearch{Identity: pendingIdentity}:
-				case <-requestCtx.Done():
-					return
-				}
-				identity, identityErr := contentSearchIdentity(requestCtx, activeClient, pendingIdentity)
-				if identityErr != nil {
-					if requestCtx.Err() == nil {
-						actions <- tui.ContentSearchFailed{Identity: pendingIdentity, Message: "content search snapshot failed: " + clientErrorMessage(identityErr)}
-					}
-					return
-				}
-				select {
-				case actions <- tui.BeginContentSearch{Identity: identity}:
-				case <-requestCtx.Done():
-					return
-				}
-				streamContentSearch(requestCtx, activeClient, identity, actions)
-			}()
-			return
-		case tui.IntentSearchCancel:
-			if searchCancel != nil {
-				searchCancel()
-				searchCancel = nil
-			}
-			requestID := string(intent.SearchIdentity.RequestID)
-			if requestID == "" {
-				requestID = string(intent.ContentSearchIdentity.RequestID)
-			}
-			if requestID != "" {
-				activeClient := client
-				go func() {
-					cancelCtx, cancel := context.WithTimeout(runCtx, 2*time.Second)
-					defer cancel()
-					var response ipc.SearchCancelResponse
-					_ = activeClient.Call(cancelCtx, daemon.SearchCancel, ipc.SearchCancelRequest{RequestID: requestID}, &response)
-				}()
-			}
-			return
-		case tui.IntentRunCommand:
-			frozenIntent := intent
-			environment := append([]string(nil), os.Environ()...)
-			commandMu.Lock()
-			if commandCancel != nil {
-				commandMu.Unlock()
-				actions <- tui.CommandCompleted{Pane: intent.Pane, Location: intent.Location, ExitCode: -1, Message: "command rejected: another one-time command is still running"}
-				return
-			}
-			commandCtx, cancel := context.WithCancel(runCtx)
-			commandCancel = cancel
-			commandGeneration++
-			generation := commandGeneration
-			commandMu.Unlock()
-			go func() {
-				defer cancel()
-				result := runCommandIntent(commandCtx, frozenIntent, environment)
-				commandMu.Lock()
-				if commandGeneration == generation {
-					commandCancel = nil
-				}
-				commandMu.Unlock()
-				select {
-				case actions <- result:
-				case <-runCtx.Done():
-				}
-			}()
-			return
-		case tui.IntentCommandCancel:
-			commandMu.Lock()
-			cancel := commandCancel
-			commandMu.Unlock()
-			if cancel != nil {
-				cancel()
-			}
-			return
-		case tui.IntentShell:
-			model.Notice = runShellIntent(runCtx, intent, append([]string(nil), os.Environ()...), screen, reprobeTerminalImages)
-			startIntent(tui.Intent{Kind: tui.IntentList, Pane: intent.Pane, Location: intent.Location})
-			return
-		case tui.IntentList:
-		default:
-			return
-		}
-		pane := intent.Pane
-		if cancels[pane] != nil {
-			cancels[pane]()
-		}
-		requestCtx, cancel := context.WithCancel(runCtx)
-		cancels[pane] = cancel
-		generations[pane]++
-		generation := generations[pane]
-		paneRecoveries[pane].listingStarted(generation, intent)
-		activeClient := client
-		actions <- tui.BeginListing{
-			Pane:                 pane,
-			Generation:           generation,
-			Location:             intent.Location,
-			Endpoint:             intent.Endpoint,
-			Connection:           intent.Connection,
-			CapabilityGeneration: intent.CapabilityGeneration,
-			Capabilities:         intent.Capabilities,
-			CommitEndpoint:       intent.CommitEndpoint,
-		}
-		go func() {
-			defer cancel()
-			listLocation(requestCtx, activeClient, pane, generation, intent.Location, applicationConfig.Listing.DefaultPageSize, actions)
-		}()
-	}
-	type connectionResult struct {
-		pane                 tui.PaneID
-		epoch                uint64
-		endpoint             domain.Endpoint
-		location             domain.Location
-		host                 string
-		state                domain.ConnectionState
-		capabilityGeneration uint64
-		capabilities         domain.CapabilitySnapshot
-		recovery             bool
-		switching            bool
-		err                  error
-	}
-	connections := make(chan connectionResult, 4)
-	var connectionAttempts paneConnectionAttempts
-	startConnection := func(pane tui.PaneID, start startLocation, recovery, switching bool, activeClient *daemon.Client) {
-		if recovery {
-			paneRecoveries[pane].beginConnection()
-			if !switching {
-				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateDisconnected, Message: "connection lost; reconnecting"})
-			}
-		}
-		activeLocal := localEndpoint
-		connectionCtx, epoch := connectionAttempts.Begin(runCtx, pane)
-		go func() {
-			result := connectionResult{pane: pane, epoch: epoch, host: start.host, recovery: recovery, switching: switching}
-			result.err = runReconnect(connectionCtx, clientReconnectPolicy, func() error {
-				var connectErr error
-				result.endpoint, result.location, result.state, result.capabilities, connectErr = resolveStartLocation(connectionCtx, activeClient, activeLocal, start)
-				result.capabilityGeneration = result.capabilities.Revision.Generation
-				return connectErr
-			})
-			select {
-			case connections <- result:
-			case <-runCtx.Done():
-			}
-		}()
-	}
-	type daemonRecoveryResult struct {
-		client     *daemon.Client
-		authClient *daemon.Client
-		local      domain.Endpoint
-		err        error
-	}
-	daemonRecoveries := make(chan daemonRecoveryResult, 1)
-	var daemonRecoveryStarts [2]startLocation
-	recoveringDaemon := false
-	startDaemonRecovery := func() {
-		if recoveringDaemon {
-			return
-		}
-		recoveringDaemon = true
-		for index, paneState := range model.Panes {
-			start := startLocation{path: string(paneState.Location.Path)}
-			if paneState.Endpoint.Kind == domain.EndpointSSH {
-				start.host = paneState.Endpoint.SSHHostAlias
-			}
-			daemonRecoveryStarts[index] = start
-			paneRecoveries[index].beginConnection()
-			model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: tui.PaneID(index), State: domain.StateConnecting, Message: "restarting daemon session"})
-			if cancels[index] != nil {
-				cancels[index]()
-			}
-			connectionAttempts.Invalidate(tui.PaneID(index))
-		}
-		if previewCancel != nil {
-			previewCancel()
-		}
-		if searchCancel != nil {
-			searchCancel()
-			searchCancel = nil
-		}
-		go func() {
-			result := daemonRecoveryResult{}
-			recoveryCtx, cancelRecovery := context.WithTimeout(runCtx, daemonRecoveryTimeout)
-			result.client, result.err = connectDaemonAfterLoss(recoveryCtx, clientReconnectPolicy, func(ctx context.Context) (*daemon.Client, error) {
-				return connectDaemonRecovering(ctx, paths, purpose)
-			})
-			cancelRecovery()
-			if result.err == nil {
-				result.local, result.err = daemonLocalEndpoint(runCtx, result.client)
-			}
-			if result.err == nil {
-				result.authClient, result.err = connectDaemon(runCtx, paths, purpose)
-			}
-			if result.err != nil {
-				if result.client != nil {
-					_ = result.client.Close()
-				}
-				if result.authClient != nil {
-					_ = result.authClient.Close()
-				}
-			}
-			select {
-			case daemonRecoveries <- result:
-			case <-runCtx.Done():
-			}
-		}()
-	}
-	for index, start := range locations {
-		pane := tui.PaneID(index)
-		if start.host == "" {
-			startIntent(tui.Intent{Kind: tui.IntentList, Pane: pane, Location: model.Panes[pane].Location})
-			continue
-		}
-		startConnection(pane, start, false, false, client)
-	}
-	startIntent(tui.Intent{Kind: tui.IntentEditRecoverable})
-	jobRefreshTicker := time.NewTicker(500 * time.Millisecond)
-	defer jobRefreshTicker.Stop()
-	helperStatusTicker := time.NewTicker(time.Second)
-	defer helperStatusTicker.Stop()
-	helperStatusRefresh := make(chan struct{}, 1)
-	leaseHeartbeatTicker := time.NewTicker(cache.DefaultLeaseHeartbeat)
-	defer leaseHeartbeatTicker.Stop()
-	var pendingTerminalImage *tui.PreviewTerminalImage
-	for {
-		tui.Render(tui.NewTCellSurface(screen), model, tui.RenderOptions{Overscan: 8, Keymap: userKeymap, Version: clientVersion})
-		screen.Show()
-		if pendingTerminalImage != nil {
-			if err := writeTerminalImage(pendingTerminalImage.Data); err != nil {
-				model.Notice = "terminal image output failed safely: " + err.Error()
-			}
-			pendingTerminalImage = nil
-		}
-		select {
-		case <-runCtx.Done():
-			return nil
-		case <-jobRefreshTicker.C:
-			if jobListRefreshRequired(model) {
-				startIntent(tui.Intent{Kind: tui.IntentJobList})
-			}
-			if model.Drawer.Mode == tui.DrawerLog {
-				startIntent(tui.Intent{Kind: tui.IntentDiagnosticList, Limit: 256})
-			}
-		case <-helperStatusTicker.C:
-			targets := make([]helperStatusRefreshTarget, 0, 2)
-			for pane := tui.Left; pane <= tui.Right; pane++ {
-				state := model.Panes[pane]
-				if state.Endpoint.Kind == domain.EndpointSSH && state.Connection == domain.StateReady && state.Capabilities.Revision.SessionID != "" {
-					targets = append(targets, helperStatusRefreshTarget{pane: pane, endpointID: state.Endpoint.ID})
-				}
-			}
-			if len(targets) != 0 {
-				select {
-				case helperStatusRefresh <- struct{}{}:
-					go func(activeClient *daemon.Client, targets []helperStatusRefreshTarget) {
-						defer func() { <-helperStatusRefresh }()
-						refreshHelperStatus(runCtx, activeClient, targets, actions)
-					}(client, targets)
-				default:
-				}
-			}
-		case <-leaseHeartbeatTicker.C:
-			if err := editFlow.Heartbeat(runCtx); err != nil {
-				model.Notice = "cache lease heartbeat failed; durable edit recovery remains retained: " + clientErrorMessage(err)
-			}
-		case lostClient := <-daemonLosses:
-			if lostClient == client {
-				startDaemonRecovery()
-			}
-		case err := <-authErrors:
-			if authFailureLostDaemon(err, func() error {
-				probeCtx, cancel := context.WithTimeout(runCtx, daemonReadyTimeout)
-				defer cancel()
-				_, probeErr := daemonLocalEndpoint(probeCtx, client)
-				return probeErr
-			}) {
-				startDaemonRecovery()
-				continue
-			}
-			return err
-		case request := <-connectRequests:
-			paneState := model.Panes[request.Pane]
-			start := startLocation{path: string(paneState.Location.Path)}
-			if request.Name == "local" {
-				location, locationErr := domain.NewLocation(localEndpoint.ID, domain.CanonicalPath(start.path))
-				if locationErr != nil {
-					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: request.Pane, State: domain.StateFailed, Message: locationErr.Error()})
-					continue
-				}
-				var intents []tui.Intent
-				paneRecoveries[request.Pane].connected()
-				model, intents = tui.Reduce(model, tui.PaneConnected{Pane: request.Pane, Endpoint: localEndpoint, Location: location, State: domain.StateReady, PreserveCommitted: true})
-				for _, intent := range intents {
-					startIntent(intent)
-				}
-				continue
-			}
-			if _, validateErr := openssh.Arguments(request.Name); validateErr != nil {
-				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: request.Pane, State: paneState.Connection, Message: "invalid SSH host alias: " + validateErr.Error()})
-				continue
-			}
-			start.host = request.Name
-			startConnection(request.Pane, start, true, true, client)
-		case result := <-daemonRecoveries:
-			recoveringDaemon = false
-			if result.err != nil {
-				for pane := tui.Left; pane <= tui.Right; pane++ {
-					paneRecoveries[pane].connectionFailed()
-					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateFailed, Message: "daemon recovery failed: " + clientErrorMessage(result.err)})
-				}
-				continue
-			}
-			oldClient := client
-			client = result.client
-			watchDaemonConnection(client)
-			localEndpoint = result.local
-			editFlow.client = client
-			editFlow.localEndpoint = localEndpoint.ID
-			_ = oldClient.Close()
-			if authCancel != nil {
-				authCancel()
-			}
-			_ = authClient.Close()
-			authClient = result.authClient
-			startAuthLoop(authClient)
-			for index, start := range daemonRecoveryStarts {
-				pane := tui.PaneID(index)
-				if start.host == "" {
-					location, locationErr := domain.NewLocation(localEndpoint.ID, domain.CanonicalPath(start.path))
-					if locationErr != nil {
-						model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: pane, State: domain.StateFailed, Message: locationErr.Error()})
-						continue
-					}
-					var intents []tui.Intent
-					paneRecoveries[pane].connected()
-					model, intents = tui.Reduce(model, tui.PaneConnected{Pane: pane, Endpoint: localEndpoint, Location: location, State: domain.StateReady, PreserveCommitted: true})
-					for _, intent := range intents {
-						startIntent(intent)
-					}
-					continue
-				}
-				startConnection(pane, start, true, false, client)
-			}
-		case result := <-connections:
-			if !connectionAttempts.Accept(result.pane, result.epoch) {
-				continue
-			}
-			if result.err != nil {
-				paneRecoveries[result.pane].connectionFailed()
-				state := connectionFailureState(model, result.pane, result.switching)
-				model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: result.pane, State: state, Message: "connect " + result.host + " failed: " + clientErrorMessage(result.err)})
-				continue
-			}
-			var intents []tui.Intent
-			if result.recovery {
-				paneRecoveries[result.pane].connected()
-			}
-			model, intents = tui.Reduce(model, tui.PaneConnected{Pane: result.pane, Endpoint: result.endpoint, Location: result.location, State: result.state, CapabilityGeneration: result.capabilityGeneration, Capabilities: result.capabilities, PreserveCommitted: result.recovery})
-			for _, intent := range intents {
-				startIntent(intent)
-			}
-		case action := <-actions:
-			if image, ok := action.(tui.PreviewTerminalImage); ok {
-				if terminalImageCurrent(model, image) {
-					copy := image
-					copy.Data = append([]byte(nil), image.Data...)
-					pendingTerminalImage = &copy
-				}
-				continue
-			}
-			listingCurrent := true
-			switch result := action.(type) {
-			case tui.ListingPage:
-				listingCurrent = listingResultCurrent(model, result.Pane, result.Generation)
-			case tui.ListingFailed:
-				listingCurrent = listingResultCurrent(model, result.Pane, result.Generation)
-			}
-			var intents []tui.Intent
-			model, intents = tui.Reduce(model, action)
-			if challenge, ok := action.(tui.AuthChallengeReceived); ok {
-				for pane, paneState := range model.Panes {
-					if paneState.Endpoint.SSHHostAlias == challenge.Endpoint || paneState.Endpoint.DisplayName == "connecting "+challenge.Endpoint {
-						model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: tui.PaneID(pane), State: domain.StateAuthRequired, Message: "waiting for authentication"})
-					}
-				}
-			}
-			if page, ok := action.(tui.ListingPage); ok && listingCurrent && page.Done {
-				if paneRecoveries[page.Pane].listingCompleted(page) {
-					model, _ = tui.Reduce(model, tui.PaneConnectionChanged{Pane: page.Pane, State: domain.StateReady, Message: "reconnected at nearest accessible parent"})
-				}
-			}
-			if failure, ok := action.(tui.ListingFailed); ok && listingCurrent {
-				if fallback, ok := paneRecoveries[failure.Pane].listingFailed(failure); ok {
-					startIntent(fallback)
-					continue
-				}
-			}
-			if failure, ok := action.(tui.ListingFailed); ok && listingCurrent && !failure.DaemonLost && failure.Retry == domain.RetryAfterReconnect && !paneRecoveries[failure.Pane].connecting() {
-				pane := model.Panes[failure.Pane]
-				if pane.Endpoint.Kind == domain.EndpointSSH && pane.Endpoint.SSHHostAlias != "" {
-					startConnection(failure.Pane, startLocation{host: pane.Endpoint.SSHHostAlias, path: string(pane.Location.Path)}, true, false, client)
-				}
-			}
-			if failure, ok := action.(tui.ListingFailed); ok && listingCurrent && failure.DaemonLost {
-				startDaemonRecovery()
-			}
-			for _, intent := range intents {
-				startIntent(intent)
-			}
-		case event, open := <-events:
-			if !open {
-				return nil
-			}
-			if key, ok := event.(*tcell.EventKey); ok && (key.Key() == tcell.KeyCtrlC || model.Mode == tui.ModeNormal && key.Str() == "q") {
-				return nil
-			}
-			if _, ok := event.(*tcell.EventResize); ok {
-				screen.Sync()
-			}
-			action, ok := tui.TranslateTCellEventWithKeymap(event, model.Mode, userKeymap)
-			if !ok {
-				continue
-			}
-			var intents []tui.Intent
-			model, intents = tui.Reduce(model, action)
-			for _, intent := range intents {
-				startIntent(intent)
-			}
-		}
-	}
+	defer runtime.close()
+	runtime.watchDaemonConnection(client)
+	runtime.startAuthLoop(authClient)
+	return runtime.run(locations)
 }
 
 func jobListRefreshRequired(model tui.Model) bool {
@@ -2353,38 +1580,7 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 		Capability: capability, ImageLimits: imageLimits,
 		Materialize: previewMaterializer(client, location, source, entry.Metadata.Size != nil, fileSize, workspaceID, policy, string(identity.RequestID)),
 	})
-	summary := result.Summary
-	if result.Warning != "" {
-		if summary != "" {
-			summary += "; "
-		}
-		summary += result.Warning
-	}
-	switch outcome.Kind {
-	case externalpreviewer.OutcomeTerminalImage:
-		if summary != "" {
-			summary += "; "
-		}
-		summary += "terminal image rendered via " + string(outcome.ImageProtocol)
-	case externalpreviewer.OutcomeExternal:
-		if summary != "" {
-			summary += "; "
-		}
-		summary += "external previewer " + outcome.External.Rule + " completed"
-	default:
-		if outcome.External.Matched && outcome.External.Status != externalpreviewer.StatusSucceeded {
-			if summary != "" {
-				summary += "; "
-			}
-			summary += "external previewer " + outcome.External.Rule + " " + string(outcome.External.Code)
-		}
-	}
-	if outcome.ReleaseFailed {
-		if summary != "" {
-			summary += "; "
-		}
-		summary += "preview cache lease release needs recovery"
-	}
+	summary := buildPreviewSummary(result, outcome)
 	actions <- tui.PreviewChunk{
 		Generation: generation, Identity: identity, Data: []byte(result.Text), Done: true,
 		Truncated: result.Truncated || result.Partial, Rendered: true,
@@ -2393,6 +1589,30 @@ func previewLocation(ctx context.Context, client previewRPCCaller, identity tui.
 	if outcome.Kind == externalpreviewer.OutcomeTerminalImage && len(outcome.TerminalBytes) != 0 {
 		actions <- tui.PreviewTerminalImage{Generation: generation, Identity: identity, Protocol: outcome.ImageProtocol, Data: append([]byte(nil), outcome.TerminalBytes...)}
 	}
+}
+
+func buildPreviewSummary(result builtinpreview.Result, outcome externalpreviewer.OrchestrationOutcome) string {
+	parts := make([]string, 0, 4)
+	if result.Summary != "" {
+		parts = append(parts, result.Summary)
+	}
+	if result.Warning != "" {
+		parts = append(parts, result.Warning)
+	}
+	switch outcome.Kind {
+	case externalpreviewer.OutcomeTerminalImage:
+		parts = append(parts, "terminal image rendered via "+string(outcome.ImageProtocol))
+	case externalpreviewer.OutcomeExternal:
+		parts = append(parts, "external previewer "+outcome.External.Rule+" completed")
+	default:
+		if outcome.External.Matched && outcome.External.Status != externalpreviewer.StatusSucceeded {
+			parts = append(parts, "external previewer "+outcome.External.Rule+" "+string(outcome.External.Code))
+		}
+	}
+	if outcome.ReleaseFailed {
+		parts = append(parts, "preview cache lease release needs recovery")
+	}
+	return strings.Join(parts, "; ")
 }
 
 func previewObjectMetadata(entry domain.Entry) *builtinpreview.ObjectMetadata {

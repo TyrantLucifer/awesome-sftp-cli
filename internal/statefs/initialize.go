@@ -280,9 +280,10 @@ func (config InitializeConfig) bootstrapCheckpoint(point string) {
 
 func recoverBootstrapIntent(ctx context.Context, root, finalPath string) (bool, error) {
 	intentPath := filepath.Join(root, bootstrapIntentName)
-	if _, err := os.Lstat(intentPath); errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	} else if err != nil {
+	if _, err := os.Lstat(intentPath); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return false, nil
+		}
 		return false, fmt.Errorf("recover bootstrap intent: inspect: %w", err)
 	}
 	if err := validatePrivateRegular(intentPath); err != nil {
@@ -301,7 +302,8 @@ func recoverBootstrapIntent(ctx context.Context, root, finalPath string) (bool, 
 	if err != nil || len(decoded) != 16 || generationID != strings.ToLower(generationID) {
 		return false, fmt.Errorf("recover bootstrap intent: invalid generation")
 	}
-	if _, err := os.Lstat(finalPath); err == nil {
+	_, finalErr := os.Lstat(finalPath)
+	if finalErr == nil {
 		identity, identityErr := PreflightIdentity(finalPath)
 		if identityErr != nil || identity.Kind != IdentityProject || identity.HasSidecars {
 			return false, fmt.Errorf("recover bootstrap intent: published final identity=%#v: %w", identity, identityErr)
@@ -326,8 +328,9 @@ func recoverBootstrapIntent(ctx context.Context, root, finalPath string) (bool, 
 			return false, fmt.Errorf("recover bootstrap intent: persist completed intent removal: %w", err)
 		}
 		return true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("recover bootstrap intent: inspect final: %w", err)
+	}
+	if !errors.Is(finalErr, os.ErrNotExist) {
+		return false, fmt.Errorf("recover bootstrap intent: inspect final: %w", finalErr)
 	}
 	if err := cleanupBootstrapGeneration(root, generationID, true); err != nil {
 		return false, err
@@ -339,9 +342,10 @@ func cleanupBootstrapGeneration(root, generationID string, removeIntent bool) er
 	tempPath := filepath.Join(root, bootstrapPrefix+generationID+bootstrapSuffix)
 	for _, candidate := range []string{tempPath + "-wal", tempPath + "-shm", tempPath + "-journal", tempPath} {
 		// candidate is an exact basename derived from the validated intent ID.
-		if _, err := os.Lstat(candidate); errors.Is(err, os.ErrNotExist) { //nolint:gosec
-			continue
-		} else if err != nil {
+		if _, err := os.Lstat(candidate); err != nil { //nolint:gosec
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return fmt.Errorf("cleanup bootstrap generation: inspect %q: %w", candidate, err)
 		}
 		if err := validatePrivateRegular(candidate); err != nil {

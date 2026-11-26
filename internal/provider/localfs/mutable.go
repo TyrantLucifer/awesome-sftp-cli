@@ -199,10 +199,13 @@ func (p *Provider) PreserveDestination(ctx context.Context, request providerapi.
 		return providerapi.PreserveDestinationResult{}, p.mapMutationError("preserve_destination", &request.Source, err, domain.EffectNone)
 	}
 	defer func() { _ = parentHandle.Close() }()
-	if backupInfo, backupErr := p.rootHandle.Lstat(backupPath); backupErr == nil {
-		if _, sourceErr := p.rootHandle.Lstat(sourcePath); sourceErr == nil {
+	backupInfo, backupErr := p.rootHandle.Lstat(backupPath)
+	if backupErr == nil {
+		_, sourceErr := p.rootHandle.Lstat(sourcePath)
+		if sourceErr == nil {
 			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "source and preservation path both exist", domain.RetryAfterConflict, nil)
-		} else if !errors.Is(sourceErr, os.ErrNotExist) {
+		}
+		if !errors.Is(sourceErr, os.ErrNotExist) {
 			return providerapi.PreserveDestinationResult{BackupPresent: true}, p.mapMutationError("preserve_destination", &request.Source, sourceErr, domain.EffectNone)
 		}
 		if !reflect.DeepEqual(request.ExpectedFingerprint, fingerprint(backupInfo)) {
@@ -213,7 +216,8 @@ func (p *Provider) PreserveDestination(ctx context.Context, request providerapi.
 			return providerapi.PreserveDestinationResult{BackupPresent: true}, errors.Join(p.opError(domain.CodeConflict, "preserve_destination", &request.Backup, "preserved content does not match", domain.RetryAfterConflict, nil), hashErr)
 		}
 		return providerapi.PreserveDestinationResult{BackupPresent: true}, nil
-	} else if !errors.Is(backupErr, os.ErrNotExist) {
+	}
+	if !errors.Is(backupErr, os.ErrNotExist) {
 		return providerapi.PreserveDestinationResult{}, p.mapMutationError("preserve_destination", &request.Backup, backupErr, domain.EffectNone)
 	}
 	sourceInfo, err := p.rootHandle.Lstat(sourcePath)

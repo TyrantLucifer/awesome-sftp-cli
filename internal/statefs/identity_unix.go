@@ -50,9 +50,11 @@ func PreflightIdentity(databasePath string) (Identity, error) {
 	metadata, err := os.Lstat(databasePath)
 	if errors.Is(err, os.ErrNotExist) {
 		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-			if _, sidecarErr := os.Lstat(databasePath + suffix); sidecarErr == nil {
+			_, sidecarErr := os.Lstat(databasePath + suffix)
+			if sidecarErr == nil {
 				return Identity{}, fmt.Errorf("%w: final is absent but %s exists", ErrAmbiguousState, suffix)
-			} else if !errors.Is(sidecarErr, os.ErrNotExist) {
+			}
+			if !errors.Is(sidecarErr, os.ErrNotExist) {
 				return Identity{}, fmt.Errorf("preflight state identity: inspect orphan %s: %w", suffix, sidecarErr)
 			}
 		}
@@ -104,9 +106,10 @@ func PreflightIdentity(databasePath string) (Identity, error) {
 	identity := Identity{Kind: IdentityProject, Size: metadata.Size()}
 	for _, suffix := range []string{"-wal", "-shm", "-journal"} {
 		sidecar := databasePath + suffix
-		if _, err := os.Lstat(sidecar); errors.Is(err, os.ErrNotExist) {
-			continue
-		} else if err != nil {
+		if _, err := os.Lstat(sidecar); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
 			return Identity{}, fmt.Errorf("%w: inspect project %s: %w", ErrAmbiguousState, suffix, err)
 		}
 		if err := platform.ValidatePrivateFile(sidecar, platform.ValidatePersistent); err != nil {
