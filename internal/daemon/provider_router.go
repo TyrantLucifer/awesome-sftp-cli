@@ -21,7 +21,6 @@ import (
 	helperruntime "github.com/TyrantLucifer/awesome-sftp-cli/internal/helper"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/ipc"
 	providerapi "github.com/TyrantLucifer/awesome-sftp-cli/internal/provider"
-	"github.com/TyrantLucifer/awesome-sftp-cli/internal/search"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/transfer"
 	"github.com/TyrantLucifer/awesome-sftp-cli/internal/workspace"
 )
@@ -171,8 +170,7 @@ func (s *ProviderSessions) NewSession() Session {
 		connectSSH:       s.connectSSH,
 		owned:            make([]providerapi.Provider, 0),
 		cursors:          make(map[cursorKey]providerapi.Provider),
-		searches:         make(map[domain.RequestID]*filenameSearchCursor),
-		contentSearches:  make(map[domain.RequestID]*contentSearchCursor),
+		searches:         make(map[domain.RequestID]activeSearch),
 		workspace:        s.workspace,
 		transfer:         s.transfer,
 		diagnostics:      s.diagnostics,
@@ -204,8 +202,7 @@ type providerSession struct {
 	providers        map[domain.EndpointID]providerapi.Provider
 	maxReadBytes     uint32
 	cursors          map[cursorKey]providerapi.Provider
-	searches         map[domain.RequestID]*filenameSearchCursor
-	contentSearches  map[domain.RequestID]*contentSearchCursor
+	searches         map[domain.RequestID]activeSearch
 	closed           bool
 	connectSSH       SSHConnector
 	owned            []providerapi.Provider
@@ -230,18 +227,6 @@ func cloneHelperClients(source map[domain.EndpointID]*helperruntime.Client) map[
 
 const maxActiveFilenameSearches = 4
 const maxFilenameEventsPerPage = 256
-
-type filenameSearchCursor struct {
-	mu     sync.Mutex
-	events <-chan search.Event
-	cancel context.CancelFunc
-}
-
-type contentSearchCursor struct {
-	mu     sync.Mutex
-	events <-chan search.ContentEvent
-	cancel context.CancelFunc
-}
 
 func (s *providerSession) Handle(ctx context.Context, name string, payload json.RawMessage) (any, error) {
 	s.mu.Lock()
@@ -392,9 +377,7 @@ func (s *providerSession) Close() error {
 	cursors := s.cursors
 	s.cursors = make(map[cursorKey]providerapi.Provider)
 	searches := s.searches
-	s.searches = make(map[domain.RequestID]*filenameSearchCursor)
-	contentSearches := s.contentSearches
-	s.contentSearches = make(map[domain.RequestID]*contentSearchCursor)
+	s.searches = make(map[domain.RequestID]activeSearch)
 	owned := s.owned
 	s.owned = nil
 	s.mu.Unlock()
@@ -408,18 +391,7 @@ func (s *providerSession) Close() error {
 		}
 	}
 	for _, cursor := range searches {
-		cursor.cancel()
-		cursor.mu.Lock()
-		for range cursor.events {
-		}
-		cursor.mu.Unlock()
-	}
-	for _, cursor := range contentSearches {
-		cursor.cancel()
-		cursor.mu.Lock()
-		for range cursor.events {
-		}
-		cursor.mu.Unlock()
+		cursor.closeAndDrain()
 	}
 	for _, implementation := range owned {
 		result = errors.Join(result, s.owner.releaseSession(implementation.Descriptor().ID))
@@ -519,23 +491,17 @@ func (s *providerSession) connect(ctx context.Context, payload json.RawMessage) 
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		if closer, ok := implementation.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		_ = closeProvider(implementation)
 		return nil, &domain.OpError{Code: domain.CodeCanceled, Message: "SSH connection completed after client session closed", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 	}
 	if _, exists := s.providers[descriptor.ID]; exists {
 		s.mu.Unlock()
-		if closer, ok := implementation.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		_ = closeProvider(implementation)
 		return nil, invalidArgument("duplicate SSH endpoint", nil)
 	}
 	if err := s.owner.attachSession(implementation); err != nil {
 		s.mu.Unlock()
-		if closer, ok := implementation.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		_ = closeProvider(implementation)
 		return nil, err
 	}
 	s.providers[descriptor.ID] = implementation
@@ -668,32 +634,24 @@ func (s *ProviderSessions) retainEndpoint(ctx context.Context, descriptor domain
 		return err
 	}
 	if implementation == nil || implementation.Descriptor() != descriptor {
-		if closer, ok := implementation.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		_ = closeProvider(implementation)
 		return &domain.OpError{Code: domain.CodeIntegrityFailed, Message: "endpoint connector returned different identity", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 	}
 	s.mu.Lock()
 	if current := s.endpoints[descriptor.ID]; current != nil {
 		if current.implementation.Descriptor() != descriptor {
 			s.mu.Unlock()
-			if closer, ok := implementation.(interface{ Close() error }); ok {
-				_ = closer.Close()
-			}
+			_ = closeProvider(implementation)
 			return &domain.OpError{Code: domain.CodeConflict, Message: "endpoint changed during reconnect", EndpointID: descriptor.ID, Retry: domain.RetryAdvice{Kind: domain.RetryAfterConflict}, Effect: domain.EffectNone}
 		}
 		current.jobs++
 		s.mu.Unlock()
-		if closer, ok := implementation.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		_ = closeProvider(implementation)
 		return nil
 	}
 	if s.dynamicEndpointCountLocked() >= s.maxDynamicEndpoints {
 		s.mu.Unlock()
-		if closer, ok := implementation.(interface{ Close() error }); ok {
-			_ = closer.Close()
-		}
+		_ = closeProvider(implementation)
 		return dynamicEndpointLimitError(descriptor.ID, s.maxDynamicEndpoints)
 	}
 	s.endpoints[descriptor.ID] = &endpointLease{implementation: implementation, jobs: 1}
@@ -761,6 +719,10 @@ func (s *ProviderSessions) release(endpointID domain.EndpointID, session bool) e
 	delete(s.endpoints, endpointID)
 	implementation := entry.implementation
 	s.mu.Unlock()
+	return closeProvider(implementation)
+}
+
+func closeProvider(implementation providerapi.Provider) error {
 	if closer, ok := implementation.(interface{ Close() error }); ok {
 		return closer.Close()
 	}

@@ -58,61 +58,52 @@ type EditSessionRecoverableResponse struct {
 	Sessions []editstore.RecoveryRecord `json:"sessions"`
 }
 
+func handleEditRPC[Req any, Resp any](
+	payload json.RawMessage,
+	decodeMsg, failMsg string,
+	call func(Req) (Resp, error),
+) (any, error) {
+	request, err := decodeRPC[Req](payload, decodeMsg)
+	if err != nil {
+		return nil, err
+	}
+	response, err := call(request)
+	if err != nil {
+		return nil, internalError(failMsg, err)
+	}
+	return response, nil
+}
+
 func (session *providerSession) handleEditSession(ctx context.Context, name string, payload json.RawMessage) (any, error) {
 	if session.editSessions == nil {
 		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "durable edit sessions are unavailable", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 	}
 	switch name {
 	case EditSessionCreate:
-		var request EditSessionCreateRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode edit session create request", err)
-		}
-		record, err := session.editSessions.Create(ctx, request.Request)
-		if err != nil {
-			return nil, internalError("create edit session", err)
-		}
-		return EditSessionResponse{Session: record}, nil
+		return handleEditRPC(payload, "decode edit session create request", "create edit session", func(request EditSessionCreateRequest) (EditSessionResponse, error) {
+			record, err := session.editSessions.Create(ctx, request.Request)
+			return EditSessionResponse{Session: record}, err
+		})
 	case EditSessionGet:
-		var request EditSessionGetRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode edit session get request", err)
-		}
-		record, err := session.editSessions.Get(ctx, request.SessionID)
-		if err != nil {
-			return nil, internalError("get edit session", err)
-		}
-		return EditSessionResponse{Session: record}, nil
+		return handleEditRPC(payload, "decode edit session get request", "get edit session", func(request EditSessionGetRequest) (EditSessionResponse, error) {
+			record, err := session.editSessions.Get(ctx, request.SessionID)
+			return EditSessionResponse{Session: record}, err
+		})
 	case EditSessionTransition:
-		var request EditSessionTransitionRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode edit session transition request", err)
-		}
-		record, err := session.editSessions.Transition(ctx, request.Request)
-		if err != nil {
-			return nil, internalError("transition edit session", err)
-		}
-		return EditSessionResponse{Session: record}, nil
+		return handleEditRPC(payload, "decode edit session transition request", "transition edit session", func(request EditSessionTransitionRequest) (EditSessionResponse, error) {
+			record, err := session.editSessions.Transition(ctx, request.Request)
+			return EditSessionResponse{Session: record}, err
+		})
 	case EditSessionEvents:
-		var request EditSessionEventsRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode edit session events request", err)
-		}
-		events, err := session.editSessions.ListEvents(ctx, request.SessionID, request.AfterSequence, request.Limit)
-		if err != nil {
-			return nil, internalError("list edit session events", err)
-		}
-		return EditSessionEventsResponse{Events: events}, nil
+		return handleEditRPC(payload, "decode edit session events request", "list edit session events", func(request EditSessionEventsRequest) (EditSessionEventsResponse, error) {
+			events, err := session.editSessions.ListEvents(ctx, request.SessionID, request.AfterSequence, request.Limit)
+			return EditSessionEventsResponse{Events: events}, err
+		})
 	case EditSessionRecoverable:
-		var request EditSessionRecoverableRequest
-		if err := decodePayload(payload, &request); err != nil {
-			return nil, invalidArgument("decode recoverable edit sessions request", err)
-		}
-		sessions, err := session.editSessions.ListRecoverable(ctx, request.Limit)
-		if err != nil {
-			return nil, internalError("list recoverable edit sessions", err)
-		}
-		return EditSessionRecoverableResponse{Sessions: sessions}, nil
+		return handleEditRPC(payload, "decode recoverable edit sessions request", "list recoverable edit sessions", func(request EditSessionRecoverableRequest) (EditSessionRecoverableResponse, error) {
+			sessions, err := session.editSessions.ListRecoverable(ctx, request.Limit)
+			return EditSessionRecoverableResponse{Sessions: sessions}, err
+		})
 	default:
 		return nil, &domain.OpError{Code: domain.CodeUnsupported, Message: "unsupported edit session request", Retry: domain.RetryAdvice{Kind: domain.RetryNever}, Effect: domain.EffectNone}
 	}
